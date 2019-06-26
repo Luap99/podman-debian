@@ -1,0 +1,92 @@
+Source: libpod
+Section: devel
+Priority: optional
+Maintainer: Debian Go Packaging Team <pkg-go-maintainers@lists.alioth.debian.org>
+Uploaders: Dmitry Smirnov <onlyjob@debian.org>
+Build-Depends: debhelper (>= 11~)
+    ,bash-completion
+    ,dh-golang
+    ,go-md2man
+    ,golang-any
+    ,golang-dbus-dev
+    ,golang-ginkgo-dev
+    ,golang-github-appc-cni-dev
+    ,golang-github-boltdb-bolt-dev
+    ,golang-github-containerd-cgroups-dev
+    ,golang-github-coreos-go-iptables-dev
+    ,golang-github-coreos-go-systemd-dev
+    ,golang-github-docker-distribution-dev
+    ,golang-github-docker-docker-dev
+    ,golang-github-docker-go-connections-dev
+    ,golang-github-docker-go-units-dev
+    ,golang-github-ghodss-yaml-dev
+    ,golang-github-hashicorp-go-multierror-dev
+    ,golang-github-mailru-easyjson-dev
+    ,golang-github-mrunalp-fileutils-dev
+    ,golang-github-opencontainers-go-digest-dev
+    ,golang-github-opencontainers-image-spec-dev
+    ,golang-github-opencontainers-runc-dev
+    ,golang-github-opencontainers-runtime-tools-dev
+    ,golang-github-opencontainers-selinux-dev
+    ,golang-github-opencontainers-specs-dev
+    ,golang-github-proglottis-gpgme-dev
+    ,golang-github-pkg-errors-dev
+    ,golang-github-stretchr-testify-dev
+    ,golang-github-urfave-cli-dev
+    ,golang-github-vishvananda-netlink-dev
+    ,golang-golang-x-crypto-dev
+    ,golang-golang-x-sys-dev
+    ,golang-gomega-dev
+    ,golang-github-sirupsen-logrus-dev
+    ,golang-github-imdario-mergo-dev
+    ,golang-github-fsouza-go-dockerclient-dev
+    ,golang-toml-dev
+    ,golang-x-text-dev
+    ,golang-github-json-iterator-go-dev
+    ,golang-github-ulikunitz-xz-dev
+    ,golang-github-vbatts-tar-split-dev
+    ,golang-github-pquerna-ffjson-dev
+    ,golang-github-cyphar-filepath-securejoin-dev
+#   ,golang-github-hpcloud-tail-dev
+    ,golang-gopkg-inf.v0-dev
+    ,golang-gopkg-tomb.v1-dev
+    ,golang-github-klauspost-pgzip-dev
+    ,golang-github-vividcortex-ewma-dev
+    ,golang-github-docker-spdystream-dev
+    ,golang-github-google-shlex-dev
+    ,golang-go-zfs-dev
+    ,golang-github-vbauerster-mpb-dev
+    ,golang-github-containerd-continuity-dev
+    ,libbtrfs-dev
+    ,libglib2.0-dev
+    ,libostree-dev
+    ,libdevmapper-dev
+Standards-Version: 4.3.0
+Homepage: https://github.com/containers/libpod
+Vcs-Browser: https://salsa.debian.org/debian/libpod
+Vcs-Git: https://salsa.debian.org/debian/libpod.git
+XS-Go-Import-Path: github.com/containers/libpod
+Testsuite: autopkgtest-pkg-go
+
+Package: podman
+Architecture: any
+Built-Using: ${misc:Built-Using}
+Depends: ${misc:Depends}, ${shlibs:Depends}
+    ,runc (>= 1.0.0~)
+Recommends: tini | dumb-init
+Description: libpod is a library used to create container pods.
+ libpod is a library for running OCI-based containers in Pods.
+ libpod provides a library for applications looking to use
+ the Container Pod concept popularized by Kubernetes. libpod also contains
+ a tool called podman for managing Pods, Containers, and Container Images.
+ .
+ At a high level, the scope of libpod and podman is the following:
+  • Support multiple image formats including the existing Docker/OCI image
+    formats.
+  • Support for multiple means to download images including trust & image
+    verification.
+  • Container image management (managing image layers, overlay filesystems,
+    etc).
+  • Full management of container lifecycle.
+  • Support for pods to manage groups of containers together.
+  • Resource isolation of containers and pods.

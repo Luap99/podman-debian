@@ -1,0 +1,42 @@
+#!/usr/bin/make -f
+
+# Uncomment this to turn on verbose mode.
+#export DH_VERBOSE=1
+
+include /usr/share/dpkg/pkg-info.mk
+
+#export DH_GOLANG_GO_GENERATE := 1
+
+export DH_GOLANG_EXCLUDES := test/e2e contrib/perftest test/utils
+
+#BUILDTAGS := "containers_image_ostree_stub"
+BUILDTAGS := systemd apparmor seccomp
+
+%:
+	dh $@ --buildsystem=golang --with=golang,bash-completion --builddirectory=_output
+
+#PB_GO_FILES = $(patsubst %.proto, %.pb.go, $(wildcard */*/*.proto))
+#$(PB_GO_FILES):
+#	protoc -I "$(dir $@)" --go_out=plugins=grpc:$(dir $@) $(@:.pb.go=.proto)
+
+override_dh_clean:
+	dh_clean $(PB_GO_FILES)
+	## Remove Files-Excluded (when built from checkout or non-DFSG tarball):
+	$(RM) -rv `perl -0nE 'say $$1 if m{^Files\-Excluded\:\s*(.*?)(?:\n\n|Files:|Comment:)}sm;' debian/copyright`
+	-find vendor -mindepth 1 -type d -empty -delete -printf 'removed %p\n'
+
+override_dh_auto_build:
+#	GOPATH=$(BUILDDIR) $(GO) generate ./cmd/podman/varlink/...
+#	LDFLAGS_PODMAN="-X main.gitCommit=$(GIT_COMMIT)"
+	dh_auto_build -v -- -tags "$(BUILDTAGS)" \
+          -ldflags "-X main.buildInfo=$(DEB_VERSION)"
+
+	$(MAKE) docs
+
+override_dh_auto_install:
+#	$(RM) debian/tmp/bin/
+	dh_auto_install --destdir=debian/tmp -- --no-source
+
+override_dh_auto_test:
+#	dh_auto_test
+	PATH="$(CURDIR)/_output/bin:$$PATH" dh_auto_test -v --max-parallel=2

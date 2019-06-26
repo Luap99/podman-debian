@@ -1,0 +1,3 @@
+lib-gpgme.patch
+upgrade-logrus.patch
+test--skip-TestPostDeleteHooks.patch
