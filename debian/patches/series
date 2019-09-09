@@ -1,3 +1,6 @@
+build-go_generate.patch
+lib_bbolt.patch
 lib-gpgme.patch
-upgrade-logrus.patch
+lib_ostree-go.patch
+#lib_yaml.patch
 test--skip-TestPostDeleteHooks.patch

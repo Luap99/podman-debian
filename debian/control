@@ -8,15 +8,15 @@ Build-Depends: debhelper (>= 11~)
     ,dh-golang
     ,go-md2man
     ,golang-any
-    ,golang-dbus-dev
+    ,golang-dbus-dev (>= 5.0.2~)
     ,golang-ginkgo-dev
     ,golang-github-appc-cni-dev
     ,golang-github-boltdb-bolt-dev
     ,golang-github-containerd-cgroups-dev
     ,golang-github-coreos-go-iptables-dev
-    ,golang-github-coreos-go-systemd-dev
+    ,golang-github-coreos-go-systemd-dev (>= 20~)
     ,golang-github-docker-distribution-dev
-    ,golang-github-docker-docker-dev
+    ,golang-github-docker-docker-dev (>= 18.09.5~)
     ,golang-github-docker-go-connections-dev
     ,golang-github-docker-go-units-dev
     ,golang-github-ghodss-yaml-dev
@@ -27,10 +27,11 @@ Build-Depends: debhelper (>= 11~)
     ,golang-github-opencontainers-image-spec-dev
     ,golang-github-opencontainers-runc-dev
     ,golang-github-opencontainers-runtime-tools-dev
-    ,golang-github-opencontainers-selinux-dev
+    ,golang-github-opencontainers-selinux-dev (>= 1.2.2~)
     ,golang-github-opencontainers-specs-dev
     ,golang-github-proglottis-gpgme-dev
     ,golang-github-pkg-errors-dev
+    ,golang-github-sjoerdsimons-ostree-go-dev (>= 0.0~git20190304~) | golang-github-ostreedev-ostree-go-dev
     ,golang-github-stretchr-testify-dev
     ,golang-github-urfave-cli-dev
     ,golang-github-vishvananda-netlink-dev
@@ -50,6 +51,7 @@ Build-Depends: debhelper (>= 11~)
 #   ,golang-github-hpcloud-tail-dev
     ,golang-gopkg-inf.v0-dev
     ,golang-gopkg-tomb.v1-dev
+    ,golang-github-klauspost-compress-dev (>= 1.7.2~)
     ,golang-github-klauspost-pgzip-dev
     ,golang-github-vividcortex-ewma-dev
     ,golang-github-docker-spdystream-dev
@@ -72,8 +74,12 @@ Package: podman
 Architecture: any
 Built-Using: ${misc:Built-Using}
 Depends: ${misc:Depends}, ${shlibs:Depends}
+    ,conmon (>= 2.0.0~)
     ,runc (>= 1.0.0~)
-Recommends: tini | dumb-init
+    ,containernetworking-plugins
+Recommends: ${misc:Recommends}
+    ,tini | dumb-init
+    ,uidmap
 Description: libpod is a library used to create container pods.
  libpod is a library for running OCI-based containers in Pods.
  libpod provides a library for applications looking to use

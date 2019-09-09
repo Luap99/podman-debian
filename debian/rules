@@ -5,12 +5,13 @@
 
 include /usr/share/dpkg/pkg-info.mk
 
-#export DH_GOLANG_GO_GENERATE := 1
+#~export DH_GOLANG_GO_GENERATE := 1
 
-export DH_GOLANG_EXCLUDES := test/e2e contrib/perftest test/utils
+export DH_GOLANG_EXCLUDES := dependencies test/e2e contrib/perftest test/utils
 
+## https://podman.io/getting-started/installation#build-tags
 #BUILDTAGS := "containers_image_ostree_stub"
-BUILDTAGS := systemd apparmor seccomp
+BUILDTAGS := apparmor ostree seccomp selinux systemd
 
 %:
 	dh $@ --buildsystem=golang --with=golang,bash-completion --builddirectory=_output

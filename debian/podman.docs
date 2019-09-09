@@ -1,1 +1,3 @@
 docs/*.md
+
+vendor/github.com/containers/storage/NOTICE
