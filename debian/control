@@ -59,7 +59,7 @@ Build-Depends: debhelper (>= 11~)
     ,golang-github-docker-spdystream-dev
     ,golang-github-google-shlex-dev
     ,golang-go-zfs-dev
-    ,golang-github-vbauerster-mpb-dev
+    ,golang-github-vbauerster-mpb-dev (>= 3.4.0~)
     ,golang-github-containerd-continuity-dev
     ,libapparmor-dev
     ,libbtrfs-dev

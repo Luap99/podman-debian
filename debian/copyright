@@ -92,7 +92,7 @@ Files-Excluded:
     vendor/github.com/ulikunitz/xz
    ~vendor/github.com/varlink/go
     vendor/github.com/vbatts/tar-split
-  ~~vendor/github.com/vbauerster/mpb
+    vendor/github.com/vbauerster/mpb
     vendor/github.com/vishvananda/netlink
     vendor/github.com/vishvananda/netns
     vendor/github.com/VividCortex/ewma
