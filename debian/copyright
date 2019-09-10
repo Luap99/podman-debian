@@ -5,8 +5,11 @@ Files-Excluded:
     vendor/github.com/Azure/go-ansiterm
     vendor/github.com/beorn7/perks
     vendor/github.com/blang/semver
-  ~~vendor/github.com/buger/goterm
+   ~vendor/github.com/buger/goterm
     vendor/github.com/BurntSushi/toml
+  ~~vendor/github.com/containers/image
+    vendor/github.com/containers/psgo
+    vendor/github.com/containers/storage
     vendor/github.com/containerd/cgroups
     vendor/github.com/containerd/continuity
   ~~vendor/github.com/containernetworking/cni
@@ -26,6 +29,7 @@ Files-Excluded:
   ~~vendor/github.com/docker/libnetwork
     vendor/github.com/docker/libtrust
     vendor/github.com/docker/spdystream
+    vendor/github.com/etcd-io/bbolt
     vendor/github.com/fsnotify/fsnotify
     vendor/github.com/fsouza/go-dockerclient
     vendor/github.com/ghodss/yaml
@@ -46,6 +50,7 @@ Files-Excluded:
     vendor/github.com/klauspost/compress
     vendor/github.com/klauspost/cpuid
     vendor/github.com/klauspost/pgzip
+    vendor/github.com/konsorten/go-windows-terminal-sequences
     vendor/github.com/matttproud/golang_protobuf_extensions
     vendor/github.com/mattn/go-isatty
     vendor/github.com/mattn/go-shellwords
@@ -65,6 +70,7 @@ Files-Excluded:
     vendor/github.com/opencontainers/runtime-spec
     vendor/github.com/opencontainers/runtime-tools
     vendor/github.com/opencontainers/selinux
+   ~vendor/github.com/openshift/imagebuilder
     vendor/github.com/opentracing/opentracing-go
     vendor/github.com/ostreedev/ostree-go
     vendor/github.com/pkg/errors
@@ -110,6 +116,18 @@ Files-Excluded:
 Comment:
     "~~" does not build with system library.
     "~"  not packaged or not available (e.g. removed).
+ .
+ Upstream "github.com/uber/*" libraries depend on forked prometheus so
+ using bundled/vendored ones make sense to avoid burden of non-reusable
+ packages with heavier dependencies than vendored subset of those libs.
+ .
+ golang-github-hpcloud-tail has been removed from Debian: #880106.
+ This not very well maintained upstream (bundled) library is used only by
+ this package so re-introducing it as standalone package may be not
+ feasible.
+ .
+ varlink/go -- not semantically versioned; single user (this very package).
+ Leave bundled?
 
 Files: *
 Copyright: 2017

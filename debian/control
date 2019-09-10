@@ -13,6 +13,8 @@ Build-Depends: debhelper (>= 11~)
     ,golang-github-appc-cni-dev
     ,golang-github-boltdb-bolt-dev
     ,golang-github-containerd-cgroups-dev
+#   ,golang-github-containers-image-dev (>= 1.5~)
+    ,golang-github-containers-storage-dev (>= 1.12.13~)
     ,golang-github-coreos-go-iptables-dev
     ,golang-github-coreos-go-systemd-dev (>= 20~)
     ,golang-github-docker-distribution-dev
@@ -59,6 +61,7 @@ Build-Depends: debhelper (>= 11~)
     ,golang-go-zfs-dev
     ,golang-github-vbauerster-mpb-dev
     ,golang-github-containerd-continuity-dev
+    ,libapparmor-dev
     ,libbtrfs-dev
     ,libglib2.0-dev
     ,libostree-dev
