@@ -49,7 +49,7 @@ Build-Depends: debhelper (>= 12~)
     ,golang-github-ulikunitz-xz-dev
     ,golang-github-vbatts-tar-split-dev
     ,golang-github-pquerna-ffjson-dev
-    ,golang-github-cyphar-filepath-securejoin-dev
+    ,golang-github-cyphar-filepath-securejoin-dev (>= 0.2.2~)
 #   ,golang-github-hpcloud-tail-dev
     ,golang-gopkg-inf.v0-dev
     ,golang-gopkg-tomb.v1-dev
