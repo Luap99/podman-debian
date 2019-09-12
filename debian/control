@@ -24,6 +24,7 @@ Build-Depends: debhelper (>= 12~)
     ,golang-github-docker-go-units-dev (>= 0.4.0~)
     ,golang-github-ghodss-yaml-dev
     ,golang-github-hashicorp-go-multierror-dev
+    ,golang-github-ishidawataru-sctp-dev
     ,golang-github-mailru-easyjson-dev
     ,golang-github-mrunalp-fileutils-dev
     ,golang-github-opencontainers-go-digest-dev
