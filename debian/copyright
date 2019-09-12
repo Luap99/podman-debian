@@ -20,7 +20,7 @@ Files-Excluded:
     vendor/github.com/coreos/pkg
     vendor/github.com/cyphar/filepath-securejoin
     vendor/github.com/davecgh/go-spew
-  ~~vendor/github.com/docker/distribution
+    vendor/github.com/docker/distribution
   ~~vendor/github.com/docker/docker
   ~~vendor/github.com/docker/go-metrics
     vendor/github.com/docker/docker-credential-helpers
