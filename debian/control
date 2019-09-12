@@ -1,9 +1,10 @@
 Source: libpod
 Section: devel
 Priority: optional
+Standards-Version: 4.4.0
 Maintainer: Debian Go Packaging Team <pkg-go-maintainers@lists.alioth.debian.org>
 Uploaders: Dmitry Smirnov <onlyjob@debian.org>
-Build-Depends: debhelper (>= 11~)
+Build-Depends: debhelper (>= 12~)
     ,bash-completion
     ,dh-golang
     ,go-md2man
@@ -65,7 +66,6 @@ Build-Depends: debhelper (>= 11~)
     ,libglib2.0-dev
     ,libostree-dev
     ,libdevmapper-dev
-Standards-Version: 4.3.0
 Homepage: https://github.com/containers/libpod
 Vcs-Browser: https://salsa.debian.org/debian/libpod
 Vcs-Git: https://salsa.debian.org/debian/libpod.git
