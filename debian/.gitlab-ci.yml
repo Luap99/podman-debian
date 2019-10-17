@@ -5,7 +5,6 @@ variables:
   LINTIAN_CMD: eval lintian --no-tag-display-limit --info --display-info --color=auto --display-experimental --pedantic "${PB_RESULT}"/*.changes
 # AUTOPKGTEST_CMD: eval autopkgtest --apt-upgrade --user debci --output-dir "${PB_RESULT}"/debci -- lxc --sudo autopkgtest-unstable-amd64
   AUTOPKGTEST_CMD: eval autopkgtest --apt-upgrade --user sbuild --output-dir "${PB_RESULT}"/debci -- schroot unstable-amd64-sbuild
-  ORIGTAR_CMD: origtargz --tar-only
 # PDEBUILD_CMD: eval pdebuild --use-pdebuild-internal --pbuildersatisfydepends "/usr/lib/pbuilder/pbuilder-satisfydepends-classic" --buildresult "${PB_RESULT}" --debbuildopts -sa
   PDEBUILD_CMD: eval pdebuild --use-pdebuild-internal --buildresult "${PB_RESULT}" --debbuildopts -sa
   EATMYDATA: "yes"
@@ -14,7 +13,8 @@ variables:
 
 .origtargz:
   script: &origtargz |
-    ${ORIGTAR_CMD}
+    origtargz --clean
+    origtargz --tar-only
 #    rm -rf .git
 #    debian/unpack-components.sh
 
@@ -37,7 +37,6 @@ dpkg-control:
   dependencies: []
   allow_failure: false
   script:
-    - wrap-and-sort --keep-first --trailing-comma # terrible way to fix "Cannot parse: ''" in "cme check dpkg-control".
     - cme check dpkg-control
 
 dpkg-copyright:
