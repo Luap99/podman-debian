@@ -7,7 +7,8 @@ Files-Excluded:
     vendor/github.com/blang/semver
    ~vendor/github.com/buger/goterm
     vendor/github.com/BurntSushi/toml
-  ~~vendor/github.com/containers/image
+   ~vendor/github.com/containers/buildah
+   ~vendor/github.com/containers/image
     vendor/github.com/containers/psgo
     vendor/github.com/containers/storage
     vendor/github.com/containerd/cgroups
@@ -44,6 +45,7 @@ Files-Excluded:
     vendor/github.com/hashicorp/errwrap
     vendor/github.com/hashicorp/go-multierror
    ~vendor/github.com/hpcloud/tail
+    vendor/github.com/ijc/Gotty
     vendor/github.com/imdario/mergo
     vendor/github.com/inconshreveable/mousetrap
     vendor/github.com/ishidawataru/sctp
@@ -82,6 +84,7 @@ Files-Excluded:
     vendor/github.com/prometheus/client_model
     vendor/github.com/prometheus/common
     vendor/github.com/prometheus/procfs
+    vendor/github.com/safchain/ethtool
     vendor/github.com/seccomp/containers-golang
     vendor/github.com/seccomp/libseccomp-golang
     vendor/github.com/sirupsen/logrus
@@ -100,6 +103,7 @@ Files-Excluded:
     vendor/github.com/xeipuuv/gojsonpointer
     vendor/github.com/xeipuuv/gojsonreference
     vendor/github.com/xeipuuv/gojsonschema
+   ~vendor/github.com/uber/jaeger-*
     vendor/golang.org/x/crypto
     vendor/golang.org/x/net
     vendor/golang.org/x/oauth2
@@ -131,11 +135,50 @@ Comment:
  Leave bundled?
 
 Files: *
-Copyright: 2017
+Copyright:
+    2016-2019 Red Hat, Inc.
 License: Apache-2.0
 
+Files:
+    vendor/github.com/buger/goterm/*
+Copyright:
+    2016 Leonid Bugaev
+License: Expat
+
+Files:
+    vendor/github.com/checkpoint-restore/go-criu/*
+Copyright: ???
+License: Apache-2.0
+
+Files:
+    vendor/github.com/cri-o/ocicni/*
+Copyright:
+    2016-2019 Red Hat, Inc.
+License: Apache-2.0
+
+Files:
+    vendor/github.com/fatih/camelcase/*
+Copyright:
+    2015 Fatih Arslan
+License: Expat
+
+Files:
+    vendor/github.com/openshift/api/*
+Copyright:
+    2018 openshift developers
+License: Apache-2.0
+
+Files:
+    vendor/github.com/uber/jaeger-*/*
+Copyright:
+    2016-2019 The Jaeger Authors
+    2017-2019 Uber Technologies, Inc.
+License: Apache-2.0
+Comment: bundled portion of the larger "all purpose" libraries that appears
+ to be not feasible to package separately.
+
 Files: debian/*
-Copyright: 2018 Dmitry Smirnov <onlyjob@debian.org>
+Copyright: 2018-2019 Dmitry Smirnov <onlyjob@debian.org>
 License: Apache-2.0
 
 License: Apache-2.0
@@ -153,3 +196,21 @@ License: Apache-2.0
  .
  On Debian systems, the complete text of the Apache version 2.0 license
  can be found in "/usr/share/common-licenses/Apache-2.0".
+
+License: Expat
+ Permission is hereby granted, free of charge, to any person obtaining a copy of
+ this software and associated documentation files (the "Software"), to deal in
+ the Software without restriction, including without limitation the rights to
+ use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+ the Software, and to permit persons to whom the Software is furnished to do so,
+ subject to the following conditions:
+ .
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+ FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+ COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
