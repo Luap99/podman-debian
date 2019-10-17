@@ -12,8 +12,8 @@ Files-Excluded:
     vendor/github.com/containers/storage
     vendor/github.com/containerd/cgroups
     vendor/github.com/containerd/continuity
-  ~~vendor/github.com/containernetworking/cni
-  ~~vendor/github.com/containernetworking/plugins
+    vendor/github.com/containernetworking/cni
+    vendor/github.com/containernetworking/plugins
     vendor/github.com/coreos/bbolt
     vendor/github.com/coreos/go-iptables
     vendor/github.com/coreos/go-systemd
@@ -21,12 +21,12 @@ Files-Excluded:
     vendor/github.com/cyphar/filepath-securejoin
     vendor/github.com/davecgh/go-spew
     vendor/github.com/docker/distribution
-  ~~vendor/github.com/docker/docker
-  ~~vendor/github.com/docker/go-metrics
+    vendor/github.com/docker/docker
+    vendor/github.com/docker/go-metrics
     vendor/github.com/docker/docker-credential-helpers
     vendor/github.com/docker/go-connections
     vendor/github.com/docker/go-units
-  ~~vendor/github.com/docker/libnetwork
+    vendor/github.com/docker/libnetwork
     vendor/github.com/docker/libtrust
     vendor/github.com/docker/spdystream
     vendor/github.com/etcd-io/bbolt
@@ -71,7 +71,7 @@ Files-Excluded:
     vendor/github.com/opencontainers/runtime-spec
     vendor/github.com/opencontainers/runtime-tools
     vendor/github.com/opencontainers/selinux
-   ~vendor/github.com/openshift/imagebuilder
+    vendor/github.com/openshift/imagebuilder
     vendor/github.com/opentracing/opentracing-go
     vendor/github.com/ostreedev/ostree-go
     vendor/github.com/pkg/errors
@@ -82,7 +82,7 @@ Files-Excluded:
     vendor/github.com/prometheus/client_model
     vendor/github.com/prometheus/common
     vendor/github.com/prometheus/procfs
-   ~vendor/github.com/seccomp/containers-golang
+    vendor/github.com/seccomp/containers-golang
     vendor/github.com/seccomp/libseccomp-golang
     vendor/github.com/sirupsen/logrus
     vendor/github.com/spf13/cobra

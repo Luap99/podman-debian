@@ -7,7 +7,7 @@ include /usr/share/dpkg/pkg-info.mk
 
 #~export DH_GOLANG_GO_GENERATE := 1
 
-export DH_GOLANG_EXCLUDES := dependencies test/e2e contrib/perftest test/utils
+export DH_GOLANG_EXCLUDES := dependencies test/e2e contrib/perftest test/utils test/endpoint
 
 ## https://podman.io/getting-started/installation#build-tags
 #BUILDTAGS := "containers_image_ostree_stub"
@@ -40,7 +40,9 @@ override_dh_auto_install:
 
 override_dh_auto_test:
 #	dh_auto_test
-	PATH="$(CURDIR)/_output/bin:$$PATH" dh_auto_test -v --max-parallel=2
+	PATH="$(CURDIR)/_output/bin:$$PATH" \
+	DH_GOLANG_EXCLUDES="$${DH_GOLANG_EXCLUDES} libpod/lock/file" \
+	dh_auto_test -v --max-parallel=2
 
 override_dh_dwz:
 	:

@@ -11,20 +11,32 @@ Build-Depends: debhelper (>= 12~)
     ,golang-any
     ,golang-dbus-dev (>= 5.0.2~)
     ,golang-ginkgo-dev
-    ,golang-github-appc-cni-dev
+    ,golang-github-appc-cni-dev (>= 0.7.1~)
+      ,golang-github-containernetworking-plugins-dev
     ,golang-github-boltdb-bolt-dev
     ,golang-github-containerd-cgroups-dev
+    ,golang-github-containerd-continuity-dev
 #   ,golang-github-containers-image-dev (>= 1.5~)
+    ,golang-github-containers-psgo-dev
     ,golang-github-containers-storage-dev (>= 1.12.13~)
     ,golang-github-coreos-go-iptables-dev (>= 0.4.2~)
     ,golang-github-coreos-go-systemd-dev (>= 20~)
+    ,golang-github-cyphar-filepath-securejoin-dev (>= 0.2.2~)
     ,golang-github-docker-distribution-dev (>= 2.7.1~)
     ,golang-github-docker-docker-dev (>= 18.09.5~)
     ,golang-github-docker-go-connections-dev (>= 0.4.0~)
     ,golang-github-docker-go-units-dev (>= 0.4.0~)
+    ,golang-github-docker-spdystream-dev
+    ,golang-github-fsouza-go-dockerclient-dev
     ,golang-github-ghodss-yaml-dev
+    ,golang-github-google-shlex-dev
     ,golang-github-hashicorp-go-multierror-dev
+#   ,golang-github-hpcloud-tail-dev
+    ,golang-github-imdario-mergo-dev
     ,golang-github-ishidawataru-sctp-dev
+    ,golang-github-json-iterator-go-dev
+    ,golang-github-klauspost-compress-dev (>= 1.7.2~)
+    ,golang-github-klauspost-pgzip-dev
     ,golang-github-mailru-easyjson-dev
     ,golang-github-mrunalp-fileutils-dev
     ,golang-github-opencontainers-go-digest-dev
@@ -32,36 +44,30 @@ Build-Depends: debhelper (>= 12~)
     ,golang-github-opencontainers-runc-dev
     ,golang-github-opencontainers-runtime-tools-dev (>= 0.9.0~)
     ,golang-github-opencontainers-selinux-dev (>= 1.2.2~)
-    ,golang-github-proglottis-gpgme-dev
+    ,golang-github-openshift-imagebuilder-dev
     ,golang-github-pkg-errors-dev
+    ,golang-github-pkg-profile-dev
+    ,golang-github-pquerna-ffjson-dev
+    ,golang-github-proglottis-gpgme-dev
+    ,golang-github-safchain-ethtool-dev
+    ,golang-github-seccomp-containers-golang-dev
+    ,golang-github-sirupsen-logrus-dev
     ,golang-github-sjoerdsimons-ostree-go-dev (>= 0.0~git20190304~) | golang-github-ostreedev-ostree-go-dev
     ,golang-github-stretchr-testify-dev
+    ,golang-github-ulikunitz-xz-dev
     ,golang-github-urfave-cli-dev
+    ,golang-github-vbatts-tar-split-dev
+    ,golang-github-vbauerster-mpb-dev (>= 3.4.0~)
     ,golang-github-vishvananda-netlink-dev (>= 1.0.0+git20181030~)
+    ,golang-github-vividcortex-ewma-dev
     ,golang-golang-x-crypto-dev
     ,golang-golang-x-sys-dev
     ,golang-gomega-dev
-    ,golang-github-sirupsen-logrus-dev
-    ,golang-github-imdario-mergo-dev
-    ,golang-github-fsouza-go-dockerclient-dev
-    ,golang-toml-dev
-    ,golang-x-text-dev
-    ,golang-github-json-iterator-go-dev
-    ,golang-github-ulikunitz-xz-dev
-    ,golang-github-vbatts-tar-split-dev
-    ,golang-github-pquerna-ffjson-dev
-    ,golang-github-cyphar-filepath-securejoin-dev (>= 0.2.2~)
-#   ,golang-github-hpcloud-tail-dev
     ,golang-gopkg-inf.v0-dev
     ,golang-gopkg-tomb.v1-dev
-    ,golang-github-klauspost-compress-dev (>= 1.7.2~)
-    ,golang-github-klauspost-pgzip-dev
-    ,golang-github-vividcortex-ewma-dev
-    ,golang-github-docker-spdystream-dev
-    ,golang-github-google-shlex-dev
     ,golang-go-zfs-dev
-    ,golang-github-vbauerster-mpb-dev (>= 3.4.0~)
-    ,golang-github-containerd-continuity-dev
+    ,golang-toml-dev
+    ,golang-x-text-dev
     ,libapparmor-dev
     ,libbtrfs-dev
     ,libglib2.0-dev
