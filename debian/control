@@ -41,7 +41,7 @@ Build-Depends: debhelper (>= 12~)
     ,golang-github-mrunalp-fileutils-dev
     ,golang-github-opencontainers-go-digest-dev
     ,golang-github-opencontainers-image-spec-dev
-    ,golang-github-opencontainers-runc-dev
+    ,golang-github-opencontainers-runc-dev (>= 1.0.0~rc9~)
     ,golang-github-opencontainers-runtime-tools-dev (>= 0.9.0~)
     ,golang-github-opencontainers-selinux-dev (>= 1.2.2~)
     ,golang-github-openshift-imagebuilder-dev
@@ -84,7 +84,7 @@ Architecture: any
 Built-Using: ${misc:Built-Using}
 Depends: ${misc:Depends}, ${shlibs:Depends}
     ,conmon (>= 2.0.0~)
-    ,runc (>= 1.0.0~)
+    ,runc (>= 1.0.0~rc9~)
     ,containernetworking-plugins
 Recommends: ${misc:Recommends}
     ,tini | dumb-init
