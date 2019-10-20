@@ -8,7 +8,7 @@ Files-Excluded:
    ~vendor/github.com/buger/goterm
     vendor/github.com/BurntSushi/toml
    ~vendor/github.com/containers/buildah
-   ~vendor/github.com/containers/image
+    vendor/github.com/containers/image
     vendor/github.com/containers/psgo
     vendor/github.com/containers/storage
     vendor/github.com/containerd/cgroups
