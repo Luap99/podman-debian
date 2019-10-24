@@ -1,115 +1,25 @@
 ---
-variables:
-  GIT_DEPTH: 128
-  PB_RESULT: '${CI_PROJECT_DIR}/../${CI_PROJECT_NAME}_${CI_BUILD_REF}_${CI_JOB_NAME}_${CI_JOB_ID}'
-  LINTIAN_CMD: eval lintian --no-tag-display-limit --info --display-info --color=auto --display-experimental --pedantic "${PB_RESULT}"/*.changes
-# AUTOPKGTEST_CMD: eval autopkgtest --apt-upgrade --user debci --output-dir "${PB_RESULT}"/debci -- lxc --sudo autopkgtest-unstable-amd64
-  AUTOPKGTEST_CMD: eval autopkgtest --apt-upgrade --user sbuild --output-dir "${PB_RESULT}"/debci -- schroot unstable-amd64-sbuild
-# PDEBUILD_CMD: eval pdebuild --use-pdebuild-internal --pbuildersatisfydepends "/usr/lib/pbuilder/pbuilder-satisfydepends-classic" --buildresult "${PB_RESULT}" --debbuildopts -sa
-  PDEBUILD_CMD: eval pdebuild --use-pdebuild-internal --buildresult "${PB_RESULT}" --debbuildopts -sa
-  EATMYDATA: "yes"
-  AUTOCLEANAPTCACHE: "yes"
-  USE_PDEBUILD_INTERNAL: "yes"
+# https://docs.gitlab.com/ce/ci/yaml/#include
+include:
+  - remote: https://salsa.debian.org/onlyjob/ci/raw/master/onlyjob-ci.yml
 
-.origtargz:
-  script: &origtargz |
-    origtargz --clean
-    origtargz --tar-only
-#    rm -rf .git
-#    debian/unpack-components.sh
+## "amd64-unstable" always runs by default followed by lintian.
 
-.pre_build:
-  script: &pre_build |
-    uname -a
-    date
-    env
-    pwd
-    mkdir -v -p "${PB_RESULT}"
+## Job to check Build-Depends versioning:
+amd64-testing_unstable:
+  extends: .build
+  variables:
+    arch: amd64
+    dist: testing_unstable
 
-stages:
-  - check
-  - build
+i386-unstable:
+  extends: .build
+  variables:
+    arch: i386
+    dist: unstable
 
-dpkg-control:
-  stage: check
-  tags:
-    - cme
-  dependencies: []
-  allow_failure: false
-  script:
-    - cme check dpkg-control
-
-dpkg-copyright:
-  stage: check
-  tags:
-    - cme
-  dependencies: []
-  allow_failure: false
-  script: |
-    cme check dpkg-copyright
-
-yamllint:
-  stage: check
-  tags:
-    - yamllint
-  dependencies: []
-  allow_failure: false
-  script: |
-    yamllint -c debian/.yamllint debian/.*.yml
-
-## Build
-
-testing_unstable-amd64:
-  stage: build
-  tags:
-    - pbuilder
-    - amd64
-  dependencies: []
-  allow_failure: false
-  before_script:
-    - *pre_build
-  script:
-    - *origtargz
-    - ${PDEBUILD_CMD} --architecture amd64 -- --basetgz /var/cache/pbuilder/testing_unstable-amd64.tgz
-    - ${LINTIAN_CMD}
-
-unstable-i386:
-  stage: build
-  tags:
-    - pbuilder
-    - amd64
-  dependencies: []
-  allow_failure: false
-  before_script:
-    - *pre_build
-  script:
-    - *origtargz
-    - ${PDEBUILD_CMD} --architecture i386 -- --basetgz /var/cache/pbuilder/unstable-i386.tgz
-
-unstable-amd64:
-  stage: build
-  tags:
-    - pbuilder
-    - amd64
-  dependencies: []
-  allow_failure: false
-  before_script:
-    - *pre_build
-  script:
-    - *origtargz
-    - ${PDEBUILD_CMD} --architecture amd64 -- --basetgz /var/cache/pbuilder/unstable-amd64.tgz
-    - ${LINTIAN_CMD}
-
-experimental-amd64:
-  stage: build
-  tags:
-    - pbuilder
-    - amd64
-  dependencies: []
-  allow_failure: false
-  before_script:
-    - *pre_build
-  script:
-    - *origtargz
-    - ${PDEBUILD_CMD} --architecture amd64 -- --basetgz /var/cache/pbuilder/experimental-amd64.tgz
-    - ${LINTIAN_CMD}
+amd64-experimental:
+  extends: .build
+  variables:
+    arch: amd64
+    dist: experimental

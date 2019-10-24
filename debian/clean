@@ -1,6 +1,5 @@
 ## Debian CI:
 debian/.gitlab-ci.yml
-debian/.yamllint
 
 .gopathok
 vendor/github.com/varlink/varlink
