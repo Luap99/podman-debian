@@ -14,7 +14,7 @@ export HOME=$(CURDIR)/debian/tmp
 
 ## https://podman.io/getting-started/installation#build-tags
 #BUILDTAGS := "containers_image_ostree_stub"
-BUILDTAGS := apparmor ostree seccomp selinux systemd
+BUILDTAGS := apparmor ostree seccomp selinux systemd varlink
 
 %:
 	dh $@ --buildsystem=golang --with=golang,bash-completion --builddirectory=_output
