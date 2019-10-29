@@ -44,7 +44,7 @@ Files-Excluded:
     vendor/github.com/gorilla/mux
     vendor/github.com/hashicorp/errwrap
     vendor/github.com/hashicorp/go-multierror
-   ~vendor/github.com/hpcloud/tail
+    vendor/github.com/hpcloud/tail
     vendor/github.com/ijc/Gotty
     vendor/github.com/imdario/mergo
     vendor/github.com/inconshreveable/mousetrap
@@ -125,11 +125,6 @@ Comment:
  Upstream "github.com/uber/*" libraries depend on forked prometheus so
  using bundled/vendored ones make sense to avoid burden of non-reusable
  packages with heavier dependencies than vendored subset of those libs.
- .
- golang-github-hpcloud-tail has been removed from Debian: #880106.
- This not very well maintained upstream (bundled) library is used only by
- this package so re-introducing it as standalone package may be not
- feasible.
  .
  varlink/go -- not semantically versioned; single user (this very package).
  Leave bundled?
