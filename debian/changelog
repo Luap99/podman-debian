@@ -1,4 +1,4 @@
-libpod (1.6.1+dfsg-1) UNRELEASED; urgency=medium
+libpod (1.6.2+dfsg-1) UNRELEASED; urgency=medium
 
   * Initial release (Closes: #930440).
 
@@ -8,7 +8,6 @@ libpod (1.6.1+dfsg-1) UNRELEASED; urgency=medium
   * Package description
   * Un-bundle vendored libraries
     * Docker: system or bundled? (probably latter)
-  * rules: DH_GOLANG_GO_GENERATE := 1
   * GO_GENERATE for vendor/
   * Install and activate systemd service?
   * Spelling

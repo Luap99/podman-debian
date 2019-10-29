@@ -5,7 +5,7 @@ Description: update library namespace
 
 --- a/libpod/boltdb_state.go
 +++ b/libpod/boltdb_state.go
-@@ -5,9 +5,9 @@
+@@ -6,9 +6,9 @@
  	"strings"
  	"sync"
  

@@ -7,12 +7,13 @@ Files-Excluded:
     vendor/github.com/blang/semver
     vendor/github.com/buger/goterm
     vendor/github.com/BurntSushi/toml
-   ~vendor/github.com/containers/buildah
-    vendor/github.com/containers/image
-    vendor/github.com/containers/psgo
-    vendor/github.com/containers/storage
     vendor/github.com/containerd/cgroups
     vendor/github.com/containerd/continuity
+   ~vendor/github.com/containers/buildah
+    vendor/github.com/containers/image
+    vendor/github.com/containers/libtrust
+    vendor/github.com/containers/psgo
+    vendor/github.com/containers/storage
     vendor/github.com/containernetworking/cni
     vendor/github.com/containernetworking/plugins
     vendor/github.com/coreos/bbolt
@@ -111,12 +112,14 @@ Files-Excluded:
     vendor/golang.org/x/sys
     vendor/golang.org/x/text
     vendor/golang.org/x/time
+    vendor/google.golang.org/appengine
+    vendor/google.golang.org/genproto
+    vendor/google.golang.org/grpc
     vendor/gopkg.in/fsnotify.v1
     vendor/gopkg.in/inf.v0
     vendor/gopkg.in/mgo.v2
     vendor/gopkg.in/tomb.v1
     vendor/gopkg.in/yaml.v2
-    vendor/google.golang.org/appengine
    ~vendor/sigs.k8s.io/yaml
 Comment:
     "~~" does not build with system library.

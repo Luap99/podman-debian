@@ -65,6 +65,8 @@ Build-Depends: debhelper (>= 12~)
     ,golang-golang-x-crypto-dev
     ,golang-golang-x-sys-dev
     ,golang-gomega-dev
+    ,golang-google-genproto-dev
+    ,golang-google-grpc-dev
     ,golang-gopkg-inf.v0-dev
     ,golang-gopkg-tomb.v1-dev
     ,golang-go-zfs-dev
