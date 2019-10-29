@@ -1,4 +1,4 @@
-build-go_generate.patch
+#build-go_generate.patch
 lib_bbolt.patch
 lib-gpgme.patch
 #lib_yaml.patch

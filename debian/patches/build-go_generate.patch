@@ -1,4 +1,7 @@
-Description: FIXME
+Last-Update: 2019-10-29
+Forwarded: not-needed
+Author: Dmitry Smirnov <onlyjob@debian.org>
+Description: use external/system "varlink-go-interface-generator".
 
 --- a/cmd/podman/varlink/generate.go
 +++ b/cmd/podman/varlink/generate.go
@@ -6,4 +9,4 @@ Description: FIXME
  package iopodman
  
 -//go:generate go run ../../../vendor/github.com/varlink/go/cmd/varlink-go-interface-generator/main.go io.podman.varlink
-+//go:generate go run ../../../../../../vendor/github.com/varlink/go/cmd/varlink-go-interface-generator/main.go io.podman.varlink
++//go:generate varlink-go-interface-generator io.podman.varlink
