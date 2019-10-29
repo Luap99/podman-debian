@@ -10,6 +10,8 @@ export DH_GOLANG_GO_GENERATE := 1
 export DH_GOLANG_INSTALL_EXTRA := $(shell find . -type f -name '*.varlink')
 export DH_GOLANG_EXCLUDES := dependencies test/e2e contrib/perftest test/utils test/endpoint
 
+export HOME=$(CURDIR)/debian/tmp
+
 ## https://podman.io/getting-started/installation#build-tags
 #BUILDTAGS := "containers_image_ostree_stub"
 BUILDTAGS := apparmor ostree seccomp selinux systemd
