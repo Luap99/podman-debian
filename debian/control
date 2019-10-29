@@ -32,7 +32,7 @@ Build-Depends: debhelper (>= 12~)
     ,golang-github-ghodss-yaml-dev
     ,golang-github-google-shlex-dev
     ,golang-github-hashicorp-go-multierror-dev
-    ,golang-github-influxdata-tail-dev | golang-github-hpcloud-tail-dev
+    ,golang-github-influxdata-tail-dev (>= 1.0.0+git20180327.c434825-2~) | golang-github-hpcloud-tail-dev
     ,golang-github-imdario-mergo-dev
     ,golang-github-ishidawataru-sctp-dev
     ,golang-github-json-iterator-go-dev
