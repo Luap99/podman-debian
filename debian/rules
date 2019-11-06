@@ -49,5 +49,8 @@ override_dh_auto_test:
 	DH_GOLANG_EXCLUDES="$${DH_GOLANG_EXCLUDES} libpod/lock/file" \
 	dh_auto_test -v --max-parallel=2
 
+override_dh_installsystemd:
+	dh_installsystemd --name=io.podman
+
 override_dh_dwz:
-	:
+	-dh_dwz
