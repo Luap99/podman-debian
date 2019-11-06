@@ -8,6 +8,7 @@ Files-Excluded:
     vendor/github.com/buger/goterm
     vendor/github.com/BurntSushi/toml
     vendor/github.com/containerd/cgroups
+    vendor/github.com/containerd/containerd
     vendor/github.com/containerd/continuity
    ~vendor/github.com/containers/buildah
     vendor/github.com/containers/image
@@ -63,6 +64,7 @@ Files-Excluded:
     vendor/github.com/mistifyio/go-zfs
     vendor/github.com/modern-go/concurrent
     vendor/github.com/modern-go/reflect2
+    vendor/github.com/morikuni/aec
     vendor/github.com/mrunalp/fileutils
     vendor/github.com/mtrmac/gpgme
     vendor/github.com/Nvveen/Gotty
