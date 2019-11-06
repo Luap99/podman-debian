@@ -5,6 +5,8 @@
 
 include /usr/share/dpkg/pkg-info.mk
 
+export GO111MODULE=off
+
 export DH_GOLANG_GO_GENERATE := 1
 
 export DH_GOLANG_INSTALL_EXTRA := $(shell find . -type f -name '*.varlink')
