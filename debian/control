@@ -77,6 +77,7 @@ Build-Depends: debhelper (>= 12~)
     ,libglib2.0-dev
     ,libostree-dev
     ,libdevmapper-dev
+    ,varlink-go
 Homepage: https://github.com/containers/libpod
 Vcs-Browser: https://salsa.debian.org/debian/libpod
 Vcs-Git: https://salsa.debian.org/debian/libpod.git

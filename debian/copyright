@@ -97,7 +97,7 @@ Files-Excluded:
     vendor/github.com/syndtr/gocapability
     vendor/github.com/tchap/go-patricia
     vendor/github.com/ulikunitz/xz
-    vendor/github.com/varlink/go
+  ~~vendor/github.com/varlink/go
     vendor/github.com/vbatts/tar-split
     vendor/github.com/vbauerster/mpb
     vendor/github.com/vishvananda/netlink
