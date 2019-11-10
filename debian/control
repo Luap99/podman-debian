@@ -24,7 +24,7 @@ Build-Depends: debhelper (>= 12~)
     ,golang-github-coreos-go-systemd-dev (>= 20~)
     ,golang-github-cyphar-filepath-securejoin-dev (>= 0.2.2~)
     ,golang-github-docker-distribution-dev (>= 2.7.1~)
-    ,golang-github-docker-docker-dev (>= 18.09.9~)
+    ,golang-github-docker-docker-dev (>= 19.03.4~)
     ,golang-github-docker-go-connections-dev (>= 0.4.0~)
     ,golang-github-docker-go-units-dev (>= 0.4.0~)
     ,golang-github-docker-spdystream-dev
