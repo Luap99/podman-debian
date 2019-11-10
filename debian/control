@@ -99,6 +99,8 @@ Description: libpod is a library used to create container pods.
  libpod provides a library for applications looking to use
  the Container Pod concept popularized by Kubernetes. libpod also contains
  a tool called podman for managing Pods, Containers, and Container Images.
+Suggests: ${misc:Suggests}
+    ,buildah
  .
  At a high level, the scope of libpod and podman is the following:
   • Support multiple image formats including the existing Docker/OCI image
