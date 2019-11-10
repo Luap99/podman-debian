@@ -59,7 +59,7 @@ Build-Depends: debhelper (>= 12~)
     ,golang-github-urfave-cli-dev
     ,golang-github-vbatts-tar-split-dev
     ,golang-github-vbauerster-mpb-dev (>= 3.4.0~)
-#~  ,golang-github-varlink-go-dev
+    ,golang-github-varlink-go-dev
     ,golang-github-vishvananda-netlink-dev (>= 1.0.0+git20181030~)
     ,golang-github-vividcortex-ewma-dev
     ,golang-golang-x-crypto-dev

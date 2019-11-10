@@ -97,7 +97,7 @@ Files-Excluded:
     vendor/github.com/syndtr/gocapability
     vendor/github.com/tchap/go-patricia
     vendor/github.com/ulikunitz/xz
-   ~vendor/github.com/varlink/go
+    vendor/github.com/varlink/go
     vendor/github.com/vbatts/tar-split
     vendor/github.com/vbauerster/mpb
     vendor/github.com/vishvananda/netlink
@@ -130,9 +130,6 @@ Comment:
  Upstream "github.com/uber/*" libraries depend on forked prometheus so
  using bundled/vendored ones make sense to avoid burden of non-reusable
  packages with heavier dependencies than vendored subset of those libs.
- .
- varlink/go -- not semantically versioned; single user (this very package).
- Leave bundled?
 
 Files: *
 Copyright:
