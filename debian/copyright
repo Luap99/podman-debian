@@ -10,7 +10,7 @@ Files-Excluded:
     vendor/github.com/containerd/cgroups
     vendor/github.com/containerd/containerd
     vendor/github.com/containerd/continuity
-   ~vendor/github.com/containers/buildah
+    vendor/github.com/containers/buildah
     vendor/github.com/containers/image
     vendor/github.com/containers/libtrust
     vendor/github.com/containers/psgo

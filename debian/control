@@ -16,6 +16,7 @@ Build-Depends: debhelper (>= 12~)
     ,golang-github-boltdb-bolt-dev
     ,golang-github-buger-goterm-dev
     ,golang-github-containerd-cgroups-dev
+    ,golang-github-containers-buildah-dev
     ,golang-github-containerd-continuity-dev
     ,golang-github-containers-image-dev (>= 1.5~)
     ,golang-github-containers-psgo-dev
