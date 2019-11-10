@@ -94,16 +94,15 @@ Depends: ${misc:Depends}, ${shlibs:Depends}
 Recommends: ${misc:Recommends}
     ,tini | dumb-init
     ,uidmap
-Description: libpod is a library used to create container pods.
- libpod is a library for running OCI-based containers in Pods.
- libpod provides a library for applications looking to use
- the Container Pod concept popularized by Kubernetes. libpod also contains
- a tool called podman for managing Pods, Containers, and Container Images.
 Suggests: ${misc:Suggests}
     ,buildah
+Description: engine to run OCI-based containers in Pods
+ Podman is an engine for running OCI-based containers in Pods.
+ Podman provides a CLI interface for managing Pods, Containers, and
+ Container Images.
  .
  At a high level, the scope of libpod and podman is the following:
-  • Support multiple image formats including the existing Docker/OCI image
+  • Support multiple image formats including the the OCI and Docker image
     formats.
   • Support for multiple means to download images including trust & image
     verification.
@@ -112,3 +111,6 @@ Suggests: ${misc:Suggests}
   • Full management of container lifecycle.
   • Support for pods to manage groups of containers together.
   • Resource isolation of containers and pods.
+  • Support for a Docker-compatible CLI interface through Podman.
+ .
+ Podman is a daemon-less alternative to Docker.
