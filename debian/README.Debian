@@ -1,0 +1,8 @@
+## Configuration
+
+Podman configuration files are in "/etc/containers".
+
+Please review "/etc/containers/policy.json" and check the corresponding man
+page for details:
+
+    containers-policy.json(5)
