@@ -92,6 +92,7 @@ Depends: ${misc:Depends}, ${shlibs:Depends}
     ,runc (>= 1.0.0~rc9~) | crun
     ,containernetworking-plugins
 Recommends: ${misc:Recommends}
+    ,fuse-overlayfs
     ,tini | dumb-init
     ,uidmap
 Suggests: ${misc:Suggests}
