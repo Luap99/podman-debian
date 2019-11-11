@@ -1,5 +1,5 @@
 Source: libpod
-Section: devel
+Section: admin
 Priority: optional
 Standards-Version: 4.4.0
 Maintainer: Debian Go Packaging Team <pkg-go-maintainers@lists.alioth.debian.org>
