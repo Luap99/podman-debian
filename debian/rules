@@ -15,15 +15,11 @@ export DH_GOLANG_EXCLUDES := dependencies test/e2e contrib/perftest test/utils t
 export HOME=$(CURDIR)/debian/tmp
 
 ## https://podman.io/getting-started/installation#build-tags
-#BUILDTAGS := "containers_image_ostree_stub"
 BUILDTAGS := apparmor ostree seccomp selinux systemd varlink
+#containers_image_ostree containers_image_openpgp
 
 %:
 	dh $@ --buildsystem=golang --with=golang,bash-completion --builddirectory=_output
-
-#PB_GO_FILES = $(patsubst %.proto, %.pb.go, $(wildcard */*/*.proto))
-#$(PB_GO_FILES):
-#	protoc -I "$(dir $@)" --go_out=plugins=grpc:$(dir $@) $(@:.pb.go=.proto)
 
 override_dh_clean:
 	dh_clean $(PB_GO_FILES)
@@ -36,11 +32,10 @@ override_dh_auto_build:
 #	LDFLAGS_PODMAN="-X main.gitCommit=$(GIT_COMMIT)"
 	dh_auto_build -v -- -tags "$(BUILDTAGS)" \
           -ldflags "-X main.buildInfo=$(DEB_VERSION)"
-
+	
 	$(MAKE) docs
 
 override_dh_auto_install:
-#	$(RM) debian/tmp/bin/
 	dh_auto_install --destdir=debian/tmp -- --no-source
 
 override_dh_auto_test:
@@ -51,6 +46,3 @@ override_dh_auto_test:
 
 override_dh_installsystemd:
 	dh_installsystemd --name=io.podman
-
-override_dh_dwz:
-	-dh_dwz

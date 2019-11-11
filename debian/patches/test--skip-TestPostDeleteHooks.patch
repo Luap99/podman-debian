@@ -23,7 +23,7 @@ Description: disable failing test
  var hookPath string
  
  func TestPostDeleteHooks(t *testing.T) {
-+t.Skip("DM - disabled failing test")
++t.Skip("DM-skipped")
  	ctx := context.Background()
  	dir, err := ioutil.TempDir("", "libpod_test_")
  	if err != nil {
