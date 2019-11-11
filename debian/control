@@ -97,6 +97,7 @@ Recommends: ${misc:Recommends}
     ,uidmap
 Suggests: ${misc:Suggests}
     ,buildah
+    ,containers-storage
 Description: engine to run OCI-based containers in Pods
  Podman is an engine for running OCI-based containers in Pods.
  Podman provides a CLI interface for managing Pods, Containers, and
