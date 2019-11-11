@@ -29,21 +29,19 @@ override_dh_clean:
 	-find vendor -mindepth 1 -type d -empty -delete -printf 'removed %p\n'
 
 override_dh_auto_build:
-#	GOPATH=$(BUILDDIR) $(GO) generate ./cmd/podman/varlink/...
 #	LDFLAGS_PODMAN="-X main.gitCommit=$(GIT_COMMIT)"
 	dh_auto_build -v -- -tags "$(BUILDTAGS)" \
           -ldflags "-X main.buildInfo=$(DEB_VERSION)"
 	
 	$(MAKE) docs
 
-override_dh_auto_install:
-	dh_auto_install --destdir=debian/tmp -- --no-source
-
 override_dh_auto_test:
-#	dh_auto_test
 	PATH="$(CURDIR)/_output/bin:$$PATH" \
 	DH_GOLANG_EXCLUDES="$${DH_GOLANG_EXCLUDES} libpod/lock/file" \
 	dh_auto_test -v --max-parallel=2
+
+override_dh_auto_install:
+	dh_auto_install --destdir=debian/tmp -- --no-source
 
 override_dh_installsystemd:
 	dh_installsystemd --name=io.podman
