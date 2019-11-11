@@ -54,7 +54,6 @@ Build-Depends: debhelper (>= 12~)
     ,golang-github-safchain-ethtool-dev
     ,golang-github-seccomp-containers-golang-dev
     ,golang-github-sirupsen-logrus-dev
-    ,golang-github-sjoerdsimons-ostree-go-dev (>= 0.0~git20190304~) | golang-github-ostreedev-ostree-go-dev
     ,golang-github-stretchr-testify-dev
     ,golang-github-ulikunitz-xz-dev
     ,golang-github-urfave-cli-dev

@@ -15,8 +15,8 @@ export DH_GOLANG_EXCLUDES := dependencies test/e2e contrib/perftest test/utils t
 export HOME=$(CURDIR)/debian/tmp
 
 ## https://podman.io/getting-started/installation#build-tags
-BUILDTAGS := apparmor ostree seccomp selinux systemd varlink
-#containers_image_ostree containers_image_openpgp
+BUILDTAGS := apparmor ostree seccomp selinux systemd varlink containers_image_ostree
+# containers_image_openpgp
 
 %:
 	dh $@ --buildsystem=golang --with=golang,bash-completion --builddirectory=_output
