@@ -1,1 +1,10 @@
 docs/*.md
+
+API.md
+CONTRIBUTING.md
+README*
+RELEASE_NOTES*
+commands.md
+rootless.md
+transfer.md
+troubleshooting.md
