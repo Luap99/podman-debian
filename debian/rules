@@ -18,6 +18,7 @@ export HOME=$(CURDIR)/debian/tmp
 BUILDTAGS := apparmor ostree seccomp selinux systemd varlink containers_image_ostree
 # containers_image_openpgp
 
+$(info :: DH_GOLANG_INSTALL_EXTRA=$(DH_GOLANG_INSTALL_EXTRA))
 %:
 	dh $@ --buildsystem=golang --with=golang,bash-completion --builddirectory=_output
 
