@@ -1,6 +1,7 @@
 docs/*.md
 
-API.md
+_output/src/github.com/containers/libpod/API.md
+
 CONTRIBUTING.md
 README*
 RELEASE_NOTES*
