@@ -92,6 +92,7 @@ Depends: ${misc:Depends}, ${shlibs:Depends}
     ,containernetworking-plugins
 Recommends: ${misc:Recommends}
     ,fuse-overlayfs
+    ,slirp4netns
     ,tini | dumb-init
     ,uidmap
 Suggests: ${misc:Suggests}
