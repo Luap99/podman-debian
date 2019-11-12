@@ -105,7 +105,7 @@ Description: engine to run OCI-based containers in Pods
  Container Images.
  .
  At a high level, the scope of libpod and podman is the following:
-  • Support multiple image formats including the the OCI and Docker image
+  • Support multiple image formats including the OCI and Docker image
     formats.
   • Support for multiple means to download images including trust & image
     verification.
