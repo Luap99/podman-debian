@@ -88,8 +88,8 @@ Architecture: any
 Built-Using: ${misc:Built-Using}
 Depends: ${misc:Depends}, ${shlibs:Depends}
     ,conmon (>= 2.0.0~)
-    ,runc (>= 1.0.0~rc9~) | crun
     ,containernetworking-plugins
+    ,crun | runc (>= 1.0.0~rc9~)
 Conflicts: slirp4netns (<< 0.4.1)
 Recommends: ${misc:Recommends}
     ,fuse-overlayfs
