@@ -90,10 +90,10 @@ Depends: ${misc:Depends}, ${shlibs:Depends}
     ,conmon (>= 2.0.0~)
     ,containernetworking-plugins
     ,crun | runc (>= 1.0.0~rc9~)
-Conflicts: slirp4netns (<< 0.4.1)
+Conflicts: slirp4netns (<< 0.4.1), fuse-overlayfs (<< 0.7.1)
 Recommends: ${misc:Recommends}
     ,buildah
-    ,fuse-overlayfs
+    ,fuse-overlayfs (>= 0.7.1~)
     ,slirp4netns (>= 0.4.1~)
     ,tini | dumb-init
     ,uidmap
