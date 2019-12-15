@@ -1,7 +1,6 @@
 cni/87-podman-bridge.conflist		/etc/cni/net.d/
 
 debian/etc/containers/libpod.conf	/etc/containers/
-debian/etc/containers/policy.json	/etc/containers/
 debian/etc/containers/registries.conf	/etc/containers/
 
 usr/bin/podman

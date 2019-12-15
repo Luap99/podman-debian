@@ -92,12 +92,12 @@ Depends: ${misc:Depends}, ${shlibs:Depends}
     ,crun | runc (>= 1.0.0~rc9~)
 Conflicts: slirp4netns (<< 0.4.1)
 Recommends: ${misc:Recommends}
+    ,buildah
     ,fuse-overlayfs
     ,slirp4netns (>= 0.4.1~)
     ,tini | dumb-init
     ,uidmap
 Suggests: ${misc:Suggests}
-    ,buildah
     ,containers-storage
 Description: engine to run OCI-based containers in Pods
  Podman is an engine for running OCI-based containers in Pods.
