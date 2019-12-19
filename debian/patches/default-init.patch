@@ -1,0 +1,18 @@
+Last-Update: 2019-12-19
+Forwarded: not-needed
+Author: Dmitry Smirnov <onlyjob@debian.org>
+Description: override built-in default for "init_path" - there is no "catatonit" in Debian.
+
+--- a/libpod/define/config.go
++++ b/libpod/define/config.go
+@@ -1,9 +1,9 @@
+ package define
+ 
+ var (
+ 	// DefaultInitPath is the default path to the container-init binary
+-	DefaultInitPath = "/usr/libexec/podman/catatonit"
++	DefaultInitPath = "/usr/bin/tini-static"
+ 	// DefaultInfraImage to use for infra container
+ 	DefaultInfraImage = "k8s.gcr.io/pause:3.1"
+ 	// DefaultInfraCommand to be run in an infra container
+ 	DefaultInfraCommand = "/pause"
