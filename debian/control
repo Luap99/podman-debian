@@ -91,8 +91,9 @@ Depends: ${misc:Depends}, ${shlibs:Depends}
     ,containernetworking-plugins
     ,crun | runc (>= 1.0.0~rc9~)
 Conflicts: slirp4netns (<< 0.4.1), fuse-overlayfs (<< 0.7.1)
+Breaks: buildah (<< 1.10.1-6)
 Recommends: ${misc:Recommends}
-    ,buildah
+    ,buildah (>= 1.10.1-6~)
     ,fuse-overlayfs (>= 0.7.1~)
     ,slirp4netns (>= 0.4.1~)
     ,tini | dumb-init

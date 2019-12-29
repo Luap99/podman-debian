@@ -1,4 +1,2 @@
 docs/*.1
 docs/*.5
-
-_output/manpages/*.5
