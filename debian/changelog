@@ -1,3 +1,17 @@
+libpod (1.6.2+dfsg-2) unstable; urgency=medium
+
+  * Added note about "swapaccount" to README.Debian.
+  * libpod.conf: prefer "crun" over "runc".
+  * Tightened "fuse-overlayfs" dependency.
+  * Only install "registries.conf" example but not conf file.
+  * Use "tini-static" for "init_path" built-in default instead of
+    "catatonit".
+  * Added "buildah" to Recommends since it provides "containers/image" man
+    pages.
+  * Standards-Version: 4.4.1
+
+ -- Dmitry Smirnov <onlyjob@debian.org>  Sun, 29 Dec 2019 20:49:01 +1100
+
 libpod (1.6.2+dfsg-1) unstable; urgency=medium
 
   * Initial release (Closes: #930440).
