@@ -4,7 +4,7 @@ Priority: optional
 Standards-Version: 4.4.1
 Maintainer: Dmitry Smirnov <onlyjob@debian.org>
 Uploaders: Debian Go Packaging Team <pkg-go-maintainers@lists.alioth.debian.org>
-Build-Depends: debhelper (>= 12~)
+Build-Depends: debhelper-compat (= 12)
     ,bash-completion
     ,dh-golang
     ,go-md2man
