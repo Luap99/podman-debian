@@ -1,5 +1,5 @@
-cni/87-podman-bridge.conflist		/etc/cni/net.d/
+debian/etc/cni/net.d/*				/etc/cni/net.d/
 
-debian/etc/containers/libpod.conf	/etc/containers/
+debian/etc/containers/libpod.conf		/etc/containers/
 
 usr/bin/podman
