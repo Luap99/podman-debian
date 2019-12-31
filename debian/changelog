@@ -1,3 +1,10 @@
+libpod (1.6.2+dfsg-3) unstable; urgency=medium
+
+  * Install annotated CNI examples.
+  * Replaced default CNI "bridge" policy with "ptp".
+
+ -- Dmitry Smirnov <onlyjob@debian.org>  Tue, 31 Dec 2019 12:07:07 +1100
+
 libpod (1.6.2+dfsg-2) unstable; urgency=medium
 
   * Added note about "swapaccount" to README.Debian.
