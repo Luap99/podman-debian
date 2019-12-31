@@ -1,0 +1,24 @@
+{
+  "cniVersion": "0.4.0",
+  "name": "podman",
+  "plugins": [
+    {
+        "type": "bridge",
+            "Documentation": "/usr/share/doc/containernetworking-plugins/main_bridge.md",
+        "bridge": "br0",
+        "ipam": { }
+    },
+
+    {
+        "type": "portmap",
+            "Documentation": "/usr/share/doc/containernetworking-plugins/meta_portmap.md",
+        "capabilities": { "portMappings": true }
+    },
+
+    {
+        "type": "firewall",
+            "Documentation": "/usr/share/doc/containernetworking-plugins/meta_firewall.md",
+        "backend": "iptables"
+    }
+  ]
+}

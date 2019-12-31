@@ -1,0 +1,37 @@
+{
+  "cniVersion": "0.4.0",
+  "name": "podman",
+  "plugins": [
+    {
+        "type": "bridge",
+            "Documentation": "/usr/share/doc/containernetworking-plugins/main_bridge.md",
+        "bridge": "cni-podman0",
+        "isGateway": true,
+        "ipMasq": true,
+        "ipam": {
+            "type": "host-local",
+                "Documentation": "/usr/share/doc/containernetworking-plugins/ipam_host-local.md",
+            "routes": [
+                { "dst": "0.0.0.0/0" }
+            ],
+            "ranges": [
+                [
+                    { "subnet": "10.88.0.0/16", "gateway": "10.88.0.1" }
+                ]
+            ]
+        }
+    },
+
+    {
+        "type": "portmap",
+            "Documentation": "/usr/share/doc/containernetworking-plugins/meta_portmap.md",
+        "capabilities": { "portMappings": true }
+    },
+
+    {
+        "type": "firewall",
+            "Documentation": "/usr/share/doc/containernetworking-plugins/meta_firewall.md",
+        "backend": "iptables"
+    }
+  ]
+}
