@@ -15,7 +15,6 @@ Build-Depends: debhelper-compat (= 12)
       ,golang-github-containernetworking-plugins-dev
     ,golang-github-buger-goterm-dev
     ,golang-github-containerd-cgroups-dev
-    ,golang-github-containerd-continuity-dev
     ,golang-github-containers-buildah-dev
     ,golang-github-containers-image-dev (>= 4.0.1-2~)
     ,golang-github-containers-psgo-dev
