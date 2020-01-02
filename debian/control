@@ -13,14 +13,14 @@ Build-Depends: debhelper-compat (= 12)
     ,golang-ginkgo-dev
     ,golang-github-appc-cni-dev (>= 0.7.1~)
       ,golang-github-containernetworking-plugins-dev
-    ,golang-github-boltdb-bolt-dev
     ,golang-github-buger-goterm-dev
     ,golang-github-containerd-cgroups-dev
-    ,golang-github-containers-buildah-dev
     ,golang-github-containerd-continuity-dev
+    ,golang-github-containers-buildah-dev
     ,golang-github-containers-image-dev (>= 4.0.1-2~)
     ,golang-github-containers-psgo-dev
     ,golang-github-containers-storage-dev (>= 1.12.13~)
+    ,golang-github-coreos-bbolt-dev (>= 1.3.3~)
     ,golang-github-coreos-go-iptables-dev (>= 0.4.2~)
     ,golang-github-coreos-go-systemd-dev (>= 20~)
     ,golang-github-cyphar-filepath-securejoin-dev (>= 0.2.2~)

@@ -1,5 +1,4 @@
 #build-go_generate.patch
 default-init.patch
-lib_bbolt.patch
 #lib_yaml.patch
 test--skip-TestPostDeleteHooks.patch
