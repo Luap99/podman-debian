@@ -76,6 +76,7 @@ Files-Excluded:
     vendor/github.com/opencontainers/runtime-spec
     vendor/github.com/opencontainers/runtime-tools
     vendor/github.com/opencontainers/selinux
+    vendor/github.com/openshift/api
     vendor/github.com/openshift/imagebuilder
     vendor/github.com/opentracing/opentracing-go
     vendor/github.com/ostreedev/ostree-go
@@ -203,12 +204,6 @@ Files:
 Copyright:
     2015 Fatih Arslan
 License: Expat
-
-Files:
-    vendor/github.com/openshift/api/*
-Copyright:
-    2018 openshift developers
-License: Apache-2.0
 
 Files:
     vendor/github.com/uber/jaeger-*/*
