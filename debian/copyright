@@ -204,6 +204,7 @@ Files:
 Copyright:
     2015 Fatih Arslan
 License: Expat
+Comment: https://github.com/containers/libpod/issues/4783
 
 Files:
     vendor/github.com/uber/jaeger-*/*
