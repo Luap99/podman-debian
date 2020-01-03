@@ -3,6 +3,6 @@ debian/.gitlab-ci.yml
 
 .gopathok
 vendor/github.com/varlink/varlink
-docs/*.1
+docs/build/man/*.1
 docs/*.5
 pkg/hooks/docs/oci-hooks.5

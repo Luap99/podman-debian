@@ -28,12 +28,17 @@ override_dh_clean:
 	$(RM) -rv `perl -0nE 'say $$1 if m{^Files\-Excluded\:\s*(.*?)(?:\n\n|Files:|Comment:)}sm;' debian/copyright`
 	-find vendor -mindepth 1 -type d -empty -delete -printf 'removed %p\n'
 
-override_dh_auto_build:
+MANPAGES_DIR:=_output/manpages
+MANPAGES5 := $(patsubst %.md,%,$(wildcard docs/*.5.md)) $(patsubst %.md,%,$(wildcard pkg/hooks/docs/*.5.md))
+$(MANPAGES5): $(info MANPAGES5=$(MANPAGES5))
+	go-md2man -in $(@).md -out $@
+
+override_dh_auto_build: $(MANPAGES5)
+	$(MAKE) docs
+	
 #	LDFLAGS_PODMAN="-X main.gitCommit=$(GIT_COMMIT)"
 	dh_auto_build -v -- -tags "$(BUILDTAGS)" \
           -ldflags "-X main.buildInfo=$(DEB_VERSION)"
-	
-	$(MAKE) docs
 
 override_dh_auto_test:
 	PATH="$(CURDIR)/_output/bin:$$PATH" \

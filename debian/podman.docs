@@ -1,5 +1,3 @@
-docs/*.md
-
 _output/src/github.com/containers/libpod/API.md
 
 CONTRIBUTING.md
