@@ -9,3 +9,5 @@ commands.md
 rootless.md
 transfer.md
 troubleshooting.md
+docs/tutorials/*_tutorial*.md
+docs/tutorials/remote_client.md
