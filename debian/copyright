@@ -213,6 +213,7 @@ Copyright:
 License: Apache-2.0
 Comment: bundled portion of the larger "all purpose" libraries that
  appears to be not feasible to package separately.
+ https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=942525
 
 Files:
     vendor/github.com/varlink/go/*
