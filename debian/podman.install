@@ -1,5 +1,7 @@
 debian/etc/cni/net.d/*				/etc/cni/net.d/
-
 debian/etc/containers/libpod.conf		/etc/containers/
 
 usr/bin/podman
+
+## "seccomp.json" is a whitelist of seccomp rules to be allowed inside of containers.
+seccomp.json					/usr/share/containers/
