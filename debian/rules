@@ -15,7 +15,7 @@ export DH_GOLANG_EXCLUDES := dependencies test/e2e contrib/perftest test/utils t
 export HOME=$(CURDIR)/debian/tmp
 
 ## https://podman.io/getting-started/installation#build-tags
-BUILDTAGS := apparmor ostree seccomp selinux systemd varlink containers_image_ostree
+BUILDTAGS := apparmor ostree seccomp selinux systemd varlink
 # containers_image_openpgp
 
 $(info :: DH_GOLANG_INSTALL_EXTRA=$(DH_GOLANG_INSTALL_EXTRA))
