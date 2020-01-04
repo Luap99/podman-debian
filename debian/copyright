@@ -7,32 +7,35 @@ Files-Excluded:
     vendor/github.com/blang/semver
     vendor/github.com/buger/goterm
     vendor/github.com/BurntSushi/toml
+   ~vendor/github.com/checkpoint-restore/go-criu
     vendor/github.com/containerd/cgroups
     vendor/github.com/containerd/containerd
     vendor/github.com/containerd/continuity
+    vendor/github.com/containernetworking/cni
+    vendor/github.com/containernetworking/plugins
     vendor/github.com/containers/buildah
     vendor/github.com/containers/image
     vendor/github.com/containers/libtrust
     vendor/github.com/containers/psgo
     vendor/github.com/containers/storage
-    vendor/github.com/containernetworking/cni
-    vendor/github.com/containernetworking/plugins
     vendor/github.com/coreos/bbolt
     vendor/github.com/coreos/go-iptables
     vendor/github.com/coreos/go-systemd
     vendor/github.com/coreos/pkg
+   ~vendor/github.com/cri-o/ocicni
     vendor/github.com/cyphar/filepath-securejoin
     vendor/github.com/davecgh/go-spew
     vendor/github.com/docker/distribution
     vendor/github.com/docker/docker
-    vendor/github.com/docker/go-metrics
     vendor/github.com/docker/docker-credential-helpers
     vendor/github.com/docker/go-connections
+    vendor/github.com/docker/go-metrics
     vendor/github.com/docker/go-units
     vendor/github.com/docker/libnetwork
     vendor/github.com/docker/libtrust
     vendor/github.com/docker/spdystream
     vendor/github.com/etcd-io/bbolt
+   ~vendor/github.com/fatih/camelcase
     vendor/github.com/fsnotify/fsnotify
     vendor/github.com/fsouza/go-dockerclient
     vendor/github.com/ghodss/yaml
@@ -97,6 +100,8 @@ Files-Excluded:
     vendor/github.com/stretchr/testify
     vendor/github.com/syndtr/gocapability
     vendor/github.com/tchap/go-patricia
+   ~vendor/github.com/uber/jaeger-client-go
+   ~vendor/github.com/uber/jaeger-lib
     vendor/github.com/ulikunitz/xz
   ~~vendor/github.com/varlink/go
     vendor/github.com/vbatts/tar-split
@@ -107,7 +112,6 @@ Files-Excluded:
     vendor/github.com/xeipuuv/gojsonpointer
     vendor/github.com/xeipuuv/gojsonreference
     vendor/github.com/xeipuuv/gojsonschema
-   ~vendor/github.com/uber/jaeger-*
     vendor/golang.org/x/crypto
     vendor/golang.org/x/net
     vendor/golang.org/x/oauth2
