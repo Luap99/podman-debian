@@ -28,7 +28,9 @@ override_dh_clean:
 	$(RM) -rv `perl -0nE 'say $$1 if m{^Files\-Excluded\:\s*(.*?)(?:\n\n|Files:|Comment:)}sm;' debian/copyright`
 	-find vendor -mindepth 1 -type d -empty -delete -printf 'removed %p\n'
 
-
+override_dh_auto_configure:
+	dh_auto_configure
+	
 	## Golang insanity workaround ('github.com/gogo/protobuf' from
 	## GOPATH works differently than from 'vendor' so having it in
 	## 'vendor' "fixes" the problem). Crazy...
