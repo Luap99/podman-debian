@@ -28,6 +28,14 @@ override_dh_clean:
 	$(RM) -rv `perl -0nE 'say $$1 if m{^Files\-Excluded\:\s*(.*?)(?:\n\n|Files:|Comment:)}sm;' debian/copyright`
 	-find vendor -mindepth 1 -type d -empty -delete -printf 'removed %p\n'
 
+
+	## Golang insanity workaround ('github.com/gogo/protobuf' from
+	## GOPATH works differently than from 'vendor' so having it in
+	## 'vendor' "fixes" the problem). Crazy...
+	## https://github.com/containers/libpod/issues/4784
+	mkdir -v -p _output/src/github.com/containers/libpod/vendor/github.com/gogo/
+	ln -sv /usr/share/gocode/src/github.com/gogo/protobuf  _output/src/github.com/containers/libpod/vendor/github.com/gogo/
+
 MANPAGES_DIR:=_output/manpages
 MANPAGES5 := $(patsubst %.md,%,$(wildcard docs/*.5.md)) $(patsubst %.md,%,$(wildcard pkg/hooks/docs/*.5.md))
 $(MANPAGES5): $(info MANPAGES5=$(MANPAGES5))
