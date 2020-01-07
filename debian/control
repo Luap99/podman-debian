@@ -89,7 +89,7 @@ Package: podman
 Architecture: any
 Built-Using: ${misc:Built-Using}
 Depends: ${misc:Depends}, ${shlibs:Depends}
-    ,conmon (>= 2.0.0~)
+    ,conmon (>= 2.0.2~)
     ,containernetworking-plugins
     ,crun | runc (>= 1.0.0~rc9~)
 Conflicts: slirp4netns (<< 0.4.1), fuse-overlayfs (<< 0.7.1)
