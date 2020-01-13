@@ -7,7 +7,7 @@ Files-Excluded:
     vendor/github.com/blang/semver
     vendor/github.com/buger/goterm
     vendor/github.com/BurntSushi/toml
-   ~vendor/github.com/checkpoint-restore/go-criu
+    vendor/github.com/checkpoint-restore/go-criu
     vendor/github.com/containerd/cgroups
     vendor/github.com/containerd/containerd
     vendor/github.com/containerd/continuity
@@ -185,17 +185,6 @@ Copyright:
     2012 The Go Authors
     2014 Sam Ghods
 License: BSD-3-Clause~Google and Expat
-
-Files:
-    vendor/github.com/checkpoint-restore/go-criu/*
-Copyright: go-criu authors
-License: Apache-2.0
-Comment: The upstream distribution does not contain an explicit statement of
- copyright ownership. Pursuant to the Berne Convention for the Protection of
- Literary and Artistic Works, it is assumed that all content is copyright by
- its respective authors unless otherwise stated.
- .
- https://github.com/checkpoint-restore/go-criu/issues/8
 
 Files:
     vendor/github.com/cri-o/ocicni/*
