@@ -1,3 +1,13 @@
+libpod (1.6.4+dfsg1-2) unstable; urgency=medium
+
+  * Un-vendored "golang-github-checkpoint-restore-go-criu-dev".
+  * Tightened dependency: "conmon (>= 2.0.2~)".
+  * rules:
+    + Golang insanity workaround.
+    + Removed obsolete "containers_image_ostree" build tag.
+
+ -- Dmitry Smirnov <onlyjob@debian.org>  Tue, 14 Jan 2020 10:56:58 +1100
+
 libpod (1.6.4+dfsg-1) unstable; urgency=medium
 
   * New upstream release.
