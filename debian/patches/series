@@ -2,3 +2,4 @@
 default-init.patch
 #lib_yaml.patch
 test--skip-TestPostDeleteHooks.patch
+CVE-2020-1726.patch
