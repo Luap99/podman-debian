@@ -27,8 +27,7 @@ Description: disable failing test
 
 --- a/libpod/container_internal_test.go
 +++ b/libpod/container_internal_test.go
-@@ -17,8 +17,9 @@
- // hookPath is the path to an example hook executable.
+@@ -18,6 +18,7 @@
  var hookPath string
  
  func TestPostDeleteHooks(t *testing.T) {
@@ -36,16 +35,3 @@ Description: disable failing test
  	ctx := context.Background()
  	dir, err := ioutil.TempDir("", "libpod_test_")
  	if err != nil {
- 		t.Fatal(err)
---- a/libpod/config/config_test.go
-+++ b/libpod/config/config_test.go
-@@ -23,8 +23,9 @@
- 	assert.Nil(t, err)
- }
- 
- func TestMergeEmptyAndDefaultMemoryConfig(t *testing.T) {
-+t.Skip("DM-skipped")
- 	// Make sure that when we merge the default config into an empty one that we
- 	// effectively get the default config.
- 	defaultConfig, err := defaultConfigFromMemory()
- 	assert.NotNil(t, defaultConfig)
