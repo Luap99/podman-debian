@@ -63,6 +63,7 @@ Build-Depends: debhelper-compat (= 12)
     ,golang-github-vishvananda-netlink-dev (>= 1.0.0+git20181030~)
     ,golang-github-vividcortex-ewma-dev
     ,golang-golang-x-crypto-dev
+    ,golang-golang-x-text-dev
     ,golang-golang-x-sys-dev
     ,golang-gomega-dev
     ,golang-google-genproto-dev
@@ -71,7 +72,6 @@ Build-Depends: debhelper-compat (= 12)
     ,golang-gopkg-tomb.v1-dev
     ,golang-go-zfs-dev
     ,golang-toml-dev
-    ,golang-x-text-dev
     ,libapparmor-dev
     ,libbtrfs-dev
     ,libglib2.0-dev
