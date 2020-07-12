@@ -1,0 +1,29 @@
+From: Reinhard Tartler
+Subject: Allow building with docker 19.03
+
+This is necessary as long as the debian docker.io package is missing
+https://github.com/docker/docker-ce/commit/3bc3fb7702ab7cc7919711cccb81ede56688f11c.patch
+and
+https://github.com/docker/docker-ce/commit/30db6a727e6daad6f36ede7e132703dc8b58e19b.patch
+which is not found in any upstream release
+
+--- a/pkg/api/handlers/types.go
++++ b/pkg/api/handlers/types.go
+@@ -297,7 +297,6 @@
+ 		RepoTags:      info.RepoTags,
+ 		RootFS:        docker.RootFS{},
+ 		Size:          info.Size,
+-		Variant:       "",
+ 		VirtualSize:   info.VirtualSize,
+ 	}
+ 	bi := ic.ConfigInfo()
+--- a/pkg/api/handlers/compat/info.go
++++ b/pkg/api/handlers/compat/info.go
+@@ -97,7 +97,6 @@
+ 		Name:               infoData.Host.Hostname,
+ 		NoProxy:            getEnv("no_proxy"),
+ 		OSType:             goRuntime.GOOS,
+-		OSVersion:          infoData.Host.Distribution.Version,
+ 		OomKillDisable:     sysInfo.OomKillDisable,
+ 		OperatingSystem:    infoData.Host.Distribution.Distribution,
+ 		PidsLimit:          sysInfo.PidsLimit,
