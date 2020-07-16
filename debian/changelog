@@ -3,7 +3,7 @@ libpod (2.0.2+dfsg1-1) experimental; urgency=medium
   * Team upload.
   * New upstream version, Closes: #964378
 
- -- Reinhard Tartler <siretart@tauware.de>  Sat, 11 Jul 2020 14:03:19 -0400
+ -- Reinhard Tartler <siretart@tauware.de>  Thu, 16 Jul 2020 18:06:15 -0400
 
 libpod (1.6.4+dfsg1-4) unstable; urgency=medium
 
