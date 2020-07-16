@@ -30,7 +30,7 @@ override_dh_clean:
 
 override_dh_auto_configure:
 	dh_auto_configure
-	
+
 	## Golang insanity workaround ('github.com/gogo/protobuf' from
 	## GOPATH works differently than from 'vendor' so having it in
 	## 'vendor' "fixes" the problem). Crazy...
@@ -45,14 +45,14 @@ $(MANPAGES5): $(info MANPAGES5=$(MANPAGES5))
 
 override_dh_auto_build: $(MANPAGES5)
 	$(MAKE) docs
-	
+
 #	LDFLAGS_PODMAN="-X main.gitCommit=$(GIT_COMMIT)"
 	dh_auto_build -v -- -tags "$(BUILDTAGS)" \
           -ldflags "-X main.buildInfo=$(DEB_VERSION)"
 
 override_dh_auto_test:
 	PATH="$(CURDIR)/_output/bin:$$PATH" \
-	DH_GOLANG_EXCLUDES="$${DH_GOLANG_EXCLUDES} libpod/lock/file" \
+	DH_GOLANG_EXCLUDES="$${DH_GOLANG_EXCLUDES} libpod/lock/file libpod/hack/podman-registry-go libpod/pkg/bindings/test" \
 	dh_auto_test -v --max-parallel=2
 
 override_dh_auto_install:
