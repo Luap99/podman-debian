@@ -1,3 +1,11 @@
+libpod (2.0.2+dfsg1-2) experimental; urgency=medium
+
+  * debian/rules: Add XDG_RUNTIME_DIR settings on build
+    - Based on debian/rules from the ibus package, unbreaks
+      testsuite on many buildds
+
+ -- Reinhard Tartler <siretart@tauware.de>  Fri, 17 Jul 2020 06:56:20 -0400
+
 libpod (2.0.2+dfsg1-1) experimental; urgency=medium
 
   * Team upload.
