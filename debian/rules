@@ -51,9 +51,22 @@ override_dh_auto_build: $(MANPAGES5)
           -ldflags "-X main.buildInfo=$(DEB_VERSION)"
 
 override_dh_auto_test:
-	PATH="$(CURDIR)/_output/bin:$$PATH" \
-	DH_GOLANG_EXCLUDES="$${DH_GOLANG_EXCLUDES} libpod/lock/file libpod/hack/podman-registry-go libpod/pkg/bindings/test" \
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	mkdir -p -m700 $(CURDIR)/debian/tmp-home/.cache
+	mkdir -p -m700 $(CURDIR)/debian/tmp-home/.config
+	mkdir -p -m700 $(CURDIR)/debian/tmp-home/.local/share
+	mkdir -p -m700 $(CURDIR)/debian/tmp-home/run
+	env \
+	  HOME=$(CURDIR)/debian/tmp-home/.cache \
+	  XDG_CACHE_HOME=$(CURDIR)/debian/tmp-home/.cache \
+	  XDG_CONFIG_HOME=$(CURDIR)/debian/tmp-home/.config \
+	  XDG_DATA_HOME=$(CURDIR)/debian/tmp-home/.local/share \
+	  XDG_RUNTIME_DIR=$(CURDIR)/debian/tmp-home/run \
+	  PATH="$(CURDIR)/_output/bin:$$PATH" \
+	  DH_GOLANG_EXCLUDES="$${DH_GOLANG_EXCLUDES} libpod/lock/file libpod/hack/podman-registry-go libpod/pkg/bindings/test" \
 	dh_auto_test -v --max-parallel=2
+	rm -rf $(CURDIR)/debian/tmp-home
+endif
 
 override_dh_auto_install:
 	dh_auto_install --destdir=debian/tmp -- --no-source
