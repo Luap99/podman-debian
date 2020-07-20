@@ -1,5 +1,13 @@
+libpod (2.0.2+dfsg1-3) unstable; urgency=medium
+
+  * Team upload.
+  * Upload to unstable.
+
+ -- Reinhard Tartler <siretart@tauware.de>  Mon, 20 Jul 2020 10:18:00 -0400
+
 libpod (2.0.2+dfsg1-2) experimental; urgency=medium
 
+  * Team upload.
   * debian/rules: Add XDG_RUNTIME_DIR settings on build
     - Based on debian/rules from the ibus package, unbreaks
       testsuite on many buildds
