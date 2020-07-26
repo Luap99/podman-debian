@@ -1,3 +1,11 @@
+libpod (2.0.3+dfsg1-1) unstable; urgency=medium
+
+  * Team upload.
+  * New upstream release
+  * Install systemd helper files in favor of varlink (Closes: #966118)
+
+ -- Reinhard Tartler <siretart@tauware.de>  Sun, 26 Jul 2020 10:53:39 -0400
+
 libpod (2.0.2+dfsg1-3) unstable; urgency=medium
 
   * Team upload.
