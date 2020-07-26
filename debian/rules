@@ -70,6 +70,3 @@ endif
 
 override_dh_auto_install:
 	dh_auto_install --destdir=debian/tmp -- --no-source
-
-override_dh_installsystemd:
-	dh_installsystemd --name=io.podman
