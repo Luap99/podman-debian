@@ -94,6 +94,7 @@ Built-Using: ${misc:Built-Using}
 Depends: ${misc:Depends}, ${shlibs:Depends}
     ,conmon (>= 2.0.2~)
     ,containernetworking-plugins
+    ,golang-github-containers-common
     ,crun | runc (>= 1.0.0~rc9~)
 Conflicts: slirp4netns (<< 0.4.1), fuse-overlayfs (<< 0.7.1)
 Breaks: buildah (<< 1.10.1-6)

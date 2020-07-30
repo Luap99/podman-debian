@@ -1,5 +1,4 @@
 debian/etc/cni/net.d/*				/etc/cni/net.d/
-debian/etc/containers/libpod.conf		/etc/containers/
 
 usr/bin/podman
 
