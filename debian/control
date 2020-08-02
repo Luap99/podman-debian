@@ -2,8 +2,8 @@ Source: libpod
 Section: admin
 Priority: optional
 Standards-Version: 4.4.1
-Maintainer: Dmitry Smirnov <onlyjob@debian.org>
-Uploaders: Debian Go Packaging Team <pkg-go-maintainers@lists.alioth.debian.org>
+Maintainer: Debian Go Packaging Team <pkg-go-maintainers@lists.alioth.debian.org>
+Uploaders: Dmitry Smirnov <onlyjob@debian.org>, Reinhard Tartler <siretart@tauware.de>
 Build-Depends: debhelper-compat (= 12)
     ,bash-completion
     ,dh-golang
