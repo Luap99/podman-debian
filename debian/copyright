@@ -3,10 +3,14 @@ Upstream-Name: libpod
 Source: https://github.com/containers/libpod
 Files-Excluded:
     vendor/github.com/Azure/go-ansiterm
+    vendor/github.com/BurntSushi/toml
+    vendor/github.com/Microsoft/go-winio
+    vendor/github.com/Microsoft/hcsshim
+    vendor/github.com/VividCortex/ewma
+    vendor/github.com/acarl005/stripansi
     vendor/github.com/beorn7/perks
     vendor/github.com/blang/semver
     vendor/github.com/buger/goterm
-    vendor/github.com/BurntSushi/toml
     vendor/github.com/checkpoint-restore/go-criu
     vendor/github.com/containerd/cgroups
     vendor/github.com/containerd/containerd
@@ -14,15 +18,13 @@ Files-Excluded:
     vendor/github.com/containernetworking/cni
     vendor/github.com/containernetworking/plugins
     vendor/github.com/containers/buildah
+    vendor/github.com/containers/common
     vendor/github.com/containers/image
     vendor/github.com/containers/libtrust
     vendor/github.com/containers/psgo
     vendor/github.com/containers/storage
-    vendor/github.com/coreos/bbolt
     vendor/github.com/coreos/go-iptables
     vendor/github.com/coreos/go-systemd
-    vendor/github.com/coreos/pkg
-   ~vendor/github.com/cri-o/ocicni
     vendor/github.com/cyphar/filepath-securejoin
     vendor/github.com/davecgh/go-spew
     vendor/github.com/docker/distribution
@@ -32,45 +34,39 @@ Files-Excluded:
     vendor/github.com/docker/go-metrics
     vendor/github.com/docker/go-units
     vendor/github.com/docker/libnetwork
-    vendor/github.com/docker/libtrust
     vendor/github.com/docker/spdystream
-    vendor/github.com/etcd-io/bbolt
-   ~vendor/github.com/fatih/camelcase
     vendor/github.com/fsnotify/fsnotify
     vendor/github.com/fsouza/go-dockerclient
+    vendor/github.com/fullsailor/pkcs7
     vendor/github.com/ghodss/yaml
     vendor/github.com/godbus/dbus
     vendor/github.com/gogo/protobuf
     vendor/github.com/golang/protobuf
     vendor/github.com/google/gofuzz
     vendor/github.com/google/shlex
-    vendor/github.com/gorilla/context
-    vendor/github.com/gorilla/context
+    vendor/github.com/google/uuid
     vendor/github.com/gorilla/mux
     vendor/github.com/hashicorp/errwrap
     vendor/github.com/hashicorp/go-multierror
+    vendor/github.com/hashicorp/golang-lru
     vendor/github.com/hpcloud/tail
-    vendor/github.com/ijc/Gotty
     vendor/github.com/imdario/mergo
     vendor/github.com/inconshreveable/mousetrap
     vendor/github.com/ishidawataru/sctp
     vendor/github.com/json-iterator/go
     vendor/github.com/klauspost/compress
-    vendor/github.com/klauspost/cpuid
     vendor/github.com/klauspost/pgzip
     vendor/github.com/konsorten/go-windows-terminal-sequences
-    vendor/github.com/matttproud/golang_protobuf_extensions
     vendor/github.com/mattn/go-isatty
+    vendor/github.com/mattn/go-runewidth
     vendor/github.com/mattn/go-shellwords
-    vendor/github.com/Microsoft/go-winio
-    vendor/github.com/Microsoft/hcsshim
+    vendor/github.com/matttproud/golang_protobuf_extensions
     vendor/github.com/mistifyio/go-zfs
     vendor/github.com/modern-go/concurrent
     vendor/github.com/modern-go/reflect2
     vendor/github.com/morikuni/aec
     vendor/github.com/mrunalp/fileutils
     vendor/github.com/mtrmac/gpgme
-    vendor/github.com/Nvveen/Gotty
     vendor/github.com/onsi/ginkgo
     vendor/github.com/onsi/gomega
     vendor/github.com/opencontainers/go-digest
@@ -79,18 +75,17 @@ Files-Excluded:
     vendor/github.com/opencontainers/runtime-spec
     vendor/github.com/opencontainers/runtime-tools
     vendor/github.com/opencontainers/selinux
-    vendor/github.com/openshift/api
     vendor/github.com/openshift/imagebuilder
     vendor/github.com/opentracing/opentracing-go
     vendor/github.com/ostreedev/ostree-go
     vendor/github.com/pkg/errors
-    vendor/github.com/pkg/profile
     vendor/github.com/pmezard/go-difflib
     vendor/github.com/pquerna/ffjson
     vendor/github.com/prometheus/client_golang
     vendor/github.com/prometheus/client_model
     vendor/github.com/prometheus/common
     vendor/github.com/prometheus/procfs
+    vendor/github.com/rootless-containers
     vendor/github.com/safchain/ethtool
     vendor/github.com/seccomp/containers-golang
     vendor/github.com/seccomp/libseccomp-golang
@@ -100,18 +95,16 @@ Files-Excluded:
     vendor/github.com/stretchr/testify
     vendor/github.com/syndtr/gocapability
     vendor/github.com/tchap/go-patricia
-   ~vendor/github.com/uber/jaeger-client-go
-   ~vendor/github.com/uber/jaeger-lib
     vendor/github.com/ulikunitz/xz
-  ~~vendor/github.com/varlink/go
     vendor/github.com/vbatts/tar-split
     vendor/github.com/vbauerster/mpb
     vendor/github.com/vishvananda/netlink
     vendor/github.com/vishvananda/netns
-    vendor/github.com/VividCortex/ewma
     vendor/github.com/xeipuuv/gojsonpointer
     vendor/github.com/xeipuuv/gojsonreference
     vendor/github.com/xeipuuv/gojsonschema
+    vendor/go.opencensus.io
+    vendor/go.uber.org/atomic
     vendor/golang.org/x/crypto
     vendor/golang.org/x/net
     vendor/golang.org/x/oauth2
@@ -119,15 +112,26 @@ Files-Excluded:
     vendor/golang.org/x/sys
     vendor/golang.org/x/text
     vendor/golang.org/x/time
+    vendor/golang.org/x/xerrors
     vendor/google.golang.org/appengine
     vendor/google.golang.org/genproto
     vendor/google.golang.org/grpc
+    vendor/google.golang.org/protobuf
     vendor/gopkg.in/fsnotify.v1
     vendor/gopkg.in/inf.v0
-    vendor/gopkg.in/mgo.v2
+    vendor/gopkg.in/square/go-jose.v2
     vendor/gopkg.in/tomb.v1
     vendor/gopkg.in/yaml.v2
+    vendor/gopkg.in/yaml.v3
+    vendor/sigs.k8s.io/structured-merge-diff
+   ~vendor/github.com/containers/conmon
+   ~vendor/github.com/cri-o/ocicni
+   ~vendor/github.com/fatih/camelcase
+   ~vendor/github.com/nxadm/tail
+   ~vendor/github.com/uber/jaeger-client-go
+   ~vendor/github.com/uber/jaeger-lib
    ~vendor/sigs.k8s.io/yaml
+  ~~vendor/github.com/varlink/go
 Comment:
     "~~" does not build with system library.
     "~"  not packaged or not available (e.g. removed).

@@ -9,5 +9,3 @@ transfer.md
 troubleshooting.md
 docs/tutorials/*_tutorial*.md
 docs/tutorials/remote_client.md
-
-vendor/gopkg.in/yaml.v3/NOTICE

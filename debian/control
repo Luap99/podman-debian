@@ -11,14 +11,16 @@ Build-Depends: debhelper-compat (= 12)
     ,golang-any
     ,golang-dbus-dev (>= 5.0.2~)
     ,golang-ginkgo-dev
+    ,golang-github-acarl005-stripansi-dev
     ,golang-github-appc-cni-dev (>= 0.8)
-      ,golang-github-containernetworking-plugins-dev
     ,golang-github-buger-goterm-dev
     ,golang-github-checkpoint-restore-go-criu-dev
     ,golang-github-containerd-cgroups-dev
-    ,golang-github-containers-common-dev (>= 0.14)
+    ,golang-github-containernetworking-plugins-dev
     ,golang-github-containers-buildah-dev (>= 1.15)
+    ,golang-github-containers-common-dev (>= 0.14)
     ,golang-github-containers-image-dev (>= 5.5)
+    ,golang-github-containers-ocicrypt-dev
     ,golang-github-containers-psgo-dev
     ,golang-github-containers-storage-dev (>= 1.20)
     ,golang-github-coreos-bbolt-dev (>= 1.3.3~)
@@ -30,16 +32,20 @@ Build-Depends: debhelper-compat (= 12)
     ,golang-github-docker-go-connections-dev (>= 0.4.0~)
     ,golang-github-docker-go-units-dev (>= 0.4.0~)
     ,golang-github-docker-spdystream-dev
+    ,golang-github-fullsailor-pkcs7-dev
     ,golang-github-ghodss-yaml-dev
     ,golang-github-google-shlex-dev
+    ,golang-github-google-uuid-dev
     ,golang-github-hashicorp-go-multierror-dev
-    ,golang-github-influxdata-tail-dev (>= 1.0.0+git20180327.c434825-2~) | golang-github-hpcloud-tail-dev
+    ,golang-github-hashicorp-golang-lru-dev
     ,golang-github-imdario-mergo-dev
+    ,golang-github-influxdata-tail-dev (>= 1.0.0+git20180327.c434825-2~) | golang-github-hpcloud-tail-dev
     ,golang-github-ishidawataru-sctp-dev
     ,golang-github-json-iterator-go-dev
     ,golang-github-klauspost-compress-dev (>= 1.7.2~)
     ,golang-github-klauspost-pgzip-dev
     ,golang-github-mailru-easyjson-dev
+    ,golang-github-mattn-go-runewidth-dev
     ,golang-github-mrunalp-fileutils-dev
     ,golang-github-opencontainers-go-digest-dev
     ,golang-github-opencontainers-image-spec-dev
@@ -52,33 +58,41 @@ Build-Depends: debhelper-compat (= 12)
     ,golang-github-pkg-profile-dev
     ,golang-github-pquerna-ffjson-dev
     ,golang-github-proglottis-gpgme-dev
+    ,golang-github-rootless-containers-rootlesskit-dev
     ,golang-github-safchain-ethtool-dev
     ,golang-github-seccomp-containers-golang-dev
     ,golang-github-seccomp-libseccomp-golang-dev
     ,golang-github-sirupsen-logrus-dev
     ,golang-github-stretchr-testify-dev
+    ,golang-github-uber-go-atomic-dev
     ,golang-github-ulikunitz-xz-dev
     ,golang-github-urfave-cli-dev
+    ,golang-github-varlink-go-dev
     ,golang-github-vbatts-tar-split-dev
     ,golang-github-vbauerster-mpb-dev (>= 3.4.0~)
-    ,golang-github-varlink-go-dev
     ,golang-github-vishvananda-netlink-dev (>= 1.0.0+git20181030~)
     ,golang-github-vividcortex-ewma-dev
+    ,golang-go-zfs-dev
+    ,golang-go.opencensus-dev
     ,golang-golang-x-crypto-dev
-    ,golang-golang-x-text-dev
     ,golang-golang-x-sys-dev
+    ,golang-golang-x-text-dev
+    ,golang-golang-x-xerrors-dev
     ,golang-gomega-dev
     ,golang-google-genproto-dev
     ,golang-google-grpc-dev
+    ,golang-google-protobuf-dev
     ,golang-gopkg-inf.v0-dev
+    ,golang-gopkg-square-go-jose.v2-dev
     ,golang-gopkg-tomb.v1-dev
-    ,golang-go-zfs-dev
+    ,golang-gopkg-yaml.v3-dev
+    ,golang-k8s-sigs-structured-merge-diff-dev
     ,golang-toml-dev
     ,libapparmor-dev
     ,libbtrfs-dev
+    ,libdevmapper-dev
     ,libglib2.0-dev
     ,libostree-dev
-    ,libdevmapper-dev
     ,varlink-go
 # sphinx docs:
 #   ,python3-recommonmark
