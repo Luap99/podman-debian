@@ -116,7 +116,7 @@ Files-Excluded:
     vendor/google.golang.org/appengine
     vendor/google.golang.org/genproto
     vendor/google.golang.org/grpc
-    vendor/google.golang.org/protobuf
+   ~vendor/google.golang.org/protobuf
     vendor/gopkg.in/fsnotify.v1
     vendor/gopkg.in/inf.v0
     vendor/gopkg.in/square/go-jose.v2
@@ -139,6 +139,8 @@ Comment:
  Upstream "github.com/uber/*" libraries depend on forked prometheus so
  using bundled/vendored ones make sense to avoid burden of non-reusable
  packages with heavier dependencies than vendored subset of those libs.
+ .
+ Protobuf in debian is not ready yet, cf. #961814
 
 Files: *
 Copyright:

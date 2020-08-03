@@ -81,7 +81,6 @@ Build-Depends: debhelper-compat (= 12)
     ,golang-gomega-dev
     ,golang-google-genproto-dev
     ,golang-google-grpc-dev
-    ,golang-google-protobuf-dev
     ,golang-gopkg-inf.v0-dev
     ,golang-gopkg-square-go-jose.v2-dev
     ,golang-gopkg-tomb.v1-dev
