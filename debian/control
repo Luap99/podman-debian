@@ -105,7 +105,7 @@ Package: podman
 Architecture: any
 Built-Using: ${misc:Built-Using}
 Depends: ${misc:Depends}, ${shlibs:Depends}
-    ,conmon (>= 2.0.2~)
+    ,conmon (>= 2.0.18~)
     ,containernetworking-plugins
     ,golang-github-containers-common
     ,crun | runc (>= 1.0.0~rc9~)
