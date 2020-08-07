@@ -113,7 +113,7 @@ Conflicts: slirp4netns (<< 0.4.1), fuse-overlayfs (<< 0.7.1)
 Breaks: buildah (<< 1.10.1-6)
 Recommends: ${misc:Recommends}
     ,buildah (>= 1.10.1-6~)
-    ,fuse-overlayfs (>= 0.7.1~)
+    ,fuse-overlayfs (>= 1.0.0~)
     ,slirp4netns (>= 0.4.1~)
     ,tini | dumb-init
     ,uidmap
