@@ -1,3 +1,21 @@
+libpod (2.0.4+dfsg2-2) unstable; urgency=medium
+
+  [ Martin Pitt ]
+  * Bump conmon dependency
+
+  [ Dmitry Smirnov ]
+  * Harmonize repacksuffix to fix CI.
+  * Tighten recommendation on fuse-overlayfs (>= 1.0.0~).
+
+  [ Reinhard Tartler ]
+  * Bug fix: "Breaks docker", thanks to Jan Hudec (Closes: #968207).
+    - No longer create symlink /run/docker.sock to avoid interfering
+      with the docker daemon. Users that wish to replace the docker
+      daemon with podman are advised to install the symlink themselves
+      and arrange appropriate permissions for podman.sock.
+
+ -- Reinhard Tartler <siretart@tauware.de>  Tue, 11 Aug 2020 07:41:44 -0400
+
 libpod (2.0.4+dfsg2-1) unstable; urgency=medium
 
   * Vendor in protobuf 3 to workaround #961814
