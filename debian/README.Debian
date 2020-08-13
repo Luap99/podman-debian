@@ -1,4 +1,40 @@
-## Configuration
+User Namespaces
+===============
+
+podman requires a Linux Kernel with userspaces enabled. Debian
+Kernels have that functionality, but the local system administrator
+needs to enable it manually, with a command like this:
+
+sudo sysctl -w kernel.unprivileged_userns_clone=1
+
+ -- Reinhard Tartler <siretart@tauware.de>, Thu, 13 Aug 2020 11:51:18 -0400
+
+
+Troubleshooting rootless mode
+=============================
+
+> Error processing tar file(exit status 1): there might not be enough IDs
+> available in the namespace (requested 0:42 for /etc/gshadow):
+> lchown/etc/gshadow: invalid argument
+
+This probably means that _subuid_ range is not defined in the "/etc/subuid"
+file. On up-to-date system subuid/subgid ranges are automatically assigned
+when a new user is added (e.g. `adduser {USER}`) but on systems upgraded
+from prior Debian releases {USER} created in old environment before upgrade
+may not have _subuid_ mapping.
+
+"usermod" command have "--add-subuids" and "--add-subgids" options but it
+does not check "/etc/login.defs" for ranges.
+An awkward solution may be to add a new temporary user, apply her ranges to
+{USER} (in "/etc/subuid" and in "/etc/subgid") then remove a temporary user
+(e.g. `deluser --remove-home {USER}`).
+
+The following command show the subuids and subgids of the current user:
+
+    grep $USER /etc/s*id
+
+Configuration
+=============
 
 Podman configuration files are in "/etc/containers".
 
@@ -7,9 +43,9 @@ and check the corresponding man page for details:
 
     containers-policy.json(5)
 
----
 
-## Kernel options
+Kernel options
+==============
 
 We higly recommended to add "swapaccount=1" to default Linux boot options
 (e.g. "/etc/default/grub" :: "GRUB_CMDLINE_LINUX_DEFAULT").
