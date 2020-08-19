@@ -1,5 +1,3 @@
-#build-go_generate.patch
-#lib_yaml.patch
 test--skip-TestPostDeleteHooks.patch
-
 old-docker-api.patch
+Fix-build-with-new-version-of-runc.patch

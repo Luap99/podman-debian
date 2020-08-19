@@ -1,0 +1,35 @@
+From: Shengjing Zhu <zhsj@debian.org>
+Date: Thu, 20 Aug 2020 00:55:53 +0800
+Subject: Fix build with new version of runc
+
+---
+ pkg/spec/config_linux.go             | 2 +-
+ pkg/specgen/generate/config_linux.go | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/pkg/spec/config_linux.go b/pkg/spec/config_linux.go
+index 93aa8a1..34cf969 100644
+--- a/pkg/spec/config_linux.go
++++ b/pkg/spec/config_linux.go
+@@ -167,7 +167,7 @@ func addDevice(g *generate.Generator, device string) error {
+ 		GID:      &dev.Gid,
+ 	}
+ 	g.AddDevice(linuxdev)
+-	g.AddLinuxResourcesDevice(true, string(dev.Type), &dev.Major, &dev.Minor, dev.Permissions)
++	g.AddLinuxResourcesDevice(true, string(dev.Type), &dev.Major, &dev.Minor, string(dev.Permissions))
+ 	return nil
+ }
+ 
+diff --git a/pkg/specgen/generate/config_linux.go b/pkg/specgen/generate/config_linux.go
+index e445e6f..2b14ec5 100644
+--- a/pkg/specgen/generate/config_linux.go
++++ b/pkg/specgen/generate/config_linux.go
+@@ -268,7 +268,7 @@ func addDevice(g *generate.Generator, device string) error {
+ 		GID:      &dev.Gid,
+ 	}
+ 	g.AddDevice(linuxdev)
+-	g.AddLinuxResourcesDevice(true, string(dev.Type), &dev.Major, &dev.Minor, dev.Permissions)
++	g.AddLinuxResourcesDevice(true, string(dev.Type), &dev.Major, &dev.Minor, string(dev.Permissions))
+ 	return nil
+ }
+ 
