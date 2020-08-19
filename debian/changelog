@@ -1,3 +1,15 @@
+libpod (2.0.4+dfsg2-3) experimental; urgency=medium
+
+  * Team upload.
+
+  [ Reinhard Tartler ]
+  * Add more notes on how to get started with Debian kernels
+
+  [ Shengjing Zhu ]
+  * Add patch to fix build with new runc
+
+ -- Shengjing Zhu <zhsj@debian.org>  Thu, 20 Aug 2020 01:00:02 +0800
+
 libpod (2.0.4+dfsg2-2) unstable; urgency=medium
 
   [ Martin Pitt ]
