@@ -1,3 +1,10 @@
+libpod (2.0.4+dfsg2-4) experimental; urgency=medium
+
+  * Team upload.
+  * Tighten buildah Build-Depends version
+
+ -- Shengjing Zhu <zhsj@debian.org>  Thu, 20 Aug 2020 02:54:27 +0800
+
 libpod (2.0.4+dfsg2-3) experimental; urgency=medium
 
   * Team upload.
