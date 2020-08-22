@@ -2,6 +2,7 @@ From: Shengjing Zhu <zhsj@debian.org>
 Date: Thu, 20 Aug 2020 00:55:53 +0800
 Subject: Fix build with new version of runc
 
+Origin: backport, https://github.com/containers/podman/pull/6906
 ---
  pkg/spec/config_linux.go             | 2 +-
  pkg/specgen/generate/config_linux.go | 2 +-
