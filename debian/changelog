@@ -1,3 +1,10 @@
+libpod (2.0.4+dfsg2-5) unstable; urgency=medium
+
+  * Team upload.
+  * Upload to unstable
+
+ -- Shengjing Zhu <zhsj@debian.org>  Sun, 23 Aug 2020 02:42:00 +0800
+
 libpod (2.0.4+dfsg2-4) experimental; urgency=medium
 
   * Team upload.
