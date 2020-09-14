@@ -109,8 +109,7 @@ Depends: ${misc:Depends}, ${shlibs:Depends}
     ,containernetworking-plugins
     ,golang-github-containers-common
     ,crun | runc (>= 1.0.0~rc92~)
-Conflicts: slirp4netns (<< 0.4.1), fuse-overlayfs (<< 0.7.1)
-Breaks: buildah (<< 1.10.1-6)
+Breaks: buildah (<< 1.10.1-6), slirp4netns (<< 0.4.1), fuse-overlayfs (<< 0.7.1)
 Recommends: ${misc:Recommends}
     ,buildah (>= 1.10.1-6~)
     ,fuse-overlayfs (>= 1.0.0~)
