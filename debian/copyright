@@ -167,7 +167,6 @@ License: Apache-2.0
 
 Files:
     pkg/kubeutils/*
-    pkg/logs/logs.go
     vendor/k8s.io/*
 Copyright:
     2014-2019 The Kubernetes Authors.
@@ -197,13 +196,6 @@ Files:
 Copyright:
     2016-2019 Red Hat, Inc.
 License: Apache-2.0
-
-Files:
-    vendor/github.com/fatih/camelcase/*
-Copyright:
-    2015 Fatih Arslan
-License: Expat
-Comment: https://github.com/containers/libpod/issues/4783
 
 Files:
     vendor/github.com/uber/jaeger-*/*
