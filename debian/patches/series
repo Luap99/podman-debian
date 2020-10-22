@@ -1,3 +1,4 @@
-test--skip-TestPostDeleteHooks.patch
+#build-go_generate.patch
 old-docker-api.patch
 Fix-build-with-new-version-of-runc.patch
+test--skip-TestPostDeleteHooks.patch
