@@ -65,7 +65,7 @@ libpod (2.0.4+dfsg1-1) unstable; urgency=medium
   * No longer install /etc/containers/libpod.conf (Closes: #961016)
       This file is deprecated in version 2.0 and is superseeded by
       /etc/containers/containers.conf, which is provided by the
-      olang-github-containers-common package. The old file hardcodes
+      golang-github-containers-common package. The old file hardcodes
       a default OCI runtime that breaks in default installations.
   * Fixed REST API regression (Closes: #966501)
 
