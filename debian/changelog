@@ -1,3 +1,10 @@
+libpod (2.0.6+dfsg1-2) unstable; urgency=medium
+
+  * Restored io.podman/varlink interface, which is still in use by
+    nomad-driver-podman.
+
+ -- Dmitry Smirnov <onlyjob@debian.org>  Thu, 22 Oct 2020 21:33:07 +1100
+
 libpod (2.0.6+dfsg1-1) unstable; urgency=medium
 
   * New upstream release
