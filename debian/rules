@@ -59,7 +59,9 @@ ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
 endif
 
 override_dh_auto_install:
-	dh_auto_install --destdir=debian/tmp -- --no-source
+	dh_auto_install --destdir=debian/tmp --buildsystem=golang
+	# avoid exposing unnecessary vendor libraries
+	rm -rfv debian/tmp/usr/share/gocode/src/github.com/containers/libpod/vendor
 
 override_dh_installsystemd:
 	dh_installsystemd
