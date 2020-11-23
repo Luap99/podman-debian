@@ -9,7 +9,7 @@ which is not found in any upstream release
 
 --- a/pkg/api/handlers/types.go
 +++ b/pkg/api/handlers/types.go
-@@ -297,7 +297,6 @@
+@@ -288,7 +288,6 @@
  		RepoTags:      info.RepoTags,
  		RootFS:        docker.RootFS{},
  		Size:          info.Size,
