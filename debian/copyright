@@ -1,6 +1,15 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: libpod
 Source: https://github.com/containers/libpod
+Comment:
+    "~~" does not build with system library.
+    "~"  not packaged or not available (e.g. removed).
+ .
+ Upstream "github.com/uber/*" libraries depend on forked prometheus so
+ using bundled/vendored ones make sense to avoid burden of non-reusable
+ packages with heavier dependencies than vendored subset of those libs.
+ .
+ Protobuf in debian is not ready yet, cf. #961814
 Files-Excluded:
     vendor/github.com/Azure/go-ansiterm
     vendor/github.com/BurntSushi/toml
@@ -132,91 +141,527 @@ Files-Excluded:
    ~vendor/github.com/uber/jaeger-lib
    ~vendor/sigs.k8s.io/yaml
   ~~vendor/github.com/varlink/go
-Comment:
-    "~~" does not build with system library.
-    "~"  not packaged or not available (e.g. removed).
- .
- Upstream "github.com/uber/*" libraries depend on forked prometheus so
- using bundled/vendored ones make sense to avoid burden of non-reusable
- packages with heavier dependencies than vendored subset of those libs.
- .
- Protobuf in debian is not ready yet, cf. #961814
 
 Files: *
 Copyright:
     2016-2019 Red Hat, Inc.
 License: Apache-2.0
 
-Files:
-    contrib/snapcraft/*
+Files: contrib/snapcraft/*
+Copyright:
+    2017 Snapcrafters
+ 2017, Snapcrafters
+License: Expat
+
+Files: contrib/snapcraft/README.md
 Copyright:
     2017 Snapcrafters
 License: Expat
-
-Files:
-    pkg/cgroups/systemd.go
-Copyright:
-    The containerd Authors
-License: Apache-2.0
-
-Files:
-    pkg/netns/netns_linux.go
-Copyright:
-    2018 CNI authors
-License: Apache-2.0
-
-Files:
-    pkg/kubeutils/*
-    vendor/k8s.io/*
-Copyright:
-    2014-2019 The Kubernetes Authors.
-License: Apache-2.0
-
-Files:
-    vendor/k8s.io/apimachinery/third_party/forked/golang/*
-Copyright:
-    2009 The Go Authors
-License: BSD-3-Clause~Google
-
-Files:
-    vendor/k8s.io/klog/*
-Copyright:
-    2013 Google Inc
-License: Apache-2.0
-
-Files:
-    vendor/sigs.k8s.io/yaml/*
-Copyright:
-    2012 The Go Authors
-    2014 Sam Ghods
-License: BSD-3-Clause~Google and Expat
-
-Files:
-    vendor/github.com/cri-o/ocicni/*
-Copyright:
-    2016-2019 Red Hat, Inc.
-License: Apache-2.0
-
-Files:
-    vendor/github.com/uber/jaeger-*/*
-Copyright:
-    2016-2019 The Jaeger Authors
-    2017-2019 Uber Technologies, Inc.
-License: Apache-2.0
-Comment: bundled portion of the larger "all purpose" libraries that
- appears to be not feasible to package separately.
- https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=942525
-
-Files:
-    vendor/github.com/varlink/go/*
-Copyright:
- 2018-2019 The varlink authors and/or their companies
-License: Apache-2.0
 
 Files: debian/*
 Copyright:
     2018-2019 Dmitry Smirnov <onlyjob@debian.org>
 License: Apache-2.0
+
+Files: pkg/cgroups/systemd.go
+Copyright: The containerd Authors.
+License: Apache-2.0
+
+Files: pkg/kubeutils/*
+Copyright: 2014-2019, The Kubernetes Authors.
+License: Apache-2.0
+
+Files: pkg/netns/*
+Copyright: 2018, CNI authors
+License: Apache-2.0
+
+Files: pkg/signal/signal_linux.go
+Copyright: 2013-2018, Docker, Inc.
+License: Apache-2.0
+
+Files: pkg/util/camelcase/*
+Copyright:
+    2016-2019 Red Hat, Inc.
+ 2015, Fatih Arslan
+License: Apache-2.0 or Expat
+
+Files: pkg/util/camelcase/README.md
+  pkg/util/camelcase/camelcase.go
+Copyright:
+    2016-2019 Red Hat, Inc.
+License: Apache-2.0
+
+Files: vendor/github.com/containers/ocicrypt/Makefile
+Copyright: The containerd Authors.
+License: Apache-2.0
+
+Files: vendor/github.com/containers/ocicrypt/blockcipher/*
+Copyright: The ocicrypt Authors.
+License: Apache-2.0
+
+Files: vendor/github.com/containers/ocicrypt/config/*
+Copyright: The ocicrypt Authors.
+License: Apache-2.0
+
+Files: vendor/github.com/containers/ocicrypt/encryption.go
+  vendor/github.com/containers/ocicrypt/gpg.go
+  vendor/github.com/containers/ocicrypt/gpgvault.go
+  vendor/github.com/containers/ocicrypt/reader.go
+Copyright: The ocicrypt Authors.
+License: Apache-2.0
+
+Files: vendor/github.com/containers/ocicrypt/keywrap/*
+Copyright: The ocicrypt Authors.
+License: Apache-2.0
+
+Files: vendor/github.com/containers/ocicrypt/utils/*
+Copyright: The ocicrypt Authors.
+License: Apache-2.0
+
+Files: vendor/github.com/gorilla/*
+Copyright:
+    2016-2019 Red Hat, Inc.
+ 2012, Rodrigo Moraes.
+License: Apache-2.0 or BSD-3-clause
+
+Files: vendor/github.com/gorilla/schema/README.md
+  vendor/github.com/gorilla/schema/encoder.go
+Copyright:
+    2016-2019 Red Hat, Inc.
+License: Apache-2.0
+
+Files: vendor/github.com/gorilla/schema/cache.go
+  vendor/github.com/gorilla/schema/converter.go
+  vendor/github.com/gorilla/schema/decoder.go
+  vendor/github.com/gorilla/schema/doc.go
+Copyright: 2012, The Gorilla Authors.
+License: Apache-2.0
+
+Files: vendor/github.com/nxadm/*
+Copyright:
+    2016-2019 Red Hat, Inc.
+ 2015, Hewlett Packard Enterprise Development LP
+  2014, ActiveState
+License: Apache-2.0 or Expat
+
+Files: vendor/github.com/nxadm/tail/CHANGES.md
+  vendor/github.com/nxadm/tail/Dockerfile
+  vendor/github.com/nxadm/tail/README.md
+  vendor/github.com/nxadm/tail/go.mod
+  vendor/github.com/nxadm/tail/tail_posix.go
+  vendor/github.com/nxadm/tail/tail_windows.go
+Copyright:
+    2016-2019 Red Hat, Inc.
+License: Apache-2.0
+
+Files: vendor/github.com/nxadm/tail/ratelimiter/*
+Copyright:
+    2016-2019 Red Hat, Inc.
+License: Apache-2.0
+
+Files: vendor/github.com/nxadm/tail/ratelimiter/Licence
+Copyright: 99, 2013, designs
+License: Expat
+
+Files: vendor/github.com/nxadm/tail/tail.go
+Copyright: 2015, HPE Software Inc.
+  2013, ActiveState Software Inc.
+License: Apache-2.0
+
+Files: vendor/github.com/nxadm/tail/util/*
+Copyright: 2015, HPE Software Inc.
+  2013, ActiveState Software Inc.
+License: Apache-2.0
+
+Files: vendor/github.com/nxadm/tail/watch/*
+Copyright: 2015, HPE Software Inc.
+  2013, ActiveState Software Inc.
+License: Apache-2.0
+
+Files: vendor/github.com/nxadm/tail/watch/filechanges.go
+Copyright:
+    2016-2019 Red Hat, Inc.
+License: Apache-2.0
+
+Files: vendor/github.com/nxadm/tail/winfile/*
+Copyright:
+    2016-2019 Red Hat, Inc.
+License: Apache-2.0
+
+Files: vendor/github.com/uber/jaeger-client-go/CONTRIBUTING.md
+  vendor/github.com/uber/jaeger-client-go/process.go
+  vendor/github.com/uber/jaeger-client-go/span_allocator.go
+Copyright: 2017-2020, The Jaeger Authors.
+License: Apache-2.0
+
+Files: vendor/github.com/uber/jaeger-client-go/DCO
+Copyright: 2004, 2006, The Linux Foundation and its contributors.
+License: Apache-2.0
+
+Files: vendor/github.com/uber/jaeger-client-go/baggage_setter.go
+  vendor/github.com/uber/jaeger-client-go/constants.go
+  vendor/github.com/uber/jaeger-client-go/contrib_observer.go
+  vendor/github.com/uber/jaeger-client-go/doc.go
+  vendor/github.com/uber/jaeger-client-go/header.go
+  vendor/github.com/uber/jaeger-client-go/interop.go
+  vendor/github.com/uber/jaeger-client-go/jaeger_tag.go
+  vendor/github.com/uber/jaeger-client-go/jaeger_thrift_span.go
+  vendor/github.com/uber/jaeger-client-go/logger.go
+  vendor/github.com/uber/jaeger-client-go/metrics.go
+  vendor/github.com/uber/jaeger-client-go/observer.go
+  vendor/github.com/uber/jaeger-client-go/propagation.go
+  vendor/github.com/uber/jaeger-client-go/reference.go
+  vendor/github.com/uber/jaeger-client-go/reporter.go
+  vendor/github.com/uber/jaeger-client-go/reporter_options.go
+  vendor/github.com/uber/jaeger-client-go/sampler.go
+  vendor/github.com/uber/jaeger-client-go/sampler_remote.go
+  vendor/github.com/uber/jaeger-client-go/sampler_remote_options.go
+  vendor/github.com/uber/jaeger-client-go/sampler_v2.go
+  vendor/github.com/uber/jaeger-client-go/span.go
+  vendor/github.com/uber/jaeger-client-go/span_context.go
+  vendor/github.com/uber/jaeger-client-go/tracer.go
+  vendor/github.com/uber/jaeger-client-go/tracer_options.go
+  vendor/github.com/uber/jaeger-client-go/transport.go
+  vendor/github.com/uber/jaeger-client-go/transport_udp.go
+  vendor/github.com/uber/jaeger-client-go/zipkin.go
+  vendor/github.com/uber/jaeger-client-go/zipkin_thrift_span.go
+Copyright: 2017-2019, Uber Technologies, Inc.
+License: Apache-2.0
+
+Files: vendor/github.com/uber/jaeger-client-go/config/*
+Copyright: 2017-2019, Uber Technologies, Inc.
+License: Apache-2.0
+
+Files: vendor/github.com/uber/jaeger-client-go/config/config_env.go
+Copyright: 2017-2020, The Jaeger Authors.
+License: Apache-2.0
+
+Files: vendor/github.com/uber/jaeger-client-go/internal/*
+Copyright: 2017-2020, The Jaeger Authors.
+License: Apache-2.0
+
+Files: vendor/github.com/uber/jaeger-client-go/internal/baggage/*
+Copyright: 2017-2019, Uber Technologies, Inc.
+License: Apache-2.0
+
+Files: vendor/github.com/uber/jaeger-client-go/internal/spanlog/*
+Copyright: 2017-2019, Uber Technologies, Inc.
+License: Apache-2.0
+
+Files: vendor/github.com/uber/jaeger-client-go/log/*
+Copyright: 2017-2019, Uber Technologies, Inc.
+License: Apache-2.0
+
+Files: vendor/github.com/uber/jaeger-client-go/rpcmetrics/doc.go
+  vendor/github.com/uber/jaeger-client-go/rpcmetrics/endpoints.go
+  vendor/github.com/uber/jaeger-client-go/rpcmetrics/metrics.go
+  vendor/github.com/uber/jaeger-client-go/rpcmetrics/normalizer.go
+  vendor/github.com/uber/jaeger-client-go/rpcmetrics/observer.go
+Copyright: 2017-2019, Uber Technologies, Inc.
+License: Apache-2.0
+
+Files: vendor/github.com/uber/jaeger-client-go/transport/*
+Copyright: 2017-2019, Uber Technologies, Inc.
+License: Apache-2.0
+
+Files: vendor/github.com/uber/jaeger-client-go/utils/*
+Copyright: 2017-2019, Uber Technologies, Inc.
+License: Apache-2.0
+
+Files: vendor/github.com/uber/jaeger-lib/*
+Copyright: 2017-2019, Uber Technologies, Inc.
+License: Apache-2.0
+
+Files: vendor/github.com/uber/jaeger-lib/metrics/histogram.go
+Copyright: 2018, The Jaeger Authors
+License: Apache-2.0
+
+Files: vendor/github.com/varlink/*
+Copyright:
+ 2018-2019 The varlink authors and/or their companies
+License: Apache-2.0
+
+Files: vendor/go.etcd.io/*
+Copyright:
+    2016-2019 Red Hat, Inc.
+ 2013, Ben Johnson
+License: Apache-2.0 or Expat
+
+Files: vendor/go.etcd.io/bbolt/Makefile
+  vendor/go.etcd.io/bbolt/README.md
+  vendor/go.etcd.io/bbolt/bolt_386.go
+  vendor/go.etcd.io/bbolt/bolt_amd64.go
+  vendor/go.etcd.io/bbolt/bolt_arm.go
+  vendor/go.etcd.io/bbolt/bolt_arm64.go
+  vendor/go.etcd.io/bbolt/bolt_linux.go
+  vendor/go.etcd.io/bbolt/bolt_mips64x.go
+  vendor/go.etcd.io/bbolt/bolt_mipsx.go
+  vendor/go.etcd.io/bbolt/bolt_openbsd.go
+  vendor/go.etcd.io/bbolt/bolt_ppc.go
+  vendor/go.etcd.io/bbolt/bolt_ppc64.go
+  vendor/go.etcd.io/bbolt/bolt_ppc64le.go
+  vendor/go.etcd.io/bbolt/bolt_riscv64.go
+  vendor/go.etcd.io/bbolt/bolt_s390x.go
+  vendor/go.etcd.io/bbolt/bolt_unix.go
+  vendor/go.etcd.io/bbolt/bolt_unix_aix.go
+  vendor/go.etcd.io/bbolt/bolt_unix_solaris.go
+  vendor/go.etcd.io/bbolt/bolt_windows.go
+  vendor/go.etcd.io/bbolt/boltsync_unix.go
+  vendor/go.etcd.io/bbolt/bucket.go
+  vendor/go.etcd.io/bbolt/cursor.go
+  vendor/go.etcd.io/bbolt/db.go
+  vendor/go.etcd.io/bbolt/doc.go
+  vendor/go.etcd.io/bbolt/errors.go
+  vendor/go.etcd.io/bbolt/freelist.go
+  vendor/go.etcd.io/bbolt/freelist_hmap.go
+  vendor/go.etcd.io/bbolt/go.mod
+  vendor/go.etcd.io/bbolt/node.go
+  vendor/go.etcd.io/bbolt/page.go
+  vendor/go.etcd.io/bbolt/tx.go
+  vendor/go.etcd.io/bbolt/unsafe.go
+Copyright:
+    2016-2019 Red Hat, Inc.
+License: Apache-2.0
+
+Files: vendor/google.golang.org/*
+Copyright: 2018, The Go Authors.
+License: BSD-3-clause
+
+Files: vendor/google.golang.org/protobuf/AUTHORS
+Copyright: purposes.
+License: Apache-2.0
+
+Files: vendor/google.golang.org/protobuf/CONTRIBUTORS
+Copyright:
+    2016-2019 Red Hat, Inc.
+License: Apache-2.0
+
+Files: vendor/google.golang.org/protobuf/PATENTS
+Copyright: able works distributed by
+License: Apache-2.0
+
+Files: vendor/google.golang.org/protobuf/encoding/*
+Copyright: 2009, 2013, 2018-2020, The Go Authors.
+License: Apache-2.0
+
+Files: vendor/google.golang.org/protobuf/internal/*
+Copyright: 2009, 2013, 2018-2020, The Go Authors.
+License: Apache-2.0
+
+Files: vendor/google.golang.org/protobuf/proto/*
+Copyright: 2009, 2013, 2018-2020, The Go Authors.
+License: Apache-2.0
+
+Files: vendor/google.golang.org/protobuf/reflect/*
+Copyright: 2009, 2013, 2018-2020, The Go Authors.
+License: Apache-2.0
+
+Files: vendor/google.golang.org/protobuf/runtime/*
+Copyright: 2009, 2013, 2018-2020, The Go Authors.
+License: Apache-2.0
+
+Files: vendor/google.golang.org/protobuf/types/*
+Copyright: 2008, Google Inc.
+License: BSD-3-clause
+
+Files: vendor/k8s.io/*
+Copyright: 2014-2019, The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/api/*
+Copyright: The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/api/apps/v1/doc.go
+  vendor/k8s.io/api/apps/v1/register.go
+  vendor/k8s.io/api/apps/v1/types.go
+Copyright: 2014-2019, The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/api/core/*
+Copyright: 2014-2019, The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/api/core/v1/generated.pb.go
+  vendor/k8s.io/api/core/v1/types_swagger_doc_generated.go
+  vendor/k8s.io/api/core/v1/zz_generated.deepcopy.go
+Copyright: The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/apimachinery/*
+Copyright:
+    2009 The Go Authors
+License: BSD-3-Clause~Google
+
+Files: vendor/k8s.io/apimachinery/pkg/*
+Copyright: 2014-2019, The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/apimachinery/pkg/api/errors/OWNERS
+Copyright:
+    2014-2019 The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/apimachinery/pkg/api/resource/OWNERS
+Copyright:
+    2014-2019 The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/apimachinery/pkg/api/resource/generated.pb.go
+  vendor/k8s.io/apimachinery/pkg/api/resource/zz_generated.deepcopy.go
+Copyright: The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/apimachinery/pkg/apis/meta/v1/OWNERS
+Copyright:
+    2014-2019 The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/apimachinery/pkg/apis/meta/v1/generated.pb.go
+  vendor/k8s.io/apimachinery/pkg/apis/meta/v1/types_swagger_doc_generated.go
+  vendor/k8s.io/apimachinery/pkg/apis/meta/v1/zz_generated.conversion.go
+  vendor/k8s.io/apimachinery/pkg/apis/meta/v1/zz_generated.deepcopy.go
+  vendor/k8s.io/apimachinery/pkg/apis/meta/v1/zz_generated.defaults.go
+Copyright: The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/apimachinery/pkg/apis/meta/v1/unstructured/zz_generated.deepcopy.go
+Copyright: The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/apimachinery/pkg/labels/zz_generated.deepcopy.go
+Copyright: The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/apimachinery/pkg/runtime/generated.pb.go
+  vendor/k8s.io/apimachinery/pkg/runtime/zz_generated.deepcopy.go
+Copyright: The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/apimachinery/pkg/runtime/schema/generated.pb.go
+Copyright: The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/apimachinery/pkg/util/intstr/*
+Copyright: The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/apimachinery/pkg/util/intstr/intstr.go
+Copyright: 2014-2019, The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/apimachinery/pkg/util/sets/*
+Copyright: The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/apimachinery/pkg/watch/zz_generated.deepcopy.go
+Copyright: The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/apimachinery/third_party/forked/golang/reflect/*
+Copyright: 2009, 2013, 2018-2020, The Go Authors.
+License: BSD-3-Clause~Google
+
+Files: vendor/k8s.io/client-go/pkg/apis/clientauthentication/OWNERS
+Copyright:
+    2014-2019 The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/client-go/pkg/apis/clientauthentication/v1alpha1/*
+Copyright: The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/client-go/pkg/apis/clientauthentication/v1alpha1/doc.go
+  vendor/k8s.io/client-go/pkg/apis/clientauthentication/v1alpha1/register.go
+  vendor/k8s.io/client-go/pkg/apis/clientauthentication/v1alpha1/types.go
+Copyright: 2014-2019, The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/client-go/pkg/apis/clientauthentication/v1beta1/zz_generated.conversion.go
+  vendor/k8s.io/client-go/pkg/apis/clientauthentication/v1beta1/zz_generated.deepcopy.go
+  vendor/k8s.io/client-go/pkg/apis/clientauthentication/v1beta1/zz_generated.defaults.go
+Copyright: The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/client-go/pkg/apis/clientauthentication/zz_generated.deepcopy.go
+Copyright: The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/client-go/rest/OWNERS
+Copyright:
+    2014-2019 The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/client-go/rest/zz_generated.deepcopy.go
+Copyright: The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/client-go/tools/clientcmd/api/zz_generated.deepcopy.go
+Copyright: The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/client-go/tools/metrics/*
+Copyright:
+    2014-2019 The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/client-go/tools/metrics/metrics.go
+Copyright: 2014-2019, The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/client-go/transport/OWNERS
+Copyright:
+    2014-2019 The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/client-go/util/cert/OWNERS
+Copyright:
+    2014-2019 The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/client-go/util/keyutil/*
+Copyright:
+    2014-2019 The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/client-go/util/keyutil/key.go
+Copyright: 2014-2019, The Kubernetes Authors.
+License: Apache-2.0
+
+Files: vendor/k8s.io/klog/*
+Copyright:
+    2013 Google Inc
+License: Apache-2.0
+
+Files: vendor/k8s.io/klog/klog.go
+  vendor/k8s.io/klog/klog_file.go
+Copyright: 2013, Google Inc.
+License: Apache-2.0
+
+Files: vendor/sigs.k8s.io/*
+Copyright:
+    2012 The Go Authors
+    2014 Sam Ghods
+ 2014, Sam Ghods
+License: BSD-3-Clause~Google and Expat or BSD-3-clause and/or Expat
+
+Files: vendor/sigs.k8s.io/yaml/CONTRIBUTING.md
+  vendor/sigs.k8s.io/yaml/OWNERS
+  vendor/sigs.k8s.io/yaml/README.md
+  vendor/sigs.k8s.io/yaml/RELEASE.md
+  vendor/sigs.k8s.io/yaml/SECURITY_CONTACTS
+  vendor/sigs.k8s.io/yaml/code-of-conduct.md
+  vendor/sigs.k8s.io/yaml/go.mod
+  vendor/sigs.k8s.io/yaml/yaml.go
+  vendor/sigs.k8s.io/yaml/yaml_go110.go
+Copyright:
+    2012 The Go Authors
+    2014 Sam Ghods
+License: BSD-3-Clause~Google and Expat
+
+Files: vendor/sigs.k8s.io/yaml/fields.go
+Copyright: 2009, 2013, 2018-2020, The Go Authors.
+License: BSD-3-Clause~Google and Expat
 
 License: Apache-2.0
  Licensed under the Apache License, Version 2.0 (the "License");
@@ -233,24 +678,6 @@ License: Apache-2.0
  .
  On Debian systems, the complete text of the Apache version 2.0 license
  can be found in "/usr/share/common-licenses/Apache-2.0".
-
-License: Expat
- Permission is hereby granted, free of charge, to any person obtaining a copy of
- this software and associated documentation files (the "Software"), to deal in
- the Software without restriction, including without limitation the rights to
- use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
- the Software, and to permit persons to whom the Software is furnished to do so,
- subject to the following conditions:
- .
-  The above copyright notice and this permission notice shall be included in all
-  copies or substantial portions of the Software.
- .
- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
- FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
- COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
- IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 License: BSD-3-Clause~Google
  Redistribution and use in source and binary forms, with or without
@@ -278,3 +705,57 @@ License: BSD-3-Clause~Google
  THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+License: BSD-3-clause
+ This software is Copyright (c) 2020 by X. Ample.
+ .
+ This is free software, licensed under:
+ .
+   The (three-clause) BSD License
+ .
+ The BSD License
+ .
+ Redistribution and use in source and binary forms, with or without
+ modification, are permitted provided that the following conditions are
+ met:
+ .
+   * Redistributions of source code must retain the above copyright
+     notice, this list of conditions and the following disclaimer.
+ .
+   * Redistributions in binary form must reproduce the above copyright
+     notice, this list of conditions and the following disclaimer in the
+     documentation and/or other materials provided with the distribution. 
+ .
+   * Neither the name of X. Ample nor the names of its
+     contributors may be used to endorse or promote products derived from
+     this software without specific prior written permission. 
+ .
+ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
+ IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+ TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+ PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+ CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+ LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+ NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+License: Expat
+ Permission is hereby granted, free of charge, to any person obtaining a copy of
+ this software and associated documentation files (the "Software"), to deal in
+ the Software without restriction, including without limitation the rights to
+ use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+ the Software, and to permit persons to whom the Software is furnished to do so,
+ subject to the following conditions:
+ .
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+ FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+ COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
