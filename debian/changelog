@@ -1,8 +1,14 @@
 libpod (2.1.1+dfsg1-1) unstable; urgency=medium
 
+  [ Reinhard Tartler ]
   * New upstream release: 2.1.1
+  * golang-github-containers-libpod-dev: expose golang sources
+  * debian/copyright: update using cme update dpkg-copyright
 
- -- Reinhard Tartler <siretart@tauware.de>  Mon, 23 Nov 2020 08:18:06 -0500
+  [ Arnaud Rebillout ]
+  * Unvendor sigs.k8s.io/yaml
+
+ -- Reinhard Tartler <siretart@tauware.de>  Fri, 27 Nov 2020 12:45:58 -0500
 
 libpod (2.0.6+dfsg1-2) unstable; urgency=medium
 

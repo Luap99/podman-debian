@@ -87,6 +87,7 @@ Build-Depends: debhelper-compat (= 12)
     ,golang-gopkg-tomb.v1-dev
     ,golang-gopkg-yaml.v3-dev
     ,golang-k8s-sigs-structured-merge-diff-dev
+    ,golang-k8s-sigs-yaml-dev
     ,golang-toml-dev
     ,libapparmor-dev
     ,libbtrfs-dev
