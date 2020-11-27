@@ -10,7 +10,7 @@ export GO111MODULE=off
 export DH_GOLANG_GO_GENERATE := 1
 
 export DH_GOLANG_INSTALL_EXTRA := $(shell find . -type f -name '*.varlink') $(wildcard libpod/*/testdata/*) $(wildcard hack/*)
-export DH_GOLANG_EXCLUDES := dependencies test/e2e contrib/perftest test/utils test/endpoint hack/podman-registry-go
+export DH_GOLANG_EXCLUDES := dependencies test/e2e contrib/perftest test/utils test/endpoint hack/podman-registry-go pkg/bindings/test
 
 export HOME=$(CURDIR)/debian/tmp
 
