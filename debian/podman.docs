@@ -1,9 +1,10 @@
-_output/src/github.com/containers/libpod/API.md
+API.md
 
 CONTRIBUTING.md
+SECURITY.md
 README*
 RELEASE_NOTES*
-commands.md
+commands*.md
 rootless.md
 transfer.md
 troubleshooting.md
