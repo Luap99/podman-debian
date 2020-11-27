@@ -1,3 +1,14 @@
+libpod (2.0.6+dfsg2-3) UNRELEASED; urgency=medium
+
+  [ Reinhard Tartler ]
+  * golang-github-containers-libpod-dev: expose golang sources
+  * debian/copyright: update using cme update dpkg-copyright
+
+  [ Arnaud Rebillout ]
+  * Unvendor sigs.k8s.io/yaml
+
+ -- Arnaud Rebillout <elboulangero@gmail.com>  Thu, 26 Nov 2020 09:58:26 +0700
+
 libpod (2.0.6+dfsg1-2) unstable; urgency=medium
 
   * Restored io.podman/varlink interface, which is still in use by

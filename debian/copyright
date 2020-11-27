@@ -133,13 +133,13 @@ Files-Excluded:
     vendor/gopkg.in/yaml.v2
     vendor/gopkg.in/yaml.v3
     vendor/sigs.k8s.io/structured-merge-diff
+    vendor/sigs.k8s.io/yaml
    ~vendor/github.com/containers/conmon
    ~vendor/github.com/cri-o/ocicni
    ~vendor/github.com/fatih/camelcase
    ~vendor/github.com/nxadm/tail
    ~vendor/github.com/uber/jaeger-client-go
    ~vendor/github.com/uber/jaeger-lib
-   ~vendor/sigs.k8s.io/yaml
   ~~vendor/github.com/varlink/go
 
 Files: *
@@ -637,31 +637,6 @@ Files: vendor/k8s.io/klog/klog.go
   vendor/k8s.io/klog/klog_file.go
 Copyright: 2013, Google Inc.
 License: Apache-2.0
-
-Files: vendor/sigs.k8s.io/*
-Copyright:
-    2012 The Go Authors
-    2014 Sam Ghods
- 2014, Sam Ghods
-License: BSD-3-Clause~Google and Expat or BSD-3-clause and/or Expat
-
-Files: vendor/sigs.k8s.io/yaml/CONTRIBUTING.md
-  vendor/sigs.k8s.io/yaml/OWNERS
-  vendor/sigs.k8s.io/yaml/README.md
-  vendor/sigs.k8s.io/yaml/RELEASE.md
-  vendor/sigs.k8s.io/yaml/SECURITY_CONTACTS
-  vendor/sigs.k8s.io/yaml/code-of-conduct.md
-  vendor/sigs.k8s.io/yaml/go.mod
-  vendor/sigs.k8s.io/yaml/yaml.go
-  vendor/sigs.k8s.io/yaml/yaml_go110.go
-Copyright:
-    2012 The Go Authors
-    2014 Sam Ghods
-License: BSD-3-Clause~Google and Expat
-
-Files: vendor/sigs.k8s.io/yaml/fields.go
-Copyright: 2009, 2013, 2018-2020, The Go Authors.
-License: BSD-3-Clause~Google and Expat
 
 License: Apache-2.0
  Licensed under the Apache License, Version 2.0 (the "License");
