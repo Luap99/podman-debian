@@ -42,6 +42,8 @@ override_dh_auto_build: $(MANPAGES5)
 
 override_dh_auto_test:
 ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	# make test binaries available where the tests expect them
+	ln -sv  ../../../../bin  _output/src/github.com/containers/podman/bin
 	mkdir -p -m700 $(CURDIR)/debian/tmp-home/.cache
 	mkdir -p -m700 $(CURDIR)/debian/tmp-home/.config
 	mkdir -p -m700 $(CURDIR)/debian/tmp-home/.local/share
