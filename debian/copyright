@@ -132,6 +132,7 @@ Files-Excluded:
     vendor/gopkg.in/tomb.v1
     vendor/gopkg.in/yaml.v2
     vendor/gopkg.in/yaml.v3
+    vendor/sigs.k8s.io/structured-merge-diff
     vendor/sigs.k8s.io/yaml
    ~vendor/github.com/containers/conmon
    ~vendor/github.com/cri-o/ocicni
@@ -140,7 +141,6 @@ Files-Excluded:
    ~vendor/github.com/uber/jaeger-client-go
    ~vendor/github.com/uber/jaeger-lib
   ~~vendor/github.com/varlink/go
-  ~~vendor/sigs.k8s.io/structured-merge-diff
 
 Files: *
 Copyright:
