@@ -1,7 +1,7 @@
 #!/usr/bin/make -f
 
 # Uncomment this to turn on verbose mode.
-#export DH_VERBOSE=1
+export DH_VERBOSE=1
 
 include /usr/share/dpkg/pkg-info.mk
 
@@ -37,7 +37,7 @@ override_dh_auto_build: $(MANPAGES5)
 	$(MAKE) docs
 
 #	LDFLAGS_PODMAN="-X main.gitCommit=$(GIT_COMMIT)"
-	dh_auto_build -v -- -tags "$(BUILDTAGS)" \
+	dh_auto_build -v  --builddirectory=_output -- -tags "$(BUILDTAGS)" \
           -ldflags "-X main.buildInfo=$(DEB_VERSION)"
 
 override_dh_auto_test:
@@ -59,7 +59,7 @@ ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
 endif
 
 override_dh_auto_install:
-	dh_auto_install --destdir=debian/tmp --buildsystem=golang
+	dh_auto_install --destdir=debian/tmp --buildsystem=golang --builddirectory=_output
 	# avoid exposing unnecessary vendor libraries
 	rm -rfv debian/tmp/usr/share/gocode/src/github.com/containers/libpod/vendor
 
