@@ -5,6 +5,8 @@ opts="\
 pgpmode=none,\
 repacksuffix=+dfsg1,\
 repack,compression=xz,\
+dirversionmangle=s/-rc/~rc/,\
+uversionmangle=s/-rc/~rc/,\
 dversionmangle=s{[+~]dfsg\d*}{},\
 " https://github.com/containers/libpod/releases \
-  .*/archive/v?(\d[-\d\.]+)\.tar\.gz
+  .*/archive/v?(\d[-\w\d\.]+)\.tar\.gz
