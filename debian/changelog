@@ -1,3 +1,9 @@
+libpod (2.2.0~rc2+dfsg1-1) experimental; urgency=medium
+
+  * New upstream release: 2.2.0~rc2
+
+ -- Reinhard Tartler <siretart@tauware.de>  Mon, 30 Nov 2020 07:44:57 -0500
+
 libpod (2.1.1+dfsg1-1) unstable; urgency=medium
 
   [ Reinhard Tartler ]
