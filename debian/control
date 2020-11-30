@@ -16,6 +16,7 @@ Build-Depends: debhelper-compat (= 12)
     ,golang-github-appc-cni-dev (>= 0.8)
     ,golang-github-buger-goterm-dev
     ,golang-github-checkpoint-restore-go-criu-dev
+    ,golang-github-chzyer-readline-dev
     ,golang-github-containerd-cgroups-dev
     ,golang-github-containernetworking-plugins-dev (>= 0.8.7)
     ,golang-github-containers-buildah-dev (>= 1.16)
@@ -43,9 +44,13 @@ Build-Depends: debhelper-compat (= 12)
     ,golang-github-influxdata-tail-dev (>= 1.0.0+git20180327.c434825-2~) | golang-github-hpcloud-tail-dev
     ,golang-github-ishidawataru-sctp-dev
     ,golang-github-json-iterator-go-dev
+    ,golang-github-juju-ansiterm-dev
     ,golang-github-klauspost-compress-dev (>= 1.7.2~)
     ,golang-github-klauspost-pgzip-dev
+    ,golang-github-lunixbochs-vtclean-dev
     ,golang-github-mailru-easyjson-dev
+    ,golang-github-manifoldco-promptui-dev
+    ,golang-github-mattn-go-colorable-dev
     ,golang-github-mattn-go-runewidth-dev
     ,golang-github-mrunalp-fileutils-dev
     ,golang-github-opencontainers-go-digest-dev
