@@ -9,9 +9,9 @@ which is not found in any upstream release
 
 --- a/pkg/api/handlers/types.go
 +++ b/pkg/api/handlers/types.go
-@@ -288,7 +288,6 @@
+@@ -298,7 +298,6 @@
  		RepoTags:      info.RepoTags,
- 		RootFS:        docker.RootFS{},
+ 		RootFS:        rootfs,
  		Size:          info.Size,
 -		Variant:       "",
  		VirtualSize:   info.VirtualSize,
@@ -19,7 +19,7 @@ which is not found in any upstream release
  	bi := ic.ConfigInfo()
 --- a/pkg/api/handlers/compat/info.go
 +++ b/pkg/api/handlers/compat/info.go
-@@ -97,7 +97,6 @@
+@@ -98,7 +98,6 @@
  		Name:               infoData.Host.Hostname,
  		NoProxy:            getEnv("no_proxy"),
  		OSType:             goRuntime.GOOS,
