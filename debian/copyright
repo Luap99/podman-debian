@@ -47,7 +47,6 @@ Files-Excluded:
     vendor/github.com/docker/spdystream
     vendor/github.com/fsnotify/fsnotify
     vendor/github.com/fsouza/go-dockerclient
-    vendor/github.com/fullsailor/pkcs7
     vendor/github.com/ghodss/yaml
     vendor/github.com/godbus/dbus
     vendor/github.com/gogo/protobuf
@@ -67,7 +66,6 @@ Files-Excluded:
     vendor/github.com/juju/ansiterm
     vendor/github.com/klauspost/compress
     vendor/github.com/klauspost/pgzip
-    vendor/github.com/konsorten/go-windows-terminal-sequences
     vendor/github.com/lunixbochs
     vendor/github.com/manifoldco
     vendor/github.com/mattn/go-colorable
@@ -101,7 +99,6 @@ Files-Excluded:
     vendor/github.com/prometheus/procfs
     vendor/github.com/rootless-containers
     vendor/github.com/safchain/ethtool
-    vendor/github.com/seccomp/containers-golang
     vendor/github.com/seccomp/libseccomp-golang
     vendor/github.com/sirupsen/logrus
     vendor/github.com/spf13/cobra
@@ -117,6 +114,7 @@ Files-Excluded:
     vendor/github.com/xeipuuv/gojsonpointer
     vendor/github.com/xeipuuv/gojsonreference
     vendor/github.com/xeipuuv/gojsonschema
+    vendor/go.mozilla.org/pkcs7
     vendor/go.opencensus.io
     vendor/go.uber.org/atomic
     vendor/golang.org/x/crypto
@@ -196,48 +194,6 @@ Copyright:
     2016-2019 Red Hat, Inc.
 License: Apache-2.0
 
-Files: vendor/github.com/chzyer/*
-Copyright:
-    2016-2019 Red Hat, Inc.
- 2015, Chzyer
-License: Apache-2.0 or Expat
-
-Files: vendor/github.com/chzyer/readline/CHANGELOG.md
-  vendor/github.com/chzyer/readline/README.md
-  vendor/github.com/chzyer/readline/ansi_windows.go
-  vendor/github.com/chzyer/readline/complete.go
-  vendor/github.com/chzyer/readline/complete_helper.go
-  vendor/github.com/chzyer/readline/complete_segment.go
-  vendor/github.com/chzyer/readline/history.go
-  vendor/github.com/chzyer/readline/operation.go
-  vendor/github.com/chzyer/readline/password.go
-  vendor/github.com/chzyer/readline/rawreader_windows.go
-  vendor/github.com/chzyer/readline/readline.go
-  vendor/github.com/chzyer/readline/remote.go
-  vendor/github.com/chzyer/readline/runebuf.go
-  vendor/github.com/chzyer/readline/runes.go
-  vendor/github.com/chzyer/readline/search.go
-  vendor/github.com/chzyer/readline/std.go
-  vendor/github.com/chzyer/readline/std_windows.go
-  vendor/github.com/chzyer/readline/terminal.go
-  vendor/github.com/chzyer/readline/utils.go
-  vendor/github.com/chzyer/readline/utils_unix.go
-  vendor/github.com/chzyer/readline/utils_windows.go
-  vendor/github.com/chzyer/readline/vim.go
-  vendor/github.com/chzyer/readline/windows_api.go
-Copyright:
-    2016-2019 Red Hat, Inc.
-License: Apache-2.0
-
-Files: vendor/github.com/chzyer/readline/term.go
-  vendor/github.com/chzyer/readline/term_bsd.go
-  vendor/github.com/chzyer/readline/term_linux.go
-  vendor/github.com/chzyer/readline/term_solaris.go
-  vendor/github.com/chzyer/readline/term_unix.go
-  vendor/github.com/chzyer/readline/term_windows.go
-Copyright: 2009, 2011, 2013, 2018-2020, The Go Authors.
-License: Apache-2.0
-
 Files: vendor/github.com/containers/ocicrypt/Makefile
 Copyright: The containerd Authors.
 License: Apache-2.0
@@ -294,94 +250,11 @@ Copyright:
  2015, Canonical Ltd. unless otherwise specified in the file.
 License: Apache-2.0 or LGPL-3
 
-Files: vendor/github.com/juju/ansiterm/Makefile
-  vendor/github.com/juju/ansiterm/attribute.go
-  vendor/github.com/juju/ansiterm/color.go
-  vendor/github.com/juju/ansiterm/context.go
-  vendor/github.com/juju/ansiterm/doc.go
-  vendor/github.com/juju/ansiterm/style.go
-  vendor/github.com/juju/ansiterm/tabwriter.go
-  vendor/github.com/juju/ansiterm/terminal.go
-  vendor/github.com/juju/ansiterm/writer.go
-Copyright: 2016, Canonical Ltd.
-License: LGPL-3
-
-Files: vendor/github.com/juju/ansiterm/README.md
-Copyright:
-    2016-2019 Red Hat, Inc.
-License: Apache-2.0
-
-Files: vendor/github.com/juju/ansiterm/tabwriter/*
-Copyright: 2012, 2018, The Go Authors.
-License: BSD-3-clause
-
-Files: vendor/github.com/juju/ansiterm/tabwriter/tabwriter.go
-Copyright: 2009, 2011, 2013, 2018-2020, The Go Authors.
-License: Apache-2.0
-
-Files: vendor/github.com/lunixbochs/*
-Copyright:
-    2016-2019 Red Hat, Inc.
- 2015, Ryan Hileman
-License: Apache-2.0 or Expat
-
-Files: vendor/github.com/lunixbochs/vtclean/README.md
-  vendor/github.com/lunixbochs/vtclean/io.go
-  vendor/github.com/lunixbochs/vtclean/line.go
-  vendor/github.com/lunixbochs/vtclean/vtclean.go
-Copyright:
-    2016-2019 Red Hat, Inc.
-License: Apache-2.0
-
-Files: vendor/github.com/manifoldco/*
-Copyright:
-    2016-2019 Red Hat, Inc.
- 2017, Arigato Machine Inc.
-License: Apache-2.0 or BSD-3-clause
-
-Files: vendor/github.com/manifoldco/promptui/CHANGELOG.md
-  vendor/github.com/manifoldco/promptui/CODE_OF_CONDUCT.md
-  vendor/github.com/manifoldco/promptui/Makefile
-  vendor/github.com/manifoldco/promptui/README.md
-  vendor/github.com/manifoldco/promptui/codes.go
-  vendor/github.com/manifoldco/promptui/cursor.go
-  vendor/github.com/manifoldco/promptui/go.mod
-  vendor/github.com/manifoldco/promptui/keycodes.go
-  vendor/github.com/manifoldco/promptui/keycodes_other.go
-  vendor/github.com/manifoldco/promptui/keycodes_windows.go
-  vendor/github.com/manifoldco/promptui/prompt.go
-  vendor/github.com/manifoldco/promptui/promptui.go
-  vendor/github.com/manifoldco/promptui/select.go
-  vendor/github.com/manifoldco/promptui/styles.go
-  vendor/github.com/manifoldco/promptui/styles_windows.go
-Copyright:
-    2016-2019 Red Hat, Inc.
-License: Apache-2.0
-
-Files: vendor/github.com/manifoldco/promptui/list/*
-Copyright:
-    2016-2019 Red Hat, Inc.
-License: Apache-2.0
-
-Files: vendor/github.com/manifoldco/promptui/screenbuf/*
-Copyright:
-    2016-2019 Red Hat, Inc.
-License: Apache-2.0
-
 Files: vendor/github.com/mattn/*
 Copyright:
     2016-2019 Red Hat, Inc.
  2016, Yasuhiro Matsumoto
 License: Apache-2.0 or Expat
-
-Files: vendor/github.com/mattn/go-colorable/README.md
-  vendor/github.com/mattn/go-colorable/colorable_appengine.go
-  vendor/github.com/mattn/go-colorable/colorable_others.go
-  vendor/github.com/mattn/go-colorable/colorable_windows.go
-  vendor/github.com/mattn/go-colorable/noncolorable.go
-Copyright:
-    2016-2019 Red Hat, Inc.
-License: Apache-2.0
 
 Files: vendor/github.com/moby/term/*
 Copyright: 2015, Docker, inc. Code released under the Apache 2.0 license. Docs released under Creative commons.
@@ -621,21 +494,8 @@ Copyright:
  2015, Andrew Smith
 License: Apache-2.0 or Expat
 
-Files: vendor/go.mozilla.org/pkcs7/Makefile
-  vendor/go.mozilla.org/pkcs7/README.md
-  vendor/go.mozilla.org/pkcs7/ber.go
-  vendor/go.mozilla.org/pkcs7/decrypt.go
-  vendor/go.mozilla.org/pkcs7/encrypt.go
-  vendor/go.mozilla.org/pkcs7/go.mod
-  vendor/go.mozilla.org/pkcs7/pkcs7.go
-  vendor/go.mozilla.org/pkcs7/sign.go
-  vendor/go.mozilla.org/pkcs7/verify.go
-Copyright:
-    2016-2019 Red Hat, Inc.
-License: Apache-2.0
-
 Files: vendor/google.golang.org/*
-Copyright: 2012, 2018, The Go Authors.
+Copyright: 2018, The Go Authors.
 License: BSD-3-clause
 
 Files: vendor/google.golang.org/protobuf/AUTHORS
@@ -652,23 +512,23 @@ Copyright: able works distributed by
 License: Apache-2.0
 
 Files: vendor/google.golang.org/protobuf/encoding/*
-Copyright: 2009, 2011, 2013, 2018-2020, The Go Authors.
+Copyright: 2009, 2018-2020, The Go Authors.
 License: Apache-2.0
 
 Files: vendor/google.golang.org/protobuf/internal/*
-Copyright: 2009, 2011, 2013, 2018-2020, The Go Authors.
+Copyright: 2009, 2018-2020, The Go Authors.
 License: Apache-2.0
 
 Files: vendor/google.golang.org/protobuf/proto/*
-Copyright: 2009, 2011, 2013, 2018-2020, The Go Authors.
+Copyright: 2009, 2018-2020, The Go Authors.
 License: Apache-2.0
 
 Files: vendor/google.golang.org/protobuf/reflect/*
-Copyright: 2009, 2011, 2013, 2018-2020, The Go Authors.
+Copyright: 2009, 2018-2020, The Go Authors.
 License: Apache-2.0
 
 Files: vendor/google.golang.org/protobuf/runtime/*
-Copyright: 2009, 2011, 2013, 2018-2020, The Go Authors.
+Copyright: 2009, 2018-2020, The Go Authors.
 License: Apache-2.0
 
 Files: vendor/google.golang.org/protobuf/types/*
@@ -770,7 +630,7 @@ Copyright: The Kubernetes Authors.
 License: Apache-2.0
 
 Files: vendor/k8s.io/apimachinery/third_party/forked/golang/reflect/*
-Copyright: 2009, 2011, 2013, 2018-2020, The Go Authors.
+Copyright: 2009, 2018-2020, The Go Authors.
 License: BSD-3-Clause~Google
 
 Files: vendor/k8s.io/client-go/pkg/apis/clientauthentication/OWNERS
