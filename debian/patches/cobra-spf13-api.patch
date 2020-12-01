@@ -1,0 +1,27 @@
+From: Reinhard Tartler <siretart@debian.org>
+Subject: Fix compilation with system cobra/spf13
+
+It remains more than unclear to me where this GenBashCompletionWithDesc is
+supposed to come from in the upstream builds. To the best of my understanding,
+it is being proposed as part of
+https://github.com/spf13/cobra/pull/1146/files#diff-4febbbe5847d6a7a9269af6270c673b12d801016102d38e2b1019d25143799efR26
+but that PR is still open at the time of writing.
+
+--- a/cmd/podman/completion/completion.go
++++ b/cmd/podman/completion/completion.go
+@@ -67,11 +67,11 @@
+ 	var err error
+ 	switch args[0] {
+ 	case "bash":
+-		if noDesc {
++		//		if noDesc {
+ 			err = cmd.Root().GenBashCompletion(w)
+-		} else {
+-			err = cmd.Root().GenBashCompletionWithDesc(w)
+-		}
++		//} else {
++		//	err = cmd.Root().GenBashCompletionWithDesc(w)
++		//}
+ 	case "zsh":
+ 		if noDesc {
+ 			err = cmd.Root().GenZshCompletionNoDesc(w)
