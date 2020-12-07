@@ -254,60 +254,17 @@ Copyright:
 License: Apache-2.0
 
 Files: vendor/github.com/moby/term/windows/*
-Copyright:
-    2016-2019 Red Hat, Inc.
+Copyright: 2016-2019, Red Hat, Inc.
 License: Apache-2.0
 
 Files: vendor/github.com/nxadm/*
-Copyright:
-    2016-2019 Red Hat, Inc.
- 2015, Hewlett Packard Enterprise Development LP
-  2014, ActiveState
-License: Apache-2.0 or Expat
-
-Files: vendor/github.com/nxadm/tail/CHANGES.md
-  vendor/github.com/nxadm/tail/Dockerfile
-  vendor/github.com/nxadm/tail/README.md
-  vendor/github.com/nxadm/tail/go.mod
-  vendor/github.com/nxadm/tail/tail_posix.go
-  vendor/github.com/nxadm/tail/tail_windows.go
-Copyright:
-    2016-2019 Red Hat, Inc.
-License: Apache-2.0
-
-Files: vendor/github.com/nxadm/tail/ratelimiter/*
-Copyright:
-    2016-2019 Red Hat, Inc.
-License: Apache-2.0
-
-Files: vendor/github.com/nxadm/tail/ratelimiter/Licence
-Copyright: 99, 2013, designs
+Copyright: 2015, Hewlett Packard Enterprise Development LP
+  2013, 2014, ActiveState
 License: Expat
 
-Files: vendor/github.com/nxadm/tail/tail.go
-Copyright: 2015, HPE Software Inc.
-  2013, ActiveState Software Inc.
-License: Apache-2.0
-
-Files: vendor/github.com/nxadm/tail/util/*
-Copyright: 2015, HPE Software Inc.
-  2013, ActiveState Software Inc.
-License: Apache-2.0
-
-Files: vendor/github.com/nxadm/tail/watch/*
-Copyright: 2015, HPE Software Inc.
-  2013, ActiveState Software Inc.
-License: Apache-2.0
-
-Files: vendor/github.com/nxadm/tail/watch/filechanges.go
-Copyright:
-    2016-2019 Red Hat, Inc.
-License: Apache-2.0
-
-Files: vendor/github.com/nxadm/tail/winfile/*
-Copyright:
-    2016-2019 Red Hat, Inc.
-License: Apache-2.0
+Files: vendor/github.com/nxadm/tail/ratelimiter/*
+Copyright: 2013, 99designs
+License: Expat
 
 Files: vendor/github.com/uber/jaeger-client-go/CONTRIBUTING.md
   vendor/github.com/uber/jaeger-client-go/process.go
