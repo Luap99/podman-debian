@@ -1,0 +1,20 @@
+! Copyright License:"Expat"
+! Copyright License:"Apache-2.0"
+
+! Files:"pkg/util/camelcase/*"
+  Copyright="2015, Fatih Arslan"
+  License short_name=Expat
+  full_license~
+
+! Files:"vendor/github.com/gorilla/* vendor/github.com/gorilla/schema/*"
+  Copyright="2012, Rodrigo Moraes"
+  License short_name=BSD-3-clause
+
+! Files:"vendor/github.com/nxadm/*"
+  Copyright="2015, Hewlett Packard Enterprise Development LP
+2013, 2014, ActiveState"
+  License short_name=Expat
+
+! Files:"vendor/github.com/nxadm/tail/ratelimiter/*"
+  Copyright="2013, 99designs"
+  License short_name=Expat

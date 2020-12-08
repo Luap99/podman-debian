@@ -4,6 +4,17 @@ libpod (2.2.0~rc2+dfsg1-1) experimental; urgency=medium
 
  -- Reinhard Tartler <siretart@tauware.de>  Mon, 30 Nov 2020 07:44:57 -0500
 
+libpod (2.1.1+dfsg1-2) unstable; urgency=medium
+
+  [ Reinhard Tartler ]
+  * Install runc by default, Closes: #971253
+  * Builds against structured-merge-diff/v4, Closes: #976410
+
+  [ Antonio Terceiro ]
+  * Recommend catatonit before the other inits (Closes: #971815)
+
+ -- Reinhard Tartler <siretart@tauware.de>  Mon, 07 Dec 2020 06:56:09 -0500
+
 libpod (2.1.1+dfsg1-1) unstable; urgency=medium
 
   [ Reinhard Tartler ]
