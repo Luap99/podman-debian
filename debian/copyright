@@ -283,12 +283,6 @@ Files: vendor/go.etcd.io/*
 Copyright: 2013, Ben Johnson
 License: Expat
 
-Files: vendor/go.mozilla.org/*
-Copyright:
-    2016-2019 Red Hat, Inc.
- 2015, Andrew Smith
-License: Apache-2.0 or Expat
-
 Files: vendor/google.golang.org/*
 Copyright: 2018, The Go Authors.
 License: BSD-3-clause
