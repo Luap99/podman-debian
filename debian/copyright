@@ -272,7 +272,7 @@ License: Apache-2.0
 
 Files: vendor/github.com/varlink/*
 Copyright:
- 2018-2019 The varlink authors and/or their companies
+ 2018-2019 The varlink Authors
 License: Apache-2.0
 
 Files: vendor/github.com/willf/*
