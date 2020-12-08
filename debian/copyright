@@ -276,23 +276,8 @@ Copyright:
 License: Apache-2.0
 
 Files: vendor/github.com/willf/*
-Copyright:
-    2016-2019 Red Hat, Inc.
- 2014, Will Fitzgerald.
-License: Apache-2.0 or BSD-3-clause
-
-Files: vendor/github.com/willf/bitset/Makefile
-  vendor/github.com/willf/bitset/README.md
-  vendor/github.com/willf/bitset/bitset.go
-  vendor/github.com/willf/bitset/popcnt.go
-  vendor/github.com/willf/bitset/popcnt_19.go
-  vendor/github.com/willf/bitset/popcnt_amd64.go
-  vendor/github.com/willf/bitset/popcnt_generic.go
-  vendor/github.com/willf/bitset/trailing_zeros_18.go
-  vendor/github.com/willf/bitset/trailing_zeros_19.go
-Copyright:
-    2016-2019 Red Hat, Inc.
-License: Apache-2.0
+Copyright: 2014, Will Fitzgerald.
+License: BSD-3-clause
 
 Files: vendor/go.etcd.io/*
 Copyright:
