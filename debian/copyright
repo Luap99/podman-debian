@@ -280,46 +280,8 @@ Copyright: 2014, Will Fitzgerald.
 License: BSD-3-clause
 
 Files: vendor/go.etcd.io/*
-Copyright:
-    2016-2019 Red Hat, Inc.
- 2013, Ben Johnson
-License: Apache-2.0 or Expat
-
-Files: vendor/go.etcd.io/bbolt/Makefile
-  vendor/go.etcd.io/bbolt/README.md
-  vendor/go.etcd.io/bbolt/bolt_386.go
-  vendor/go.etcd.io/bbolt/bolt_amd64.go
-  vendor/go.etcd.io/bbolt/bolt_arm.go
-  vendor/go.etcd.io/bbolt/bolt_arm64.go
-  vendor/go.etcd.io/bbolt/bolt_linux.go
-  vendor/go.etcd.io/bbolt/bolt_mips64x.go
-  vendor/go.etcd.io/bbolt/bolt_mipsx.go
-  vendor/go.etcd.io/bbolt/bolt_openbsd.go
-  vendor/go.etcd.io/bbolt/bolt_ppc.go
-  vendor/go.etcd.io/bbolt/bolt_ppc64.go
-  vendor/go.etcd.io/bbolt/bolt_ppc64le.go
-  vendor/go.etcd.io/bbolt/bolt_riscv64.go
-  vendor/go.etcd.io/bbolt/bolt_s390x.go
-  vendor/go.etcd.io/bbolt/bolt_unix.go
-  vendor/go.etcd.io/bbolt/bolt_unix_aix.go
-  vendor/go.etcd.io/bbolt/bolt_unix_solaris.go
-  vendor/go.etcd.io/bbolt/bolt_windows.go
-  vendor/go.etcd.io/bbolt/boltsync_unix.go
-  vendor/go.etcd.io/bbolt/bucket.go
-  vendor/go.etcd.io/bbolt/cursor.go
-  vendor/go.etcd.io/bbolt/db.go
-  vendor/go.etcd.io/bbolt/doc.go
-  vendor/go.etcd.io/bbolt/errors.go
-  vendor/go.etcd.io/bbolt/freelist.go
-  vendor/go.etcd.io/bbolt/freelist_hmap.go
-  vendor/go.etcd.io/bbolt/go.mod
-  vendor/go.etcd.io/bbolt/node.go
-  vendor/go.etcd.io/bbolt/page.go
-  vendor/go.etcd.io/bbolt/tx.go
-  vendor/go.etcd.io/bbolt/unsafe.go
-Copyright:
-    2016-2019 Red Hat, Inc.
-License: Apache-2.0
+Copyright: 2013, Ben Johnson
+License: Expat
 
 Files: vendor/go.mozilla.org/*
 Copyright:
