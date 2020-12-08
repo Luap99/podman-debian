@@ -122,6 +122,7 @@ Recommends: ${misc:Recommends}
     ,slirp4netns (>= 0.4.1~)
     ,catatonit | tini | dumb-init
     ,uidmap
+    ,golang-github-containernetworking-plugin-dnsname
 Suggests: ${misc:Suggests}
     ,containers-storage
 Description: engine to run OCI-based containers in Pods
