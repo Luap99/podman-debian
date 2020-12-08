@@ -8,3 +8,6 @@ vendor/github.com/uber/jaeger-client-go/:
 
 vendor/github.com/uber/jaeger-lib/metrics/histogram.go:
   skip: 1
+
+vendor/google.golang.org/protobuf:
+  skip: 1

@@ -287,39 +287,6 @@ Files: vendor/google.golang.org/*
 Copyright: 2018, The Go Authors.
 License: BSD-3-clause
 
-Files: vendor/google.golang.org/protobuf/AUTHORS
-Copyright: purposes.
-License: Apache-2.0
-
-Files: vendor/google.golang.org/protobuf/CONTRIBUTORS
-Copyright:
-    2016-2019 Red Hat, Inc.
-License: Apache-2.0
-
-Files: vendor/google.golang.org/protobuf/PATENTS
-Copyright: able works distributed by
-License: Apache-2.0
-
-Files: vendor/google.golang.org/protobuf/encoding/*
-Copyright: 2009, 2018-2020, The Go Authors.
-License: Apache-2.0
-
-Files: vendor/google.golang.org/protobuf/internal/*
-Copyright: 2009, 2018-2020, The Go Authors.
-License: Apache-2.0
-
-Files: vendor/google.golang.org/protobuf/proto/*
-Copyright: 2009, 2018-2020, The Go Authors.
-License: Apache-2.0
-
-Files: vendor/google.golang.org/protobuf/reflect/*
-Copyright: 2009, 2018-2020, The Go Authors.
-License: Apache-2.0
-
-Files: vendor/google.golang.org/protobuf/runtime/*
-Copyright: 2009, 2018-2020, The Go Authors.
-License: Apache-2.0
-
 Files: vendor/google.golang.org/protobuf/types/*
 Copyright: 2008, Google Inc.
 License: BSD-3-clause
@@ -349,8 +316,7 @@ Copyright: The Kubernetes Authors.
 License: Apache-2.0
 
 Files: vendor/k8s.io/apimachinery/*
-Copyright:
-    2009 The Go Authors
+Copyright: 2009, The Go Authors.
 License: BSD-3-Clause~Google
 
 Files: vendor/k8s.io/apimachinery/pkg/*
@@ -417,10 +383,6 @@ License: Apache-2.0
 Files: vendor/k8s.io/apimachinery/pkg/watch/zz_generated.deepcopy.go
 Copyright: The Kubernetes Authors.
 License: Apache-2.0
-
-Files: vendor/k8s.io/apimachinery/third_party/forked/golang/reflect/*
-Copyright: 2009, 2018-2020, The Go Authors.
-License: BSD-3-Clause~Google
 
 Files: vendor/k8s.io/client-go/pkg/apis/clientauthentication/OWNERS
 Copyright:
