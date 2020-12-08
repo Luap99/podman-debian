@@ -219,23 +219,6 @@ License: Apache-2.0
 
 Files: vendor/github.com/gorilla/*
 Copyright: 2012, Rodrigo Moraes
- 2012, Rodrigo Moraes.
-License: BSD-3-clause
-
-Files: vendor/github.com/gorilla/* vendor/github.com/gorilla/schema/*
-Copyright: 2012, Rodrigo Moraes
-License: BSD-3-clause
-
-Files: vendor/github.com/gorilla/schema/README.md
-  vendor/github.com/gorilla/schema/encoder.go
-Copyright: 2012, Rodrigo Moraes
-License: BSD-3-clause
-
-Files: vendor/github.com/gorilla/schema/cache.go
-  vendor/github.com/gorilla/schema/converter.go
-  vendor/github.com/gorilla/schema/decoder.go
-  vendor/github.com/gorilla/schema/doc.go
-Copyright: 2012, The Gorilla Authors.
 License: BSD-3-clause
 
 Files: vendor/github.com/mattn/*
