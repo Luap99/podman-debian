@@ -11,3 +11,7 @@ vendor/github.com/uber/jaeger-lib/metrics/histogram.go:
 
 vendor/google.golang.org/protobuf:
   skip: 1
+
+vendor/github.com/gorilla/schema*:
+  'override-copyright': 2012, Rodrigo Moraes
+  license: BSD-3-clause
