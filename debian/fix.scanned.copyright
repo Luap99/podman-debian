@@ -6,7 +6,7 @@
   License short_name=Expat
   full_license~
 
-! Files:"vendor/github.com/gorilla/*"
+! Files:"vendor/github.com/gorilla/schema/*"
   Copyright="2012, Rodrigo Moraes"
   License short_name=BSD-3-clause
 
