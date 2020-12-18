@@ -1,4 +1,3 @@
 #build-go_generate.patch
 old-docker-api.patch
 test--skip-TestPostDeleteHooks.patch
-cobra-spf13-api.patch
