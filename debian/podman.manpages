@@ -1,3 +1,2 @@
 docs/build/man/*.1
-docs/build/man/*.5
 pkg/hooks/docs/*.5
