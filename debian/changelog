@@ -1,3 +1,16 @@
+libpod (2.1.1+dfsg1-3) unstable; urgency=medium
+
+  [ Dmitry Smirnov ]
+  * Tightened versioned dependency on "containernetworking-plugins".
+
+  [ Reinhard Tartler ]
+  * debian/copyright: various cleanups
+  * Fix handling of Ambient/Inheritable caps for non root user, Closes: #977717
+  * Rely on upstream's build scripts to install manpages
+  * Remove conflicting manpage container-mounts(5), Closes: #977502
+
+ -- Reinhard Tartler <siretart@tauware.de>  Tue, 22 Dec 2020 13:00:57 -0500
+
 libpod (2.1.1+dfsg1-2) unstable; urgency=medium
 
   [ Reinhard Tartler ]
