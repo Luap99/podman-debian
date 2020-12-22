@@ -108,7 +108,7 @@ Architecture: any
 Built-Using: ${misc:Built-Using}
 Depends: ${misc:Depends}, ${shlibs:Depends}
     ,conmon (>= 2.0.18~)
-    ,containernetworking-plugins
+    ,containernetworking-plugins (>= 0.8.7)
     ,golang-github-containers-common
     ,runc (>= 1.0.0~rc92~) | crun
 Breaks: buildah (<< 1.10.1-6), slirp4netns (<< 0.4.1), fuse-overlayfs (<< 0.7.1)
