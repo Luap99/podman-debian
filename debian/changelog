@@ -1,6 +1,10 @@
 libpod (2.2.1+dfsg1-1) experimental; urgency=medium
 
   * New upstream version
+  * drop cobra-spf13-api.patch, no longer needed
+  * Rely on upstream's build scripts to install manpages (Closes: #977502)
+  * Remove conflicting manpage container-mounts(5), Closes: #977502
+  * drop old-docker-api.patch, no longer needed
 
  -- Reinhard Tartler <siretart@tauware.de>  Fri, 18 Dec 2020 07:16:27 -0500
 
