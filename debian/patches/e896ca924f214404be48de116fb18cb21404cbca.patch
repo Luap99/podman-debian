@@ -1,0 +1,125 @@
+From e896ca924f214404be48de116fb18cb21404cbca Mon Sep 17 00:00:00 2001
+From: Daniel J Walsh <dwalsh@redhat.com>
+Date: Mon, 28 Sep 2020 15:55:06 -0400
+Subject: [PATCH] Ignore containers.conf sysctl when namespaces set to host
+
+If user sets namespace to host, then default sysctls need to be ignored
+that are specific to that namespace.
+
+--net=host ignore sysctls that begin with net.
+--ipc=host ignore fs.mqueue
+--uts=host ignore kernel.domainname and kernel.hostname
+
+Signed-off-by: Daniel J Walsh <dwalsh@redhat.com>
+(cherry picked from commit 0d70df119539d818224b0d014602aaad2bd1b95e)
+Signed-off-by: Lokesh Mandvekar <lsm5@fedoraproject.org>
+---
+ cmd/podman/common/create.go      |  2 +-
+ pkg/specgen/generate/security.go | 46 ++++++++++++++++++++++++++++++++
+ test/e2e/containers_conf_test.go |  6 +++++
+ test/e2e/run_test.go             |  5 ++++
+ 4 files changed, 58 insertions(+), 1 deletion(-)
+
+--- a/cmd/podman/common/create.go
++++ b/cmd/podman/common/create.go
+@@ -448,7 +448,7 @@
+ 
+ 	createFlags.StringSliceVar(
+ 		&cf.Sysctl,
+-		"sysctl", containerConfig.Sysctls(),
++		"sysctl", []string{},
+ 		"Sysctl options",
+ 	)
+ 	createFlags.StringVar(
+--- a/pkg/specgen/generate/security.go
++++ b/pkg/specgen/generate/security.go
+@@ -7,6 +7,7 @@
+ 	"github.com/containers/common/pkg/capabilities"
+ 	"github.com/containers/common/pkg/config"
+ 	"github.com/containers/podman/v2/libpod"
++	"github.com/containers/podman/v2/libpod/define"
+ 	"github.com/containers/podman/v2/libpod/image"
+ 	"github.com/containers/podman/v2/pkg/specgen"
+ 	"github.com/containers/podman/v2/pkg/util"
+@@ -170,7 +171,52 @@
+ 	}
+ 
+ 	g.SetRootReadonly(s.ReadOnlyFilesystem)
++
++	// Add default sysctls
++	defaultSysctls, err := util.ValidateSysctls(rtc.Sysctls())
++	if err != nil {
++		return err
++	}
++	for sysctlKey, sysctlVal := range defaultSysctls {
++
++		// Ignore mqueue sysctls if --ipc=host
++		if s.IpcNS.IsHost() && strings.HasPrefix(sysctlKey, "fs.mqueue.") {
++			logrus.Infof("Sysctl %s=%s ignored in containers.conf, since IPC Namespace set to host", sysctlKey, sysctlVal)
++
++			continue
++		}
++
++		// Ignore net sysctls if --net=host
++		if s.NetNS.IsHost() && strings.HasPrefix(sysctlKey, "net.") {
++			logrus.Infof("Sysctl %s=%s ignored in containers.conf, since Network Namespace set to host", sysctlKey, sysctlVal)
++			continue
++		}
++
++		// Ignore uts sysctls if --uts=host
++		if s.UtsNS.IsHost() && (strings.HasPrefix(sysctlKey, "kernel.domainname") || strings.HasPrefix(sysctlKey, "kernel.hostname")) {
++			logrus.Infof("Sysctl %s=%s ignored in containers.conf, since UTS Namespace set to host", sysctlKey, sysctlVal)
++			continue
++		}
++
++		g.AddLinuxSysctl(sysctlKey, sysctlVal)
++	}
++
+ 	for sysctlKey, sysctlVal := range s.Sysctl {
++
++		if s.IpcNS.IsHost() && strings.HasPrefix(sysctlKey, "fs.mqueue.") {
++			return errors.Wrapf(define.ErrInvalidArg, "sysctl %s=%s can't be set since IPC Namespace set to host", sysctlKey, sysctlVal)
++		}
++
++		// Ignore net sysctls if --net=host
++		if s.NetNS.IsHost() && strings.HasPrefix(sysctlKey, "net.") {
++			return errors.Wrapf(define.ErrInvalidArg, "sysctl %s=%s can't be set since Host Namespace set to host", sysctlKey, sysctlVal)
++		}
++
++		// Ignore uts sysctls if --uts=host
++		if s.UtsNS.IsHost() && (strings.HasPrefix(sysctlKey, "kernel.domainname") || strings.HasPrefix(sysctlKey, "kernel.hostname")) {
++			return errors.Wrapf(define.ErrInvalidArg, "sysctl %s=%s can't be set since UTS Namespace set to host", sysctlKey, sysctlVal)
++		}
++
+ 		g.AddLinuxSysctl(sysctlKey, sysctlVal)
+ 	}
+ 
+--- a/test/e2e/containers_conf_test.go
++++ b/test/e2e/containers_conf_test.go
+@@ -182,6 +182,12 @@
+ 		session.WaitWithDefaultTimeout()
+ 		Expect(session.ExitCode()).To(Equal(0))
+ 		Expect(session.OutputToString()).To(ContainSubstring("1000"))
++
++		// Ignore containers.conf setting if --net=host
++		session = podmanTest.Podman([]string{"run", "--rm", "--net", "host", fedoraMinimal, "cat", "/proc/sys/net/ipv4/ping_group_range"})
++		session.WaitWithDefaultTimeout()
++		Expect(session.ExitCode()).To(Equal(0))
++		Expect(session.OutputToString()).ToNot((ContainSubstring("1000")))
+ 	})
+ 
+ 	It("podman run containers.conf search domain", func() {
+--- a/test/e2e/run_test.go
++++ b/test/e2e/run_test.go
+@@ -375,6 +375,11 @@
+ 		session.WaitWithDefaultTimeout()
+ 		Expect(session.ExitCode()).To(Equal(0))
+ 		Expect(session.OutputToString()).To(ContainSubstring("net.core.somaxconn = 65535"))
++
++		// network sysctls should fail if --net=host is set
++		session = podmanTest.Podman([]string{"run", "--net", "host", "--rm", "--sysctl", "net.core.somaxconn=65535", ALPINE, "sysctl", "net.core.somaxconn"})
++		session.WaitWithDefaultTimeout()
++		Expect(session.ExitCode()).To(Equal(125))
+ 	})
+ 
+ 	It("podman run blkio-weight test", func() {
