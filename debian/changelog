@@ -1,6 +1,8 @@
 libpod (3.0.0~rc1+dfsg1-1) experimental; urgency=medium
 
   * New upstream version
+  * Drop varlink references, dropped upstream
+  * Remove confusing line (Closes: #980480)
 
  -- Reinhard Tartler <siretart@tauware.de>  Sun, 24 Jan 2021 11:16:44 -0500
 
