@@ -1,4 +1,3 @@
-#build-go_generate.patch
 test--skip-TestPostDeleteHooks.patch
 rm-containers-mounts-5.patch
 inspect-volume-data.patch

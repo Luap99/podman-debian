@@ -55,7 +55,6 @@ Build-Depends: debhelper-compat (= 12)
     ,golang-github-stretchr-testify-dev
     ,golang-github-uber-go-atomic-dev
     ,golang-github-ulikunitz-xz-dev
-    ,golang-github-varlink-go-dev
     ,golang-github-vbatts-tar-split-dev
     ,golang-github-vishvananda-netlink-dev (>= 1.0.0+git20181030~)
     ,golang-github-vividcortex-ewma-dev
@@ -80,7 +79,6 @@ Build-Depends: debhelper-compat (= 12)
     ,libdevmapper-dev
     ,libglib2.0-dev
     ,libostree-dev
-    ,varlink-go
 # sphinx docs:
 #   ,python3-recommonmark
 Homepage: https://github.com/containers/podman
@@ -175,7 +173,6 @@ Depends: ${misc:Depends},
     ,golang-github-stretchr-testify-dev
     ,golang-github-uber-go-atomic-dev
     ,golang-github-ulikunitz-xz-dev
-    ,golang-github-varlink-go-dev
     ,golang-github-vbatts-tar-split-dev
     ,golang-github-vishvananda-netlink-dev (>= 1.0.0+git20181030~)
     ,golang-github-vividcortex-ewma-dev
