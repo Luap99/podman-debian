@@ -214,6 +214,10 @@ Files: vendor/github.com/containers/ocicrypt/utils/*
 Copyright: The ocicrypt Authors.
 License: Apache-2.0
 
+Files: vendor/github.com/docker/go-plugins-helpers/NOTICE
+Copyright: 2012-2015, Docker, Inc.
+License: Expat
+
 Files: vendor/github.com/go-logr/logr/logr.go
 Copyright: 2019, The logr Authors.
 License: Apache-2.0
@@ -360,12 +364,8 @@ Files: vendor/k8s.io/apimachinery/pkg/runtime/schema/generated.pb.go
 Copyright: The Kubernetes Authors.
 License: Apache-2.0
 
-Files: vendor/k8s.io/apimachinery/pkg/util/intstr/*
+Files: vendor/k8s.io/apimachinery/pkg/util/intstr/generated.pb.go
 Copyright: The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/apimachinery/pkg/util/intstr/intstr.go
-Copyright: 2014-2019, The Kubernetes Authors.
 License: Apache-2.0
 
 Files: vendor/k8s.io/apimachinery/pkg/util/sets/*
