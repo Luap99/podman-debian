@@ -64,6 +64,7 @@ Build-Depends: debhelper-compat (= 12)
     ,golang-golang-x-crypto-dev
     ,golang-golang-x-sys-dev
     ,golang-golang-x-text-dev
+    ,golang-golang-x-tools
     ,golang-golang-x-xerrors-dev
     ,golang-gomega-dev
     ,golang-google-genproto-dev
