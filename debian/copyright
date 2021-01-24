@@ -171,7 +171,7 @@ Copyright: The containerd Authors.
 License: Apache-2.0
 
 Files: pkg/kubeutils/*
-Copyright: 2014-2019, The Kubernetes Authors.
+Copyright: 2014-2020, The Kubernetes Authors.
 License: Apache-2.0
 
 Files: pkg/netns/*
@@ -179,6 +179,7 @@ Copyright: 2018, CNI authors
 License: Apache-2.0
 
 Files: pkg/signal/signal_linux.go
+  pkg/signal/signal_linux_mipsx.go
 Copyright: 2013-2018, Docker, Inc.
 License: Apache-2.0
 
@@ -266,11 +267,6 @@ Files: vendor/github.com/uber/*
 Copyright: 2017, 2018, Uber Technologies, Inc.
 License: Apache-2.0
 
-Files: vendor/github.com/varlink/*
-Copyright:
- 2018-2019 The varlink Authors
-License: Apache-2.0
-
 Files: vendor/github.com/willf/*
 Copyright: 2014, Will Fitzgerald.
 License: BSD-3-clause
@@ -288,7 +284,7 @@ Copyright: 2008, Google Inc.
 License: BSD-3-clause
 
 Files: vendor/k8s.io/*
-Copyright: 2014-2019, The Kubernetes Authors.
+Copyright: 2014-2020, The Kubernetes Authors.
 License: Apache-2.0
 
 Files: vendor/k8s.io/api/*
@@ -298,11 +294,11 @@ License: Apache-2.0
 Files: vendor/k8s.io/api/apps/v1/doc.go
   vendor/k8s.io/api/apps/v1/register.go
   vendor/k8s.io/api/apps/v1/types.go
-Copyright: 2014-2019, The Kubernetes Authors.
+Copyright: 2014-2020, The Kubernetes Authors.
 License: Apache-2.0
 
 Files: vendor/k8s.io/api/core/*
-Copyright: 2014-2019, The Kubernetes Authors.
+Copyright: 2014-2020, The Kubernetes Authors.
 License: Apache-2.0
 
 Files: vendor/k8s.io/api/core/v1/generated.pb.go
@@ -316,7 +312,7 @@ Copyright: 2009, The Go Authors.
 License: BSD-3-Clause~Google
 
 Files: vendor/k8s.io/apimachinery/pkg/*
-Copyright: 2014-2019, The Kubernetes Authors.
+Copyright: 2014-2020, The Kubernetes Authors.
 License: Apache-2.0
 
 Files: vendor/k8s.io/apimachinery/pkg/api/errors/OWNERS
@@ -392,7 +388,7 @@ License: Apache-2.0
 Files: vendor/k8s.io/client-go/pkg/apis/clientauthentication/v1alpha1/doc.go
   vendor/k8s.io/client-go/pkg/apis/clientauthentication/v1alpha1/register.go
   vendor/k8s.io/client-go/pkg/apis/clientauthentication/v1alpha1/types.go
-Copyright: 2014-2019, The Kubernetes Authors.
+Copyright: 2014-2020, The Kubernetes Authors.
 License: Apache-2.0
 
 Files: vendor/k8s.io/client-go/pkg/apis/clientauthentication/v1beta1/zz_generated.conversion.go
@@ -424,7 +420,7 @@ Copyright:
 License: Apache-2.0
 
 Files: vendor/k8s.io/client-go/tools/metrics/metrics.go
-Copyright: 2014-2019, The Kubernetes Authors.
+Copyright: 2014-2020, The Kubernetes Authors.
 License: Apache-2.0
 
 Files: vendor/k8s.io/client-go/transport/OWNERS
@@ -443,7 +439,7 @@ Copyright:
 License: Apache-2.0
 
 Files: vendor/k8s.io/client-go/util/keyutil/key.go
-Copyright: 2014-2019, The Kubernetes Authors.
+Copyright: 2014-2020, The Kubernetes Authors.
 License: Apache-2.0
 
 Files: vendor/k8s.io/klog/*
