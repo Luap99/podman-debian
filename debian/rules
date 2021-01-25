@@ -61,4 +61,4 @@ override_dh_auto_install:
 
 override_dh_installsystemd:
 	dh_installsystemd
-	dh_installsystemd --name=io.podman
+	dh_installsystemd --name=podman-auto-update
