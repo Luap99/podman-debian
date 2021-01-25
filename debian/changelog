@@ -1,3 +1,9 @@
+libpod (2.1.1+dfsg1-5) unstable; urgency=medium
+
+  * Install auto-update systemd units
+
+ -- Reinhard Tartler <siretart@tauware.de>  Mon, 25 Jan 2021 07:49:44 -0500
+
 libpod (2.1.1+dfsg1-4) unstable; urgency=medium
 
   * Ignore containers.conf sysctl when namespaces set to host
