@@ -1,8 +1,15 @@
-libpod (3.0.0~rc1+dfsg1-2) UNRELEASED; urgency=medium
+libpod (3.0.0~rc2+dfsg1-1) experimental; urgency=medium
 
+  * New upstream release
   * Install auto-update systemd units
+  * debian/copyright: more updates
+  * Install auto-update systemd units
+  * systemd: Don't enable podman-auto-update.service in default.target
+    (Closes: #981097)
+  * Pass buildtags also go test invocation to unbreak autopkgtests when
+    run as root
 
- -- Reinhard Tartler <siretart@tauware.de>  Mon, 25 Jan 2021 07:11:52 -0500
+ -- Reinhard Tartler <siretart@tauware.de>  Sat, 30 Jan 2021 22:17:33 -0500
 
 libpod (3.0.0~rc1+dfsg1-1) experimental; urgency=medium
 
