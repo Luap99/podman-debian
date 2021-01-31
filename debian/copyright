@@ -117,14 +117,7 @@ Files-Excluded:
     vendor/go.mozilla.org/pkcs7
     vendor/go.opencensus.io
     vendor/go.uber.org/atomic
-    vendor/golang.org/x/crypto
-    vendor/golang.org/x/net
-    vendor/golang.org/x/oauth2
-    vendor/golang.org/x/sync
-    vendor/golang.org/x/sys
-    vendor/golang.org/x/text
-    vendor/golang.org/x/time
-    vendor/golang.org/x/xerrors
+    vendor/golang.org
     vendor/google.golang.org/appengine
     vendor/google.golang.org/genproto
     vendor/google.golang.org/grpc
