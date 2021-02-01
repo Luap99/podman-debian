@@ -1,3 +1,10 @@
+libpod (2.1.1+dfsg1-7) unstable; urgency=medium
+
+  * Pass buildtags also go test invocation to unbreak autopkgtests
+    on machines that run as real root.
+
+ -- Reinhard Tartler <siretart@tauware.de>  Mon, 01 Feb 2021 06:43:56 -0500
+
 libpod (2.1.1+dfsg1-6) unstable; urgency=medium
 
   * debian/rules: Remove confusing line (Closes: #980480)
