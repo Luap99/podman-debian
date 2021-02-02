@@ -1,7 +1,4 @@
-#build-go_generate.patch
-old-docker-api.patch
 test--skip-TestPostDeleteHooks.patch
-7802.patch
 rm-containers-mounts-5.patch
-e896ca924f214404be48de116fb18cb21404cbca.patch
+inspect-volume-data.patch
 systemd-tweaks.patch

@@ -1,3 +1,51 @@
+libpod (3.0.0~rc2+dfsg1-2) unstable; urgency=medium
+
+  * Upload to unstable
+
+ -- Reinhard Tartler <siretart@tauware.de>  Tue, 02 Feb 2021 17:21:00 -0500
+
+libpod (3.0.0~rc2+dfsg1-1) experimental; urgency=medium
+
+  * New upstream release
+  * Install auto-update systemd units
+  * debian/copyright: more updates
+  * Install auto-update systemd units
+  * systemd: Don't enable podman-auto-update.service in default.target
+    (Closes: #981097)
+  * Pass buildtags also go test invocation to unbreak autopkgtests when
+    run as root
+
+ -- Reinhard Tartler <siretart@tauware.de>  Sat, 30 Jan 2021 22:17:33 -0500
+
+libpod (3.0.0~rc1+dfsg1-1) experimental; urgency=medium
+
+  * New upstream version
+  * Drop varlink references, dropped upstream
+  * Remove confusing line (Closes: #980480)
+
+ -- Reinhard Tartler <siretart@tauware.de>  Sun, 24 Jan 2021 11:16:44 -0500
+
+libpod (2.2.1+dfsg1-1) experimental; urgency=medium
+
+  * New upstream version
+  * drop cobra-spf13-api.patch, no longer needed
+  * Rely on upstream's build scripts to install manpages (Closes: #977502)
+  * Remove conflicting manpage container-mounts(5), Closes: #977502
+  * drop old-docker-api.patch, no longer needed
+
+ -- Reinhard Tartler <siretart@tauware.de>  Fri, 18 Dec 2020 07:16:27 -0500
+
+libpod (2.2.0+dfsg1-1) experimental; urgency=medium
+
+  * debian/changelog: Bump to libpod 2.2.0
+  * Refresh distro patches
+  * debian/control: Tighten build-dependency on buildah
+  * add cobra-spf13-api.patch
+  * debian/copyright: manual updates
+  * podman: Add depends on golang-github-containernetworking-plugin-dnsname
+
+ -- Reinhard Tartler <siretart@tauware.de>  Tue, 08 Dec 2020 15:45:22 -0500
+
 libpod (2.1.1+dfsg1-7) unstable; urgency=medium
 
   * Pass buildtags also go test invocation to unbreak autopkgtests

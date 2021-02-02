@@ -1,0 +1,22 @@
+From: Reinhard Tartler <siretart@tauware.de>
+Subject: Fix FTBFS in pkg/api/handlers/swagger/swagger.go
+
+--- a/pkg/api/handlers/swagger/swagger.go
++++ b/pkg/api/handlers/swagger/swagger.go
+@@ -1,7 +1,6 @@
+ package swagger
+ 
+ import (
+-	"github.com/containers/podman/v2/libpod"
+ 	"github.com/containers/podman/v2/libpod/define"
+ 	"github.com/containers/podman/v2/libpod/image"
+ 	"github.com/containers/podman/v2/pkg/api/handlers"
+@@ -166,7 +165,7 @@
+ type swagInspectVolumeResponse struct {
+ 	// in:body
+ 	Body struct {
+-		libpod.InspectVolumeData
++		define.InspectVolumeData
+ 	}
+ }
+ 

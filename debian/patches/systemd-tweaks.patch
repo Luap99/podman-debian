@@ -5,7 +5,7 @@ Bugs-Debian: https://bugs.debian.org/981097
 
 --- a/contrib/systemd/auto-update/podman-auto-update.service
 +++ b/contrib/systemd/auto-update/podman-auto-update.service
-@@ -8,4 +8,4 @@
+@@ -9,4 +9,4 @@
  ExecStart=/usr/bin/podman auto-update
  
  [Install]
