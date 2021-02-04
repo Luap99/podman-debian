@@ -1,0 +1,31 @@
+#!/bin/sh
+
+set -e
+
+# summary of how this script can be called:
+#        * <postinst> `configure' <most-recently-configured-version>
+#        * <old-postinst> `abort-upgrade' <new version>
+#        * <conflictor's-postinst> `abort-remove' `in-favour' <package>
+#          <new-version>
+#        * <postinst> `abort-remove'
+#        * <deconfigured's-postinst> `abort-deconfigure' `in-favour'
+#          <failed-install-package> <version> `removing'
+#          <conflicting-package> <version>
+# for details, see https://www.debian.org/doc/debian-policy/ or
+# the debian-policy package
+
+case "$1" in
+    configure)
+        # Podman 3.0 dropped the varlink interface, so we need to cleanup
+        # the related systemd service, cf. #981708
+        if dpkg --compare-versions "$2" le-nl '3.0.0~rc2+dfsg1-3'; then
+            deb-systemd-helper purge  io.podman.service io.podman.socket >/dev/null || true
+            deb-systemd-helper unmask io.podman.service io.podman.socket >/dev/null || true
+        fi
+    ;;
+
+    *)
+    ;;
+esac
+
+#DEBHELPER#
