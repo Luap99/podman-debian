@@ -1,3 +1,12 @@
+libpod (3.0.0~rc3+dfsg1-1) experimental; urgency=medium
+
+  * New upstream release
+  * Cleanup varlink service, closes: #981708
+  * Tighten dependency on buildah to pickup fix for caching bug,
+    closes: #982467
+
+ -- Reinhard Tartler <siretart@tauware.de>  Wed, 10 Feb 2021 06:54:28 -0500
+
 libpod (3.0.0~rc2+dfsg1-2) unstable; urgency=medium
 
   * Upload to unstable
