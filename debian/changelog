@@ -1,6 +1,9 @@
 libpod (3.0.1+dfsg1-1) unstable; urgency=medium
 
   * New upstream release
+  * debian/control: tighten dependencies
+  * drop inspect-volume-data.patch, merged upstream
+  * Use packaged version of ocicrypt
 
  -- Reinhard Tartler <siretart@tauware.de>  Wed, 24 Feb 2021 06:46:17 -0500
 
