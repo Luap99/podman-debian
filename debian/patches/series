@@ -1,4 +1,3 @@
 test--skip-TestPostDeleteHooks.patch
 rm-containers-mounts-5.patch
-inspect-volume-data.patch
 systemd-tweaks.patch
