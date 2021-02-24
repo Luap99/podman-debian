@@ -33,6 +33,7 @@ Files-Excluded:
     vendor/github.com/containers/libtrust
     vendor/github.com/containers/psgo
     vendor/github.com/containers/storage
+    vendor/github.com/containers/ocicrypt
     vendor/github.com/coreos/go-iptables
     vendor/github.com/coreos/go-systemd
     vendor/github.com/cyphar/filepath-securejoin
@@ -179,33 +180,6 @@ License: Apache-2.0
 Files: pkg/util/camelcase/*
 Copyright: 2015, Fatih Arslan
 License: Expat
-
-Files: vendor/github.com/containers/ocicrypt/Makefile
-Copyright: The containerd Authors.
-License: Apache-2.0
-
-Files: vendor/github.com/containers/ocicrypt/blockcipher/*
-Copyright: The ocicrypt Authors.
-License: Apache-2.0
-
-Files: vendor/github.com/containers/ocicrypt/config/*
-Copyright: The ocicrypt Authors.
-License: Apache-2.0
-
-Files: vendor/github.com/containers/ocicrypt/encryption.go
-  vendor/github.com/containers/ocicrypt/gpg.go
-  vendor/github.com/containers/ocicrypt/gpgvault.go
-  vendor/github.com/containers/ocicrypt/reader.go
-Copyright: The ocicrypt Authors.
-License: Apache-2.0
-
-Files: vendor/github.com/containers/ocicrypt/keywrap/*
-Copyright: The ocicrypt Authors.
-License: Apache-2.0
-
-Files: vendor/github.com/containers/ocicrypt/utils/*
-Copyright: The ocicrypt Authors.
-License: Apache-2.0
 
 Files: vendor/github.com/docker/go-plugins-helpers/NOTICE
 Copyright: 2012-2015, Docker, Inc.
