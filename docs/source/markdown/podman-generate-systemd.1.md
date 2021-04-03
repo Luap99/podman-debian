@@ -1,7 +1,7 @@
 % podman-generate-systemd(1)
 
 ## NAME
-podman\-generate\-systemd - Generate systemd unit file(s) for a container or pod. Not supported for the remote client
+podman\-generate\-systemd - Generate systemd unit file(s) for a container or pod
 
 ## SYNOPSIS
 **podman generate systemd** [*options*] *container|pod*
@@ -14,42 +14,46 @@ _Note: If you use this command with the remote client, you would still have to p
 
 ## OPTIONS
 
-#### **--files**, **-f**
+#### **\-\-files**, **-f**
 
 Generate files instead of printing to stdout.  The generated files are named {container,pod}-{ID,name}.service and will be placed in the current working directory.
 
 Note: On a system with SELinux enabled, the generated files will inherit contexts from the current working directory. Depending on the SELinux setup, changes to the generated files using `restorecon`, `chcon`, or `semanage` may be required to allow systemd to access these files. Alternatively, use the `-Z` option when running `mv` or `cp`.
 
-#### **--format**=*format*
+#### **\-\-format**=*format*
 
 Print the created units in specified format (json). If `--files` is specified the paths to the created files will be printed instead of the unit content.
 
-#### **--name**, **-n**
+#### **\-\-name**, **-n**
 
 Use the name of the container for the start, stop, and description in the unit file
 
-#### **--new**
+#### **\-\-new**
 
 Using this flag will yield unit files that do not expect containers and pods to exist.  Instead, new containers and pods are created based on their configuration files.  The unit files are created best effort and may need to be further edited; please review the generated files carefully before using them in production.
 
-#### **--time**, **-t**=*value*
+#### **\-\-no-header**
+
+Do not generate the header including meta data such as the Podman version and the timestamp.
+
+#### **\-\-time**, **-t**=*value*
 
 Override the default stop timeout for the container with the given value.
 
-#### **--restart-policy**=*policy*
+#### **\-\-restart-policy**=*policy*
 
 Set the systemd restart policy.  The restart-policy must be one of: "no", "on-success", "on-failure", "on-abnormal",
 "on-watchdog", "on-abort", or "always".  The default policy is *on-failure*.
 
-#### **--container-prefix**=*prefix*
+#### **\-\-container-prefix**=*prefix*
 
 Set the systemd unit name prefix for containers. The default is *container*.
 
-#### **--pod-prefix**=*prefix*
+#### **\-\-pod-prefix**=*prefix*
 
 Set the systemd unit name prefix for pods. The default is *pod*.
 
-#### **--separator**=*separator*
+#### **\-\-separator**=*separator*
 
 Set the systemd unit name separator between the name/id of a container/pod and the prefix. The default is *-*.
 
@@ -57,7 +61,7 @@ Set the systemd unit name separator between the name/id of a container/pod and t
 
 ### Generate and print a systemd unit file for a container
 
-Generate a systemd unit file for a container running nginx with an *always* restart policy and 1-second timeout to stdout.
+Generate a systemd unit file for a container running nginx with an *always* restart policy and 1-second timeout to stdout. Note that the **RequiresMountsFor** option in the **Unit** section ensures that the container storage for both the GraphRoot and the RunRoot are mounted prior to starting the service. For systems with container storage on disks like iSCSI or other remote block protocols, this ensures that Podman is not executed prior to any necessary storage operations coming online.
 
 ```
 $ podman create --name nginx nginx:latest
@@ -69,6 +73,9 @@ $ podman generate systemd --restart-policy=always -t 1 nginx
 [Unit]
 Description=Podman container-de1e3223b1b888bc02d0962dd6cb5855eb00734061013ffdd3479d225abacdc6.service
 Documentation=man:podman-generate-systemd(1)
+Wants=network.target
+After=network-online.target
+RequiresMountsFor=/var/lib/containers/storage /var/run/container/storage
 
 [Service]
 Restart=always
@@ -97,6 +104,7 @@ Description=Podman container-busy_moser.service
 Documentation=man:podman-generate-systemd(1)
 Wants=network.target
 After=network-online.target
+RequiresMountsFor=/var/lib/containers/storage /var/run/container/storage
 
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
@@ -136,6 +144,9 @@ Description=Podman pod-systemd-pod.service
 Documentation=man:podman-generate-systemd(1)
 Requires=container-amazing_chandrasekhar.service container-jolly_shtern.service
 Before=container-amazing_chandrasekhar.service container-jolly_shtern.service
+Wants=network.target
+After=network-online.target
+RequiresMountsFor=/var/lib/containers/storage /var/run/container/storage
 
 [Service]
 Restart=on-failure
@@ -188,6 +199,8 @@ $ loginctl enable-linger <username>
 Create and enable systemd unit files for a pod using the above examples as reference and use `systemctl` to perform operations.
 
 Since systemctl defaults to using the root user, all the changes using the systemctl can be seen by appending sudo to the podman cli commands. To perform `systemctl` actions as a non-root user use the `--user` flag when interacting with `systemctl`.
+
+Note: If the previously created containers or pods are using shared resources, such as ports, make sure to remove them before starting the generated systemd units.
 
 ```
 $ systemctl --user start pod-systemd-pod.service

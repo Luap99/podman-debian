@@ -26,6 +26,16 @@ verify_iid_and_name() {
     is "$new_img_name" "$1"   "Name & tag of restored image"
 }
 
+@test "podman load invalid file" {
+    # Regression test for #9672 to make sure invalid input yields errors.
+    invalid=$PODMAN_TMPDIR/invalid
+    echo "I am an invalid file and should cause a podman-load error" > $invalid
+    run_podman 125 load -i $invalid
+    # podman and podman-remote emit different messages; this is a common string
+    is "$output" ".*payload does not match any of the supported image formats .*" \
+       "load -i INVALID fails with expected diagnostic"
+}
+
 @test "podman save to pipe and load" {
     # Generate a random name and tag (must be lower-case)
     local random_name=x0$(random_string 12 | tr A-Z a-z)
@@ -125,6 +135,13 @@ verify_iid_and_name() {
     is "$output" \
        "Error: cannot read from terminal. Use command-line redirection" \
        "Diagnostic from 'podman load' without redirection or -i"
+}
+
+@test "podman load - redirect corrupt payload" {
+    run_podman 125 load <<< "Danger, Will Robinson!! This is a corrupt tarball!"
+    is "$output" \
+        ".*payload does not match any of the supported image formats .*" \
+        "Diagnostic from 'podman load' unknown/corrupt payload"
 }
 
 @test "podman load - multi-image archive" {

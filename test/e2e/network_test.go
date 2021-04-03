@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containers/podman/v2/pkg/rootless"
-	. "github.com/containers/podman/v2/test/utils"
+	"github.com/containers/podman/v3/pkg/rootless"
+	. "github.com/containers/podman/v3/test/utils"
 	"github.com/containers/storage/pkg/stringid"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -149,6 +149,13 @@ var _ = Describe("Podman network", func() {
 		session.WaitWithDefaultTimeout()
 		defer podmanTest.removeCNINetwork(net)
 		Expect(session.ExitCode()).To(BeZero())
+
+		// Tests Default Table Output
+		session = podmanTest.Podman([]string{"network", "ls", "--filter", "id=" + netID})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(BeZero())
+		expectedTable := "NETWORK ID NAME VERSION PLUGINS"
+		Expect(session.OutputToString()).To(ContainSubstring(expectedTable))
 
 		session = podmanTest.Podman([]string{"network", "ls", "--format", "{{.Name}} {{.ID}}", "--filter", "id=" + netID})
 		session.WaitWithDefaultTimeout()
@@ -345,6 +352,29 @@ var _ = Describe("Podman network", func() {
 		Expect(rmAll.ExitCode()).To(BeZero())
 	})
 
+	It("podman network remove after disconnect when container initially created with the network", func() {
+		SkipIfRootless("disconnect works only in non rootless container")
+
+		container := "test"
+		network := "foo"
+
+		session := podmanTest.Podman([]string{"network", "create", network})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+
+		session = podmanTest.Podman([]string{"run", "--name", container, "--network", network, "-d", ALPINE, "top"})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+
+		session = podmanTest.Podman([]string{"network", "disconnect", network, container})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+
+		session = podmanTest.Podman([]string{"network", "rm", network})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+	})
+
 	It("podman network remove bogus", func() {
 		session := podmanTest.Podman([]string{"network", "rm", "bogus"})
 		session.WaitWithDefaultTimeout()
@@ -500,7 +530,6 @@ var _ = Describe("Podman network", func() {
 		inspect := podmanTest.Podman([]string{"network", "inspect", net})
 		inspect.WaitWithDefaultTimeout()
 		Expect(inspect.ExitCode()).To(BeZero())
-		fmt.Println(inspect.OutputToString())
 
 		out, err := inspect.jq(".[0].plugins[0].master")
 		Expect(err).To(BeNil())
@@ -509,5 +538,136 @@ var _ = Describe("Podman network", func() {
 		nc = podmanTest.Podman([]string{"network", "rm", net})
 		nc.WaitWithDefaultTimeout()
 		Expect(nc.ExitCode()).To(Equal(0))
+	})
+
+	It("podman network exists", func() {
+		net := "net" + stringid.GenerateNonCryptoID()
+		session := podmanTest.Podman([]string{"network", "create", net})
+		session.WaitWithDefaultTimeout()
+		defer podmanTest.removeCNINetwork(net)
+		Expect(session.ExitCode()).To(BeZero())
+
+		session = podmanTest.Podman([]string{"network", "exists", net})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+
+		session = podmanTest.Podman([]string{"network", "exists", stringid.GenerateNonCryptoID()})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(1))
+	})
+
+	It("podman network create macvlan with network info and options", func() {
+		net := "macvlan" + stringid.GenerateNonCryptoID()
+		nc := podmanTest.Podman([]string{"network", "create", "-d", "macvlan", "-o", "parent=lo", "-o", "mtu=1500", "--gateway", "192.168.1.254", "--subnet", "192.168.1.0/24", net})
+		nc.WaitWithDefaultTimeout()
+		defer podmanTest.removeCNINetwork(net)
+		Expect(nc.ExitCode()).To(Equal(0))
+	})
+
+	It("podman network create/remove macvlan as driver (-d) no device name", func() {
+		net := "macvlan" + stringid.GenerateNonCryptoID()
+		nc := podmanTest.Podman([]string{"network", "create", "-d", "macvlan", net})
+		nc.WaitWithDefaultTimeout()
+		defer podmanTest.removeCNINetwork(net)
+		Expect(nc.ExitCode()).To(Equal(0))
+
+		inspect := podmanTest.Podman([]string{"network", "inspect", net})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect.ExitCode()).To(BeZero())
+
+		out, err := inspect.jq(".[0].plugins[0].master")
+		Expect(err).To(BeNil())
+		Expect(out).To(Equal("\"\""))
+
+		nc = podmanTest.Podman([]string{"network", "rm", net})
+		nc.WaitWithDefaultTimeout()
+		Expect(nc.ExitCode()).To(Equal(0))
+	})
+
+	It("podman network create/remove macvlan as driver (-d) with device name", func() {
+		net := "macvlan" + stringid.GenerateNonCryptoID()
+		nc := podmanTest.Podman([]string{"network", "create", "-d", "macvlan", "-o", "parent=lo", net})
+		nc.WaitWithDefaultTimeout()
+		defer podmanTest.removeCNINetwork(net)
+		Expect(nc.ExitCode()).To(Equal(0))
+
+		inspect := podmanTest.Podman([]string{"network", "inspect", net})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect.ExitCode()).To(BeZero())
+		fmt.Println(inspect.OutputToString())
+
+		out, err := inspect.jq(".[0].plugins[0].master")
+		Expect(err).To(BeNil())
+		Expect(out).To(Equal("\"lo\""))
+
+		inspect := podmanTest.Podman([]string{"network", "inspect", net})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect.ExitCode()).To(BeZero())
+
+		mtu, err := inspect.jq(".[0].plugins[0].mtu")
+		Expect(err).To(BeNil())
+		Expect(mtu).To(Equal("1500"))
+
+		gw, err := inspect.jq(".[0].plugins[0].ipam.ranges[0][0].gateway")
+		Expect(err).To(BeNil())
+		Expect(gw).To(Equal("\"192.168.1.254\""))
+
+		subnet, err := inspect.jq(".[0].plugins[0].ipam.ranges[0][0].subnet")
+		Expect(err).To(BeNil())
+		Expect(subnet).To(Equal("\"192.168.1.0/24\""))
+
+		nc = podmanTest.Podman([]string{"network", "rm", net})
+		nc.WaitWithDefaultTimeout()
+		Expect(nc.ExitCode()).To(Equal(0))
+	})
+
+	It("podman network prune", func() {
+		// Create two networks
+		// Check they are there
+		// Run a container on one of them
+		// Network Prune
+		// Check that one has been pruned, other remains
+		net := "macvlan" + stringid.GenerateNonCryptoID()
+		net1 := net + "1"
+		net2 := net + "2"
+		nc := podmanTest.Podman([]string{"network", "create", net1})
+		nc.WaitWithDefaultTimeout()
+		defer podmanTest.removeCNINetwork(net1)
+		Expect(nc.ExitCode()).To(Equal(0))
+
+		nc2 := podmanTest.Podman([]string{"network", "create", net2})
+		nc2.WaitWithDefaultTimeout()
+		defer podmanTest.removeCNINetwork(net2)
+		Expect(nc2.ExitCode()).To(Equal(0))
+
+		list := podmanTest.Podman([]string{"network", "ls", "--format", "{{.Name}}"})
+		list.WaitWithDefaultTimeout()
+		Expect(list.ExitCode()).To(BeZero())
+
+		Expect(StringInSlice(net1, list.OutputToStringArray())).To(BeTrue())
+		Expect(StringInSlice(net2, list.OutputToStringArray())).To(BeTrue())
+		if !isRootless() {
+			Expect(StringInSlice("podman", list.OutputToStringArray())).To(BeTrue())
+		}
+
+		session := podmanTest.Podman([]string{"run", "-dt", "--net", net2, ALPINE, "top"})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(BeZero())
+
+		prune := podmanTest.Podman([]string{"network", "prune", "-f"})
+		prune.WaitWithDefaultTimeout()
+		Expect(prune.ExitCode()).To(BeZero())
+
+		listAgain := podmanTest.Podman([]string{"network", "ls", "--format", "{{.Name}}"})
+		listAgain.WaitWithDefaultTimeout()
+		Expect(listAgain.ExitCode()).To(BeZero())
+
+		Expect(StringInSlice(net1, listAgain.OutputToStringArray())).To(BeFalse())
+		Expect(StringInSlice(net2, listAgain.OutputToStringArray())).To(BeTrue())
+		// Make sure default network 'podman' still exists
+		if !isRootless() {
+			Expect(StringInSlice("podman", list.OutputToStringArray())).To(BeTrue())
+		}
+
 	})
 })

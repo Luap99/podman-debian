@@ -3,7 +3,7 @@ package integration
 import (
 	"os"
 
-	. "github.com/containers/podman/v2/test/utils"
+	. "github.com/containers/podman/v3/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -90,6 +90,23 @@ var _ = Describe("Podman start", func() {
 		cid := session.OutputToString()
 		shortID := cid[0:10]
 		session = podmanTest.Podman([]string{"container", "start", shortID})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+		Expect(session.OutputToString()).To(Equal(shortID))
+	})
+
+	It("podman container start single container by short id", func() {
+		session := podmanTest.Podman([]string{"container", "create", ALPINE, "ls"})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+		cid := session.OutputToString()
+		shortID := cid[0:10]
+		session = podmanTest.Podman([]string{"container", "start", shortID})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+		Expect(session.OutputToString()).To(Equal(shortID))
+
+		session = podmanTest.Podman([]string{"stop", shortID})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
 		Expect(session.OutputToString()).To(Equal(shortID))

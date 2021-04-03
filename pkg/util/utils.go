@@ -16,13 +16,14 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v2/pkg/errorhandling"
-	"github.com/containers/podman/v2/pkg/namespaces"
-	"github.com/containers/podman/v2/pkg/rootless"
-	"github.com/containers/podman/v2/pkg/signal"
+	"github.com/containers/podman/v3/pkg/errorhandling"
+	"github.com/containers/podman/v3/pkg/namespaces"
+	"github.com/containers/podman/v3/pkg/rootless"
+	"github.com/containers/podman/v3/pkg/signal"
 	"github.com/containers/storage"
 	"github.com/containers/storage/pkg/idtools"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/crypto/ssh/terminal"
@@ -691,4 +692,17 @@ func CoresToPeriodAndQuota(cores float64) (uint64, int64) {
 // Quota are in microseconds.
 func PeriodAndQuotaToCores(period uint64, quota int64) float64 {
 	return float64(quota) / float64(period)
+}
+
+// IDtoolsToRuntimeSpec converts idtools ID mapping to the one of the runtime spec.
+func IDtoolsToRuntimeSpec(idMaps []idtools.IDMap) (convertedIDMap []specs.LinuxIDMapping) {
+	for _, idmap := range idMaps {
+		tempIDMap := specs.LinuxIDMapping{
+			ContainerID: uint32(idmap.ContainerID),
+			HostID:      uint32(idmap.HostID),
+			Size:        uint32(idmap.Size),
+		}
+		convertedIDMap = append(convertedIDMap, tempIDMap)
+	}
+	return convertedIDMap
 }

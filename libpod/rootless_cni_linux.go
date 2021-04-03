@@ -11,10 +11,10 @@ import (
 
 	cnitypes "github.com/containernetworking/cni/pkg/types/current"
 	"github.com/containernetworking/plugins/pkg/ns"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/libpod/image"
-	"github.com/containers/podman/v2/pkg/env"
-	"github.com/containers/podman/v2/pkg/util"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/libpod/image"
+	"github.com/containers/podman/v3/pkg/env"
+	"github.com/containers/podman/v3/pkg/util"
 	"github.com/containers/storage/pkg/lockfile"
 	"github.com/hashicorp/go-multierror"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
@@ -265,7 +265,7 @@ func startRootlessCNIInfraContainer(ctx context.Context, r *Runtime) (*Container
 	}
 	logrus.Debugf("rootless CNI: ensuring image %q to exist", imageName)
 	newImage, err := r.ImageRuntime().New(ctx, imageName, "", "", nil, nil,
-		image.SigningOptions{}, nil, util.PullImageMissing)
+		image.SigningOptions{}, nil, util.PullImageMissing, nil)
 	if err != nil {
 		return nil, err
 	}

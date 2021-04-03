@@ -3,7 +3,7 @@ package generate
 import (
 	"net/url"
 
-	"github.com/containers/podman/v2/pkg/bindings/util"
+	"github.com/containers/podman/v3/pkg/bindings/internal/util"
 )
 
 /*
@@ -50,6 +50,22 @@ func (o *SystemdOptions) GetNew() bool {
 		return new
 	}
 	return *o.New
+}
+
+// WithNoHeader
+func (o *SystemdOptions) WithNoHeader(value bool) *SystemdOptions {
+	v := &value
+	o.NoHeader = v
+	return o
+}
+
+// GetNoHeader
+func (o *SystemdOptions) GetNoHeader() bool {
+	var noHeader bool
+	if o.NoHeader == nil {
+		return noHeader
+	}
+	return *o.NoHeader
 }
 
 // WithRestartPolicy

@@ -17,6 +17,8 @@ PODMAN_TEST_IMAGE_FQN="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/$PODM
 
 IMAGE=$PODMAN_TEST_IMAGE_FQN
 
+REGISTRY_IMAGE="${PODMAN_TEST_IMAGE_REGISTRY}/${PODMAN_TEST_IMAGE_USER}/registry:2.7"
+
 # END   stuff you can but probably shouldn't customize
 ###############################################################################
 # BEGIN setup
@@ -84,7 +86,9 @@ function like() {
 
     if expr "$actual" : "$expect" &>/dev/null; then
         # On success, include expected value; this helps readers understand
-        _show_ok 1 "$testname ('$actual') ~ $expect"
+        # (but don't show enormous multi-line output like 'generate kube')
+        blurb=$(head -n1 <<<"$actual")
+        _show_ok 1 "$testname ('$blurb') ~ $expect"
         return
     fi
     _show_ok 0 "$testname" "~ $expect" "$actual"
@@ -152,19 +156,23 @@ function _bump() {
 #  jsonify  #  convert 'foo=bar,x=y' to json {"foo":"bar","x":"y"}
 #############
 function jsonify() {
-    # split by comma
-    local -a settings_in
-    read -ra settings_in <<<"$1"
-
     # convert each to double-quoted form
     local -a settings_out
-    for i in ${settings_in[*]}; do
-        settings_out+=$(sed -e 's/\(.*\)=\(.*\)/"\1":"\2"/' <<<$i)
+    for i in "$@"; do
+        # Each argument is of the form foo=bar. Separate into left and right.
+        local lhs
+        local rhs
+        IFS='=' read lhs rhs <<<"$i"
+
+        # If right-hand side already includes double quotes, do nothing
+        if [[ ! $rhs =~ \" ]]; then
+            rhs="\"${rhs}\""
+        fi
+        settings_out+=("\"${lhs}\":${rhs}")
     done
 
-    # ...and wrap inside braces.
-    # FIXME: handle commas
-    echo "{${settings_out[*]}}"
+    # ...and wrap inside braces, with comma separator if multiple fields
+    (IFS=','; echo "{${settings_out[*]}}")
 }
 
 #######
@@ -176,15 +184,30 @@ function t() {
     local curl_args
 
     local testname="$method $path"
-    # POST requests require an extra params arg
+    # POST requests may be followed by one or more key=value pairs.
+    # Slurp the command line until we see a 3-digit status code.
     if [[ $method = "POST" ]]; then
-        curl_args="-d $(jsonify $1)"
+        local -a post_args
+        for arg; do
+            case "$arg" in
+                *=*)              post_args+=("$arg"); shift ;;
+                [1-9][0-9][0-9])  break;;
+                *)                die "Internal error: invalid POST arg '$arg'" ;;
+            esac
+        done
+        curl_args="-d $(jsonify ${post_args[@]})"
         testname="$testname [$curl_args]"
-        shift
     fi
 
     # entrypoint path can include a descriptive comment; strip it off
     path=${path%% *}
+
+    # path may include JSONish params that curl will barf on; url-encode them
+    path="${path//'['/%5B}"
+    path="${path//']'/%5D}"
+    path="${path//'{'/%7B}"
+    path="${path//'}'/%7D}"
+    path="${path//':'/%3A}"
 
     # curl -X HEAD but without --head seems to wait for output anyway
     if [[ $method == "HEAD" ]]; then
@@ -231,14 +254,17 @@ function t() {
     if [[ $content_type =~ /octet ]]; then
         output="[$(file --brief $WORKDIR/curl.result.out)]"
         echo "$output" >>$LOG
-    else
+    elif [[ -e $WORKDIR/curl.result.out ]]; then
         output=$(< $WORKDIR/curl.result.out)
 
-        if [[ $content_type =~ application/json ]]; then
+        if [[ $content_type =~ application/json ]] && [[ $method != "HEAD" ]]; then
             jq . <<<"$output" >>$LOG
         else
             echo "$output" >>$LOG
         fi
+    else
+        output=
+        echo "[no output]" >>$LOG
     fi
 
     # Test return code
@@ -301,14 +327,126 @@ function start_service() {
         die "Cannot start service on non-localhost ($HOST)"
     fi
 
-    $PODMAN_BIN --root $WORKDIR system service --time 15 tcp:127.0.0.1:$PORT \
+    $PODMAN_BIN --root $WORKDIR/server_root system service \
+                --time 15 \
+                tcp:127.0.0.1:$PORT \
         &> $WORKDIR/server.log &
     service_pid=$!
 
+    wait_for_port $HOST $PORT
+}
+
+function stop_service() {
+    # Stop the server
+    if [[ -n $service_pid ]]; then
+        kill $service_pid
+        wait $service_pid
+    fi
+}
+
+####################
+#  start_registry  #  Run a local registry
+####################
+REGISTRY_PORT=
+REGISTRY_USERNAME=
+REGISTRY_PASSWORD=
+function start_registry() {
+    # We can be invoked multiple times, e.g. from different subtests, but
+    # let's assume that once started we only kill it at the end of tests.
+    if [[ -n "$REGISTRY_PORT" ]]; then
+        return
+    fi
+
+    REGISTRY_PORT=$(random_port)
+    REGISTRY_USERNAME=u$(random_string 7)
+    REGISTRY_PASSWORD=p$(random_string 7)
+
+    local REGDIR=$WORKDIR/registry
+    local AUTHDIR=$REGDIR/auth
+    mkdir -p $AUTHDIR
+
+    mkdir -p ${REGDIR}/{root,runroot}
+    local PODMAN_REGISTRY_ARGS="--root ${REGDIR}/root --runroot ${REGDIR}/runroot"
+
+    # Give it three tries, to compensate for network flakes
+    podman ${PODMAN_REGISTRY_ARGS} pull $REGISTRY_IMAGE ||
+        podman ${PODMAN_REGISTRY_ARGS} pull $REGISTRY_IMAGE ||
+        podman ${PODMAN_REGISTRY_ARGS} pull $REGISTRY_IMAGE
+
+    # Create a local cert and credentials
+    # FIXME: is there a hidden "--quiet" flag? This is too noisy.
+    openssl req -newkey rsa:4096 -nodes -sha256 \
+            -keyout $AUTHDIR/domain.key -x509 -days 2 \
+            -out $AUTHDIR/domain.crt \
+            -subj "/C=US/ST=Foo/L=Bar/O=Red Hat, Inc./CN=registry host certificate" \
+            -addext subjectAltName=DNS:localhost
+    htpasswd -Bbn ${REGISTRY_USERNAME} ${REGISTRY_PASSWORD} \
+             > $AUTHDIR/htpasswd
+
+    # Run the registry, and wait for it to come up
+    podman ${PODMAN_REGISTRY_ARGS} run -d \
+           -p ${REGISTRY_PORT}:5000 \
+           --name registry \
+           -v $AUTHDIR:/auth:Z \
+           -e "REGISTRY_AUTH=htpasswd" \
+           -e "REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm" \
+           -e REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd \
+           -e REGISTRY_HTTP_TLS_CERTIFICATE=/auth/domain.crt \
+           -e REGISTRY_HTTP_TLS_KEY=/auth/domain.key \
+           ${REGISTRY_IMAGE}
+
+    wait_for_port localhost $REGISTRY_PORT
+}
+
+function stop_registry() {
+    local REGDIR=${WORKDIR}/registry
+    if [[ -d $REGDIR ]]; then
+        local OPTS="--root ${REGDIR}/root --runroot ${REGDIR}/runroot"
+        podman $OPTS stop -f -t 0 -a
+
+        # rm/rmi are important when running rootless: without them we
+        # get EPERMS in tmpdir cleanup because files are owned by subuids.
+        podman $OPTS rm -f -a
+        podman $OPTS rmi -f -a
+    fi
+}
+
+#################
+#  random_port  #  Random open port; arg is range (min-max), default 5000-5999
+#################
+function random_port() {
+    local range=${1:-5000-5999}
+
+    local port
+    for port in $(shuf -i ${range}); do
+        if ! { exec 5<> /dev/tcp/127.0.0.1/$port; } &>/dev/null; then
+            echo $port
+            return
+        fi
+    done
+
+    die "Could not find open port in range $range"
+}
+
+###################
+#  random_string  #  Pseudorandom alphanumeric string of given length
+###################
+function random_string() {
+    local length=${1:-10}
+    head /dev/urandom | tr -dc a-zA-Z0-9 | head -c$length
+}
+
+###################
+#  wait_for_port  #  Returns once port is available on host
+###################
+function wait_for_port() {
+    local host=$1                      # Probably "localhost"
+    local port=$2                      # Numeric port
+    local timeout=${3:-5}              # Optional; default to 5 seconds
+
     # Wait
-    local _timeout=5
-    while [ $_timeout -gt 0 ]; do
-        { exec 3<> /dev/tcp/$HOST/$PORT; } &>/dev/null && return
+    while [ $timeout -gt 0 ]; do
+        { exec 3<> /dev/tcp/$host/$port; } &>/dev/null && return
         sleep 1
         _timeout=$(( $_timeout - 1 ))
     done
@@ -319,8 +457,8 @@ function start_service() {
 #  podman  #  Needed by some test scripts to invoke the actual podman binary
 ############
 function podman() {
-    echo "\$ $PODMAN_BIN $*"           >>$WORKDIR/output.log
-    $PODMAN_BIN --root $WORKDIR "$@"   >>$WORKDIR/output.log 2>&1
+    echo "\$ $PODMAN_BIN $*"                       >>$WORKDIR/output.log
+    $PODMAN_BIN --root $WORKDIR/server_root "$@"   >>$WORKDIR/output.log 2>&1
 }
 
 ####################
@@ -385,8 +523,13 @@ done
 # Clean up
 
 if [ -n "$service_pid" ]; then
-    kill $service_pid
-    wait $service_pid
+    # Remove any containers and images; this prevents the following warning:
+    #  'rm: cannot remove '/.../overlay': Device or resource busy
+    podman rm -a
+    podman rmi -af
+
+    stop_registry
+    stop_service
 fi
 
 test_count=$(<$testcounter_file)

@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/containers/podman/v2/test/utils"
+	. "github.com/containers/podman/v3/test/utils"
 	"github.com/containers/storage/pkg/stringid"
 	"github.com/docker/go-units"
 	. "github.com/onsi/ginkgo"
@@ -351,7 +351,7 @@ var _ = Describe("Podman ps", func() {
 	})
 
 	It("podman --format by size", func() {
-		session := podmanTest.Podman([]string{"create", "busybox", "ls"})
+		session := podmanTest.Podman([]string{"create", BB, "ls"})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
 
@@ -366,7 +366,7 @@ var _ = Describe("Podman ps", func() {
 	})
 
 	It("podman --sort by size", func() {
-		session := podmanTest.Podman([]string{"create", "busybox", "ls"})
+		session := podmanTest.Podman([]string{"create", BB, "ls"})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
 

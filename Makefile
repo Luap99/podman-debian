@@ -35,7 +35,11 @@ PKG_MANAGER ?= $(shell command -v dnf yum|head -n1)
 # ~/.local/bin is not in PATH on all systems
 PRE_COMMIT = $(shell command -v bin/venv/bin/pre-commit ~/.local/bin/pre-commit pre-commit | head -n1)
 
-SOURCES = $(shell find . -path './.*' -prune -o -name "*.go")
+# This isn't what we actually build; it's a superset, used for target
+# dependencies. Basically: all *.go files, except *_test.go, and except
+# anything in a dot subdirectory. If any of these files is newer than
+# our target (bin/podman{,-remote}), a rebuild is triggered.
+SOURCES = $(shell find . -path './.*' -prune -o \( -name '*.go' -a ! -name '*_test.go' \) -print)
 
 BUILDFLAGS := -mod=vendor $(BUILDFLAGS)
 
@@ -59,7 +63,7 @@ else
 	BUILD_INFO ?= $(shell date "+$(DATE_FMT)")
 	ISODATE ?= $(shell date --iso-8601)
 endif
-LIBPOD := ${PROJECT}/v2/libpod
+LIBPOD := ${PROJECT}/v3/libpod
 GCFLAGS ?= all=-trimpath=${PWD}
 ASMFLAGS ?= all=-trimpath=${PWD}
 LDFLAGS_PODMAN ?= \
@@ -195,7 +199,6 @@ test/goecho/goecho: .gopathok $(wildcard test/goecho/*.go)
 	$(GO) build $(BUILDFLAGS) -ldflags '$(LDFLAGS_PODMAN)' -o $@ ./test/goecho
 
 
-.PHONY: bin/podman
 bin/podman: .gopathok $(SOURCES) go.mod go.sum ## Build with podman
 # Make sure to warn in case we're building without the systemd buildtag.
 ifeq (,$(findstring systemd,$(BUILDTAGS)))
@@ -207,7 +210,6 @@ endif
 .PHONY: podman
 podman: bin/podman
 
-.PHONY: bin/podman-remote
 bin/podman-remote: .gopathok $(SOURCES) go.mod go.sum ## Build with podman on remote environment
 	$(GO) build $(BUILDFLAGS) -gcflags '$(GCFLAGS)' -asmflags '$(ASMFLAGS)' -ldflags '$(LDFLAGS_PODMAN)' -tags "${REMOTETAGS}" -o $@ ./cmd/podman
 
@@ -303,13 +305,17 @@ localunit: test/goecho/goecho
 .PHONY: test
 test: localunit localintegration remoteintegration localsystem remotesystem  ## Run unit, integration, and system tests.
 
+.PHONY: ginkgo-run
+ginkgo-run:
+	$(GOBIN)/ginkgo -v $(TESTFLAGS) -tags "$(TAGS)" $(GINKGOTIMEOUT) -cover -flakeAttempts 3 -progress -trace -noColor -nodes 3 -debug test/e2e/. $(HACK)
+
 .PHONY: ginkgo
 ginkgo:
-	$(GOBIN)/ginkgo -v $(TESTFLAGS) -tags "$(BUILDTAGS)" $(GINKGOTIMEOUT) -cover -flakeAttempts 3 -progress -trace -noColor -nodes 3 -debug test/e2e/. hack/.
+	$(MAKE) ginkgo-run TAGS="$(BUILDTAGS)" HACK=hack/.
 
 .PHONY: ginkgo-remote
 ginkgo-remote:
-	$(GOBIN)/ginkgo -v $(TESTFLAGS) -tags "$(REMOTETAGS)" $(GINKGOTIMEOUT) -cover -flakeAttempts 3 -progress -trace -noColor test/e2e/.
+	$(MAKE) ginkgo-run TAGS="$(REMOTETAGS)" HACK=
 
 .PHONY: localintegration
 localintegration: test-binaries ginkgo
@@ -384,9 +390,9 @@ MANPAGES ?= $(MANPAGES_MD:%.md=%)
 MANPAGES_DEST ?= $(subst markdown,man, $(subst source,build,$(MANPAGES)))
 
 $(MANPAGES): %: %.md .install.md2man docdir
-	@sed -e 's/\((podman.*\.md)\)//' -e 's/\[\(podman.*\)\]/\1/' $<  | $(GOMD2MAN) -in /dev/stdin -out $(subst source/markdown,build/man,$@)
+	@sed -e 's/\((podman.*\.md)\)//' -e 's/\[\(podman.*\)\]/\1/' -e 's;<\(/\)\?\(a[^>]*\|sup\)>;;g' $<  | $(GOMD2MAN) -in /dev/stdin -out $(subst source/markdown,build/man,$@)
 
-.PHONY: docs
+.PHONY: docdir
 docdir:
 	mkdir -p docs/build/man
 
@@ -400,13 +406,17 @@ install-podman-remote-%-docs: podman-remote docs $(MANPAGES)
 	docs/remote-docs.sh $* docs/build/remote/$* $(if $(findstring windows,$*),docs/source/markdown,docs/build/man)
 
 .PHONY: man-page-check
-man-page-check:
+man-page-check: bin/podman
 	hack/man-page-checker
 	hack/xref-helpmsgs-manpages
 
 .PHONY: swagger-check
 swagger-check:
 	hack/swagger-check
+
+.PHONY: tests-included
+tests-included:
+	contrib/cirrus/pr-should-include-tests
 
 .PHONY: codespell
 codespell:
@@ -533,14 +543,21 @@ install.cni:
 	install ${SELINUXOPT} -m 644 cni/87-podman-bridge.conflist ${DESTDIR}${ETCDIR}/cni/net.d/87-podman-bridge.conflist
 
 .PHONY: install.docker
-install.docker: docker-docs
-	install ${SELINUXOPT} -d -m 755 $(DESTDIR)$(BINDIR) $(DESTDIR)$(MANDIR)/man1
+install.docker:
 	install ${SELINUXOPT} -m 755 docker $(DESTDIR)$(BINDIR)/docker
-	install ${SELINUXOPT} -m 644 docs/build/man/docker*.1 -t $(DESTDIR)$(MANDIR)/man1
 	install ${SELINUXOPT} -m 755 -d ${DESTDIR}${SYSTEMDDIR}  ${DESTDIR}${USERSYSTEMDDIR} ${DESTDIR}${TMPFILESDIR}
 	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman-docker.conf -t ${DESTDIR}${TMPFILESDIR}
 
+.PHONY: install.docker-docs-nobuild
+install.docker-docs-nobuild:
+	install ${SELINUXOPT} -d -m 755 $(DESTDIR)$(BINDIR) $(DESTDIR)$(MANDIR)/man1
+	install ${SELINUXOPT} -m 644 docs/build/man/docker*.1 -t $(DESTDIR)$(MANDIR)/man1
+
+.PHONY: install.docker-docs
+install.docker-docs: docker-docs install.docker-docs-nobuild
+
 .PHONY: install.systemd
+ifneq (,$(findstring systemd,$(BUILDTAGS)))
 install.systemd:
 	install ${SELINUXOPT} -m 755 -d ${DESTDIR}${SYSTEMDDIR}  ${DESTDIR}${USERSYSTEMDDIR}
 	# User services
@@ -553,6 +570,9 @@ install.systemd:
 	install ${SELINUXOPT} -m 644 contrib/systemd/auto-update/podman-auto-update.timer ${DESTDIR}${SYSTEMDDIR}/podman-auto-update.timer
 	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman.socket ${DESTDIR}${SYSTEMDDIR}/podman.socket
 	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman.service ${DESTDIR}${SYSTEMDDIR}/podman.service
+else
+install.systemd:
+endif
 
 .PHONY: uninstall
 uninstall:
@@ -635,6 +655,18 @@ install.libseccomp.sudo:
 	cd ../../seccomp/libseccomp && git checkout --detach $(LIBSECCOMP_COMMIT) && ./autogen.sh && ./configure --prefix=/usr && make all && make install
 
 
+.PHONY: completions
+completions: podman podman-remote
+	# key = shell, value = completion filename
+	declare -A outfiles=([bash]=%s [zsh]=_%s [fish]=%s.fish);\
+	for shell in $${!outfiles[*]}; do \
+	    for remote in "" "-remote"; do \
+	        podman="podman$$remote"; \
+	        outfile=$$(printf "completions/$$shell/$${outfiles[$$shell]}" $$podman); \
+	        ./bin/$$podman completion $$shell >| $$outfile; \
+	    done;\
+	done
+
 .PHONY: validate.completions
 validate.completions: SHELL:=/usr/bin/env bash # Set shell to bash for this target
 validate.completions:
@@ -644,7 +676,7 @@ validate.completions:
 	if [ -x /bin/fish ]; then /bin/fish completions/fish/podman.fish; fi
 
 .PHONY: validate
-validate: gofmt lint .gitvalidation validate.completions man-page-check swagger-check
+validate: gofmt lint .gitvalidation validate.completions man-page-check swagger-check tests-included
 
 .PHONY: build-all-new-commits
 build-all-new-commits:

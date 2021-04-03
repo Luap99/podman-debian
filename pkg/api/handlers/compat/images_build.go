@@ -10,16 +10,20 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/containers/buildah"
+	"github.com/containers/buildah/define"
 	"github.com/containers/buildah/imagebuildah"
+	"github.com/containers/buildah/util"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v2/libpod"
-	"github.com/containers/podman/v2/pkg/api/handlers/utils"
-	"github.com/containers/podman/v2/pkg/auth"
-	"github.com/containers/podman/v2/pkg/channel"
+	"github.com/containers/podman/v3/libpod"
+	"github.com/containers/podman/v3/pkg/api/handlers/utils"
+	"github.com/containers/podman/v3/pkg/auth"
+	"github.com/containers/podman/v3/pkg/channel"
 	"github.com/containers/storage/pkg/archive"
 	"github.com/gorilla/schema"
+	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -65,7 +69,8 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		Annotations            string `schema:"annotations"`
 		BuildArgs              string `schema:"buildargs"`
 		CacheFrom              string `schema:"cachefrom"`
-		ConfigureNetwork       int64  `schema:"networkmode"`
+		Compression            uint64 `schema:"compression"`
+		ConfigureNetwork       string `schema:"networkmode"`
 		CpuPeriod              uint64 `schema:"cpuperiod"`  // nolint
 		CpuQuota               int64  `schema:"cpuquota"`   // nolint
 		CpuSetCpus             string `schema:"cpusetcpus"` // nolint
@@ -73,21 +78,28 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		Devices                string `schema:"devices"`
 		Dockerfile             string `schema:"dockerfile"`
 		DropCapabilities       string `schema:"dropcaps"`
+		DNSServers             string `schema:"dnsservers"`
+		DNSOptions             string `schema:"dnsoptions"`
+		DNSSearch              string `schema:"dnssearch"`
+		Excludes               string `schema:"excludes"`
 		ForceRm                bool   `schema:"forcerm"`
 		From                   string `schema:"from"`
 		HTTPProxy              bool   `schema:"httpproxy"`
-		Isolation              int64  `schema:"isolation"`
-		Jobs                   uint64 `schema:"jobs"` // nolint
+		Isolation              string `schema:"isolation"`
+		Ignore                 bool   `schema:"ignore"`
+		Jobs                   int    `schema:"jobs"` // nolint
 		Labels                 string `schema:"labels"`
 		Layers                 bool   `schema:"layers"`
 		LogRusage              bool   `schema:"rusage"`
 		Manifest               string `schema:"manifest"`
 		MemSwap                int64  `schema:"memswap"`
 		Memory                 int64  `schema:"memory"`
+		NamespaceOptions       string `schema:"nsoptions"`
 		NoCache                bool   `schema:"nocache"`
 		OutputFormat           string `schema:"outputformat"`
 		Platform               string `schema:"platform"`
 		Pull                   bool   `schema:"pull"`
+		PullPolicy             string `schema:"pullpolicy"`
 		Quiet                  bool   `schema:"q"`
 		Registry               string `schema:"registry"`
 		Rm                     bool   `schema:"rm"`
@@ -97,6 +109,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		Squash      bool     `schema:"squash"`
 		Tag         []string `schema:"t"`
 		Target      string   `schema:"target"`
+		Timestamp   int64    `schema:"timestamp"`
 	}{
 		Dockerfile: "Dockerfile",
 		Registry:   "docker.io",
@@ -129,6 +142,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	compression := archive.Compression(query.Compression)
 	// convert label formats
 	var dropCaps = []string{}
 	if _, found := r.URL.Query()["dropcaps"]; found {
@@ -151,13 +165,53 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		devices = m
 	}
 
+	var dnsservers = []string{}
+	if _, found := r.URL.Query()["dnsservers"]; found {
+		var m = []string{}
+		if err := json.Unmarshal([]byte(query.DNSServers), &m); err != nil {
+			utils.BadRequest(w, "dnsservers", query.DNSServers, err)
+			return
+		}
+		dnsservers = m
+	}
+
+	var dnsoptions = []string{}
+	if _, found := r.URL.Query()["dnsoptions"]; found {
+		var m = []string{}
+		if err := json.Unmarshal([]byte(query.DNSOptions), &m); err != nil {
+			utils.BadRequest(w, "dnsoptions", query.DNSOptions, err)
+			return
+		}
+		dnsoptions = m
+	}
+
+	var dnssearch = []string{}
+	if _, found := r.URL.Query()["dnssearch"]; found {
+		var m = []string{}
+		if err := json.Unmarshal([]byte(query.DNSSearch), &m); err != nil {
+			utils.BadRequest(w, "dnssearches", query.DNSSearch, err)
+			return
+		}
+		dnssearch = m
+	}
+
 	var output string
 	if len(query.Tag) > 0 {
 		output = query.Tag[0]
 	}
 	format := buildah.Dockerv2ImageManifest
+	registry := query.Registry
+	isolation := buildah.IsolationDefault
 	if utils.IsLibpodRequest(r) {
+		isolation = parseLibPodIsolation(query.Isolation)
+		registry = ""
 		format = query.OutputFormat
+	} else {
+		if _, found := r.URL.Query()["isolation"]; found {
+			if query.Isolation != "" && query.Isolation != "default" {
+				logrus.Debugf("invalid `isolation` parameter: %q", query.Isolation)
+			}
+		}
 	}
 	var additionalTags []string
 	if len(query.Tag) > 1 {
@@ -172,6 +226,14 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var excludes = []string{}
+	if _, found := r.URL.Query()["excludes"]; found {
+		if err := json.Unmarshal([]byte(query.Excludes), &excludes); err != nil {
+			utils.BadRequest(w, "excludes", query.Excludes, err)
+			return
+		}
+	}
+
 	// convert label formats
 	var annotations = []string{}
 	if _, found := r.URL.Query()["annotations"]; found {
@@ -182,18 +244,47 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// convert label formats
-	var labels = []string{}
-	if _, found := r.URL.Query()["labels"]; found {
-		if err := json.Unmarshal([]byte(query.Labels), &labels); err != nil {
-			utils.BadRequest(w, "labels", query.Labels, err)
+	nsoptions := buildah.NamespaceOptions{}
+	if _, found := r.URL.Query()["nsoptions"]; found {
+		if err := json.Unmarshal([]byte(query.NamespaceOptions), &nsoptions); err != nil {
+			utils.BadRequest(w, "nsoptions", query.NamespaceOptions, err)
 			return
 		}
+	} else {
+		nsoptions = append(nsoptions, buildah.NamespaceOption{
+			Name: string(specs.NetworkNamespace),
+			Host: true,
+		})
+	}
+	// convert label formats
+	var labels = []string{}
+	if _, found := r.URL.Query()["labels"]; found {
+		makeLabels := make(map[string]string)
+		err := json.Unmarshal([]byte(query.Labels), &makeLabels)
+		if err == nil {
+			for k, v := range makeLabels {
+				labels = append(labels, k+"="+v)
+			}
+		} else {
+			if err := json.Unmarshal([]byte(query.Labels), &labels); err != nil {
+				utils.BadRequest(w, "labels", query.Labels, err)
+				return
+			}
+		}
+	}
+	jobs := 1
+	if _, found := r.URL.Query()["jobs"]; found {
+		jobs = query.Jobs
 	}
 
-	pullPolicy := buildah.PullIfMissing
-	if _, found := r.URL.Query()["pull"]; found {
-		if query.Pull {
-			pullPolicy = buildah.PullAlways
+	pullPolicy := define.PullIfMissing
+	if utils.IsLibpodRequest(r) {
+		pullPolicy = define.PolicyMap[query.PullPolicy]
+	} else {
+		if _, found := r.URL.Query()["pull"]; found {
+			if query.Pull {
+				pullPolicy = define.PullAlways
+			}
 		}
 	}
 
@@ -218,6 +309,12 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	reporter := channel.NewWriter(make(chan []byte, 1))
 	defer reporter.Close()
 
+	runtime := r.Context().Value("runtime").(*libpod.Runtime)
+	rtc, err := runtime.GetConfig()
+	if err != nil {
+		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrap(err, "Decode()"))
+		return
+	}
 	buildOptions := imagebuildah.BuildOptions{
 		AddCapabilities: addCaps,
 		AdditionalTags:  additionalTags,
@@ -229,37 +326,44 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 			CPUQuota:   query.CpuQuota,
 			CPUShares:  query.CpuShares,
 			CPUSetCPUs: query.CpuSetCpus,
+			DNSServers: dnsservers,
+			DNSOptions: dnsoptions,
+			DNSSearch:  dnssearch,
 			HTTPProxy:  query.HTTPProxy,
 			Memory:     query.Memory,
 			MemorySwap: query.MemSwap,
 			ShmSize:    strconv.Itoa(query.ShmSize),
 		},
-		Compression:                    archive.Gzip,
-		ConfigureNetwork:               buildah.NetworkConfigurationPolicy(query.ConfigureNetwork),
+		CNIConfigDir:                   rtc.Network.CNIPluginDirs[0],
+		CNIPluginPath:                  util.DefaultCNIPluginPath,
+		Compression:                    compression,
+		ConfigureNetwork:               parseNetworkConfigurationPolicy(query.ConfigureNetwork),
 		ContextDirectory:               contextDirectory,
 		Devices:                        devices,
 		DropCapabilities:               dropCaps,
 		Err:                            auxout,
+		Excludes:                       excludes,
 		ForceRmIntermediateCtrs:        query.ForceRm,
 		From:                           query.From,
-		IgnoreUnrecognizedInstructions: true,
-		// FIXME, This is very broken.  Buildah will only work with chroot
-		//		Isolation:                      buildah.Isolation(query.Isolation),
-		Isolation: buildah.IsolationChroot,
-
-		Labels:                 labels,
-		Layers:                 query.Layers,
-		Manifest:               query.Manifest,
-		NoCache:                query.NoCache,
-		Out:                    stdout,
-		Output:                 output,
-		OutputFormat:           format,
-		PullPolicy:             pullPolicy,
-		Quiet:                  query.Quiet,
-		Registry:               query.Registry,
-		RemoveIntermediateCtrs: query.Rm,
-		ReportWriter:           reporter,
-		Squash:                 query.Squash,
+		IgnoreUnrecognizedInstructions: query.Ignore,
+		Isolation:                      isolation,
+		Jobs:                           &jobs,
+		Labels:                         labels,
+		Layers:                         query.Layers,
+		Manifest:                       query.Manifest,
+		MaxPullPushRetries:             3,
+		NamespaceOptions:               nsoptions,
+		NoCache:                        query.NoCache,
+		Out:                            stdout,
+		Output:                         output,
+		OutputFormat:                   format,
+		PullPolicy:                     pullPolicy,
+		PullPushRetryDelay:             time.Duration(2 * time.Second),
+		Quiet:                          query.Quiet,
+		Registry:                       registry,
+		RemoveIntermediateCtrs:         query.Rm,
+		ReportWriter:                   reporter,
+		Squash:                         query.Squash,
 		SystemContext: &types.SystemContext{
 			AuthFilePath:     authfile,
 			DockerAuthConfig: creds,
@@ -267,7 +371,11 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		Target: query.Target,
 	}
 
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
+	if _, found := r.URL.Query()["timestamp"]; found {
+		ts := time.Unix(query.Timestamp, 0)
+		buildOptions.Timestamp = &ts
+	}
+
 	runCtx, cancel := context.WithCancel(context.Background())
 	var imageID string
 	go func() {
@@ -345,10 +453,51 @@ loop:
 						logrus.Warnf("Failed to json encode error %v", err)
 					}
 					flush()
+					for _, tag := range query.Tag {
+						m.Stream = fmt.Sprintf("Successfully tagged %s\n", tag)
+						if err := enc.Encode(m); err != nil {
+							logrus.Warnf("Failed to json encode error %v", err)
+						}
+						flush()
+					}
 				}
 			}
 			break loop
 		}
+	}
+}
+
+func parseNetworkConfigurationPolicy(network string) buildah.NetworkConfigurationPolicy {
+	if val, err := strconv.Atoi(network); err == nil {
+		return buildah.NetworkConfigurationPolicy(val)
+	}
+	switch network {
+	case "NetworkDefault":
+		return buildah.NetworkDefault
+	case "NetworkDisabled":
+		return buildah.NetworkDisabled
+	case "NetworkEnabled":
+		return buildah.NetworkEnabled
+	default:
+		return buildah.NetworkDefault
+	}
+}
+
+func parseLibPodIsolation(isolation string) buildah.Isolation { // nolint
+	if val, err := strconv.Atoi(isolation); err == nil {
+		return buildah.Isolation(val)
+	}
+	switch isolation {
+	case "IsolationDefault", "default":
+		return buildah.IsolationDefault
+	case "IsolationOCI":
+		return buildah.IsolationOCI
+	case "IsolationChroot":
+		return buildah.IsolationChroot
+	case "IsolationOCIRootless":
+		return buildah.IsolationOCIRootless
+	default:
+		return buildah.IsolationDefault
 	}
 }
 

@@ -10,10 +10,11 @@ import (
 
 	"github.com/containernetworking/cni/pkg/types"
 	cnitypes "github.com/containernetworking/cni/pkg/types/current"
+	"github.com/containers/common/pkg/secrets"
 	"github.com/containers/image/v5/manifest"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/libpod/lock"
-	"github.com/containers/podman/v2/pkg/rootless"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/libpod/lock"
+	"github.com/containers/podman/v3/pkg/rootless"
 	"github.com/containers/storage"
 	"github.com/cri-o/ocicni/pkg/ocicni"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
@@ -82,24 +83,6 @@ func (ns LinuxNS) String() string {
 		return "unknown"
 	}
 }
-
-// Valid restart policy types.
-const (
-	// RestartPolicyNone indicates that no restart policy has been requested
-	// by a container.
-	RestartPolicyNone = ""
-	// RestartPolicyNo is identical in function to RestartPolicyNone.
-	RestartPolicyNo = "no"
-	// RestartPolicyAlways unconditionally restarts the container.
-	RestartPolicyAlways = "always"
-	// RestartPolicyOnFailure restarts the container on non-0 exit code,
-	// with an optional maximum number of retries.
-	RestartPolicyOnFailure = "on-failure"
-	// RestartPolicyUnlessStopped unconditionally restarts unless stopped
-	// by the user. It is identical to Always except with respect to
-	// handling of system restart, which Podman does not yet support.
-	RestartPolicyUnlessStopped = "unless-stopped"
-)
 
 // Container is a single OCI container.
 // All operations on a Container that access state must begin with a call to
@@ -235,6 +218,8 @@ type ContainerOverlayVolume struct {
 	Dest string `json:"dest"`
 	// Source specifies the source path of the mount.
 	Source string `json:"source,omitempty"`
+	// Options holds overlay volume options.
+	Options []string `json:"options,omitempty"`
 }
 
 // ContainerImageVolume is a volume based on a container image.  The container
@@ -901,6 +886,12 @@ func (c *Container) NamespacePath(linuxNS LinuxNS) (string, error) { //nolint:in
 		}
 	}
 
+	return c.namespacePath(linuxNS)
+}
+
+// namespacePath returns the path of one of the container's namespaces
+// If the container is not running, an error will be returned
+func (c *Container) namespacePath(linuxNS LinuxNS) (string, error) { //nolint:interfacer
 	if c.state.State != define.ContainerStateRunning && c.state.State != define.ContainerStatePaused {
 		return "", errors.Wrapf(define.ErrCtrStopped, "cannot get namespace path unless container %s is running", c.ID())
 	}
@@ -1130,6 +1121,11 @@ func (c *Container) Timezone() string {
 // Umask returns the Umask bits configured inside the container.
 func (c *Container) Umask() string {
 	return c.config.Umask
+}
+
+//Secrets return the secrets in the container
+func (c *Container) Secrets() []*secrets.Secret {
+	return c.config.Secrets
 }
 
 // Networks gets all the networks this container is connected to.

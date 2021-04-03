@@ -6,7 +6,7 @@ env:
     #### Global variables used for all tasks
     ####
     # Name of the ultimate destination branch for this CI run, PR or post-merge.
-    DEST_BRANCH: "v3.0"
+    DEST_BRANCH: "v3.1"
     # Overrides default location (/tmp/cirrus) for repo clone
     GOPATH: &gopath "/var/tmp/go"
     GOBIN: "${GOPATH}/bin"
@@ -30,7 +30,7 @@ env:
     PRIOR_UBUNTU_NAME: "ubuntu-2004"
 
     # Google-cloud VM Images
-    IMAGE_SUFFIX: "c6524344056676352"
+    IMAGE_SUFFIX: "c5961289315909632"
     FEDORA_CACHE_IMAGE_NAME: "fedora-${IMAGE_SUFFIX}"
     PRIOR_FEDORA_CACHE_IMAGE_NAME: "prior-fedora-${IMAGE_SUFFIX}"
     UBUNTU_CACHE_IMAGE_NAME: "ubuntu-${IMAGE_SUFFIX}"
@@ -151,11 +151,11 @@ build_task:
               CTR_FQIN: ${FEDORA_CONTAINER_FQIN}
               # ID for re-use of build output
               _BUILD_CACHE_HANDLE: ${FEDORA_NAME}-build-${CIRRUS_BUILD_ID}
-        - env:
-              DISTRO_NV: ${PRIOR_FEDORA_NAME}
-              VM_IMAGE_NAME: ${PRIOR_FEDORA_CACHE_IMAGE_NAME}
-              CTR_FQIN: ${PRIOR_FEDORA_CONTAINER_FQIN}
-              _BUILD_CACHE_HANDLE: ${PRIOR_FEDORA_NAME}-build-${CIRRUS_BUILD_ID}
+        # - env:
+        #       DISTRO_NV: ${PRIOR_FEDORA_NAME}
+        #       VM_IMAGE_NAME: ${PRIOR_FEDORA_CACHE_IMAGE_NAME}
+        #       CTR_FQIN: ${PRIOR_FEDORA_CONTAINER_FQIN}
+        #       _BUILD_CACHE_HANDLE: ${PRIOR_FEDORA_NAME}-build-${CIRRUS_BUILD_ID}
         - env:
               DISTRO_NV: ${UBUNTU_NAME}
               VM_IMAGE_NAME: ${UBUNTU_CACHE_IMAGE_NAME}
@@ -241,20 +241,27 @@ bindings_task:
     always: *runner_stats
 
 
-# Build the "libpod" API documentation `swagger.yaml` for eventual
-# publishing along side the official podman documentation.
+# Build the "libpod" API documentation `swagger.yaml` and
+# publish it to google-cloud-storage (GCS).
 swagger_task:
     name: "Test Swagger"
     alias: swagger
     depends_on:
         - build
-    container: *smallcontainer
+    gce_instance: *standardvm
     env:
         <<: *stdenvars
         TEST_FLAVOR: swagger
-        TEST_ENVIRON: container
-        CTR_FQIN: ${FEDORA_CONTAINER_FQIN}
-    clone_script: *full_clone  # build-cache not available to container tasks
+        # TODO: Due to podman 3.0 activity (including new images), avoid
+        # disturbing the status-quo just to incorporate this one new
+        # container image.  Uncomment line below when CI activities normalize.
+        #CTR_FQIN: 'quay.io/libpod/gcsupld:${IMAGE_SUFFIX}'
+        CTR_FQIN: 'quay.io/libpod/gcsupld:c4813063494828032'
+        GCPJSON: ENCRYPTED[927dc01e755eaddb4242b0845cf86c9098d1e3dffac38c70aefb1487fd8b4fe6dd6ae627b3bffafaba70e2c63172664e]
+        GCPNAME: ENCRYPTED[c145e9c16b6fb88d476944a454bf4c1ccc84bb4ecaca73bdd28bdacef0dfa7959ebc8171a27b2e4064d66093b2cdba49]
+        GCPPROJECT: 'libpod-218412'
+    gopath_cache: *ro_gopath_cache
+    clone_script: *noop  # Comes from cache
     setup_script: *setup
     main_script: *main
     always: *binary_artifacts
@@ -426,7 +433,6 @@ apiv2_test_task:
             path: ./*.html
             type: text/html
         package_versions_script: '$SCRIPT_BASE/logcollector.sh packages'
-        ginkgo_node_logs_script: '$SCRIPT_BASE/logcollector.sh ginkgo'
         df_script: '$SCRIPT_BASE/logcollector.sh df'
         audit_log_script: '$SCRIPT_BASE/logcollector.sh audit'
         journal_script: '$SCRIPT_BASE/logcollector.sh journal'
@@ -471,7 +477,11 @@ local_integration_test_task: &local_integration_test_task
     gopath_cache: *ro_gopath_cache
     setup_script: *setup
     main_script: *main
-    always: *logs_artifacts
+    always: &int_logs_artifacts
+        <<: *logs_artifacts
+        ginkgo_node_logs_artifacts:
+            path: ./test/e2e/ginkgo-node-*.log
+            type: text/plain
 
 
 # Nearly identical to `local_integration_test` except all operations
@@ -500,11 +510,11 @@ container_integration_test_task:
               _BUILD_CACHE_HANDLE: ${FEDORA_NAME}-build-${CIRRUS_BUILD_ID}
               VM_IMAGE_NAME: ${FEDORA_CACHE_IMAGE_NAME}
               CTR_FQIN: ${FEDORA_CONTAINER_FQIN}
-        - env:
-              DISTRO_NV: ${PRIOR_FEDORA_NAME}
-              _BUILD_CACHE_HANDLE: ${PRIOR_FEDORA_NAME}-build-${CIRRUS_BUILD_ID}
-              VM_IMAGE_NAME: ${PRIOR_FEDORA_CACHE_IMAGE_NAME}
-              CTR_FQIN: ${PRIOR_FEDORA_CONTAINER_FQIN}
+        # - env:
+        #       DISTRO_NV: ${PRIOR_FEDORA_NAME}
+        #       _BUILD_CACHE_HANDLE: ${PRIOR_FEDORA_NAME}-build-${CIRRUS_BUILD_ID}
+        #       VM_IMAGE_NAME: ${PRIOR_FEDORA_CACHE_IMAGE_NAME}
+        #       CTR_FQIN: ${PRIOR_FEDORA_CONTAINER_FQIN}
     gce_instance: *standardvm
     timeout_in: 90m
     env:
@@ -514,7 +524,7 @@ container_integration_test_task:
     gopath_cache: *ro_gopath_cache
     setup_script: *setup
     main_script: *main
-    always: *logs_artifacts
+    always: *int_logs_artifacts
 
 
 # Execute most integration tests as a regular (non-root) user.
@@ -535,7 +545,7 @@ rootless_integration_test_task:
     gopath_cache: *ro_gopath_cache
     setup_script: *setup
     main_script: *main
-    always: *logs_artifacts
+    always: *int_logs_artifacts
 
 
 # Always run subsequent to integration tests.  While parallelism is lost
@@ -588,6 +598,38 @@ rootless_system_test_task:
     main_script: *main
     always: *logs_artifacts
 
+# FIXME: we may want to consider running this from nightly cron instead of CI.
+# The tests are actually pretty quick (less than a minute) but they do rely
+# on pulling images from quay.io, which means we're subject to network flakes.
+#
+# FIXME: how does this env matrix work, anyway? Does it spin up multiple VMs?
+# We might just want to encode the version matrix in runner.sh instead
+upgrade_test_task:
+    name: "Upgrade test: from $PODMAN_UPGRADE_FROM"
+    alias: upgrade_test
+    skip: *tags
+    only_if: *not_docs
+    depends_on:
+      - local_system_test
+    matrix:
+        - env:
+              PODMAN_UPGRADE_FROM: v1.9.0
+        - env:
+              PODMAN_UPGRADE_FROM: v2.0.6
+        - env:
+              PODMAN_UPGRADE_FROM: v2.1.1
+    gce_instance: *standardvm
+    env:
+        TEST_FLAVOR: upgrade_test
+        DISTRO_NV: ${FEDORA_NAME}
+        VM_IMAGE_NAME: ${FEDORA_CACHE_IMAGE_NAME}
+        # ID for re-use of build output
+        _BUILD_CACHE_HANDLE: ${FEDORA_NAME}-build-${CIRRUS_BUILD_ID}
+    clone_script: *noop
+    gopath_cache: *ro_gopath_cache
+    setup_script: *setup
+    main_script: *main
+    always: *logs_artifacts
 
 # This task is critical.  It updates the "last-used by" timestamp stored
 # in metadata for all VM images.  This mechanism functions in tandem with
@@ -644,6 +686,7 @@ success_task:
         - local_system_test
         - remote_system_test
         - rootless_system_test
+        - upgrade_test
         - meta
     container: *smallcontainer
     env:

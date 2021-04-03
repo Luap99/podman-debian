@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/pkg/errorhandling"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/pkg/errorhandling"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
 )
@@ -77,6 +77,14 @@ func SessionNotFound(w http.ResponseWriter, name string, err error) {
 		InternalServerError(w, err)
 	}
 	msg := fmt.Sprintf("No such exec session: %s", name)
+	Error(w, msg, http.StatusNotFound, err)
+}
+
+func SecretNotFound(w http.ResponseWriter, nameOrID string, err error) {
+	if errors.Cause(err).Error() != "no such secret" {
+		InternalServerError(w, err)
+	}
+	msg := fmt.Sprintf("No such secret: %s", nameOrID)
 	Error(w, msg, http.StatusNotFound, err)
 }
 

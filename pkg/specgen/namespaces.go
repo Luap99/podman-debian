@@ -3,8 +3,8 @@ package specgen
 import (
 	"strings"
 
-	"github.com/containers/podman/v2/pkg/cgroups"
-	"github.com/containers/podman/v2/pkg/rootless"
+	"github.com/containers/podman/v3/pkg/cgroups"
+	"github.com/containers/podman/v3/pkg/rootless"
 	"github.com/pkg/errors"
 )
 
@@ -54,7 +54,7 @@ const (
 // Namespace describes the namespace
 type Namespace struct {
 	NSMode NamespaceMode `json:"nsmode,omitempty"`
-	Value  string        `json:"string,omitempty"`
+	Value  string        `json:"value,omitempty"`
 }
 
 // IsDefault returns whether the namespace is set to the default setting (which

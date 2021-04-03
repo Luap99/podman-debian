@@ -1,6 +1,7 @@
 package abi
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -9,57 +10,90 @@ import (
 	"strings"
 
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v2/libpod"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/libpod/image"
-	"github.com/containers/podman/v2/pkg/domain/entities"
-	"github.com/containers/podman/v2/pkg/specgen/generate"
-	"github.com/containers/podman/v2/pkg/specgen/generate/kube"
-	"github.com/containers/podman/v2/pkg/util"
+	"github.com/containers/podman/v3/libpod"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/libpod/image"
+	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v3/pkg/specgen/generate"
+	"github.com/containers/podman/v3/pkg/specgen/generate/kube"
+	"github.com/containers/podman/v3/pkg/util"
 	"github.com/docker/distribution/reference"
 	"github.com/ghodss/yaml"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	yamlv3 "gopkg.in/yaml.v3"
 	v1apps "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 )
 
 func (ic *ContainerEngine) PlayKube(ctx context.Context, path string, options entities.PlayKubeOptions) (*entities.PlayKubeReport, error) {
-	var (
-		kubeObject v1.ObjectReference
-	)
+	report := &entities.PlayKubeReport{}
+	validKinds := 0
 
+	// read yaml document
 	content, err := ioutil.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := yaml.Unmarshal(content, &kubeObject); err != nil {
-		return nil, errors.Wrapf(err, "unable to read %q as YAML", path)
+	// split yaml document
+	documentList, err := splitMultiDocYAML(content)
+	if err != nil {
+		return nil, err
 	}
 
-	// NOTE: pkg/bindings/play is also parsing the file.
-	// A pkg/kube would be nice to refactor and abstract
-	// parts of the K8s-related code.
-	switch kubeObject.Kind {
-	case "Pod":
-		var podYAML v1.Pod
-		var podTemplateSpec v1.PodTemplateSpec
-		if err := yaml.Unmarshal(content, &podYAML); err != nil {
-			return nil, errors.Wrapf(err, "unable to read YAML %q as Kube Pod", path)
+	// create pod on each document if it is a pod or deployment
+	// any other kube kind will be skipped
+	for _, document := range documentList {
+		kind, err := getKubeKind(document)
+		if err != nil {
+			return nil, errors.Wrapf(err, "unable to read %q as kube YAML", path)
 		}
-		podTemplateSpec.ObjectMeta = podYAML.ObjectMeta
-		podTemplateSpec.Spec = podYAML.Spec
-		return ic.playKubePod(ctx, podTemplateSpec.ObjectMeta.Name, &podTemplateSpec, options)
-	case "Deployment":
-		var deploymentYAML v1apps.Deployment
-		if err := yaml.Unmarshal(content, &deploymentYAML); err != nil {
-			return nil, errors.Wrapf(err, "unable to read YAML %q as Kube Deployment", path)
+
+		switch kind {
+		case "Pod":
+			var podYAML v1.Pod
+			var podTemplateSpec v1.PodTemplateSpec
+
+			if err := yaml.Unmarshal(document, &podYAML); err != nil {
+				return nil, errors.Wrapf(err, "unable to read YAML %q as Kube Pod", path)
+			}
+
+			podTemplateSpec.ObjectMeta = podYAML.ObjectMeta
+			podTemplateSpec.Spec = podYAML.Spec
+
+			r, err := ic.playKubePod(ctx, podTemplateSpec.ObjectMeta.Name, &podTemplateSpec, options)
+			if err != nil {
+				return nil, err
+			}
+
+			report.Pods = append(report.Pods, r.Pods...)
+			validKinds++
+		case "Deployment":
+			var deploymentYAML v1apps.Deployment
+
+			if err := yaml.Unmarshal(document, &deploymentYAML); err != nil {
+				return nil, errors.Wrapf(err, "unable to read YAML %q as Kube Deployment", path)
+			}
+
+			r, err := ic.playKubeDeployment(ctx, &deploymentYAML, options)
+			if err != nil {
+				return nil, err
+			}
+
+			report.Pods = append(report.Pods, r.Pods...)
+			validKinds++
+		default:
+			logrus.Infof("kube kind %s not supported", kind)
+			continue
 		}
-		return ic.playKubeDeployment(ctx, &deploymentYAML, options)
-	default:
-		return nil, errors.Errorf("invalid YAML kind: %q. [Pod|Deployment] are the only supported Kubernetes Kinds", kubeObject.Kind)
 	}
+
+	if validKinds == 0 {
+		return nil, fmt.Errorf("YAML document does not contain any supported kube kind")
+	}
+
+	return report, nil
 }
 
 func (ic *ContainerEngine) playKubeDeployment(ctx context.Context, deploymentYAML *v1apps.Deployment, options entities.PlayKubeOptions) (*entities.PlayKubeReport, error) {
@@ -173,13 +207,13 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 	var ctrRestartPolicy string
 	switch podYAML.Spec.RestartPolicy {
 	case v1.RestartPolicyAlways:
-		ctrRestartPolicy = libpod.RestartPolicyAlways
+		ctrRestartPolicy = define.RestartPolicyAlways
 	case v1.RestartPolicyOnFailure:
-		ctrRestartPolicy = libpod.RestartPolicyOnFailure
+		ctrRestartPolicy = define.RestartPolicyOnFailure
 	case v1.RestartPolicyNever:
-		ctrRestartPolicy = libpod.RestartPolicyNo
+		ctrRestartPolicy = define.RestartPolicyNo
 	default: // Default to Always
-		ctrRestartPolicy = libpod.RestartPolicyAlways
+		ctrRestartPolicy = define.RestartPolicyAlways
 	}
 
 	configMaps := []v1.ConfigMap{}
@@ -221,7 +255,7 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 		}
 
 		// This ensures the image is the image store
-		newImage, err := ic.Libpod.ImageRuntime().New(ctx, container.Image, options.SignaturePolicy, options.Authfile, writer, &dockerRegistryOptions, image.SigningOptions{}, nil, pullPolicy)
+		newImage, err := ic.Libpod.ImageRuntime().New(ctx, container.Image, options.SignaturePolicy, options.Authfile, writer, &dockerRegistryOptions, image.SigningOptions{}, nil, pullPolicy, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -289,4 +323,46 @@ func readConfigMapFromFile(r io.Reader) (v1.ConfigMap, error) {
 	}
 
 	return cm, nil
+}
+
+// splitMultiDocYAML reads mutiple documents in a YAML file and
+// returns them as a list.
+func splitMultiDocYAML(yamlContent []byte) ([][]byte, error) {
+	var documentList [][]byte
+
+	d := yamlv3.NewDecoder(bytes.NewReader(yamlContent))
+	for {
+		var o interface{}
+		// read individual document
+		err := d.Decode(&o)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, errors.Wrapf(err, "multi doc yaml could not be split")
+		}
+
+		if o != nil {
+			// back to bytes
+			document, err := yamlv3.Marshal(o)
+			if err != nil {
+				return nil, errors.Wrapf(err, "individual doc yaml could not be marshalled")
+			}
+
+			documentList = append(documentList, document)
+		}
+	}
+
+	return documentList, nil
+}
+
+// getKubeKind unmarshals a kube YAML document and returns its kind.
+func getKubeKind(obj []byte) (string, error) {
+	var kubeObject v1.ObjectReference
+
+	if err := yaml.Unmarshal(obj, &kubeObject); err != nil {
+		return "", err
+	}
+
+	return kubeObject.Kind, nil
 }

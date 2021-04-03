@@ -8,13 +8,14 @@ import (
 	"syscall"
 
 	"github.com/containers/common/pkg/config"
+	"github.com/containers/common/pkg/secrets"
 	"github.com/containers/image/v5/manifest"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/libpod/events"
-	"github.com/containers/podman/v2/pkg/namespaces"
-	"github.com/containers/podman/v2/pkg/rootless"
-	"github.com/containers/podman/v2/pkg/util"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/libpod/events"
+	"github.com/containers/podman/v3/pkg/namespaces"
+	"github.com/containers/podman/v3/pkg/rootless"
+	"github.com/containers/podman/v3/pkg/util"
 	"github.com/containers/storage"
 	"github.com/containers/storage/pkg/idtools"
 	"github.com/cri-o/ocicni/pkg/ocicni"
@@ -63,15 +64,22 @@ func WithStorageConfig(config storage.StoreOptions) RuntimeOption {
 			setField = true
 		}
 
+		graphDriverChanged := false
 		if config.GraphDriverName != "" {
 			rt.storageConfig.GraphDriverName = config.GraphDriverName
 			rt.storageSet.GraphDriverNameSet = true
 			setField = true
+			graphDriverChanged = true
 		}
 
 		if config.GraphDriverOptions != nil {
-			rt.storageConfig.GraphDriverOptions = make([]string, len(config.GraphDriverOptions))
-			copy(rt.storageConfig.GraphDriverOptions, config.GraphDriverOptions)
+			if graphDriverChanged {
+				rt.storageConfig.GraphDriverOptions = make([]string, len(config.GraphDriverOptions))
+				copy(rt.storageConfig.GraphDriverOptions, config.GraphDriverOptions)
+			} else {
+				// append new options after what is specified in the config files
+				rt.storageConfig.GraphDriverOptions = append(rt.storageConfig.GraphDriverOptions, config.GraphDriverOptions...)
+			}
 			setField = true
 		}
 
@@ -1356,7 +1364,7 @@ func WithRestartPolicy(policy string) CtrCreateOption {
 		}
 
 		switch policy {
-		case RestartPolicyNone, RestartPolicyNo, RestartPolicyOnFailure, RestartPolicyAlways, RestartPolicyUnlessStopped:
+		case define.RestartPolicyNone, define.RestartPolicyNo, define.RestartPolicyOnFailure, define.RestartPolicyAlways, define.RestartPolicyUnlessStopped:
 			ctr.config.RestartPolicy = policy
 		default:
 			return errors.Wrapf(define.ErrInvalidArg, "%q is not a valid restart policy", policy)
@@ -1428,8 +1436,9 @@ func WithOverlayVolumes(volumes []*ContainerOverlayVolume) CtrCreateOption {
 
 		for _, vol := range volumes {
 			ctr.config.OverlayVolumes = append(ctr.config.OverlayVolumes, &ContainerOverlayVolume{
-				Dest:   vol.Dest,
-				Source: vol.Source,
+				Dest:    vol.Dest,
+				Source:  vol.Source,
+				Options: vol.Options,
 			})
 		}
 
@@ -1568,8 +1577,6 @@ func WithVolumeLabels(labels map[string]string) VolumeCreateOption {
 }
 
 // WithVolumeOptions sets the options of the volume.
-// If the "local" driver has been selected, options will be validated. There are
-// currently 3 valid options for the "local" driver - o, type, and device.
 func WithVolumeOptions(options map[string]string) VolumeCreateOption {
 	return func(volume *Volume) error {
 		if volume.valid {
@@ -1578,13 +1585,6 @@ func WithVolumeOptions(options map[string]string) VolumeCreateOption {
 
 		volume.config.Options = make(map[string]string)
 		for key, value := range options {
-			switch key {
-			case "type", "device", "o", "UID", "GID":
-				volume.config.Options[key] = value
-			default:
-				return errors.Wrapf(define.ErrInvalidArg, "unrecognized volume option %q is not supported with local driver", key)
-			}
-
 			volume.config.Options[key] = value
 		}
 
@@ -1613,19 +1613,6 @@ func WithVolumeGID(gid int) VolumeCreateOption {
 		}
 
 		volume.config.GID = gid
-
-		return nil
-	}
-}
-
-// WithVolumeNeedsChown sets the NeedsChown flag for the volume.
-func WithVolumeNeedsChown() VolumeCreateOption {
-	return func(volume *Volume) error {
-		if volume.valid {
-			return define.ErrVolumeFinalized
-		}
-
-		volume.state.NeedsChown = true
 
 		return nil
 	}
@@ -1680,6 +1667,28 @@ func WithUmask(umask string) CtrCreateOption {
 			return errors.Wrapf(define.ErrInvalidArg, "Invalid umask string %s", umask)
 		}
 		ctr.config.Umask = umask
+		return nil
+	}
+}
+
+// WithSecrets adds secrets to the container
+func WithSecrets(secretNames []string) CtrCreateOption {
+	return func(ctr *Container) error {
+		if ctr.valid {
+			return define.ErrCtrFinalized
+		}
+		manager, err := secrets.NewManager(ctr.runtime.GetSecretsStorageDir())
+		if err != nil {
+			return err
+		}
+		for _, name := range secretNames {
+			secr, err := manager.Lookup(name)
+			if err != nil {
+				return err
+			}
+			ctr.config.Secrets = append(ctr.config.Secrets, secr)
+		}
+
 		return nil
 	}
 }

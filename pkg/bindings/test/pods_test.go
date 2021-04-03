@@ -5,10 +5,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/pkg/bindings"
-	"github.com/containers/podman/v2/pkg/bindings/pods"
-	"github.com/containers/podman/v2/pkg/specgen"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/pkg/bindings"
+	"github.com/containers/podman/v3/pkg/bindings/pods"
+	"github.com/containers/podman/v3/pkg/specgen"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
@@ -63,7 +63,7 @@ var _ = Describe("Podman pods", func() {
 		Expect(err).To(BeNil())
 
 		// Adding an alpine container to the existing pod
-		_, err = bt.RunTopContainer(nil, bindings.PTrue, &newpod)
+		_, err = bt.RunTopContainer(nil, &newpod)
 		Expect(err).To(BeNil())
 		podSummary, err = pods.List(bt.conn, nil)
 		// Verify no errors.
@@ -93,7 +93,7 @@ var _ = Describe("Podman pods", func() {
 		_, err = pods.Start(bt.conn, newpod, nil)
 		Expect(err).To(BeNil())
 
-		_, err = bt.RunTopContainer(nil, bindings.PTrue, &newpod)
+		_, err = bt.RunTopContainer(nil, &newpod)
 		Expect(err).To(BeNil())
 
 		// Expected err with invalid filter params
@@ -179,7 +179,7 @@ var _ = Describe("Podman pods", func() {
 		Expect(code).To(BeNumerically("==", http.StatusNotFound))
 
 		// Adding an alpine container to the existing pod
-		_, err = bt.RunTopContainer(nil, bindings.PTrue, &newpod)
+		_, err = bt.RunTopContainer(nil, &newpod)
 		Expect(err).To(BeNil())
 
 		// Binding needs to be modified to inspect the pod state.

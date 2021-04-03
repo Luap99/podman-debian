@@ -3,7 +3,7 @@ package containers
 import (
 	"net/url"
 
-	"github.com/containers/podman/v2/pkg/bindings/util"
+	"github.com/containers/podman/v3/pkg/bindings/internal/util"
 )
 
 /*
@@ -50,4 +50,20 @@ func (o *ResizeTTYOptions) GetWidth() int {
 		return width
 	}
 	return *o.Width
+}
+
+// WithRunning
+func (o *ResizeTTYOptions) WithRunning(value bool) *ResizeTTYOptions {
+	v := &value
+	o.Running = v
+	return o
+}
+
+// GetRunning
+func (o *ResizeTTYOptions) GetRunning() bool {
+	var running bool
+	if o.Running == nil {
+		return running
+	}
+	return *o.Running
 }

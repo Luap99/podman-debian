@@ -1,7 +1,7 @@
 package compat
 
 import (
-	"github.com/containers/podman/v2/pkg/domain/entities"
+	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/containers/storage/pkg/archive"
 	"github.com/docker/docker/api/types"
 )
@@ -76,4 +76,11 @@ type swagCompatNetworkConnectRequest struct {
 type swagCompatNetworkDisconnectRequest struct {
 	// in:body
 	Body struct{ types.NetworkDisconnect }
+}
+
+// Network prune
+// swagger:response NetworkPruneResponse
+type swagCompatNetworkPruneResponse struct {
+	// in:body
+	Body []string
 }

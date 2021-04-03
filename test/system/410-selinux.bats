@@ -39,15 +39,15 @@ function check_label() {
 }
 
 @test "podman selinux: container with label=disable" {
-    skip_if_rootless
-
     check_label "--security-opt label=disable" "spc_t"
 }
 
 @test "podman selinux: privileged container" {
-    skip_if_rootless
-
     check_label "--privileged --userns=host" "spc_t"
+}
+
+@test "podman selinux: init container" {
+    check_label "--systemd=always" "container_init_t"
 }
 
 @test "podman selinux: pid=host" {
@@ -61,9 +61,6 @@ function check_label() {
             # SELinux not enabled on Ubuntu, so we should never get here
             die "WHOA! SELinux enabled, but no /usr/bin/rpm!"
         fi
-        if [[ "$cs_version" < "2.146" ]]; then
-            skip "FIXME: #7939: requires container-selinux-2.146.0 (currently installed: $cs_version)"
-        fi
     fi
     # FIXME FIXME FIXME: delete up to here, leaving just check_label
 
@@ -72,6 +69,19 @@ function check_label() {
 
 @test "podman selinux: container with overridden range" {
     check_label "--security-opt label=level:s0:c1,c2" "container_t" "s0:c1,c2"
+}
+
+@test "podman selinux: inspect kvm labels" {
+    skip_if_no_selinux
+    skip_if_remote "runtime flag is not passed over remote"
+
+    tmpdir=$PODMAN_TMPDIR/kata-test
+    mkdir -p $tmpdir
+    KATA=${tmpdir}/kata-runtime
+    ln -s /bin/true ${KATA}
+    run_podman create --runtime=${KATA} --name myc $IMAGE
+    run_podman inspect --format='{{ .ProcessLabel }}' myc
+    is "$output" ".*container_kvm_t"
 }
 
 # pr #6752
@@ -170,5 +180,16 @@ function check_label() {
 
     run_podman pod rm myselinuxpod
 }
+
+# #8946 - better diagnostics for nonexistent attributes
+@test "podman with nonexistent labels" {
+    skip_if_no_selinux
+
+    # The '.*' in the error below is for dealing with podman-remote, which
+    # includes "error preparing container <sha> for attach" in output.
+    run_podman 126 run --security-opt label=type:foo.bar $IMAGE true
+    is "$output" "Error.*: \`/proc/thread-self/attr/exec\`: OCI runtime error: unable to assign security attribute" "useful diagnostic"
+}
+
 
 # vim: filetype=sh

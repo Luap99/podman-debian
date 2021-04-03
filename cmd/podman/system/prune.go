@@ -8,11 +8,11 @@ import (
 	"strings"
 
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/podman/v2/cmd/podman/registry"
-	"github.com/containers/podman/v2/cmd/podman/utils"
-	"github.com/containers/podman/v2/cmd/podman/validate"
-	"github.com/containers/podman/v2/pkg/domain/entities"
-	dfilters "github.com/containers/podman/v2/pkg/domain/filters"
+	"github.com/containers/podman/v3/cmd/podman/parse"
+	"github.com/containers/podman/v3/cmd/podman/registry"
+	"github.com/containers/podman/v3/cmd/podman/utils"
+	"github.com/containers/podman/v3/cmd/podman/validate"
+	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/docker/go-units"
 	"github.com/spf13/cobra"
 )
@@ -55,22 +55,17 @@ func init() {
 
 func prune(cmd *cobra.Command, args []string) error {
 	var err error
-
 	// Prompt for confirmation if --force is not set
 	if !force {
 		reader := bufio.NewReader(os.Stdin)
 		volumeString := ""
 		if pruneOptions.Volume {
 			volumeString = `
-        - all volumes not used by at least one container`
+	- all volumes not used by at least one container`
 		}
-		fmt.Printf(`
-WARNING! This will remove:
-        - all stopped containers%s
-        - all stopped pods
-        - all dangling images
-        - all build cache
-Are you sure you want to continue? [y/N] `, volumeString)
+
+		fmt.Printf(createPruneWarningMessage(pruneOptions), volumeString, "Are you sure you want to continue? [y/N] ")
+
 		answer, err := reader.ReadString('\n')
 		if err != nil {
 			return err
@@ -80,7 +75,7 @@ Are you sure you want to continue? [y/N] `, volumeString)
 		}
 	}
 
-	pruneOptions.Filters, err = dfilters.ParseFilterArgumentsIntoFilters(filters)
+	pruneOptions.Filters, err = parse.FilterArgumentsIntoFilters(filters)
 	if err != nil {
 		return err
 	}
@@ -114,4 +109,23 @@ Are you sure you want to continue? [y/N] `, volumeString)
 
 	fmt.Printf("Total reclaimed space: %s\n", units.HumanSize((float64)(response.ReclaimedSpace)))
 	return nil
+}
+
+func createPruneWarningMessage(pruneOpts entities.SystemPruneOptions) string {
+	if pruneOpts.All {
+		return `WARNING! This will remove:
+	- all stopped containers
+	- all networks not used by at least one container%s
+	- all images without at least one container associated to them
+	- all build cache
+
+%s`
+	}
+	return `WARNING! This will remove:
+	- all stopped containers
+	- all networks not used by at least one container%s
+	- all dangling images
+	- all dangling build cache
+
+%s`
 }

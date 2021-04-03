@@ -3,16 +3,18 @@ package common
 import (
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
-	"github.com/containers/podman/v2/cmd/podman/registry"
-	"github.com/containers/podman/v2/pkg/api/handlers"
-	"github.com/containers/podman/v2/pkg/cgroups"
-	"github.com/containers/podman/v2/pkg/domain/entities"
-	"github.com/containers/podman/v2/pkg/rootless"
-	"github.com/containers/podman/v2/pkg/specgen"
+	"github.com/containers/podman/v3/cmd/podman/registry"
+	"github.com/containers/podman/v3/pkg/api/handlers"
+	"github.com/containers/podman/v3/pkg/cgroups"
+	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v3/pkg/rootless"
+	"github.com/containers/podman/v3/pkg/specgen"
+	"github.com/pkg/errors"
 )
 
 type ContainerCLIOpts struct {
@@ -93,6 +95,7 @@ type ContainerCLIOpts struct {
 	Replace           bool
 	Rm                bool
 	RootFS            bool
+	Secrets           []string
 	SecurityOpt       []string
 	SdNotifyMode      string
 	ShmSize           string
@@ -310,6 +313,15 @@ func ContainerCreateToContainerCLIOpts(cc handlers.CreateContainerConfig, cgroup
 		netInfo.CNINetworks = []string{string(cc.HostConfig.NetworkMode)}
 	}
 
+	parsedTmp := make([]string, 0, len(cc.HostConfig.Tmpfs))
+	for path, options := range cc.HostConfig.Tmpfs {
+		finalString := path
+		if options != "" {
+			finalString += ":" + options
+		}
+		parsedTmp = append(parsedTmp, finalString)
+	}
+
 	// Note: several options here are marked as "don't need". this is based
 	// on speculation by Matt and I. We think that these come into play later
 	// like with start. We believe this is just a difference in podman/compat
@@ -366,7 +378,7 @@ func ContainerCreateToContainerCLIOpts(cc handlers.CreateContainerConfig, cgroup
 		StorageOpt:       stringMaptoArray(cc.HostConfig.StorageOpt),
 		Sysctl:           stringMaptoArray(cc.HostConfig.Sysctls),
 		Systemd:          "true", // podman default
-		TmpFS:            stringMaptoArray(cc.HostConfig.Tmpfs),
+		TmpFS:            parsedTmp,
 		TTY:              cc.Config.Tty,
 		User:             cc.Config.User,
 		UserNS:           string(cc.HostConfig.UsernsMode),
@@ -385,8 +397,16 @@ func ContainerCreateToContainerCLIOpts(cc handlers.CreateContainerConfig, cgroup
 			cliOpts.Ulimit = ulimits
 		}
 	}
+	if cc.HostConfig.Resources.NanoCPUs > 0 {
+		if cliOpts.CPUPeriod != 0 || cliOpts.CPUQuota != 0 {
+			return nil, nil, errors.Errorf("NanoCpus conflicts with CpuPeriod and CpuQuota")
+		}
+		cliOpts.CPUPeriod = 100000
+		cliOpts.CPUQuota = cc.HostConfig.Resources.NanoCPUs / 10000
+	}
 
 	// volumes
+	volSources := make(map[string]bool)
 	volDestinations := make(map[string]bool)
 	for _, vol := range cc.HostConfig.Binds {
 		cliOpts.Volume = append(cliOpts.Volume, vol)
@@ -397,6 +417,7 @@ func ContainerCreateToContainerCLIOpts(cc handlers.CreateContainerConfig, cgroup
 		case 1:
 			volDestinations[vol] = true
 		default:
+			volSources[splitVol[0]] = true
 			volDestinations[splitVol[1]] = true
 		}
 	}
@@ -410,6 +431,23 @@ func ContainerCreateToContainerCLIOpts(cc handlers.CreateContainerConfig, cgroup
 			continue
 		}
 		cliOpts.Volume = append(cliOpts.Volume, vol)
+	}
+	// Make mount points for compat volumes
+	for vol := range volSources {
+		// This might be a named volume.
+		// Assume it is if it's not an absolute path.
+		if !filepath.IsAbs(vol) {
+			continue
+		}
+		// If volume already exists, there is nothing to do
+		if _, err := os.Stat(vol); err == nil {
+			continue
+		}
+		if err := os.MkdirAll(vol, 0755); err != nil {
+			if !os.IsExist(err) {
+				return nil, nil, errors.Wrapf(err, "error making volume mountpoint for volume %s", vol)
+			}
+		}
 	}
 	if len(cc.HostConfig.BlkioWeightDevice) > 0 {
 		devices := make([]string, 0, len(cc.HostConfig.BlkioWeightDevice))

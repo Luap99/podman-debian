@@ -1,13 +1,16 @@
 package network
 
 import (
-	"github.com/containers/podman/v2/cmd/podman/registry"
-	"github.com/containers/podman/v2/cmd/podman/validate"
-	"github.com/containers/podman/v2/pkg/domain/entities"
+	"github.com/containers/podman/v3/cmd/podman/registry"
+	"github.com/containers/podman/v3/cmd/podman/validate"
+	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/spf13/cobra"
 )
 
 var (
+	// Pull in configured json library
+	json = registry.JSONLibrary()
+
 	// Command: podman _network_
 	networkCmd = &cobra.Command{
 		Use:   "network",

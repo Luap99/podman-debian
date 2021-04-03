@@ -3,8 +3,8 @@ package server
 import (
 	"net/http"
 
-	"github.com/containers/podman/v2/pkg/api/handlers/compat"
-	"github.com/containers/podman/v2/pkg/api/handlers/libpod"
+	"github.com/containers/podman/v3/pkg/api/handlers/compat"
+	"github.com/containers/podman/v3/pkg/api/handlers/libpod"
 	"github.com/gorilla/mux"
 )
 
@@ -652,6 +652,7 @@ func (s *APIServer) registerImagesHandlers(r *mux.Router) error {
 	//           example: |
 	//             (build details...)
 	//             Successfully built 8ba084515c724cbf90d447a63600c0a6
+	//             Successfully tagged your_image:latest
 	//   400:
 	//     $ref: "#/responses/BadParamError"
 	//   500:
@@ -809,11 +810,14 @@ func (s *APIServer) registerImagesHandlers(r *mux.Router) error {
 	// summary: Load image
 	// description: Load an image (oci-archive or docker-archive) stream.
 	// parameters:
-	//   - in: formData
+	//   - in: body
 	//     name: upload
-	//     description: tarball of container image
-	//     type: file
 	//     required: true
+	//     description: tarball of container image
+	//     schema:
+	//       type: string
+	// consumes:
+	// - application/x-tar
 	// produces:
 	// - application/json
 	// responses:
@@ -849,13 +853,16 @@ func (s *APIServer) registerImagesHandlers(r *mux.Router) error {
 	//     name: url
 	//     description: Load image from the specified URL
 	//     type: string
-	//   - in: formData
+	//   - in: body
 	//     name: upload
-	//     type: file
 	//     required: true
 	//     description: tarball for imported image
+	//     schema:
+	//       type: "string"
 	// produces:
 	// - application/json
+	// consumes:
+	// - application/x-tar
 	// responses:
 	//   200:
 	//     $ref: "#/responses/DocsLibpodImagesImportResponse"
@@ -1031,7 +1038,7 @@ func (s *APIServer) registerImagesHandlers(r *mux.Router) error {
 	//      $ref: "#/responses/DocsSearchResponse"
 	//   500:
 	//      $ref: '#/responses/InternalError'
-	r.Handle(VersionedPath("/libpod/images/search"), s.APIHandler(libpod.SearchImages)).Methods(http.MethodGet)
+	r.Handle(VersionedPath("/libpod/images/search"), s.APIHandler(compat.SearchImages)).Methods(http.MethodGet)
 	// swagger:operation GET /libpod/images/{name:.*}/get libpod libpodExportImage
 	// ---
 	// tags:
@@ -1482,7 +1489,6 @@ func (s *APIServer) registerImagesHandlers(r *mux.Router) error {
 	//           description: output from build process
 	//           example: |
 	//             (build details...)
-	//             Successfully built 8ba084515c724cbf90d447a63600c0a6
 	//   400:
 	//     $ref: "#/responses/BadParamError"
 	//   500:

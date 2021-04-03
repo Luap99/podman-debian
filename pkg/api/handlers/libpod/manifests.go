@@ -7,13 +7,13 @@ import (
 
 	"github.com/containers/image/v5/manifest"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v2/libpod"
-	"github.com/containers/podman/v2/libpod/image"
-	"github.com/containers/podman/v2/pkg/api/handlers"
-	"github.com/containers/podman/v2/pkg/api/handlers/utils"
-	"github.com/containers/podman/v2/pkg/auth"
-	"github.com/containers/podman/v2/pkg/domain/entities"
-	"github.com/containers/podman/v2/pkg/domain/infra/abi"
+	"github.com/containers/podman/v3/libpod"
+	"github.com/containers/podman/v3/libpod/image"
+	"github.com/containers/podman/v3/pkg/api/handlers"
+	"github.com/containers/podman/v3/pkg/api/handlers/utils"
+	"github.com/containers/podman/v3/pkg/auth"
+	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v3/pkg/domain/infra/abi"
 	"github.com/gorilla/schema"
 	"github.com/opencontainers/go-digest"
 	"github.com/pkg/errors"
@@ -46,6 +46,24 @@ func ManifestCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	utils.WriteResponse(w, http.StatusOK, handlers.IDResponse{ID: manID})
+}
+
+// ExistsManifest check if a manifest list exists
+func ExistsManifest(w http.ResponseWriter, r *http.Request) {
+	runtime := r.Context().Value("runtime").(*libpod.Runtime)
+	name := utils.GetName(r)
+
+	ic := abi.ImageEngine{Libpod: runtime}
+	report, err := ic.ManifestExists(r.Context(), name)
+	if err != nil {
+		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, err)
+		return
+	}
+	if !report.Value {
+		utils.Error(w, "manifest not found", http.StatusNotFound, errors.New("manifest not found"))
+		return
+	}
+	utils.WriteResponse(w, http.StatusNoContent, "")
 }
 
 func ManifestInspect(w http.ResponseWriter, r *http.Request) {

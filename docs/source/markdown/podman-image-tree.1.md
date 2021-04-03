@@ -13,11 +13,11 @@ If you do not provide a *tag*, Podman will default to `latest` for the *image*.
 Layers are indicated with image tags as `Top Layer of`, when the tag is known locally.
 ## OPTIONS
 
-#### **--help**, **-h**
+#### **\-\-help**, **-h**
 
 Print usage statement
 
-#### **--whatrequires**
+#### **\-\-whatrequires**
 
 Show all child images and layers of the specified image
 
@@ -85,4 +85,4 @@ Image Layers
 podman(1)
 
 ## HISTORY
-Feb 2019, Originally compiled by Kunal Kushwaha <kushwaha_kunal_v7@lab.ntt.co.jp>
+Feb 2019, Originally compiled by Kunal Kushwaha `<kushwaha_kunal_v7@lab.ntt.co.jp>`

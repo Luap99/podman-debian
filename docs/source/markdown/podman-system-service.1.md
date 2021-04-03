@@ -13,6 +13,10 @@ If no endpoint is provided, defaults will be used.  The default endpoint for a r
 service is *unix:/run/podman/podman.sock* and rootless is *unix:/$XDG_RUNTIME_DIR/podman/podman.sock* (for
 example *unix:/run/user/1000/podman/podman.sock*)
 
+To access the API service inside a container:
+- mount the socket as a volume
+- run the container with `--security-opt label:disable`
+
 The REST API provided by **podman system service** is split into two parts: a compatibility layer offering support for the Docker v1.40 API, and a Podman-native Libpod layer.
 Documentation for the latter is available at *https://docs.podman.io/en/latest/_static/api.html*.
 Both APIs are versioned, but the server will not reject requests with an unsupported version set.
@@ -21,12 +25,12 @@ Note: The default systemd unit files (system and user) change the log-level opti
 
 ## OPTIONS
 
-#### **--time**, **-t**
+#### **\-\-time**, **-t**
 
 The time until the session expires in _seconds_. The default is 5
 seconds. A value of `0` means no timeout, therefore the session will not expire.
 
-#### **--help**, **-h**
+#### **\-\-help**, **-h**
 
 Print usage statement.
 
@@ -34,12 +38,12 @@ Print usage statement.
 
 Run an API listening for 5 seconds using the default socket.
 ```
-podman system service --timeout 5000
+podman system service --time 5
 ```
 
 ## SEE ALSO
 podman(1), podman-system-service(1), podman-system-connection(1)
 
 ## HISTORY
-January 2020, Originally compiled by Brent Baude<bbaude@redhat.com>
-November 2020, Updated by Jhon Honce <jhonce at redhat.com>
+January 2020, Originally compiled by Brent Baude `<bbaude@redhat.com>`
+November 2020, Updated by Jhon Honce (jhonce at redhat dot com)

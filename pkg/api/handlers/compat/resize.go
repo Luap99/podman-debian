@@ -5,13 +5,12 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/containers/podman/v2/libpod"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/pkg/api/handlers/utils"
+	"github.com/containers/podman/v3/libpod"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/pkg/api/handlers/utils"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/schema"
 	"github.com/pkg/errors"
-	"k8s.io/client-go/tools/remotecommand"
 )
 
 func ResizeTTY(w http.ResponseWriter, r *http.Request) {
@@ -20,8 +19,9 @@ func ResizeTTY(w http.ResponseWriter, r *http.Request) {
 
 	// /containers/{id}/resize
 	query := struct {
-		Height uint16 `schema:"h"`
-		Width  uint16 `schema:"w"`
+		Height           uint16 `schema:"h"`
+		Width            uint16 `schema:"w"`
+		IgnoreNotRunning bool   `schema:"running"`
 	}{
 		// override any golang type defaults
 	}
@@ -32,7 +32,7 @@ func ResizeTTY(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sz := remotecommand.TerminalSize{
+	sz := define.TerminalSize{
 		Width:  query.Width,
 		Height: query.Height,
 	}
@@ -49,14 +49,17 @@ func ResizeTTY(w http.ResponseWriter, r *http.Request) {
 		if state, err := ctnr.State(); err != nil {
 			utils.InternalServerError(w, errors.Wrapf(err, "cannot obtain container state"))
 			return
-		} else if state != define.ContainerStateRunning {
+		} else if state != define.ContainerStateRunning && !query.IgnoreNotRunning {
 			utils.Error(w, "Container not running", http.StatusConflict,
 				fmt.Errorf("container %q in wrong state %q", name, state.String()))
 			return
 		}
+		// If container is not running, ignore since this can be a race condition, and is expected
 		if err := ctnr.AttachResize(sz); err != nil {
-			utils.InternalServerError(w, errors.Wrapf(err, "cannot resize container"))
-			return
+			if errors.Cause(err) != define.ErrCtrStateInvalid || !query.IgnoreNotRunning {
+				utils.InternalServerError(w, errors.Wrapf(err, "cannot resize container"))
+				return
+			}
 		}
 		// This is not a 204, even though we write nothing, for compatibility
 		// reasons.
@@ -71,14 +74,16 @@ func ResizeTTY(w http.ResponseWriter, r *http.Request) {
 		if state, err := ctnr.State(); err != nil {
 			utils.InternalServerError(w, errors.Wrapf(err, "cannot obtain session container state"))
 			return
-		} else if state != define.ContainerStateRunning {
+		} else if state != define.ContainerStateRunning && !query.IgnoreNotRunning {
 			utils.Error(w, "Container not running", http.StatusConflict,
 				fmt.Errorf("container %q in wrong state %q", name, state.String()))
 			return
 		}
 		if err := ctnr.ExecResize(name, sz); err != nil {
-			utils.InternalServerError(w, errors.Wrapf(err, "cannot resize session"))
-			return
+			if errors.Cause(err) != define.ErrCtrStateInvalid || !query.IgnoreNotRunning {
+				utils.InternalServerError(w, errors.Wrapf(err, "cannot resize session"))
+				return
+			}
 		}
 		// This is not a 204, even though we write nothing, for compatibility
 		// reasons.

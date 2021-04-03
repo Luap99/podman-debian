@@ -36,6 +36,9 @@ do
     fi
 done
 
+# Make sure cni network plugins directory exists
+mkdir -p /etc/cni/net.d
+
 # Ensure that all lower-level contexts and child-processes have
 # ready access to higher level orchestration (e.g Cirrus-CI)
 # variables.
@@ -200,8 +203,8 @@ case "$TEST_FLAVOR" in
     compose) ;&
     int) ;&
     sys) ;&
+    upgrade_test) ;&
     bindings) ;&
-    swagger) ;&
     endpoint)
         # Use existing host bits when testing is to happen inside a container
         # since this script will run again in that environment.
@@ -213,6 +216,7 @@ case "$TEST_FLAVOR" in
 
         install_test_configs
         ;;
+    swagger) ;&  # use next item
     consistency) make clean ;;
     release) ;;
     *) die_unknown TEST_FLAVOR

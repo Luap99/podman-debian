@@ -20,7 +20,6 @@ Files-Included:
     vendor/github.com/fatih/camelcase
     vendor/github.com/moby/sys
     vendor/github.com/uber/jaeger-client-go
-    vendor/github.com/uber/jaeger-lib
 
 Files: *
 Copyright:

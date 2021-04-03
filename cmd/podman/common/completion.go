@@ -7,14 +7,13 @@ import (
 	"strings"
 
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v2/cmd/podman/registry"
-	"github.com/containers/podman/v2/libpod"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/pkg/domain/entities"
-	"github.com/containers/podman/v2/pkg/registries"
-	"github.com/containers/podman/v2/pkg/rootless"
-	systemdGen "github.com/containers/podman/v2/pkg/systemd/generate"
-	"github.com/containers/podman/v2/pkg/util"
+	"github.com/containers/podman/v3/cmd/podman/registry"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v3/pkg/registries"
+	"github.com/containers/podman/v3/pkg/rootless"
+	systemdDefine "github.com/containers/podman/v3/pkg/systemd/define"
+	"github.com/containers/podman/v3/pkg/util"
 	"github.com/spf13/cobra"
 )
 
@@ -207,6 +206,28 @@ func getImages(cmd *cobra.Command, toComplete string) ([]string, cobra.ShellComp
 					}
 				}
 			}
+		}
+	}
+	return suggestions, cobra.ShellCompDirectiveNoFileComp
+}
+
+func getSecrets(cmd *cobra.Command, toComplete string) ([]string, cobra.ShellCompDirective) {
+	suggestions := []string{}
+
+	engine, err := setupContainerEngine(cmd)
+	if err != nil {
+		cobra.CompErrorln(err.Error())
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	secrets, err := engine.SecretList(registry.GetContext())
+	if err != nil {
+		cobra.CompErrorln(err.Error())
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+
+	for _, s := range secrets {
+		if strings.HasPrefix(s.Spec.Name, toComplete) {
+			suggestions = append(suggestions, s.Spec.Name)
 		}
 	}
 	return suggestions, cobra.ShellCompDirectiveNoFileComp
@@ -410,6 +431,21 @@ func AutocompleteVolumes(cmd *cobra.Command, args []string, toComplete string) (
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 	return getVolumes(cmd, toComplete)
+}
+
+// AutocompleteSecrets - Autocomplete secrets.
+func AutocompleteSecrets(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if !validCurrentCmdLine(cmd, args, toComplete) {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	return getSecrets(cmd, toComplete)
+}
+
+func AutocompleteSecretCreate(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) == 1 {
+		return nil, cobra.ShellCompDirectiveDefault
+	}
+	return nil, cobra.ShellCompDirectiveNoFileComp
 }
 
 // AutocompleteImages - Autocomplete images.
@@ -695,8 +731,8 @@ func AutocompletePullOption(cmd *cobra.Command, args []string, toComplete string
 // AutocompleteRestartOption - Autocomplete restart options for create and run command.
 // -> "always", "no", "on-failure", "unless-stopped"
 func AutocompleteRestartOption(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	restartOptions := []string{libpod.RestartPolicyAlways, libpod.RestartPolicyNo,
-		libpod.RestartPolicyOnFailure, libpod.RestartPolicyUnlessStopped}
+	restartOptions := []string{define.RestartPolicyAlways, define.RestartPolicyNo,
+		define.RestartPolicyOnFailure, define.RestartPolicyUnlessStopped}
 	return restartOptions, cobra.ShellCompDirectiveNoFileComp
 }
 
@@ -871,7 +907,7 @@ func AutocompleteEventFilter(cmd *cobra.Command, args []string, toComplete strin
 // AutocompleteSystemdRestartOptions - Autocomplete systemd restart options.
 // -> "no", "on-success", "on-failure", "on-abnormal", "on-watchdog", "on-abort", "always"
 func AutocompleteSystemdRestartOptions(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	return systemdGen.RestartPolicies, cobra.ShellCompDirectiveNoFileComp
+	return systemdDefine.RestartPolicies, cobra.ShellCompDirectiveNoFileComp
 }
 
 // AutocompleteTrustType - Autocomplete trust type options.

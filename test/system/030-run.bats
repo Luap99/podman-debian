@@ -139,7 +139,7 @@ echo $rand        |   0 | $rand
     is "$output" "" "--pull=never [present]: no output"
 
     # Now test with a remote image which we don't have present (the 00 tag)
-    NONLOCAL_IMAGE="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/$PODMAN_TEST_IMAGE_NAME:00000000"
+    NONLOCAL_IMAGE="$PODMAN_NONLOCAL_IMAGE_FQN"
 
     run_podman 125 run --pull=never $NONLOCAL_IMAGE true
     is "$output" "Error: unable to find a name and tag match for $NONLOCAL_IMAGE in repotags: no such image" "--pull=never [with image not present]: error"
@@ -175,7 +175,7 @@ echo $rand        |   0 | $rand
 # 'run --rmi' deletes the image in the end unless it's used by another container
 @test "podman run --rmi" {
     # Name of a nonlocal image. It should be pulled in by the first 'run'
-    NONLOCAL_IMAGE="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/$PODMAN_TEST_IMAGE_NAME:00000000"
+    NONLOCAL_IMAGE="$PODMAN_NONLOCAL_IMAGE_FQN"
     run_podman 1 image exists $NONLOCAL_IMAGE
 
     # Run a container, without --rm; this should block subsequent --rmi
@@ -623,10 +623,60 @@ json-file | f
     fi
 }
 
+# https://github.com/containers/podman/issues/9096
+# podman exec may truncate stdout/stderr; actually a bug in conmon:
+# https://github.com/containers/conmon/issues/236
+@test "podman run - does not truncate or hang with big output" {
+    # Size, in bytes, to dd and to expect in return
+    char_count=700000
+
+    # Container name; primarily needed when running podman-remote
+    cname=mybigdatacontainer
+
+    # This is one of those cases where BATS is not the best test framework.
+    # We can't do any output redirection, because 'run' overrides it so
+    # as to preserve $output. We can't _not_ do redirection, because BATS
+    # doesn't like NULs in $output (and neither would humans who might
+    # have to read them in an error log).
+    # Workaround: write to a log file, and don't attach stdout.
+    run_podman run --name $cname --attach stderr --log-driver k8s-file \
+               $IMAGE dd if=/dev/zero count=$char_count bs=1
+    is "${lines[0]}" "$char_count+0 records in"  "dd: number of records in"
+    is "${lines[1]}" "$char_count+0 records out" "dd: number of records out"
+
+    # We don't have many tests for '-l'. This is as good a place as any
+    if ! is_remote; then
+        cname=-l
+    fi
+
+    # Now find that log file, and count the NULs in it.
+    # The log file is of the form '<timestamp> <P|F> <data>', where P|F
+    # is Partial/Full; I think that's called "kubernetes log format"?
+    run_podman inspect $cname --format '{{.HostConfig.LogConfig.Path}}'
+    logfile="$output"
+
+    count_zero=$(tr -cd '\0' <$logfile | wc -c)
+    is "$count_zero" "$char_count" "count of NULL characters in log"
+
+    # Clean up
+    run_podman rm $cname
+}
+
 @test "podman run - do not set empty HOME" {
     # Regression test for #9378.
     run_podman run --rm --user 100 $IMAGE printenv
     is "$output" ".*HOME=/.*"
+}
+
+@test "podman run --tty -i failure with no tty" {
+    run_podman run --tty -i --rm $IMAGE echo hello < /dev/null
+    is "$output" ".*The input device is not a TTY.*"
+
+    run_podman run --tty=false -i --rm $IMAGE echo hello < /dev/null
+    is "$output" "hello"
+
+    run_podman run --tty -i=false --rm $IMAGE echo hello < /dev/null
+    is "$output" "hello"
 }
 
 # vim: filetype=sh

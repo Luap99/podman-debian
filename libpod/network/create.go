@@ -10,9 +10,9 @@ import (
 
 	"github.com/containernetworking/cni/pkg/version"
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v2/pkg/domain/entities"
-	"github.com/containers/podman/v2/pkg/rootless"
-	"github.com/containers/podman/v2/pkg/util"
+	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v3/pkg/rootless"
+	"github.com/containers/podman/v3/pkg/util"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -24,7 +24,7 @@ func Create(name string, options entities.NetworkCreateOptions, runtimeConfig *c
 		return nil, err
 	}
 	// Acquire a lock for CNI
-	l, err := acquireCNILock(filepath.Join(runtimeConfig.Engine.TmpDir, LockFileName))
+	l, err := acquireCNILock(runtimeConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -248,6 +248,7 @@ func createBridge(name string, options entities.NetworkCreateOptions, runtimeCon
 
 func createMacVLAN(name string, options entities.NetworkCreateOptions, runtimeConfig *config.Config) (string, error) {
 	var (
+		mtu     int
 		plugins []CNIPlugins
 	)
 	liveNetNames, err := GetLiveNetworkNames()
@@ -282,7 +283,19 @@ func createMacVLAN(name string, options entities.NetworkCreateOptions, runtimeCo
 		}
 	}
 	ncList := NewNcList(name, version.Current(), options.Labels)
-	macvlan := NewMacVLANPlugin(parentNetworkDevice)
+	if val, ok := options.Options["mtu"]; ok {
+		intVal, err := strconv.Atoi(val)
+		if err != nil {
+			return "", err
+		}
+		if intVal > 0 {
+			mtu = intVal
+		}
+	}
+	macvlan, err := NewMacVLANPlugin(parentNetworkDevice, options.Gateway, &options.Range, &options.Subnet, mtu)
+	if err != nil {
+		return "", err
+	}
 	plugins = append(plugins, macvlan)
 	ncList["plugins"] = plugins
 	b, err := json.MarshalIndent(ncList, "", "   ")

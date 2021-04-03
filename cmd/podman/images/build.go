@@ -2,24 +2,23 @@ package images
 
 import (
 	"io"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/containers/buildah"
-	"github.com/containers/buildah/imagebuildah"
+	"github.com/containers/buildah/define"
 	buildahCLI "github.com/containers/buildah/pkg/cli"
 	"github.com/containers/buildah/pkg/parse"
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/config"
 	encconfig "github.com/containers/ocicrypt/config"
 	enchelpers "github.com/containers/ocicrypt/helpers"
-	"github.com/containers/podman/v2/cmd/podman/common"
-	"github.com/containers/podman/v2/cmd/podman/registry"
-	"github.com/containers/podman/v2/cmd/podman/utils"
-	"github.com/containers/podman/v2/pkg/domain/entities"
-	"github.com/docker/go-units"
+	"github.com/containers/podman/v3/cmd/podman/common"
+	"github.com/containers/podman/v3/cmd/podman/registry"
+	"github.com/containers/podman/v3/cmd/podman/utils"
+	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -159,17 +158,18 @@ func buildFlags(cmd *cobra.Command) {
 	flags.SetNormalizeFunc(buildahCLI.AliasFlags)
 	if registry.IsRemote() {
 		flag = flags.Lookup("isolation")
-		buildOpts.Isolation = buildah.OCI
-		if err := flag.Value.Set(buildah.OCI); err != nil {
-			logrus.Errorf("unable to set --isolation to %v: %v", buildah.OCI, err)
+		buildOpts.Isolation = define.OCI
+		if err := flag.Value.Set(define.OCI); err != nil {
+			logrus.Errorf("unable to set --isolation to %v: %v", define.OCI, err)
 		}
-		flag.DefValue = buildah.OCI
+		flag.DefValue = define.OCI
 		_ = flags.MarkHidden("disable-content-trust")
 		_ = flags.MarkHidden("cache-from")
 		_ = flags.MarkHidden("sign-by")
 		_ = flags.MarkHidden("signature-policy")
 		_ = flags.MarkHidden("tls-verify")
 		_ = flags.MarkHidden("compress")
+		_ = flags.MarkHidden("volume")
 	}
 }
 
@@ -195,7 +195,7 @@ func build(cmd *cobra.Command, args []string) error {
 	var contextDir string
 	if len(args) > 0 {
 		// The context directory could be a URL.  Try to handle that.
-		tempDir, subDir, err := imagebuildah.TempDirForURL("", "buildah", args[0])
+		tempDir, subDir, err := define.TempDirForURL("", "buildah", args[0])
 		if err != nil {
 			return errors.Wrapf(err, "error prepping temporary context directory")
 		}
@@ -265,6 +265,9 @@ func build(cmd *cobra.Command, args []string) error {
 	}
 
 	report, err := registry.ImageEngine().Build(registry.GetContext(), containerFiles, *apiBuildOpts)
+	if err != nil {
+		return err
+	}
 
 	if cmd.Flag("iidfile").Changed {
 		f, err := os.Create(buildOpts.Iidfile)
@@ -276,7 +279,7 @@ func build(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	return err
+	return nil
 }
 
 // buildFlagsWrapperToOptions converts the local build flags to the build options used
@@ -295,16 +298,36 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 		}
 	}
 
-	pullPolicy := imagebuildah.PullIfMissing
+	commonOpts, err := parse.CommonBuildOptions(c)
+	if err != nil {
+		return nil, err
+	}
+
+	pullFlagsCount := 0
+	if c.Flag("pull").Changed {
+		pullFlagsCount++
+	}
+	if c.Flag("pull-always").Changed {
+		pullFlagsCount++
+	}
+	if c.Flag("pull-never").Changed {
+		pullFlagsCount++
+	}
+
+	if pullFlagsCount > 1 {
+		return nil, errors.Errorf("can only set one of 'pull' or 'pull-always' or 'pull-never'")
+	}
+
+	pullPolicy := define.PullIfMissing
 	if c.Flags().Changed("pull") && flags.Pull {
-		pullPolicy = imagebuildah.PullAlways
+		pullPolicy = define.PullAlways
 	}
 	if flags.PullAlways {
-		pullPolicy = imagebuildah.PullAlways
+		pullPolicy = define.PullAlways
 	}
 
 	if flags.PullNever {
-		pullPolicy = imagebuildah.PullIfMissing
+		pullPolicy = define.PullNever
 	}
 
 	args := make(map[string]string)
@@ -314,7 +337,12 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 			if len(av) > 1 {
 				args[av[0]] = av[1]
 			} else {
-				delete(args, av[0])
+				// check if the env is set in the local environment and use that value if it is
+				if val, present := os.LookupEnv(av[0]); present {
+					args[av[0]] = val
+				} else {
+					delete(args, av[0])
+				}
 			}
 		}
 	}
@@ -353,22 +381,6 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 		reporter = logfile
 	}
 
-	var memoryLimit, memorySwap int64
-	var err error
-	if c.Flags().Changed("memory") {
-		memoryLimit, err = units.RAMInBytes(flags.Memory)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if c.Flags().Changed("memory-swap") {
-		memorySwap, err = units.RAMInBytes(flags.MemorySwap)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	nsValues, networkPolicy, err := parse.NamespaceOptions(c)
 	if err != nil {
 		return nil, err
@@ -390,9 +402,9 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 		flags.Layers = false
 	}
 
-	compression := imagebuildah.Gzip
+	compression := define.Gzip
 	if flags.DisableCompression {
-		compression = imagebuildah.Uncompressed
+		compression = define.Uncompressed
 	}
 
 	isolation, err := parse.IsolationOption(flags.Isolation)
@@ -414,10 +426,10 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 	format := ""
 	flags.Format = strings.ToLower(flags.Format)
 	switch {
-	case strings.HasPrefix(flags.Format, buildah.OCI):
-		format = buildah.OCIv1ImageManifest
-	case strings.HasPrefix(flags.Format, buildah.DOCKER):
-		format = buildah.Dockerv2ImageManifest
+	case strings.HasPrefix(flags.Format, define.OCI):
+		format = define.OCIv1ImageManifest
+	case strings.HasPrefix(flags.Format, define.DOCKER):
+		format = define.Dockerv2ImageManifest
 	default:
 		return nil, errors.Errorf("unrecognized image type %q", flags.Format)
 	}
@@ -445,34 +457,20 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 		return nil, errors.Wrapf(err, "unable to obtain decrypt config")
 	}
 
-	opts := imagebuildah.BuildOptions{
-		AddCapabilities: flags.CapAdd,
-		AdditionalTags:  tags,
-		Annotations:     flags.Annotation,
-		Architecture:    arch,
-		Args:            args,
-		BlobDirectory:   flags.BlobCache,
-		CNIConfigDir:    flags.CNIConfigDir,
-		CNIPluginPath:   flags.CNIPlugInPath,
-		CommonBuildOpts: &buildah.CommonBuildOptions{
-			AddHost:      flags.AddHost,
-			CPUPeriod:    flags.CPUPeriod,
-			CPUQuota:     flags.CPUQuota,
-			CPUSetCPUs:   flags.CPUSetCPUs,
-			CPUSetMems:   flags.CPUSetMems,
-			CPUShares:    flags.CPUShares,
-			CgroupParent: flags.CgroupParent,
-			HTTPProxy:    flags.HTTPProxy,
-			Memory:       memoryLimit,
-			MemorySwap:   memorySwap,
-			ShmSize:      flags.ShmSize,
-			Ulimit:       flags.Ulimit,
-			Volumes:      flags.Volumes,
-		},
-		Compression:      compression,
-		ConfigureNetwork: networkPolicy,
-		ContextDirectory: contextDir,
-		//		DefaultMountsFilePath:   FIXME: this requires global flags to be working!
+	opts := define.BuildOptions{
+		AddCapabilities:         flags.CapAdd,
+		AdditionalTags:          tags,
+		Annotations:             flags.Annotation,
+		Architecture:            arch,
+		Args:                    args,
+		BlobDirectory:           flags.BlobCache,
+		CNIConfigDir:            flags.CNIConfigDir,
+		CNIPluginPath:           flags.CNIPlugInPath,
+		CommonBuildOpts:         commonOpts,
+		Compression:             compression,
+		ConfigureNetwork:        networkPolicy,
+		ContextDirectory:        contextDir,
+		DefaultMountsFilePath:   containerConfig.Containers.DefaultMountsFile,
 		Devices:                 flags.Devices,
 		DropCapabilities:        flags.CapDrop,
 		Err:                     stderr,
@@ -509,6 +507,19 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 		TransientMounts:         flags.Volumes,
 	}
 
+	if flags.IgnoreFile != "" {
+		excludes, err := parseDockerignore(flags.IgnoreFile)
+		if err != nil {
+			return nil, errors.Wrapf(err, "unable to obtain decrypt config")
+		}
+		opts.Excludes = excludes
+	}
+
+	if c.Flag("timestamp").Changed {
+		timestamp := time.Unix(flags.Timestamp, 0).UTC()
+		opts.Timestamp = &timestamp
+	}
+
 	return &entities.BuildOptions{BuildOptions: opts}, nil
 }
 
@@ -525,4 +536,19 @@ func getDecryptConfig(decryptionKeys []string) (*encconfig.DecryptConfig, error)
 	}
 
 	return decConfig, nil
+}
+
+func parseDockerignore(ignoreFile string) ([]string, error) {
+	excludes := []string{}
+	ignore, err := ioutil.ReadFile(ignoreFile)
+	if err != nil {
+		return excludes, err
+	}
+	for _, e := range strings.Split(string(ignore), "\n") {
+		if len(e) == 0 || e[0] == '#' {
+			continue
+		}
+		excludes = append(excludes, e)
+	}
+	return excludes, nil
 }

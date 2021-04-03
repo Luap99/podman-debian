@@ -5,10 +5,10 @@ import (
 	"strings"
 
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/podman/v2/cmd/podman/parse"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/pkg/domain/entities"
-	"github.com/containers/podman/v2/pkg/specgen"
+	"github.com/containers/podman/v3/cmd/podman/parse"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v3/pkg/specgen"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
@@ -80,7 +80,7 @@ func DefineNetFlags(cmd *cobra.Command) {
 	_ = cmd.RegisterFlagCompletionFunc(publishFlagName, completion.AutocompleteNone)
 
 	netFlags.Bool(
-		"no-hosts", false,
+		"no-hosts", containerConfig.Containers.NoHosts,
 		"Do not create /etc/hosts within the container, instead use the version from the image",
 	)
 }

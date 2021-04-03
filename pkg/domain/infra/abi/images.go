@@ -20,13 +20,13 @@ import (
 	"github.com/containers/image/v5/transports"
 	"github.com/containers/image/v5/transports/alltransports"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/libpod/image"
-	"github.com/containers/podman/v2/pkg/domain/entities"
-	"github.com/containers/podman/v2/pkg/domain/entities/reports"
-	domainUtils "github.com/containers/podman/v2/pkg/domain/utils"
-	"github.com/containers/podman/v2/pkg/rootless"
-	"github.com/containers/podman/v2/pkg/util"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/libpod/image"
+	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v3/pkg/domain/entities/reports"
+	domainUtils "github.com/containers/podman/v3/pkg/domain/utils"
+	"github.com/containers/podman/v3/pkg/rootless"
+	"github.com/containers/podman/v3/pkg/util"
 	"github.com/containers/storage"
 	dockerRef "github.com/docker/distribution/reference"
 	"github.com/opencontainers/go-digest"
@@ -247,7 +247,7 @@ func pull(ctx context.Context, runtime *image.Runtime, rawImage string, options 
 	}
 
 	if !options.AllTags {
-		newImage, err := runtime.New(ctx, rawImage, options.SignaturePolicy, options.Authfile, writer, &dockerRegistryOptions, image.SigningOptions{}, label, options.PullPolicy)
+		newImage, err := runtime.New(ctx, rawImage, options.SignaturePolicy, options.Authfile, writer, &dockerRegistryOptions, image.SigningOptions{}, label, options.PullPolicy, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -280,7 +280,7 @@ func pull(ctx context.Context, runtime *image.Runtime, rawImage string, options 
 	foundIDs := []string{}
 	for _, tag := range tags {
 		name := rawImage + ":" + tag
-		newImage, err := runtime.New(ctx, name, options.SignaturePolicy, options.Authfile, writer, &dockerRegistryOptions, image.SigningOptions{}, nil, util.PullImageAlways)
+		newImage, err := runtime.New(ctx, name, options.SignaturePolicy, options.Authfile, writer, &dockerRegistryOptions, image.SigningOptions{}, nil, util.PullImageAlways, nil)
 		if err != nil {
 			logrus.Errorf("error pulling image %q", name)
 			continue
@@ -376,7 +376,8 @@ func (ir *ImageEngine) Push(ctx context.Context, source string, destination stri
 		options.Compress,
 		signOptions,
 		&dockerRegistryOptions,
-		nil)
+		nil,
+		options.Progress)
 	if err != nil && errors.Cause(err) != storage.ErrImageUnknown {
 		// Image might be a manifest list so attempt a manifest push
 		if _, manifestErr := ir.ManifestPush(ctx, source, destination, options); manifestErr == nil {
@@ -583,8 +584,9 @@ func (ir *ImageEngine) Remove(ctx context.Context, images []string, opts entitie
 			report.Deleted = append(report.Deleted, results.Deleted)
 			report.Untagged = append(report.Untagged, results.Untagged...)
 			return nil
-		case storage.ErrImageUnknown:
-			// The image must have been removed already (see #6510).
+		case storage.ErrImageUnknown, storage.ErrLayerUnknown:
+			// The image must have been removed already (see #6510)
+			// or the storage is corrupted (see #9617).
 			report.Deleted = append(report.Deleted, img.ID())
 			report.Untagged = append(report.Untagged, img.ID())
 			return nil
@@ -638,6 +640,10 @@ func (ir *ImageEngine) Remove(ctx context.Context, images []string, opts entitie
 	for _, id := range images {
 		img, err := ir.Libpod.ImageRuntime().NewFromLocal(id)
 		if err != nil {
+			// attempt to remove image from storage
+			if forceErr := ir.Libpod.RemoveImageFromStorage(id); forceErr == nil {
+				continue
+			}
 			rmErrors = append(rmErrors, err)
 			continue
 		}

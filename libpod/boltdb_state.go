@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/containers/podman/v2/libpod/define"
+	"github.com/containers/podman/v3/libpod/define"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -879,7 +879,7 @@ func (s *BoltState) ContainerInUse(ctr *Container) ([]string, error) {
 		ctrDB := ctrBucket.Bucket([]byte(ctr.ID()))
 		if ctrDB == nil {
 			ctr.valid = false
-			return errors.Wrapf(define.ErrNoSuchCtr, "no container with ID %s found in DB", ctr.ID())
+			return errors.Wrapf(define.ErrNoSuchCtr, "no container with ID %q found in DB", ctr.ID())
 		}
 
 		dependsBkt := ctrDB.Bucket(dependenciesBkt)
@@ -1669,7 +1669,105 @@ func (s *BoltState) RewriteContainerConfig(ctr *Container, newCfg *ContainerConf
 		ctrDB := ctrBkt.Bucket([]byte(ctr.ID()))
 		if ctrDB == nil {
 			ctr.valid = false
-			return errors.Wrapf(define.ErrNoSuchCtr, "no container with ID %s found in DB", ctr.ID())
+			return errors.Wrapf(define.ErrNoSuchCtr, "no container with ID %q found in DB", ctr.ID())
+		}
+
+		if err := ctrDB.Put(configKey, newCfgJSON); err != nil {
+			return errors.Wrapf(err, "error updating container %s config JSON", ctr.ID())
+		}
+
+		return nil
+	})
+	return err
+}
+
+// SafeRewriteContainerConfig rewrites a container's configuration in a more
+// limited fashion than RewriteContainerConfig. It is marked as safe to use
+// under most circumstances, unlike RewriteContainerConfig.
+// DO NOT USE TO: Change container dependencies, change pod membership, change
+// locks, change container ID.
+func (s *BoltState) SafeRewriteContainerConfig(ctr *Container, oldName, newName string, newCfg *ContainerConfig) error {
+	if !s.valid {
+		return define.ErrDBClosed
+	}
+
+	if !ctr.valid {
+		return define.ErrCtrRemoved
+	}
+
+	if newName != "" && newCfg.Name != newName {
+		return errors.Wrapf(define.ErrInvalidArg, "new name %s for container %s must match name in given container config", newName, ctr.ID())
+	}
+	if newName != "" && oldName == "" {
+		return errors.Wrapf(define.ErrInvalidArg, "must provide old name for container if a new name is given")
+	}
+
+	newCfgJSON, err := json.Marshal(newCfg)
+	if err != nil {
+		return errors.Wrapf(err, "error marshalling new configuration JSON for container %s", ctr.ID())
+	}
+
+	db, err := s.getDBCon()
+	if err != nil {
+		return err
+	}
+	defer s.deferredCloseDBCon(db)
+
+	err = db.Update(func(tx *bolt.Tx) error {
+		if newName != "" {
+			idBkt, err := getIDBucket(tx)
+			if err != nil {
+				return err
+			}
+			namesBkt, err := getNamesBucket(tx)
+			if err != nil {
+				return err
+			}
+			allCtrsBkt, err := getAllCtrsBucket(tx)
+			if err != nil {
+				return err
+			}
+
+			needsRename := true
+			if exists := namesBkt.Get([]byte(newName)); exists != nil {
+				if string(exists) == ctr.ID() {
+					// Name already associated with the ID
+					// of this container. No need for a
+					// rename.
+					needsRename = false
+				} else {
+					return errors.Wrapf(define.ErrCtrExists, "name %s already in use, cannot rename container %s", newName, ctr.ID())
+				}
+			}
+
+			if needsRename {
+				// We do have to remove the old name. The other
+				// buckets are ID-indexed so we just need to
+				// overwrite the values there.
+				if err := namesBkt.Delete([]byte(oldName)); err != nil {
+					return errors.Wrapf(err, "error deleting container %s old name from DB for rename", ctr.ID())
+				}
+				if err := idBkt.Put([]byte(ctr.ID()), []byte(newName)); err != nil {
+					return errors.Wrapf(err, "error renaming container %s in ID bucket in DB", ctr.ID())
+				}
+				if err := namesBkt.Put([]byte(newName), []byte(ctr.ID())); err != nil {
+					return errors.Wrapf(err, "error adding new name %s for container %s in DB", newName, ctr.ID())
+				}
+				if err := allCtrsBkt.Put([]byte(ctr.ID()), []byte(newName)); err != nil {
+					return errors.Wrapf(err, "error renaming container %s in all containers bucket in DB", ctr.ID())
+				}
+			}
+		}
+
+		ctrBkt, err := getCtrBucket(tx)
+		if err != nil {
+			return err
+		}
+
+		ctrDB := ctrBkt.Bucket([]byte(ctr.ID()))
+		if ctrDB == nil {
+			ctr.valid = false
+			return errors.Wrapf(define.ErrNoSuchCtr, "no container with ID %q found in DB", ctr.ID())
 		}
 
 		if err := ctrDB.Put(configKey, newCfgJSON); err != nil {

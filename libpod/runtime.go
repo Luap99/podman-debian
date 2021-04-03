@@ -14,16 +14,16 @@ import (
 	"github.com/containers/image/v5/pkg/sysregistriesv2"
 	is "github.com/containers/image/v5/storage"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/libpod/events"
-	"github.com/containers/podman/v2/libpod/image"
-	"github.com/containers/podman/v2/libpod/lock"
-	"github.com/containers/podman/v2/libpod/plugin"
-	"github.com/containers/podman/v2/libpod/shutdown"
-	"github.com/containers/podman/v2/pkg/cgroups"
-	"github.com/containers/podman/v2/pkg/registries"
-	"github.com/containers/podman/v2/pkg/rootless"
-	"github.com/containers/podman/v2/pkg/util"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/libpod/events"
+	"github.com/containers/podman/v3/libpod/image"
+	"github.com/containers/podman/v3/libpod/lock"
+	"github.com/containers/podman/v3/libpod/plugin"
+	"github.com/containers/podman/v3/libpod/shutdown"
+	"github.com/containers/podman/v3/pkg/cgroups"
+	"github.com/containers/podman/v3/pkg/registries"
+	"github.com/containers/podman/v3/pkg/rootless"
+	"github.com/containers/podman/v3/pkg/util"
 	"github.com/containers/storage"
 	"github.com/cri-o/ocicni/pkg/ocicni"
 	"github.com/docker/docker/pkg/namesgenerator"
@@ -903,6 +903,11 @@ func (r *Runtime) getVolumePlugin(name string) (*plugin.VolumePlugin, error) {
 	}
 
 	return plugin.GetVolumePlugin(name, pluginPath)
+}
+
+// GetSecretsStoreageDir returns the directory that the secrets manager should take
+func (r *Runtime) GetSecretsStorageDir() string {
+	return filepath.Join(r.store.GraphRoot(), "secrets")
 }
 
 func graphRootMounted() bool {

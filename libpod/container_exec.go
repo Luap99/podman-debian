@@ -8,12 +8,11 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/libpod/events"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/libpod/events"
 	"github.com/containers/storage/pkg/stringid"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-	"k8s.io/client-go/tools/remotecommand"
 )
 
 // ExecConfig contains the configuration of an exec session
@@ -676,7 +675,7 @@ func (c *Container) ExecRemove(sessionID string, force bool) error {
 
 // ExecResize resizes the TTY of the given exec session. Only available if the
 // exec session created a TTY.
-func (c *Container) ExecResize(sessionID string, newSize remotecommand.TerminalSize) error {
+func (c *Container) ExecResize(sessionID string, newSize define.TerminalSize) error {
 	if !c.batched {
 		c.lock.Lock()
 		defer c.lock.Unlock()
@@ -703,7 +702,7 @@ func (c *Container) ExecResize(sessionID string, newSize remotecommand.TerminalS
 // Exec emulates the old Libpod exec API, providing a single call to create,
 // run, and remove an exec session. Returns exit code and error. Exit code is
 // not guaranteed to be set sanely if error is not nil.
-func (c *Container) Exec(config *ExecConfig, streams *define.AttachStreams, resize <-chan remotecommand.TerminalSize) (int, error) {
+func (c *Container) Exec(config *ExecConfig, streams *define.AttachStreams, resize <-chan define.TerminalSize) (int, error) {
 	sessionID, err := c.ExecCreate(config)
 	if err != nil {
 		return -1, err
@@ -954,18 +953,22 @@ func (c *Container) removeAllExecSessions() error {
 	}
 	// Delete all exec sessions
 	if err := c.runtime.state.RemoveContainerExecSessions(c); err != nil {
-		if lastErr != nil {
-			logrus.Errorf("Error stopping container %s exec sessions: %v", c.ID(), lastErr)
+		if errors.Cause(err) != define.ErrCtrRemoved {
+			if lastErr != nil {
+				logrus.Errorf("Error stopping container %s exec sessions: %v", c.ID(), lastErr)
+			}
+			lastErr = err
 		}
-		lastErr = err
 	}
 	c.state.ExecSessions = nil
 	c.state.LegacyExecSessions = nil
 	if err := c.save(); err != nil {
-		if lastErr != nil {
-			logrus.Errorf("Error stopping container %s exec sessions: %v", c.ID(), lastErr)
+		if errors.Cause(err) != define.ErrCtrRemoved {
+			if lastErr != nil {
+				logrus.Errorf("Error stopping container %s exec sessions: %v", c.ID(), lastErr)
+			}
+			lastErr = err
 		}
-		lastErr = err
 	}
 
 	return lastErr

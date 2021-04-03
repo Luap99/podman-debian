@@ -12,24 +12,24 @@ import (
 	"github.com/containers/buildah"
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/image/v5/manifest"
-	"github.com/containers/podman/v2/libpod"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/libpod/events"
-	"github.com/containers/podman/v2/libpod/image"
-	"github.com/containers/podman/v2/libpod/logs"
-	"github.com/containers/podman/v2/pkg/cgroups"
-	"github.com/containers/podman/v2/pkg/checkpoint"
-	"github.com/containers/podman/v2/pkg/domain/entities"
-	"github.com/containers/podman/v2/pkg/domain/entities/reports"
-	dfilters "github.com/containers/podman/v2/pkg/domain/filters"
-	"github.com/containers/podman/v2/pkg/domain/infra/abi/terminal"
-	parallelctr "github.com/containers/podman/v2/pkg/parallel/ctr"
-	"github.com/containers/podman/v2/pkg/ps"
-	"github.com/containers/podman/v2/pkg/rootless"
-	"github.com/containers/podman/v2/pkg/signal"
-	"github.com/containers/podman/v2/pkg/specgen"
-	"github.com/containers/podman/v2/pkg/specgen/generate"
-	"github.com/containers/podman/v2/pkg/util"
+	"github.com/containers/podman/v3/libpod"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/libpod/events"
+	"github.com/containers/podman/v3/libpod/image"
+	"github.com/containers/podman/v3/libpod/logs"
+	"github.com/containers/podman/v3/pkg/cgroups"
+	"github.com/containers/podman/v3/pkg/checkpoint"
+	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v3/pkg/domain/entities/reports"
+	dfilters "github.com/containers/podman/v3/pkg/domain/filters"
+	"github.com/containers/podman/v3/pkg/domain/infra/abi/terminal"
+	parallelctr "github.com/containers/podman/v3/pkg/parallel/ctr"
+	"github.com/containers/podman/v3/pkg/ps"
+	"github.com/containers/podman/v3/pkg/rootless"
+	"github.com/containers/podman/v3/pkg/signal"
+	"github.com/containers/podman/v3/pkg/specgen"
+	"github.com/containers/podman/v3/pkg/specgen/generate"
+	"github.com/containers/podman/v3/pkg/util"
 	"github.com/containers/storage"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -138,9 +138,15 @@ func (ic *ContainerEngine) ContainerUnpause(ctx context.Context, namesOrIds []st
 }
 func (ic *ContainerEngine) ContainerStop(ctx context.Context, namesOrIds []string, options entities.StopOptions) ([]*entities.StopReport, error) {
 	names := namesOrIds
-	ctrs, err := getContainersByContext(options.All, options.Latest, names, ic.Libpod)
+	ctrs, rawInputs, err := getContainersAndInputByContext(options.All, options.Latest, names, ic.Libpod)
 	if err != nil && !(options.Ignore && errors.Cause(err) == define.ErrNoSuchCtr) {
 		return nil, err
+	}
+	ctrMap := map[string]string{}
+	if len(rawInputs) == len(ctrs) {
+		for i := range ctrs {
+			ctrMap[ctrs[i].ID()] = rawInputs[i]
+		}
 	}
 	errMap, err := parallelctr.ContainerOp(ctx, ctrs, func(c *libpod.Container) error {
 		var err error
@@ -174,6 +180,11 @@ func (ic *ContainerEngine) ContainerStop(ctx context.Context, namesOrIds []strin
 	for ctr, err := range errMap {
 		report := new(entities.StopReport)
 		report.Id = ctr.ID()
+		if options.All {
+			report.RawInput = ctr.ID()
+		} else {
+			report.RawInput = ctrMap[ctr.ID()]
+		}
 		report.Err = err
 		reports = append(reports, report)
 	}
@@ -197,15 +208,22 @@ func (ic *ContainerEngine) ContainerKill(ctx context.Context, namesOrIds []strin
 	if err != nil {
 		return nil, err
 	}
-	ctrs, err := getContainersByContext(options.All, options.Latest, namesOrIds, ic.Libpod)
+	ctrs, rawInputs, err := getContainersAndInputByContext(options.All, options.Latest, namesOrIds, ic.Libpod)
 	if err != nil {
 		return nil, err
+	}
+	ctrMap := map[string]string{}
+	if len(rawInputs) == len(ctrs) {
+		for i := range ctrs {
+			ctrMap[ctrs[i].ID()] = rawInputs[i]
+		}
 	}
 	reports := make([]*entities.KillReport, 0, len(ctrs))
 	for _, con := range ctrs {
 		reports = append(reports, &entities.KillReport{
-			Id:  con.ID(),
-			Err: con.Kill(uint(sig)),
+			Id:       con.ID(),
+			Err:      con.Kill(uint(sig)),
+			RawInput: ctrMap[con.ID()],
 		})
 	}
 	return reports, nil
@@ -283,14 +301,14 @@ func (ic *ContainerEngine) ContainerRm(ctx context.Context, namesOrIds []string,
 		for _, ctr := range names {
 			logrus.Debugf("Evicting container %q", ctr)
 			report := entities.RmReport{Id: ctr}
-			id, err := ic.Libpod.EvictContainer(ctx, ctr, options.Volumes)
+			_, err := ic.Libpod.EvictContainer(ctx, ctr, options.Volumes)
 			if err != nil {
 				if options.Ignore && errors.Cause(err) == define.ErrNoSuchCtr {
 					logrus.Debugf("Ignoring error (--allow-missing): %v", err)
 					reports = append(reports, &report)
 					continue
 				}
-				report.Err = errors.Wrapf(err, "failed to evict container: %q", id)
+				report.Err = err
 				reports = append(reports, &report)
 				continue
 			}
@@ -301,12 +319,18 @@ func (ic *ContainerEngine) ContainerRm(ctx context.Context, namesOrIds []string,
 
 	errMap, err := parallelctr.ContainerOp(ctx, ctrs, func(c *libpod.Container) error {
 		err := ic.Libpod.RemoveContainer(ctx, c, options.Force, options.Volumes)
-		if err != nil {
-			if options.Ignore && errors.Cause(err) == define.ErrNoSuchCtr {
+		if err == nil {
+			return nil
+		}
+		logrus.Debugf("Failed to remove container %s: %s", c.ID(), err.Error())
+		switch errors.Cause(err) {
+		case define.ErrNoSuchCtr:
+			if options.Ignore {
 				logrus.Debugf("Ignoring error (--allow-missing): %v", err)
 				return nil
 			}
-			logrus.Debugf("Failed to remove container %s: %s", c.ID(), err.Error())
+		case define.ErrCtrRemoved:
+			return nil
 		}
 		return err
 	})

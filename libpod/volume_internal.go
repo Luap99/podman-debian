@@ -4,7 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/containers/podman/v2/libpod/define"
+	"github.com/containers/podman/v3/libpod/define"
 	"github.com/pkg/errors"
 )
 
@@ -17,6 +17,7 @@ func newVolume(runtime *Runtime) *Volume {
 	volume.config.Labels = make(map[string]string)
 	volume.config.Options = make(map[string]string)
 	volume.state.NeedsCopyUp = true
+	volume.state.NeedsChown = true
 	return volume
 }
 

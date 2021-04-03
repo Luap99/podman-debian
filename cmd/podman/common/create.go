@@ -5,8 +5,8 @@ import (
 
 	"github.com/containers/common/pkg/auth"
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/podman/v2/cmd/podman/registry"
-	"github.com/containers/podman/v2/libpod/define"
+	"github.com/containers/podman/v3/cmd/podman/registry"
+	"github.com/containers/podman/v3/libpod/define"
 	"github.com/spf13/cobra"
 )
 
@@ -602,6 +602,14 @@ func DefineCreateFlags(cmd *cobra.Command, cf *ContainerCLIOpts) {
 		`control sd-notify behavior ("container"|"conmon"|"ignore")`,
 	)
 	_ = cmd.RegisterFlagCompletionFunc(sdnotifyFlagName, AutocompleteSDNotify)
+
+	secretFlagName := "secret"
+	createFlags.StringArrayVar(
+		&cf.Secrets,
+		secretFlagName, []string{},
+		"Add secret to container",
+	)
+	_ = cmd.RegisterFlagCompletionFunc(secretFlagName, AutocompleteSecrets)
 
 	securityOptFlagName := "security-opt"
 	createFlags.StringArrayVar(

@@ -13,15 +13,17 @@ import (
 	"strings"
 	"time"
 
+	metadata "github.com/checkpoint-restore/checkpointctl/lib"
 	"github.com/containers/buildah/copier"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/libpod/events"
-	"github.com/containers/podman/v2/pkg/cgroups"
-	"github.com/containers/podman/v2/pkg/ctime"
-	"github.com/containers/podman/v2/pkg/hooks"
-	"github.com/containers/podman/v2/pkg/hooks/exec"
-	"github.com/containers/podman/v2/pkg/rootless"
-	"github.com/containers/podman/v2/pkg/selinux"
+	"github.com/containers/common/pkg/secrets"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/libpod/events"
+	"github.com/containers/podman/v3/pkg/cgroups"
+	"github.com/containers/podman/v3/pkg/ctime"
+	"github.com/containers/podman/v3/pkg/hooks"
+	"github.com/containers/podman/v3/pkg/hooks/exec"
+	"github.com/containers/podman/v3/pkg/rootless"
+	"github.com/containers/podman/v3/pkg/selinux"
 	"github.com/containers/storage"
 	"github.com/containers/storage/pkg/archive"
 	"github.com/containers/storage/pkg/idtools"
@@ -30,7 +32,7 @@ import (
 	securejoin "github.com/cyphar/filepath-securejoin"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/runtime-tools/generate"
-	"github.com/opentracing/opentracing-go"
+	"github.com/opencontainers/selinux/go-selinux/label"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -133,7 +135,7 @@ func (c *Container) ControlSocketPath() string {
 
 // CheckpointPath returns the path to the directory containing the checkpoint
 func (c *Container) CheckpointPath() string {
-	return filepath.Join(c.bundlePath(), "checkpoint")
+	return filepath.Join(c.bundlePath(), metadata.CheckpointDirectory)
 }
 
 // PreCheckpointPath returns the path to the directory containing the pre-checkpoint-images
@@ -217,14 +219,14 @@ func (c *Container) shouldRestart() bool {
 	// If we did not get a restart policy match, return false
 	// Do the same if we're not a policy that restarts.
 	if !c.state.RestartPolicyMatch ||
-		c.config.RestartPolicy == RestartPolicyNo ||
-		c.config.RestartPolicy == RestartPolicyNone {
+		c.config.RestartPolicy == define.RestartPolicyNo ||
+		c.config.RestartPolicy == define.RestartPolicyNone {
 		return false
 	}
 
 	// If we're RestartPolicyOnFailure, we need to check retries and exit
 	// code.
-	if c.config.RestartPolicy == RestartPolicyOnFailure {
+	if c.config.RestartPolicy == define.RestartPolicyOnFailure {
 		if c.state.ExitCode == 0 {
 			return false
 		}
@@ -330,7 +332,7 @@ func (c *Container) syncContainer() error {
 		// Only save back to DB if state changed
 		if c.state.State != oldState {
 			// Check for a restart policy match
-			if c.config.RestartPolicy != RestartPolicyNone && c.config.RestartPolicy != RestartPolicyNo &&
+			if c.config.RestartPolicy != define.RestartPolicyNone && c.config.RestartPolicy != define.RestartPolicyNo &&
 				(oldState == define.ContainerStateRunning || oldState == define.ContainerStatePaused) &&
 				(c.state.State == define.ContainerStateStopped || c.state.State == define.ContainerStateExited) &&
 				!c.state.StoppedByUser {
@@ -396,10 +398,6 @@ func (c *Container) setupStorageMapping(dest, from *storage.IDMappingOptions) {
 
 // Create container root filesystem for use
 func (c *Container) setupStorage(ctx context.Context) error {
-	span, _ := opentracing.StartSpanFromContext(ctx, "setupStorage")
-	span.SetTag("type", "container")
-	defer span.Finish()
-
 	if !c.valid {
 		return errors.Wrapf(define.ErrCtrRemoved, "container %s is not valid", c.ID())
 	}
@@ -1032,10 +1030,6 @@ func (c *Container) cniHosts() string {
 
 // Initialize a container, creating it in the runtime
 func (c *Container) init(ctx context.Context, retainRetries bool) error {
-	span, _ := opentracing.StartSpanFromContext(ctx, "init")
-	span.SetTag("struct", "container")
-	defer span.Finish()
-
 	// Unconditionally remove conmon temporary files.
 	// We've been running into far too many issues where they block startup.
 	if err := c.removeConmonFiles(); err != nil {
@@ -1108,10 +1102,6 @@ func (c *Container) init(ctx context.Context, retainRetries bool) error {
 // Deletes the container in the runtime, and resets its state to Exited.
 // The container can be restarted cleanly after this.
 func (c *Container) cleanupRuntime(ctx context.Context) error {
-	span, _ := opentracing.StartSpanFromContext(ctx, "cleanupRuntime")
-	span.SetTag("struct", "container")
-	defer span.Finish()
-
 	// If the container is not ContainerStateStopped or
 	// ContainerStateCreated, do nothing.
 	if !c.ensureState(define.ContainerStateStopped, define.ContainerStateCreated) {
@@ -1153,10 +1143,6 @@ func (c *Container) cleanupRuntime(ctx context.Context) error {
 // Not necessary for ContainerStateExited - the container has already been
 // removed from the runtime, so init() can proceed freely.
 func (c *Container) reinit(ctx context.Context, retainRetries bool) error {
-	span, _ := opentracing.StartSpanFromContext(ctx, "reinit")
-	span.SetTag("struct", "container")
-	defer span.Finish()
-
 	logrus.Debugf("Recreating container %s in OCI runtime", c.ID())
 
 	if err := c.cleanupRuntime(ctx); err != nil {
@@ -1304,9 +1290,7 @@ func (c *Container) stop(timeout uint) error {
 		c.lock.Unlock()
 	}
 
-	if err := c.ociRuntime.StopContainer(c, timeout, all); err != nil {
-		return err
-	}
+	stopErr := c.ociRuntime.StopContainer(c, timeout, all)
 
 	if !c.batched {
 		c.lock.Lock()
@@ -1315,11 +1299,21 @@ func (c *Container) stop(timeout uint) error {
 			// If the container has already been removed (e.g., via
 			// the cleanup process), there's nothing left to do.
 			case define.ErrNoSuchCtr, define.ErrCtrRemoved:
-				return nil
+				return stopErr
 			default:
+				if stopErr != nil {
+					logrus.Errorf("Error syncing container %s status: %v", c.ID(), err)
+					return stopErr
+				}
 				return err
 			}
 		}
+	}
+
+	// We have to check stopErr *after* we lock again - otherwise, we have a
+	// change of panicing on a double-unlock. Ref: GH Issue 9615
+	if stopErr != nil {
+		return stopErr
 	}
 
 	// Since we're now subject to a race condition with other processes who
@@ -1809,10 +1803,6 @@ func (c *Container) cleanupStorage() error {
 func (c *Container) cleanup(ctx context.Context) error {
 	var lastError error
 
-	span, _ := opentracing.StartSpanFromContext(ctx, "cleanup")
-	span.SetTag("struct", "container")
-	defer span.Finish()
-
 	logrus.Debugf("Cleaning up container %s", c.ID())
 
 	// Remove healthcheck unit/timer file if it execs
@@ -1873,10 +1863,6 @@ func (c *Container) cleanup(ctx context.Context) error {
 // delete deletes the container and runs any configured poststop
 // hooks.
 func (c *Container) delete(ctx context.Context) error {
-	span, _ := opentracing.StartSpanFromContext(ctx, "delete")
-	span.SetTag("struct", "container")
-	defer span.Finish()
-
 	if err := c.ociRuntime.DeleteContainer(c); err != nil {
 		return errors.Wrapf(err, "error removing container %s from runtime", c.ID())
 	}
@@ -1892,10 +1878,6 @@ func (c *Container) delete(ctx context.Context) error {
 // the OCI Runtime Specification (which requires them to run
 // post-delete, despite the stage name).
 func (c *Container) postDeleteHooks(ctx context.Context) error {
-	span, _ := opentracing.StartSpanFromContext(ctx, "postDeleteHooks")
-	span.SetTag("struct", "container")
-	defer span.Finish()
-
 	if c.state.ExtensionStageHooks != nil {
 		extensionHooks, ok := c.state.ExtensionStageHooks["poststop"]
 		if ok {
@@ -2083,6 +2065,10 @@ func (c *Container) setupOCIHooks(ctx context.Context, config *spec.Spec) (map[s
 
 // mount mounts the container's root filesystem
 func (c *Container) mount() (string, error) {
+	if c.state.State == define.ContainerStateRemoving {
+		return "", errors.Wrapf(define.ErrCtrStateInvalid, "cannot mount container %s as it is being removed", c.ID())
+	}
+
 	mountPoint, err := c.runtime.storageService.MountContainerImage(c.ID())
 	if err != nil {
 		return "", errors.Wrapf(err, "error mounting storage for container %s", c.ID())
@@ -2139,26 +2125,11 @@ func (c *Container) canWithPrevious() error {
 	return err
 }
 
-// writeJSONFile marshalls and writes the given data to a JSON file
-// in the bundle path
-func (c *Container) writeJSONFile(v interface{}, file string) error {
-	fileJSON, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return errors.Wrapf(err, "error writing JSON to %s for container %s", file, c.ID())
-	}
-	file = filepath.Join(c.bundlePath(), file)
-	if err := ioutil.WriteFile(file, fileJSON, 0644); err != nil {
-		return err
-	}
-
-	return nil
-}
-
 // prepareCheckpointExport writes the config and spec to
 // JSON files for later export
 func (c *Container) prepareCheckpointExport() error {
 	// save live config
-	if err := c.writeJSONFile(c.Config(), "config.dump"); err != nil {
+	if _, err := metadata.WriteJSONFile(c.Config(), c.bundlePath(), metadata.ConfigDumpFile); err != nil {
 		return err
 	}
 
@@ -2169,7 +2140,7 @@ func (c *Container) prepareCheckpointExport() error {
 		logrus.Debugf("generating spec for container %q failed with %v", c.ID(), err)
 		return err
 	}
-	if err := c.writeJSONFile(g.Config, "spec.dump"); err != nil {
+	if _, err := metadata.WriteJSONFile(g.Config, c.bundlePath(), metadata.SpecDumpFile); err != nil {
 		return err
 	}
 
@@ -2249,4 +2220,26 @@ func (c *Container) hasNamespace(namespace spec.LinuxNamespaceType) bool {
 		}
 	}
 	return false
+}
+
+// extractSecretToStorage copies a secret's data from the secrets manager to the container's static dir
+func (c *Container) extractSecretToCtrStorage(name string) error {
+	manager, err := secrets.NewManager(c.runtime.GetSecretsStorageDir())
+	if err != nil {
+		return err
+	}
+	secr, data, err := manager.LookupSecretData(name)
+	if err != nil {
+		return err
+	}
+	secretFile := filepath.Join(c.config.SecretsPath, secr.Name)
+
+	err = ioutil.WriteFile(secretFile, data, 0644)
+	if err != nil {
+		return errors.Wrapf(err, "unable to create %s", secretFile)
+	}
+	if err := label.Relabel(secretFile, c.config.MountLabel, false); err != nil {
+		return err
+	}
+	return nil
 }

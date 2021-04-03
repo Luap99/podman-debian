@@ -2,13 +2,15 @@ package integration
 
 import (
 	"fmt"
+	"io/ioutil"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 
-	"github.com/containers/podman/v2/pkg/rootless"
-	. "github.com/containers/podman/v2/test/utils"
+	"github.com/containers/podman/v3/pkg/rootless"
+	. "github.com/containers/podman/v3/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
@@ -306,9 +308,9 @@ var _ = Describe("Podman run with volumes", func() {
 
 	It("podman named volume copyup symlink", func() {
 		imgName := "testimg"
-		dockerfile := `FROM alpine
+		dockerfile := fmt.Sprintf(`FROM %s
 RUN touch /testfile
-RUN sh -c "cd /etc/apk && ln -s ../../testfile"`
+RUN sh -c "cd /etc/apk && ln -s ../../testfile"`, ALPINE)
 		podmanTest.BuildImage(dockerfile, imgName, "false")
 
 		baselineSession := podmanTest.Podman([]string{"run", "--rm", "-t", "-i", imgName, "ls", "/etc/apk/"})
@@ -477,9 +479,8 @@ RUN sh -c "cd /etc/apk && ln -s ../../testfile"`
 
 	It("Podman mount over image volume with trailing /", func() {
 		image := "podman-volume-test:trailing"
-		dockerfile := `
-FROM alpine:latest
-VOLUME /test/`
+		dockerfile := fmt.Sprintf(`FROM %s
+VOLUME /test/`, ALPINE)
 		podmanTest.BuildImage(dockerfile, image, "false")
 
 		ctrName := "testCtr"
@@ -589,5 +590,82 @@ VOLUME /test/`
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
 		Expect(len(session.OutputToStringArray())).To(Equal(2))
+	})
+
+	It("podman run with U volume flag", func() {
+		SkipIfRemote("Overlay volumes only work locally")
+
+		u, err := user.Current()
+		Expect(err).To(BeNil())
+		name := u.Username
+		if name == "root" {
+			name = "containers"
+		}
+
+		content, err := ioutil.ReadFile("/etc/subuid")
+		if err != nil {
+			Skip("cannot read /etc/subuid")
+		}
+		if !strings.Contains(string(content), name) {
+			Skip("cannot find mappings for the current user")
+		}
+
+		if os.Getenv("container") != "" {
+			Skip("Overlay mounts not supported when running in a container")
+		}
+		if rootless.IsRootless() {
+			if _, err := exec.LookPath("fuse_overlay"); err != nil {
+				Skip("Fuse-Overlayfs required for rootless overlay mount test")
+			}
+		}
+
+		mountPath := filepath.Join(podmanTest.TempDir, "secrets")
+		os.Mkdir(mountPath, 0755)
+		vol := mountPath + ":" + dest + ":U"
+
+		session := podmanTest.Podman([]string{"run", "--rm", "--user", "888:888", "-v", vol, ALPINE, "stat", "-c", "%u:%g", dest})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+		found, _ := session.GrepString("888:888")
+		Expect(found).Should(BeTrue())
+
+		session = podmanTest.Podman([]string{"run", "--rm", "--user", "888:888", "--userns", "auto", "-v", vol, ALPINE, "stat", "-c", "%u:%g", dest})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+		found, _ = session.GrepString("888:888")
+		Expect(found).Should(BeTrue())
+
+		vol = vol + ",O"
+		session = podmanTest.Podman([]string{"run", "--rm", "--user", "888:888", "--userns", "keep-id", "-v", vol, ALPINE, "stat", "-c", "%u:%g", dest})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+		found, _ = session.GrepString("888:888")
+		Expect(found).Should(BeTrue())
+	})
+
+	It("volume permissions after run", func() {
+		imgName := "testimg"
+		dockerfile := fmt.Sprintf(`FROM %s
+RUN useradd -m testuser -u 1005
+USER testuser`, fedoraMinimal)
+		podmanTest.BuildImage(dockerfile, imgName, "false")
+
+		testString := "testuser testuser"
+
+		test1 := podmanTest.Podman([]string{"run", "-v", "testvol1:/test", imgName, "bash", "-c", "ls -al /test | grep -v root | grep -v total"})
+		test1.WaitWithDefaultTimeout()
+		Expect(test1.ExitCode()).To(Equal(0))
+		Expect(strings.Contains(test1.OutputToString(), testString)).To(BeTrue())
+
+		volName := "testvol2"
+		vol := podmanTest.Podman([]string{"volume", "create", volName})
+		vol.WaitWithDefaultTimeout()
+		Expect(vol.ExitCode()).To(Equal(0))
+
+		test2 := podmanTest.Podman([]string{"run", "-v", fmt.Sprintf("%s:/test", volName), imgName, "bash", "-c", "ls -al /test | grep -v root | grep -v total"})
+		test2.WaitWithDefaultTimeout()
+		Expect(test2.ExitCode()).To(Equal(0))
+		Expect(strings.Contains(test2.OutputToString(), testString)).To(BeTrue())
+
 	})
 })

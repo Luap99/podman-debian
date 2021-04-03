@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	. "github.com/containers/podman/v2/test/utils"
+	. "github.com/containers/podman/v3/test/utils"
 	"github.com/containers/storage/pkg/stringid"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -765,5 +765,19 @@ var _ = Describe("Podman run networking", func() {
 		session = podmanTest.Podman([]string{"run", "--name", "con4", "--network", net, ALPINE, "nslookup", pod2})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(BeZero())
+	})
+
+	It("podman run check dnsname adds dns search domain", func() {
+		Skip("needs dnsname#57")
+		net := "dnsname" + stringid.GenerateNonCryptoID()
+		session := podmanTest.Podman([]string{"network", "create", net})
+		session.WaitWithDefaultTimeout()
+		defer podmanTest.removeCNINetwork(net)
+		Expect(session.ExitCode()).To(BeZero())
+
+		session = podmanTest.Podman([]string{"run", "--network", net, ALPINE, "cat", "/etc/resolv.conf"})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(BeZero())
+		Expect(session.OutputToString()).To(ContainSubstring("search dns.podman"))
 	})
 })

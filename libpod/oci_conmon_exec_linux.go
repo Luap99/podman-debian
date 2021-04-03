@@ -10,14 +10,13 @@ import (
 	"time"
 
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/pkg/errorhandling"
-	"github.com/containers/podman/v2/pkg/util"
-	"github.com/containers/podman/v2/utils"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/pkg/errorhandling"
+	"github.com/containers/podman/v3/pkg/util"
+	"github.com/containers/podman/v3/utils"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
-	"k8s.io/client-go/tools/remotecommand"
 )
 
 // ExecContainer executes a command in a running container
@@ -191,7 +190,7 @@ func (r *ConmonOCIRuntime) ExecContainerDetached(ctr *Container, sessionID strin
 }
 
 // ExecAttachResize resizes the TTY of the given exec session.
-func (r *ConmonOCIRuntime) ExecAttachResize(ctr *Container, sessionID string, newSize remotecommand.TerminalSize) error {
+func (r *ConmonOCIRuntime) ExecAttachResize(ctr *Container, sessionID string, newSize define.TerminalSize) error {
 	controlFile, err := openControlFile(ctr, ctr.execBundlePath(sessionID))
 	if err != nil {
 		return err

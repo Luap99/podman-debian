@@ -13,16 +13,17 @@ import (
 	"github.com/containers/buildah"
 	"github.com/containers/image/v5/manifest"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v2/libpod"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/libpod/image"
-	"github.com/containers/podman/v2/pkg/api/handlers"
-	"github.com/containers/podman/v2/pkg/api/handlers/utils"
-	"github.com/containers/podman/v2/pkg/auth"
-	"github.com/containers/podman/v2/pkg/domain/entities"
-	"github.com/containers/podman/v2/pkg/domain/infra/abi"
-	"github.com/containers/podman/v2/pkg/errorhandling"
-	utils2 "github.com/containers/podman/v2/utils"
+	"github.com/containers/podman/v3/libpod"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/libpod/image"
+	"github.com/containers/podman/v3/pkg/api/handlers"
+	"github.com/containers/podman/v3/pkg/api/handlers/utils"
+	"github.com/containers/podman/v3/pkg/auth"
+	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v3/pkg/domain/infra/abi"
+	"github.com/containers/podman/v3/pkg/errorhandling"
+	"github.com/containers/podman/v3/pkg/util"
+	utils2 "github.com/containers/podman/v3/utils"
 	"github.com/gorilla/schema"
 	"github.com/pkg/errors"
 )
@@ -125,31 +126,32 @@ func PruneImages(w http.ResponseWriter, r *http.Request) {
 	runtime := r.Context().Value("runtime").(*libpod.Runtime)
 	decoder := r.Context().Value("decoder").(*schema.Decoder)
 	query := struct {
-		All     bool                `schema:"all"`
-		Filters map[string][]string `schema:"filters"`
+		All bool `schema:"all"`
 	}{
 		// override any golang type defaults
 	}
 
-	if err := decoder.Decode(&query, r.URL.Query()); err != nil {
-		utils.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest,
+	filterMap, err := util.PrepareFilters(r)
+
+	if dErr := decoder.Decode(&query, r.URL.Query()); dErr != nil || err != nil {
+		utils.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError,
 			errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
 		return
 	}
 
 	var libpodFilters = []string{}
 	if _, found := r.URL.Query()["filters"]; found {
-		dangling := query.Filters["all"]
+		dangling := (*filterMap)["all"]
 		if len(dangling) > 0 {
-			query.All, err = strconv.ParseBool(query.Filters["all"][0])
+			query.All, err = strconv.ParseBool((*filterMap)["all"][0])
 			if err != nil {
 				utils.InternalServerError(w, err)
 				return
 			}
 		}
 		// dangling is special and not implemented in the libpod side of things
-		delete(query.Filters, "dangling")
-		for k, v := range query.Filters {
+		delete(*filterMap, "dangling")
+		for k, v := range *filterMap {
 			libpodFilters = append(libpodFilters, fmt.Sprintf("%s=%s", k, v[0]))
 		}
 	}
@@ -319,18 +321,6 @@ func ExportImages(w http.ResponseWriter, r *http.Request) {
 
 func ImagesLoad(w http.ResponseWriter, r *http.Request) {
 	runtime := r.Context().Value("runtime").(*libpod.Runtime)
-	decoder := r.Context().Value("decoder").(*schema.Decoder)
-	query := struct {
-		Reference string `schema:"reference"`
-	}{
-		// Add defaults here once needed.
-	}
-
-	if err := decoder.Decode(&query, r.URL.Query()); err != nil {
-		utils.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest,
-			errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
-		return
-	}
 
 	tmpfile, err := ioutil.TempFile("", "libpod-images-load.tar")
 	if err != nil {
@@ -338,14 +328,15 @@ func ImagesLoad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer os.Remove(tmpfile.Name())
-	defer tmpfile.Close()
 
-	if _, err := io.Copy(tmpfile, r.Body); err != nil && err != io.EOF {
+	_, err = io.Copy(tmpfile, r.Body)
+	tmpfile.Close()
+
+	if err != nil && err != io.EOF {
 		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrap(err, "unable to write archive to temporary file"))
 		return
 	}
 
-	tmpfile.Close()
 	loadedImage, err := runtime.LoadImage(context.Background(), tmpfile.Name(), os.Stderr, "")
 	if err != nil {
 		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrap(err, "unable to load image"))
@@ -451,6 +442,7 @@ func PushImage(w http.ResponseWriter, r *http.Request) {
 		Password: password,
 		Format:   query.Format,
 		All:      query.All,
+		Quiet:    true,
 	}
 	if _, found := r.URL.Query()["tlsVerify"]; found {
 		options.SkipTLSVerify = types.NewOptionalBool(!query.TLSVerify)
@@ -585,92 +577,6 @@ func UntagImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	utils.WriteResponse(w, http.StatusCreated, "")
-}
-
-func SearchImages(w http.ResponseWriter, r *http.Request) {
-	decoder := r.Context().Value("decoder").(*schema.Decoder)
-	query := struct {
-		Term      string              `json:"term"`
-		Limit     int                 `json:"limit"`
-		NoTrunc   bool                `json:"noTrunc"`
-		Filters   map[string][]string `json:"filters"`
-		TLSVerify bool                `json:"tlsVerify"`
-		ListTags  bool                `json:"listTags"`
-	}{
-		// This is where you can override the golang default value for one of fields
-	}
-
-	if err := decoder.Decode(&query, r.URL.Query()); err != nil {
-		utils.Error(w, "Something went wrong.", http.StatusBadRequest, errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
-		return
-	}
-
-	filter := image.SearchFilter{}
-	if len(query.Filters) > 0 {
-		if len(query.Filters["stars"]) > 0 {
-			stars, err := strconv.Atoi(query.Filters["stars"][0])
-			if err != nil {
-				utils.InternalServerError(w, err)
-				return
-			}
-			filter.Stars = stars
-		}
-		if len(query.Filters["is-official"]) > 0 {
-			isOfficial, err := strconv.ParseBool(query.Filters["is-official"][0])
-			if err != nil {
-				utils.InternalServerError(w, err)
-				return
-			}
-			filter.IsOfficial = types.NewOptionalBool(isOfficial)
-		}
-		if len(query.Filters["is-automated"]) > 0 {
-			isAutomated, err := strconv.ParseBool(query.Filters["is-automated"][0])
-			if err != nil {
-				utils.InternalServerError(w, err)
-				return
-			}
-			filter.IsAutomated = types.NewOptionalBool(isAutomated)
-		}
-	}
-	options := image.SearchOptions{
-		Limit:    query.Limit,
-		NoTrunc:  query.NoTrunc,
-		ListTags: query.ListTags,
-		Filter:   filter,
-	}
-
-	if _, found := r.URL.Query()["tlsVerify"]; found {
-		options.InsecureSkipTLSVerify = types.NewOptionalBool(!query.TLSVerify)
-	}
-
-	_, authfile, key, err := auth.GetCredentials(r)
-	if err != nil {
-		utils.Error(w, "failed to retrieve repository credentials", http.StatusBadRequest, errors.Wrapf(err, "failed to parse %q header for %s", key, r.URL.String()))
-		return
-	}
-	defer auth.RemoveAuthfile(authfile)
-	options.Authfile = authfile
-
-	searchResults, err := image.SearchImages(query.Term, options)
-	if err != nil {
-		utils.BadRequest(w, "term", query.Term, err)
-		return
-	}
-	// Convert from image.SearchResults to entities.ImageSearchReport. We don't
-	// want to leak any low-level packages into the remote client, which
-	// requires converting.
-	reports := make([]entities.ImageSearchReport, len(searchResults))
-	for i := range searchResults {
-		reports[i].Index = searchResults[i].Index
-		reports[i].Name = searchResults[i].Name
-		reports[i].Description = searchResults[i].Description
-		reports[i].Stars = searchResults[i].Stars
-		reports[i].Official = searchResults[i].Official
-		reports[i].Automated = searchResults[i].Automated
-		reports[i].Tag = searchResults[i].Tag
-	}
-
-	utils.WriteResponse(w, http.StatusOK, reports)
 }
 
 // ImagesBatchRemove is the endpoint for batch image removal.

@@ -9,10 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/containers/podman/v2/libpod/define"
-	. "github.com/containers/podman/v2/pkg/bindings"
-	"github.com/containers/podman/v2/pkg/bindings/containers"
-	"github.com/containers/podman/v2/pkg/specgen"
+	"github.com/containers/podman/v3/libpod/define"
+	. "github.com/containers/podman/v3/pkg/bindings"
+	"github.com/containers/podman/v3/pkg/bindings/containers"
+	"github.com/containers/podman/v3/pkg/specgen"
 	"github.com/onsi/ginkgo"
 	"github.com/onsi/gomega/gexec"
 	"github.com/pkg/errors"
@@ -188,14 +188,14 @@ func (b *bindingTest) restoreImageFromCache(i testImage) {
 
 // Run a container within or without a pod
 // and add or append the alpine image to it
-func (b *bindingTest) RunTopContainer(containerName *string, insidePod *bool, podName *string) (string, error) {
+func (b *bindingTest) RunTopContainer(containerName *string, podName *string) (string, error) {
 	s := specgen.NewSpecGenerator(alpine.name, false)
 	s.Terminal = false
 	s.Command = []string{"/usr/bin/top"}
 	if containerName != nil {
 		s.Name = *containerName
 	}
-	if insidePod != nil && podName != nil {
+	if podName != nil {
 		s.Pod = *podName
 	}
 	ctr, err := containers.CreateWithSpec(b.conn, s, nil)

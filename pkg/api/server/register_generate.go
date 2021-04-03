@@ -3,7 +3,7 @@ package server
 import (
 	"net/http"
 
-	"github.com/containers/podman/v2/pkg/api/handlers/libpod"
+	"github.com/containers/podman/v3/pkg/api/handlers/libpod"
 	"github.com/gorilla/mux"
 )
 
@@ -31,6 +31,11 @@ func (s *APIServer) registerGenerateHandlers(r *mux.Router) error {
 	//    type: boolean
 	//    default: false
 	//    description: Create a new container instead of starting an existing one.
+	//  - in: query
+	//    name: noHeader
+	//    type: boolean
+	//    default: false
+	//    description: Do not generate the header including the Podman version and the timestamp.
 	//  - in: query
 	//    name: time
 	//    type: integer

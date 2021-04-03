@@ -10,12 +10,14 @@ import (
 	"time"
 
 	"github.com/containernetworking/cni/libcni"
-	"github.com/containers/podman/v2/libpod"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/libpod/network"
-	"github.com/containers/podman/v2/pkg/api/handlers/utils"
-	"github.com/containers/podman/v2/pkg/domain/entities"
-	"github.com/containers/podman/v2/pkg/domain/infra/abi"
+	"github.com/containers/podman/v3/libpod"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/libpod/network"
+	"github.com/containers/podman/v3/pkg/api/handlers/utils"
+	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v3/pkg/domain/infra/abi"
+	networkid "github.com/containers/podman/v3/pkg/network"
+	"github.com/containers/podman/v3/pkg/util"
 	"github.com/docker/docker/api/types"
 	dockerNetwork "github.com/docker/docker/api/types/network"
 	"github.com/gorilla/schema"
@@ -127,16 +129,22 @@ func getNetworkResourceByNameOrID(nameOrID string, runtime *libpod.Runtime, filt
 			containerEndpoints[con.ID()] = containerEndpoint
 		}
 	}
+
+	labels := network.GetNetworkLabels(conf)
+	if labels == nil {
+		labels = map[string]string{}
+	}
+
 	report := types.NetworkResource{
 		Name:       conf.Name,
-		ID:         network.GetNetworkID(conf.Name),
+		ID:         networkid.GetNetworkID(conf.Name),
 		Created:    time.Unix(int64(stat.Ctim.Sec), int64(stat.Ctim.Nsec)), // nolint: unconvert
 		Scope:      "local",
 		Driver:     network.DefaultNetworkDriver,
 		EnableIPv6: false,
 		IPAM: dockerNetwork.IPAM{
 			Driver:  "default",
-			Options: nil,
+			Options: map[string]string{},
 			Config:  ipamConfigs,
 		},
 		Internal:   !bridge.IsGW,
@@ -145,8 +153,8 @@ func getNetworkResourceByNameOrID(nameOrID string, runtime *libpod.Runtime, filt
 		ConfigFrom: dockerNetwork.ConfigReference{},
 		ConfigOnly: false,
 		Containers: containerEndpoints,
-		Options:    nil,
-		Labels:     network.GetNetworkLabels(conf),
+		Options:    map[string]string{},
+		Labels:     labels,
 		Peers:      nil,
 		Services:   nil,
 	}
@@ -174,16 +182,12 @@ func findPluginByName(plugins []*libcni.NetworkConfig, pluginType string) ([]byt
 
 func ListNetworks(w http.ResponseWriter, r *http.Request) {
 	runtime := r.Context().Value("runtime").(*libpod.Runtime)
-	decoder := r.Context().Value("decoder").(*schema.Decoder)
-	query := struct {
-		Filters map[string][]string `schema:"filters"`
-	}{
-		// override any golang type defaults
-	}
-	if err := decoder.Decode(&query, r.URL.Query()); err != nil {
-		utils.Error(w, "Something went wrong.", http.StatusBadRequest, errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
+	filterMap, err := util.PrepareFilters(r)
+	if err != nil {
+		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
 		return
 	}
+
 	config, err := runtime.GetConfig()
 	if err != nil {
 		utils.InternalServerError(w, err)
@@ -196,10 +200,10 @@ func ListNetworks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var reports []*types.NetworkResource
+	reports := []*types.NetworkResource{}
 	logrus.Debugf("netNames: %q", strings.Join(netNames, ", "))
 	for _, name := range netNames {
-		report, err := getNetworkResourceByNameOrID(name, runtime, query.Filters)
+		report, err := getNetworkResourceByNameOrID(name, runtime, *filterMap)
 		if err != nil {
 			utils.InternalServerError(w, err)
 			return
@@ -387,4 +391,36 @@ func Disconnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	utils.WriteResponse(w, http.StatusOK, "OK")
+}
+
+// Prune removes unused networks
+func Prune(w http.ResponseWriter, r *http.Request) {
+	runtime := r.Context().Value("runtime").(*libpod.Runtime)
+	filterMap, err := util.PrepareFilters(r)
+	if err != nil {
+		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrap(err, "Decode()"))
+		return
+	}
+
+	ic := abi.ContainerEngine{Libpod: runtime}
+	pruneOptions := entities.NetworkPruneOptions{
+		Filters: *filterMap,
+	}
+	pruneReports, err := ic.NetworkPrune(r.Context(), pruneOptions)
+	if err != nil {
+		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, err)
+		return
+	}
+	type response struct {
+		NetworksDeleted []string
+	}
+	var prunedNetworks []string //nolint
+	for _, pr := range pruneReports {
+		if pr.Error != nil {
+			logrus.Error(pr.Error)
+			continue
+		}
+		prunedNetworks = append(prunedNetworks, pr.Name)
+	}
+	utils.WriteResponse(w, http.StatusOK, response{NetworksDeleted: prunedNetworks})
 }

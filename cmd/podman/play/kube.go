@@ -7,11 +7,11 @@ import (
 	"github.com/containers/common/pkg/auth"
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v2/cmd/podman/common"
-	"github.com/containers/podman/v2/cmd/podman/registry"
-	"github.com/containers/podman/v2/cmd/podman/utils"
-	"github.com/containers/podman/v2/pkg/domain/entities"
-	"github.com/containers/podman/v2/pkg/util"
+	"github.com/containers/podman/v3/cmd/podman/common"
+	"github.com/containers/podman/v3/cmd/podman/registry"
+	"github.com/containers/podman/v3/cmd/podman/utils"
+	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v3/pkg/util"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
@@ -35,13 +35,14 @@ var (
   It creates the pod and containers described in the YAML.  The containers within the pod are then started and the ID of the new Pod is output.`
 
 	kubeCmd = &cobra.Command{
-		Use:               "kube [options] KUBEFILE",
+		Use:               "kube [options] KUBEFILE|-",
 		Short:             "Play a pod based on Kubernetes YAML.",
 		Long:              kubeDescription,
 		RunE:              kube,
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: common.AutocompleteDefaultOneArg,
 		Example: `podman play kube nginx.yml
+  cat nginx.yml | podman play kube -
   podman play kube --creds user:password --seccomp-profile-root /custom/path apache.yml`,
 	}
 )
@@ -119,7 +120,11 @@ func kube(cmd *cobra.Command, args []string) error {
 		kubeOptions.Password = creds.Password
 	}
 
-	report, err := registry.ContainerEngine().PlayKube(registry.GetContext(), args[0], kubeOptions.PlayKubeOptions)
+	yamlfile := args[0]
+	if yamlfile == "-" {
+		yamlfile = "/dev/stdin"
+	}
+	report, err := registry.ContainerEngine().PlayKube(registry.GetContext(), yamlfile, kubeOptions.PlayKubeOptions)
 	if err != nil {
 		return err
 	}

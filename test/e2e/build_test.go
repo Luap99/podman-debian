@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -8,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/containers/buildah"
-	. "github.com/containers/podman/v2/test/utils"
+	. "github.com/containers/podman/v3/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
@@ -39,7 +40,7 @@ var _ = Describe("Podman build", func() {
 	// happy and then clean up after ourselves to make sure that works too.
 	It("podman build and remove basic alpine", func() {
 		podmanTest.AddImageToRWStore(ALPINE)
-		session := podmanTest.Podman([]string{"build", "build/basicalpine"})
+		session := podmanTest.Podman([]string{"build", "--pull-never", "build/basicalpine"})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
 
@@ -59,7 +60,7 @@ var _ = Describe("Podman build", func() {
 
 	It("podman build with logfile", func() {
 		logfile := filepath.Join(podmanTest.TempDir, "logfile")
-		session := podmanTest.Podman([]string{"build", "--tag", "test", "--logfile", logfile, "build/basicalpine"})
+		session := podmanTest.Podman([]string{"build", "--pull-never", "--tag", "test", "--logfile", logfile, "build/basicalpine"})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
 
@@ -82,7 +83,7 @@ var _ = Describe("Podman build", func() {
 	// If the context directory is pointing at a file and not a directory,
 	// that's a no no, fail out.
 	It("podman build context directory a file", func() {
-		session := podmanTest.Podman([]string{"build", "build/context_dir_a_file"})
+		session := podmanTest.Podman([]string{"build", "--pull-never", "build/context_dir_a_file"})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(125))
 	})
@@ -90,7 +91,7 @@ var _ = Describe("Podman build", func() {
 	// Check that builds with different values for the squash options
 	// create the appropriate number of layers, then clean up after.
 	It("podman build basic alpine with squash", func() {
-		session := podmanTest.Podman([]string{"build", "-f", "build/squash/Dockerfile.squash-a", "-t", "test-squash-a:latest", "build/squash"})
+		session := podmanTest.Podman([]string{"build", "--pull-never", "-f", "build/squash/Dockerfile.squash-a", "-t", "test-squash-a:latest", "build/squash"})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
 
@@ -100,7 +101,7 @@ var _ = Describe("Podman build", func() {
 		// Check for two layers
 		Expect(len(strings.Fields(session.OutputToString()))).To(Equal(2))
 
-		session = podmanTest.Podman([]string{"build", "-f", "build/squash/Dockerfile.squash-b", "--squash", "-t", "test-squash-b:latest", "build/squash"})
+		session = podmanTest.Podman([]string{"build", "--pull-never", "-f", "build/squash/Dockerfile.squash-b", "--squash", "-t", "test-squash-b:latest", "build/squash"})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
 
@@ -110,7 +111,7 @@ var _ = Describe("Podman build", func() {
 		// Check for three layers
 		Expect(len(strings.Fields(session.OutputToString()))).To(Equal(3))
 
-		session = podmanTest.Podman([]string{"build", "-f", "build/squash/Dockerfile.squash-c", "--squash", "-t", "test-squash-c:latest", "build/squash"})
+		session = podmanTest.Podman([]string{"build", "--pull-never", "-f", "build/squash/Dockerfile.squash-c", "--squash", "-t", "test-squash-c:latest", "build/squash"})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
 
@@ -120,7 +121,7 @@ var _ = Describe("Podman build", func() {
 		// Check for two layers
 		Expect(len(strings.Fields(session.OutputToString()))).To(Equal(2))
 
-		session = podmanTest.Podman([]string{"build", "-f", "build/squash/Dockerfile.squash-c", "--squash-all", "-t", "test-squash-d:latest", "build/squash"})
+		session = podmanTest.Podman([]string{"build", "--pull-never", "-f", "build/squash/Dockerfile.squash-c", "--squash-all", "-t", "test-squash-d:latest", "build/squash"})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
 
@@ -150,7 +151,7 @@ var _ = Describe("Podman build", func() {
 		}
 
 		fakeFile := filepath.Join(os.TempDir(), "Containerfile")
-		Expect(ioutil.WriteFile(fakeFile, []byte("FROM alpine"), 0755)).To(BeNil())
+		Expect(ioutil.WriteFile(fakeFile, []byte(fmt.Sprintf("FROM %s", ALPINE)), 0755)).To(BeNil())
 
 		targetFile := filepath.Join(targetPath, "Containerfile")
 		Expect(ioutil.WriteFile(targetFile, []byte("FROM scratch"), 0755)).To(BeNil())
@@ -162,7 +163,7 @@ var _ = Describe("Podman build", func() {
 
 		// When
 		session := podmanTest.Podman([]string{
-			"build", "-f", targetFile, "-t", "test-locations",
+			"build", "--pull-never", "-f", targetFile, "-t", "test-locations",
 		})
 		session.WaitWithDefaultTimeout()
 
@@ -185,7 +186,7 @@ var _ = Describe("Podman build", func() {
 		}
 		targetFile := filepath.Join(targetPath, "idFile")
 
-		session := podmanTest.Podman([]string{"build", "build/basicalpine", "--iidfile", targetFile})
+		session := podmanTest.Podman([]string{"build", "--pull-never", "build/basicalpine", "--iidfile", targetFile})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
 		id, _ := ioutil.ReadFile(targetFile)
@@ -200,7 +201,7 @@ var _ = Describe("Podman build", func() {
 	It("podman Test PATH in built image", func() {
 		path := "/tmp:/bin:/usr/bin:/usr/sbin"
 		session := podmanTest.Podman([]string{
-			"build", "-f", "build/basicalpine/Containerfile.path", "-t", "test-path",
+			"build", "--pull-never", "-f", "build/basicalpine/Containerfile.path", "-t", "test-path",
 		})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
@@ -219,13 +220,13 @@ var _ = Describe("Podman build", func() {
 			podmanTest.StartRemoteService()
 		}
 		podmanTest.AddImageToRWStore(ALPINE)
-		dockerfile := `FROM quay.io/libpod/alpine:latest
-RUN printenv http_proxy`
+		dockerfile := fmt.Sprintf(`FROM %s
+RUN printenv http_proxy`, ALPINE)
 
 		dockerfilePath := filepath.Join(podmanTest.TempDir, "Dockerfile")
 		err := ioutil.WriteFile(dockerfilePath, []byte(dockerfile), 0755)
 		Expect(err).To(BeNil())
-		session := podmanTest.Podman([]string{"build", "--http-proxy", "--file", dockerfilePath, podmanTest.TempDir})
+		session := podmanTest.Podman([]string{"build", "--pull-never", "--http-proxy", "--file", dockerfilePath, podmanTest.TempDir})
 		session.Wait(120)
 		Expect(session.ExitCode()).To(Equal(0))
 		ok, _ := session.GrepString("1.2.3.4")
@@ -234,7 +235,7 @@ RUN printenv http_proxy`
 	})
 
 	It("podman build and check identity", func() {
-		session := podmanTest.Podman([]string{"build", "-f", "build/basicalpine/Containerfile.path", "--no-cache", "-t", "test", "build/basicalpine"})
+		session := podmanTest.Podman([]string{"build", "--pull-never", "-f", "build/basicalpine/Containerfile.path", "--no-cache", "-t", "test", "build/basicalpine"})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
 
@@ -263,9 +264,9 @@ RUN printenv http_proxy`
 		err = ioutil.WriteFile(dummyFile, []byte("dummy"), 0644)
 		Expect(err).To(BeNil())
 
-		containerfile := `FROM quay.io/libpod/alpine:latest
+		containerfile := fmt.Sprintf(`FROM %s
 ADD . /test
-RUN find /test`
+RUN find /test`, ALPINE)
 
 		containerfilePath := filepath.Join(targetPath, "Containerfile")
 		err = ioutil.WriteFile(containerfilePath, []byte(containerfile), 0644)
@@ -279,7 +280,7 @@ RUN find /test`
 		// make cwd as context root path
 		Expect(os.Chdir(targetPath)).To(BeNil())
 
-		session := podmanTest.Podman([]string{"build", "-t", "test", "-f", "Containerfile", targetSubPath})
+		session := podmanTest.Podman([]string{"build", "--pull-never", "-t", "test", "-f", "Containerfile", targetSubPath})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
 		ok, _ := session.GrepString("/test/dummy")
@@ -307,7 +308,7 @@ RUN find /test`
 		err = os.Mkdir(targetSubPath, 0755)
 		Expect(err).To(BeNil())
 
-		containerfile := `FROM quay.io/libpod/alpine:latest`
+		containerfile := fmt.Sprintf("FROM %s", ALPINE)
 
 		containerfilePath := filepath.Join(targetSubPath, "Containerfile")
 		err = ioutil.WriteFile(containerfilePath, []byte(containerfile), 0644)
@@ -321,7 +322,7 @@ RUN find /test`
 		// make cwd as context root path
 		Expect(os.Chdir(targetPath)).To(BeNil())
 
-		session := podmanTest.Podman([]string{"build", "-t", "test", "-f", "subdir/Containerfile", "."})
+		session := podmanTest.Podman([]string{"build", "--pull-never", "-t", "test", "-f", "subdir/Containerfile", "."})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
 	})
@@ -344,9 +345,9 @@ RUN find /test`
 		targetPath, err := CreateTempDirInTempDir()
 		Expect(err).To(BeNil())
 
-		containerfile := `FROM quay.io/libpod/alpine:latest
+		containerfile := fmt.Sprintf(`FROM %s
 ADD . /testfilter/
-RUN find /testfilter/`
+RUN find /testfilter/`, ALPINE)
 
 		containerfilePath := filepath.Join(targetPath, "Containerfile")
 		err = ioutil.WriteFile(containerfilePath, []byte(containerfile), 0644)
@@ -428,10 +429,10 @@ subdir**`
 		Expect(os.Chdir(targetSubPath)).To(BeNil())
 		Expect(os.Symlink("dummy", "dummy-symlink")).To(BeNil())
 
-		containerfile := `FROM quay.io/libpod/alpine:latest
+		containerfile := fmt.Sprintf(`FROM %s
 ADD . /test
 RUN find /test
-RUN [[ -L /test/dummy-symlink ]] && echo SYMLNKOK || echo SYMLNKERR`
+RUN [[ -L /test/dummy-symlink ]] && echo SYMLNKOK || echo SYMLNKERR`, ALPINE)
 
 		containerfilePath := filepath.Join(targetSubPath, "Containerfile")
 		err = ioutil.WriteFile(containerfilePath, []byte(containerfile), 0644)
@@ -445,7 +446,7 @@ RUN [[ -L /test/dummy-symlink ]] && echo SYMLNKOK || echo SYMLNKERR`
 		// make cwd as context root path
 		Expect(os.Chdir(targetPath)).To(BeNil())
 
-		session := podmanTest.Podman([]string{"build", "-t", "test", targetSubPath})
+		session := podmanTest.Podman([]string{"build", "--pull-never", "-t", "test", targetSubPath})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
 		ok, _ := session.GrepString("/test/dummy")
@@ -475,26 +476,26 @@ RUN grep CapEff /proc/self/status`
 
 		// When
 		session := podmanTest.Podman([]string{
-			"build", "--cap-drop=all", "--cap-add=net_bind_service", "--add-host", "testhost:1.2.3.4", "--from", "alpine", targetPath,
+			"build", "--pull-never", "--cap-drop=all", "--cap-add=net_bind_service", "--add-host", "testhost:1.2.3.4", "--from", ALPINE, targetPath,
 		})
 		session.WaitWithDefaultTimeout()
 
 		// Then
 		Expect(session.ExitCode()).To(Equal(0))
 		Expect(strings.Fields(session.OutputToString())).
-			To(ContainElement("alpine"))
+			To(ContainElement(ALPINE))
 		Expect(strings.Fields(session.OutputToString())).
 			To(ContainElement("testhost"))
 		Expect(strings.Fields(session.OutputToString())).
 			To(ContainElement("0000000000000400"))
 	})
 
-	It("podman build --arch", func() {
+	It("podman build --isolation && --arch", func() {
 		targetPath, err := CreateTempDirInTempDir()
 		Expect(err).To(BeNil())
 
 		containerFile := filepath.Join(targetPath, "Containerfile")
-		Expect(ioutil.WriteFile(containerFile, []byte("FROM alpine"), 0755)).To(BeNil())
+		Expect(ioutil.WriteFile(containerFile, []byte(fmt.Sprintf("FROM %s", ALPINE)), 0755)).To(BeNil())
 
 		defer func() {
 			Expect(os.RemoveAll(containerFile)).To(BeNil())
@@ -502,11 +503,50 @@ RUN grep CapEff /proc/self/status`
 
 		// When
 		session := podmanTest.Podman([]string{
-			"build", "--arch", "arm64", targetPath,
+			"build", "--isolation", "oci", "--arch", "arm64", targetPath,
 		})
 		session.WaitWithDefaultTimeout()
-
 		// Then
 		Expect(session.ExitCode()).To(Equal(0))
+
+		// When
+		session = podmanTest.Podman([]string{
+			"build", "--isolation", "chroot", "--arch", "arm64", targetPath,
+		})
+		session.WaitWithDefaultTimeout()
+		// Then
+		Expect(session.ExitCode()).To(Equal(0))
+
+		// When
+		session = podmanTest.Podman([]string{
+			"build", "--pull-never", "--isolation", "rootless", "--arch", "arm64", targetPath,
+		})
+		session.WaitWithDefaultTimeout()
+		// Then
+		Expect(session.ExitCode()).To(Equal(0))
+
+		// When
+		session = podmanTest.Podman([]string{
+			"build", "--pull-never", "--isolation", "bogus", "--arch", "arm64", targetPath,
+		})
+		session.WaitWithDefaultTimeout()
+		// Then
+		Expect(session.ExitCode()).To(Equal(125))
+	})
+
+	It("podman build --timestamp flag", func() {
+		containerfile := fmt.Sprintf(`FROM %s
+RUN echo hello`, ALPINE)
+
+		containerfilePath := filepath.Join(podmanTest.TempDir, "Containerfile")
+		err := ioutil.WriteFile(containerfilePath, []byte(containerfile), 0755)
+		Expect(err).To(BeNil())
+		session := podmanTest.Podman([]string{"build", "--pull-never", "-t", "test", "--timestamp", "0", "--file", containerfilePath, podmanTest.TempDir})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+
+		inspect := podmanTest.Podman([]string{"image", "inspect", "--format", "{{ .Created }}", "test"})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect.OutputToString()).To(Equal("1970-01-01 00:00:00 +0000 UTC"))
 	})
 })

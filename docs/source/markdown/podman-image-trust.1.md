@@ -8,7 +8,7 @@ podman\-image\-trust - Manage container registry image trust policy
 **podman image trust** set|show [*options*] *registry[/repository]*
 
 ## DESCRIPTION
-Manages which registries you trust as a source of container images  based on its location. (Not available for remote commands)
+Manages which registries you trust as a source of container images  based on its location. (This option is not available with the remote Podman client)
 
 The location is determined
 by the transport and the registry host of the image.  Using this container image `docker://docker.io/library/busybox`
@@ -37,15 +37,15 @@ Require signature (“signedBy”).
 Trust may be updated using the command **podman image trust set** for an existing trust scope.
 
 ## OPTIONS
-#### **--help**, **-h**
+#### **\-\-help**, **-h**
   Print usage statement.
 
-#### **--pubkeysfile**=*KEY1*, **-f**
+#### **\-\-pubkeysfile**=*KEY1*, **-f**
   A path to an exported public key on the local system. Key paths
   will be referenced in policy.json. Any path to a file may be used but locating the file in **/etc/pki/containers** is recommended. Options may be used multiple times to
-  require an image be signed by multiple keys.  The **--pubkeysfile** option is required for the **signedBy** type.
+  require an image be signed by multiple keys.  The **\-\-pubkeysfile** option is required for the **signedBy** type.
 
-#### **--type**=*value*, **-t**
+#### **\-\-type**=*value*, **-t**
   The trust type for this policy entry.
   Accepted values:
     **signedBy** (default): Require signatures with corresponding list of
@@ -56,10 +56,10 @@ Trust may be updated using the command **podman image trust set** for an existin
 
 ## show OPTIONS
 
-#### **--raw**
+#### **\-\-raw**
   Output trust policy file as raw JSON
 
-#### **--json**, **-j**
+#### **\-\-json**, **-j**
   Output trust as JSON for machine parsing
 
 ## EXAMPLES

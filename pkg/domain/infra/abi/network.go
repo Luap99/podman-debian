@@ -3,10 +3,10 @@ package abi
 import (
 	"context"
 
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/libpod/network"
-	"github.com/containers/podman/v2/pkg/domain/entities"
-	"github.com/containers/podman/v2/pkg/util"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/libpod/network"
+	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v3/pkg/util"
 	"github.com/pkg/errors"
 )
 
@@ -96,7 +96,15 @@ func (ic *ContainerEngine) NetworkRm(ctx context.Context, namesOrIds []string, o
 		}
 		// We need to iterate containers looking to see if they belong to the given network
 		for _, c := range containers {
-			if util.StringInSlice(name, c.Config().Networks) {
+			networks, _, err := c.Networks()
+			// if container vanished or network does not exist, go to next container
+			if errors.Is(err, define.ErrNoSuchNetwork) || errors.Is(err, define.ErrNoSuchCtr) {
+				continue
+			}
+			if err != nil {
+				return reports, err
+			}
+			if util.StringInSlice(name, networks) {
 				// if user passes force, we nuke containers and pods
 				if !options.Force {
 					// Without the force option, we return an error
@@ -139,4 +147,64 @@ func (ic *ContainerEngine) NetworkDisconnect(ctx context.Context, networkname st
 
 func (ic *ContainerEngine) NetworkConnect(ctx context.Context, networkname string, options entities.NetworkConnectOptions) error {
 	return ic.Libpod.ConnectContainerToNetwork(options.Container, networkname, options.Aliases)
+}
+
+// NetworkExists checks if the given network exists
+func (ic *ContainerEngine) NetworkExists(ctx context.Context, networkname string) (*entities.BoolReport, error) {
+	config, err := ic.Libpod.GetConfig()
+	if err != nil {
+		return nil, err
+	}
+	exists, err := network.Exists(config, networkname)
+	if err != nil {
+		return nil, err
+	}
+	return &entities.BoolReport{
+		Value: exists,
+	}, nil
+}
+
+// Network prune removes unused cni networks
+func (ic *ContainerEngine) NetworkPrune(ctx context.Context, options entities.NetworkPruneOptions) ([]*entities.NetworkPruneReport, error) {
+	runtimeConfig, err := ic.Libpod.GetConfig()
+	if err != nil {
+		return nil, err
+	}
+	cons, err := ic.Libpod.GetAllContainers()
+	if err != nil {
+		return nil, err
+	}
+	networks, err := network.LoadCNIConfsFromDir(network.GetCNIConfDir(runtimeConfig))
+	if err != nil {
+		return nil, err
+	}
+
+	// Gather up all the non-default networks that the
+	// containers want
+	networksToKeep := make(map[string]bool)
+	for _, c := range cons {
+		nets, _, err := c.Networks()
+		if err != nil {
+			return nil, err
+		}
+		for _, n := range nets {
+			networksToKeep[n] = true
+		}
+	}
+	if len(options.Filters) != 0 {
+		for _, n := range networks {
+			// This network will be kept anyway
+			if _, found := networksToKeep[n.Name]; found {
+				continue
+			}
+			ok, err := network.IfPassesPruneFilter(runtimeConfig, n, options.Filters)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				networksToKeep[n.Name] = true
+			}
+		}
+	}
+	return network.PruneNetworks(runtimeConfig, networksToKeep)
 }

@@ -3,7 +3,7 @@ package server
 import (
 	"net/http"
 
-	"github.com/containers/podman/v2/pkg/api/handlers/libpod"
+	"github.com/containers/podman/v3/pkg/api/handlers/libpod"
 	"github.com/gorilla/mux"
 )
 
@@ -30,7 +30,8 @@ func (s *APIServer) registerManifestHandlers(r *mux.Router) error {
 	//   description: add all contents if given list
 	// responses:
 	//   200:
-	//     $ref: "#/definitions/IDResponse"
+	//     schema:
+	//       $ref: "#/definitions/IDResponse"
 	//   400:
 	//     $ref: "#/responses/BadParamError"
 	//   404:
@@ -38,6 +39,26 @@ func (s *APIServer) registerManifestHandlers(r *mux.Router) error {
 	//   500:
 	//     $ref: "#/responses/InternalError"
 	r.Handle(VersionedPath("/libpod/manifests/create"), s.APIHandler(libpod.ManifestCreate)).Methods(http.MethodPost)
+	// swagger:operation GET /libpod/manifests/{name}/exists manifests Exists
+	// ---
+	// summary: Exists
+	// description: Check if manifest list exists
+	// parameters:
+	//  - in: path
+	//    name: name
+	//    type: string
+	//    required: true
+	//    description: the name of the manifest list
+	// produces:
+	// - application/json
+	// responses:
+	//   204:
+	//     description: manifest list exists
+	//   404:
+	//     $ref: '#/responses/NoSuchManifest'
+	//   500:
+	//     $ref: '#/responses/InternalError'
+	r.Handle(VersionedPath("/libpod/manifests/{name}/exists"), s.APIHandler(libpod.ExistsManifest)).Methods(http.MethodGet)
 	// swagger:operation GET /libpod/manifests/{name:.*}/json manifests Inspect
 	// ---
 	// summary: Inspect
@@ -76,7 +97,8 @@ func (s *APIServer) registerManifestHandlers(r *mux.Router) error {
 	//      $ref: "#/definitions/ManifestAddOpts"
 	// responses:
 	//   200:
-	//     $ref: "#/definitions/IDResponse"
+	//     schema:
+	//       $ref: "#/definitions/IDResponse"
 	//   404:
 	//     $ref: "#/responses/NoSuchManifest"
 	//   409:
@@ -102,7 +124,8 @@ func (s *APIServer) registerManifestHandlers(r *mux.Router) error {
 	//    description: image digest to be removed
 	// responses:
 	//   200:
-	//     $ref: "#/definitions/IDResponse"
+	//     schema:
+	//       $ref: "#/definitions/IDResponse"
 	//   400:
 	//     $ref: "#/responses/BadParamError"
 	//   404:
@@ -133,7 +156,8 @@ func (s *APIServer) registerManifestHandlers(r *mux.Router) error {
 	//    type: boolean
 	// responses:
 	//   200:
-	//     $ref: "#/definitions/IDResponse"
+	//     schema:
+	//       $ref: "#/definitions/IDResponse"
 	//   400:
 	//     $ref: "#/responses/BadParamError"
 	//   404:

@@ -3,10 +3,10 @@ package tunnel
 import (
 	"context"
 
-	"github.com/containers/podman/v2/pkg/bindings/volumes"
-	"github.com/containers/podman/v2/pkg/domain/entities"
-	"github.com/containers/podman/v2/pkg/domain/entities/reports"
-	"github.com/containers/podman/v2/pkg/errorhandling"
+	"github.com/containers/podman/v3/pkg/bindings/volumes"
+	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v3/pkg/domain/entities/reports"
+	"github.com/containers/podman/v3/pkg/errorhandling"
 	"github.com/pkg/errors"
 )
 
@@ -79,4 +79,15 @@ func (ic *ContainerEngine) VolumePrune(ctx context.Context, opts entities.Volume
 func (ic *ContainerEngine) VolumeList(ctx context.Context, opts entities.VolumeListOptions) ([]*entities.VolumeListReport, error) {
 	options := new(volumes.ListOptions).WithFilters(opts.Filter)
 	return volumes.List(ic.ClientCtx, options)
+}
+
+// VolumeExists checks if the given volume exists
+func (ic *ContainerEngine) VolumeExists(ctx context.Context, nameOrID string) (*entities.BoolReport, error) {
+	exists, err := volumes.Exists(ic.ClientCtx, nameOrID, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &entities.BoolReport{
+		Value: exists,
+	}, nil
 }

@@ -50,14 +50,13 @@ class TestApi(unittest.TestCase):
     def setUp(self):
         super().setUp()
 
-        try:
-            TestApi.podman.run("run", "alpine", "/bin/ls", check=True)
-        except subprocess.CalledProcessError as e:
-            if e.stdout:
-                sys.stdout.write("\nRun Stdout:\n" + e.stdout.decode("utf-8"))
-            if e.stderr:
-                sys.stderr.write("\nRun Stderr:\n" + e.stderr.decode("utf-8"))
-            raise
+        TestApi.podman.run("run", "alpine", "/bin/ls", check=True)
+
+    def tearDown(self) -> None:
+        super().tearDown()
+
+        TestApi.podman.run("pod", "rm", "--all", "--force", check=True)
+        TestApi.podman.run("rm", "--all", "--force", check=True)
 
     @classmethod
     def setUpClass(cls):
@@ -355,17 +354,51 @@ class TestApi(unittest.TestCase):
         self.assertTrue(keys["stream"], "Expected to find stream progress stanza's")
 
     def test_search_compat(self):
+        url = PODMAN_URL + "/v1.40/images/search"
+
         # Had issues with this test hanging when repositories not happy
-        def do_search():
-            r = requests.get(PODMAN_URL + "/v1.40/images/search?term=alpine", timeout=5)
+        def do_search1():
+            payload = {"term": "alpine"}
+            r = requests.get(url, params=payload, timeout=5)
             self.assertEqual(r.status_code, 200, r.text)
             objs = json.loads(r.text)
             self.assertIn(type(objs), (list,))
 
-        search = Process(target=do_search)
-        search.start()
-        search.join(timeout=10)
-        self.assertFalse(search.is_alive(), "/images/search took too long")
+        def do_search2():
+            payload = {"term": "alpine", "limit": 1}
+            r = requests.get(url, params=payload, timeout=5)
+            self.assertEqual(r.status_code, 200, r.text)
+            objs = json.loads(r.text)
+            self.assertIn(type(objs), (list,))
+            self.assertEqual(len(objs), 1)
+
+        def do_search3():
+            payload = {"term": "alpine", "filters": '{"is-official":["true"]}'}
+            r = requests.get(url, params=payload, timeout=5)
+            self.assertEqual(r.status_code, 200, r.text)
+            objs = json.loads(r.text)
+            self.assertIn(type(objs), (list,))
+            # There should be only one offical image
+            self.assertEqual(len(objs), 1)
+
+        def do_search4():
+            headers = {"X-Registry-Auth": "null"}
+            payload = {"term": "alpine"}
+            r = requests.get(url, params=payload, headers=headers, timeout=5)
+            self.assertEqual(r.status_code, 200, r.text)
+
+        def do_search5():
+            headers = {"X-Registry-Auth": "invalid value"}
+            payload = {"term": "alpine"}
+            r = requests.get(url, params=payload, headers=headers, timeout=5)
+            self.assertEqual(r.status_code, 400, r.text)
+
+        search_methods = [do_search1, do_search2, do_search3, do_search4, do_search5]
+        for search_method in search_methods:
+            search = Process(target=search_method)
+            search.start()
+            search.join(timeout=10)
+            self.assertFalse(search.is_alive(), "/images/search took too long")
 
     def test_ping(self):
         required_headers = (
@@ -449,8 +482,17 @@ class TestApi(unittest.TestCase):
         inspect = requests.get(PODMAN_URL + f"/v1.40/networks/{ident}")
         self.assertEqual(inspect.status_code, 404, inspect.content)
 
+        # network prune
+        prune_name = "Network_" + "".join(random.choice(string.ascii_letters) for i in range(10))
+        prune_create = requests.post(
+            PODMAN_URL + "/v1.40/networks/create", json={"Name": prune_name}
+        )
+        self.assertEqual(create.status_code, 201, prune_create.content)
+
         prune = requests.post(PODMAN_URL + "/v1.40/networks/prune")
-        self.assertEqual(prune.status_code, 404, prune.content)
+        self.assertEqual(prune.status_code, 200, prune.content)
+        obj = json.loads(prune.content)
+        self.assertTrue(prune_name in obj["NetworksDeleted"])
 
     def test_volumes_compat(self):
         name = "Volume_" + "".join(random.choice(string.ascii_letters) for i in range(10))
@@ -512,17 +554,6 @@ class TestApi(unittest.TestCase):
         payload = json.loads(prune.content)
         self.assertIn(name, payload["VolumesDeleted"])
         self.assertGreater(payload["SpaceReclaimed"], 0)
-
-    def test_auth_compat(self):
-        r = requests.post(
-            PODMAN_URL + "/v1.40/auth",
-            json={
-                "username": "bozo",
-                "password": "wedontneednopasswords",
-                "serveraddress": "https://localhost/v1.40/",
-            },
-        )
-        self.assertEqual(r.status_code, 404, r.content)
 
     def test_version(self):
         r = requests.get(PODMAN_URL + "/v1.40/version")
