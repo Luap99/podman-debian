@@ -8,5 +8,5 @@ repack,compression=xz,\
 dirversionmangle=s/-rc/~rc/,\
 uversionmangle=s/-rc/~rc/,\
 dversionmangle=s{[+~]dfsg\d*}{},\
-" https://github.com/containers/libpod/releases \
-  .*/archive/v?(\d[-\w\d\.]+)\.tar\.gz
+" https://github.com/containers/podman/releases \
+  .*/archive/refs/tags/v?(\d[-\w\d\.]+)\.tar\.gz
