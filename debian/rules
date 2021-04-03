@@ -21,12 +21,6 @@ BUILDTAGS := apparmor,ostree,seccomp,selinux,systemd
 %:
 	dh $@ --buildsystem=golang --with=golang,bash-completion --builddirectory=_output
 
-override_dh_clean:
-	dh_clean $(PB_GO_FILES)
-	## Remove Files-Excluded (when built from checkout or non-DFSG tarball):
-	$(RM) -rv `perl -0nE 'say $$1 if m{^Files\-Excluded\:\s*(.*?)(?:\n\n|Files:|Comment:)}sm;' debian/copyright`
-	-find vendor -mindepth 1 -type d -empty -delete -printf 'removed %p\n'
-
 override_dh_auto_build:
 	$(MAKE) docs
 
