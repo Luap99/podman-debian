@@ -8,14 +8,14 @@ import (
 	"time"
 
 	"github.com/containers/image/v5/manifest"
-	"github.com/containers/podman/v2/cmd/podman/parse"
-	"github.com/containers/podman/v2/libpod/define"
-	ann "github.com/containers/podman/v2/pkg/annotations"
-	envLib "github.com/containers/podman/v2/pkg/env"
-	ns "github.com/containers/podman/v2/pkg/namespaces"
-	"github.com/containers/podman/v2/pkg/specgen"
-	systemdGen "github.com/containers/podman/v2/pkg/systemd/generate"
-	"github.com/containers/podman/v2/pkg/util"
+	"github.com/containers/podman/v3/cmd/podman/parse"
+	"github.com/containers/podman/v3/libpod/define"
+	ann "github.com/containers/podman/v3/pkg/annotations"
+	envLib "github.com/containers/podman/v3/pkg/env"
+	ns "github.com/containers/podman/v3/pkg/namespaces"
+	"github.com/containers/podman/v3/pkg/specgen"
+	systemdDefine "github.com/containers/podman/v3/pkg/systemd/define"
+	"github.com/containers/podman/v3/pkg/util"
 	"github.com/docker/go-units"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
@@ -148,17 +148,16 @@ func getMemoryLimits(s *specgen.SpecGenerator, c *ContainerCLIOpts) (*specs.Linu
 	}
 	if m := c.MemorySwap; len(m) > 0 {
 		var ms int64
-		if m == "-1" {
-			ms = int64(-1)
-			s.ResourceLimits.Memory.Swap = &ms
-		} else {
+		// only set memory swap if it was set
+		// -1 indicates unlimited
+		if m != "-1" {
 			ms, err = units.RAMInBytes(m)
+			memory.Swap = &ms
 			if err != nil {
 				return nil, errors.Wrapf(err, "invalid value for memory")
 			}
+			hasLimits = true
 		}
-		memory.Swap = &ms
-		hasLimits = true
 	}
 	if m := c.KernelMemory; len(m) > 0 {
 		mk, err := units.RAMInBytes(m)
@@ -343,8 +342,8 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *ContainerCLIOpts, args []string
 		return errors.Wrapf(err, "unable to process labels")
 	}
 
-	if systemdUnit, exists := osEnv[systemdGen.EnvVariable]; exists {
-		labels[systemdGen.EnvVariable] = systemdUnit
+	if systemdUnit, exists := osEnv[systemdDefine.EnvVariable]; exists {
+		labels[systemdDefine.EnvVariable] = systemdUnit
 	}
 
 	s.Labels = labels
@@ -642,6 +641,7 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *ContainerCLIOpts, args []string
 	s.StopTimeout = &c.StopTimeout
 	s.Timezone = c.Timezone
 	s.Umask = c.Umask
+	s.Secrets = c.Secrets
 
 	return nil
 }

@@ -3,11 +3,11 @@ package compat
 import (
 	"net/http"
 
-	"github.com/containers/podman/v2/libpod"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/pkg/api/handlers/utils"
-	"github.com/containers/podman/v2/pkg/domain/entities"
-	"github.com/containers/podman/v2/pkg/domain/infra/abi"
+	"github.com/containers/podman/v3/libpod"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/pkg/api/handlers/utils"
+	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v3/pkg/domain/infra/abi"
 	"github.com/gorilla/schema"
 	"github.com/pkg/errors"
 )
@@ -39,11 +39,11 @@ func StopContainer(w http.ResponseWriter, r *http.Request) {
 		Ignore: query.Ignore,
 	}
 	if utils.IsLibpodRequest(r) {
-		if query.LibpodTimeout > 0 {
+		if _, found := r.URL.Query()["timeout"]; found {
 			options.Timeout = &query.LibpodTimeout
 		}
 	} else {
-		if query.DockerTimeout > 0 {
+		if _, found := r.URL.Query()["t"]; found {
 			options.Timeout = &query.DockerTimeout
 		}
 	}

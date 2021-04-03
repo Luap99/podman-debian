@@ -1,6 +1,7 @@
 package inspect
 
 import (
+	"bytes"
 	"context"
 	"encoding/json" // due to a bug in json-iterator it cannot be used here
 	"fmt"
@@ -12,11 +13,11 @@ import (
 
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/report"
-	"github.com/containers/podman/v2/cmd/podman/common"
-	"github.com/containers/podman/v2/cmd/podman/registry"
-	"github.com/containers/podman/v2/cmd/podman/validate"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/pkg/domain/entities"
+	"github.com/containers/podman/v3/cmd/podman/common"
+	"github.com/containers/podman/v3/cmd/podman/registry"
+	"github.com/containers/podman/v3/cmd/podman/validate"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -245,8 +246,15 @@ func printJSON(data []interface{}) error {
 }
 
 func printTmpl(typ, row string, data []interface{}) error {
-	// We cannot use c/common/reports here, too many levels of interface{}
-	t, err := template.New(typ + " inspect").Funcs(template.FuncMap(report.DefaultFuncs)).Parse(row)
+	t, err := template.New(typ + " inspect").Funcs(map[string]interface{}{
+		"json": func(v interface{}) string {
+			b := &bytes.Buffer{}
+			e := registry.JSONLibrary().NewEncoder(b)
+			e.SetEscapeHTML(false)
+			_ = e.Encode(v)
+			return strings.TrimSpace(b.String())
+		},
+	}).Parse(row)
 	if err != nil {
 		return err
 	}

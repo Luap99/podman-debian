@@ -7,10 +7,10 @@ import (
 	"strings"
 
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v2/libpod"
-	"github.com/containers/podman/v2/libpod/image"
-	"github.com/containers/podman/v2/pkg/specgen"
-	"github.com/containers/podman/v2/pkg/util"
+	"github.com/containers/podman/v3/libpod"
+	"github.com/containers/podman/v3/libpod/image"
+	"github.com/containers/podman/v3/pkg/specgen"
+	"github.com/containers/podman/v3/pkg/util"
 	"github.com/containers/storage"
 	"github.com/opencontainers/selinux/go-selinux/label"
 	"github.com/pkg/errors"
@@ -247,8 +247,9 @@ func createContainerOptions(ctx context.Context, rt *libpod.Runtime, s *specgen.
 		var vols []*libpod.ContainerOverlayVolume
 		for _, v := range overlays {
 			vols = append(vols, &libpod.ContainerOverlayVolume{
-				Dest:   v.Destination,
-				Source: v.Source,
+				Dest:    v.Destination,
+				Source:  v.Source,
+				Options: v.Options,
 			})
 		}
 		options = append(options, libpod.WithOverlayVolumes(vols))
@@ -358,6 +359,10 @@ func createContainerOptions(ctx context.Context, rt *libpod.Runtime, s *specgen.
 	if s.ContainerHealthCheckConfig.HealthConfig != nil {
 		options = append(options, libpod.WithHealthCheck(s.ContainerHealthCheckConfig.HealthConfig))
 		logrus.Debugf("New container has a health check")
+	}
+
+	if len(s.Secrets) != 0 {
+		options = append(options, libpod.WithSecrets(s.Secrets))
 	}
 	return options, nil
 }

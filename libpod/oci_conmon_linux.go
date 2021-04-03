@@ -25,14 +25,15 @@ import (
 	"github.com/containers/common/pkg/capabilities"
 	"github.com/containers/common/pkg/config"
 	conmonConfig "github.com/containers/conmon/runner/config"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/libpod/logs"
-	"github.com/containers/podman/v2/pkg/cgroups"
-	"github.com/containers/podman/v2/pkg/errorhandling"
-	"github.com/containers/podman/v2/pkg/lookup"
-	"github.com/containers/podman/v2/pkg/rootless"
-	"github.com/containers/podman/v2/pkg/util"
-	"github.com/containers/podman/v2/utils"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/libpod/logs"
+	"github.com/containers/podman/v3/pkg/cgroups"
+	"github.com/containers/podman/v3/pkg/checkpoint/crutils"
+	"github.com/containers/podman/v3/pkg/errorhandling"
+	"github.com/containers/podman/v3/pkg/lookup"
+	"github.com/containers/podman/v3/pkg/rootless"
+	"github.com/containers/podman/v3/pkg/util"
+	"github.com/containers/podman/v3/utils"
 	"github.com/containers/storage/pkg/homedir"
 	pmount "github.com/containers/storage/pkg/mount"
 	"github.com/coreos/go-systemd/v22/activation"
@@ -43,7 +44,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
-	"k8s.io/client-go/tools/remotecommand"
 )
 
 const (
@@ -113,9 +113,11 @@ func newConmonOCIRuntime(name string, paths []string, conmonPath string, runtime
 
 	// TODO: probe OCI runtime for feature and enable automatically if
 	// available.
-	runtime.supportsJSON = supportsJSON[name]
-	runtime.supportsNoCgroups = supportsNoCgroups[name]
-	runtime.supportsKVM = supportsKVM[name]
+
+	base := filepath.Base(name)
+	runtime.supportsJSON = supportsJSON[base]
+	runtime.supportsNoCgroups = supportsNoCgroups[base]
+	runtime.supportsKVM = supportsKVM[base]
 
 	foundPath := false
 	for _, path := range paths {
@@ -746,7 +748,7 @@ func openControlFile(ctr *Container, parentDir string) (*os.File, error) {
 }
 
 // AttachResize resizes the terminal used by the given container.
-func (r *ConmonOCIRuntime) AttachResize(ctr *Container, newSize remotecommand.TerminalSize) error {
+func (r *ConmonOCIRuntime) AttachResize(ctr *Container, newSize define.TerminalSize) error {
 	controlFile, err := openControlFile(ctr, ctr.bundlePath())
 	if err != nil {
 		return err
@@ -838,16 +840,7 @@ func (r *ConmonOCIRuntime) CheckConmonRunning(ctr *Container) (bool, error) {
 // SupportsCheckpoint checks if the OCI runtime supports checkpointing
 // containers.
 func (r *ConmonOCIRuntime) SupportsCheckpoint() bool {
-	// Check if the runtime implements checkpointing. Currently only
-	// runc's checkpoint/restore implementation is supported.
-	cmd := exec.Command(r.path, "checkpoint", "--help")
-	if err := cmd.Start(); err != nil {
-		return false
-	}
-	if err := cmd.Wait(); err == nil {
-		return true
-	}
-	return false
+	return crutils.CRRuntimeSupportsCheckpointRestore(r.path)
 }
 
 // SupportsJSONErrors checks if the OCI runtime supports JSON-formatted error
@@ -1275,7 +1268,10 @@ func prepareProcessExec(c *Container, options *ExecOptions, env []string, sessio
 		return nil, err
 	}
 
-	allCaps := capabilities.AllCapabilities()
+	allCaps, err := capabilities.BoundingSet()
+	if err != nil {
+		return nil, err
+	}
 	if options.Privileged {
 		pspec.Capabilities.Bounding = allCaps
 	} else {

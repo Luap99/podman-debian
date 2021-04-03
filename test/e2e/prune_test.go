@@ -1,18 +1,19 @@
 package integration
 
 import (
+	"fmt"
 	"os"
 
-	. "github.com/containers/podman/v2/test/utils"
+	. "github.com/containers/podman/v3/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
 
-var pruneImage = `
-FROM  alpine:latest
+var pruneImage = fmt.Sprintf(`
+FROM  %s
 LABEL RUN podman --version
 RUN apk update
-RUN apk add bash`
+RUN apk add bash`, ALPINE)
 
 var _ = Describe("Podman prune", func() {
 	var (
@@ -88,7 +89,6 @@ var _ = Describe("Podman prune", func() {
 	})
 
 	It("podman image prune skip cache images", func() {
-		SkipIfRemote("FIXME: podman-remote build is not working the same as local build")
 		podmanTest.BuildImage(pruneImage, "alpine_bash:latest", "true")
 
 		none := podmanTest.Podman([]string{"images", "-a"})
@@ -110,10 +110,8 @@ var _ = Describe("Podman prune", func() {
 	})
 
 	It("podman image prune dangling images", func() {
-		SkipIfRemote("FIXME: podman-remote build is not working the same as local build")
 		podmanTest.BuildImage(pruneImage, "alpine_bash:latest", "true")
 		podmanTest.BuildImage(pruneImage, "alpine_bash:latest", "true")
-
 		none := podmanTest.Podman([]string{"images", "-a"})
 		none.WaitWithDefaultTimeout()
 		Expect(none.ExitCode()).To(Equal(0))

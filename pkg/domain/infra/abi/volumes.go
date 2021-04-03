@@ -3,12 +3,12 @@ package abi
 import (
 	"context"
 
-	"github.com/containers/podman/v2/libpod"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/pkg/domain/entities"
-	"github.com/containers/podman/v2/pkg/domain/entities/reports"
-	"github.com/containers/podman/v2/pkg/domain/filters"
-	"github.com/containers/podman/v2/pkg/domain/infra/abi/parse"
+	"github.com/containers/podman/v3/libpod"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v3/pkg/domain/entities/reports"
+	"github.com/containers/podman/v3/pkg/domain/filters"
+	"github.com/containers/podman/v3/pkg/domain/infra/abi/parse"
 	"github.com/pkg/errors"
 )
 
@@ -152,4 +152,13 @@ func (ic *ContainerEngine) VolumeList(ctx context.Context, opts entities.VolumeL
 		reports = append(reports, &entities.VolumeListReport{VolumeConfigResponse: config})
 	}
 	return reports, nil
+}
+
+// VolumeExists check if a given volume name exists
+func (ic *ContainerEngine) VolumeExists(ctx context.Context, nameOrID string) (*entities.BoolReport, error) {
+	exists, err := ic.Libpod.HasVolume(nameOrID)
+	if err != nil {
+		return nil, err
+	}
+	return &entities.BoolReport{Value: exists}, nil
 }

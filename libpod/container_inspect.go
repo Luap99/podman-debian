@@ -2,12 +2,13 @@ package libpod
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/libpod/driver"
-	"github.com/containers/podman/v2/pkg/util"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/libpod/driver"
+	"github.com/containers/podman/v3/pkg/util"
 	units "github.com/docker/go-units"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/runtime-tools/generate"
@@ -339,6 +340,13 @@ func (c *Container) generateInspectContainerConfig(spec *spec.Spec) *define.Insp
 	ctrConfig.CreateCommand = c.config.CreateCommand
 
 	ctrConfig.Timezone = c.config.Timezone
+
+	for _, secret := range c.config.Secrets {
+		newSec := define.InspectSecret{}
+		newSec.Name = secret.Name
+		newSec.ID = secret.ID
+		ctrConfig.Secrets = append(ctrConfig.Secrets, &newSec)
+	}
 
 	// Pad Umask to 4 characters
 	if len(c.config.Umask) < 4 {
@@ -691,6 +699,8 @@ func (c *Container) generateInspectContainerHostConfig(ctrSpec *spec.Spec, named
 		for cap := range boundingCaps {
 			capDrop = append(capDrop, cap)
 		}
+		// Sort CapDrop so it displays in consistent order (GH #9490)
+		sort.Strings(capDrop)
 	}
 	hostConfig.CapAdd = capAdd
 	hostConfig.CapDrop = capDrop

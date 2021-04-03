@@ -7,8 +7,8 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/pkg/rootless"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/pkg/rootless"
 	"github.com/containers/storage"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -1055,9 +1055,9 @@ func (s *BoltState) lookupContainerID(idOrName string, ctrBucket, namesBucket, n
 		return nil, err
 	} else if !exists {
 		if isPod {
-			return nil, errors.Wrapf(define.ErrNoSuchCtr, "%s is a pod, not a container", idOrName)
+			return nil, errors.Wrapf(define.ErrNoSuchCtr, "%q is a pod, not a container", idOrName)
 		}
-		return nil, errors.Wrapf(define.ErrNoSuchCtr, "no container with name or ID %s found", idOrName)
+		return nil, errors.Wrapf(define.ErrNoSuchCtr, "no container with name or ID %q found", idOrName)
 	}
 	return id, nil
 }

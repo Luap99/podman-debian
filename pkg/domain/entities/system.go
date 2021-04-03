@@ -3,8 +3,8 @@ package entities
 import (
 	"time"
 
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/pkg/domain/entities/reports"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/pkg/domain/entities/reports"
 	"github.com/docker/docker/api/types"
 	"github.com/spf13/cobra"
 )
@@ -106,4 +106,15 @@ type ComponentVersion struct {
 // registries which may be contacted during certain operations.
 type ListRegistriesReport struct {
 	Registries []string
+}
+
+// swagger:model AuthConfig
+type AuthConfig struct {
+	types.AuthConfig
+}
+
+// AuthReport describes the response for authentication check
+type AuthReport struct {
+	IdentityToken string
+	Status        string
 }

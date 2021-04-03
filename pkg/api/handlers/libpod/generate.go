@@ -3,11 +3,11 @@ package libpod
 import (
 	"net/http"
 
-	"github.com/containers/podman/v2/libpod"
-	"github.com/containers/podman/v2/pkg/api/handlers/utils"
-	"github.com/containers/podman/v2/pkg/domain/entities"
-	"github.com/containers/podman/v2/pkg/domain/infra/abi"
-	"github.com/containers/podman/v2/pkg/util"
+	"github.com/containers/podman/v3/libpod"
+	"github.com/containers/podman/v3/pkg/api/handlers/utils"
+	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v3/pkg/domain/infra/abi"
+	"github.com/containers/podman/v3/pkg/util"
 	"github.com/gorilla/schema"
 	"github.com/pkg/errors"
 )
@@ -18,6 +18,7 @@ func GenerateSystemd(w http.ResponseWriter, r *http.Request) {
 	query := struct {
 		Name            bool   `schema:"useName"`
 		New             bool   `schema:"new"`
+		NoHeader        bool   `schema:"noHeader"`
 		RestartPolicy   string `schema:"restartPolicy"`
 		StopTimeout     uint   `schema:"stopTimeout"`
 		ContainerPrefix string `schema:"containerPrefix"`
@@ -41,6 +42,7 @@ func GenerateSystemd(w http.ResponseWriter, r *http.Request) {
 	options := entities.GenerateSystemdOptions{
 		Name:            query.Name,
 		New:             query.New,
+		NoHeader:        query.NoHeader,
 		RestartPolicy:   query.RestartPolicy,
 		StopTimeout:     &query.StopTimeout,
 		ContainerPrefix: query.ContainerPrefix,

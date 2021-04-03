@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/containers/podman/v2/pkg/bindings"
-	"github.com/containers/podman/v2/pkg/bindings/containers"
-	"github.com/containers/podman/v2/pkg/bindings/images"
-	dreports "github.com/containers/podman/v2/pkg/domain/entities/reports"
+	"github.com/containers/podman/v3/pkg/bindings"
+	"github.com/containers/podman/v3/pkg/bindings/containers"
+	"github.com/containers/podman/v3/pkg/bindings/images"
+	dreports "github.com/containers/podman/v3/pkg/domain/entities/reports"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
@@ -101,7 +101,7 @@ var _ = Describe("Podman images", func() {
 
 		// Start a container with alpine image
 		var top string = "top"
-		_, err = bt.RunTopContainer(&top, bindings.PFalse, nil)
+		_, err = bt.RunTopContainer(&top, nil)
 		Expect(err).To(BeNil())
 		// we should now have a container called "top" running
 		containerResponse, err := containers.Inspect(bt.conn, "top", nil)

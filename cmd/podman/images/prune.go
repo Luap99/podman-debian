@@ -7,10 +7,10 @@ import (
 	"strings"
 
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/podman/v2/cmd/podman/registry"
-	"github.com/containers/podman/v2/cmd/podman/utils"
-	"github.com/containers/podman/v2/cmd/podman/validate"
-	"github.com/containers/podman/v2/pkg/domain/entities"
+	"github.com/containers/podman/v3/cmd/podman/registry"
+	"github.com/containers/podman/v3/cmd/podman/utils"
+	"github.com/containers/podman/v3/cmd/podman/validate"
+	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/spf13/cobra"
 )
 
@@ -53,9 +53,7 @@ func init() {
 func prune(cmd *cobra.Command, args []string) error {
 	if !force {
 		reader := bufio.NewReader(os.Stdin)
-		fmt.Printf(`
-WARNING! This will remove all dangling images.
-Are you sure you want to continue? [y/N] `)
+		fmt.Printf("%s", createPruneWarningMessage(pruneOpts))
 		answer, err := reader.ReadString('\n')
 		if err != nil {
 			return err
@@ -71,4 +69,12 @@ Are you sure you want to continue? [y/N] `)
 	}
 
 	return utils.PrintImagePruneResults(results, false)
+}
+
+func createPruneWarningMessage(pruneOpts entities.ImagePruneOptions) string {
+	question := "Are you sure you want to continue? [y/N] "
+	if pruneOpts.All {
+		return "WARNING! This will remove all images without at least one container associated to them.\n" + question
+	}
+	return "WARNING! This will remove all dangling images.\n" + question
 }

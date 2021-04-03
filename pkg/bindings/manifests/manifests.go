@@ -9,9 +9,9 @@ import (
 	"strings"
 
 	"github.com/containers/image/v5/manifest"
-	"github.com/containers/podman/v2/pkg/api/handlers"
-	"github.com/containers/podman/v2/pkg/bindings"
-	"github.com/containers/podman/v2/pkg/bindings/images"
+	"github.com/containers/podman/v3/pkg/api/handlers"
+	"github.com/containers/podman/v3/pkg/bindings"
+	"github.com/containers/podman/v3/pkg/bindings/images"
 	jsoniter "github.com/json-iterator/go"
 )
 
@@ -47,6 +47,19 @@ func Create(ctx context.Context, names, images []string, options *CreateOptions)
 		return "", err
 	}
 	return idr.ID, response.Process(&idr)
+}
+
+// Exists returns true if a given maifest list exists
+func Exists(ctx context.Context, name string, options *ExistsOptions) (bool, error) {
+	conn, err := bindings.GetClient(ctx)
+	if err != nil {
+		return false, err
+	}
+	response, err := conn.DoRequest(nil, http.MethodGet, "/manifests/%s/exists", nil, nil, name)
+	if err != nil {
+		return false, err
+	}
+	return response.IsSuccess(), nil
 }
 
 // Inspect returns a manifest list for a given name.

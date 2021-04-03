@@ -3,9 +3,9 @@ package tunnel
 import (
 	"context"
 
-	"github.com/containers/podman/v2/pkg/bindings/network"
-	"github.com/containers/podman/v2/pkg/domain/entities"
-	"github.com/containers/podman/v2/pkg/errorhandling"
+	"github.com/containers/podman/v3/pkg/bindings/network"
+	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v3/pkg/errorhandling"
 	"github.com/pkg/errors"
 )
 
@@ -77,4 +77,20 @@ func (ic *ContainerEngine) NetworkDisconnect(ctx context.Context, networkname st
 func (ic *ContainerEngine) NetworkConnect(ctx context.Context, networkname string, opts entities.NetworkConnectOptions) error {
 	options := new(network.ConnectOptions).WithAliases(opts.Aliases)
 	return network.Connect(ic.ClientCtx, networkname, opts.Container, options)
+}
+
+// NetworkExists checks if the given network exists
+func (ic *ContainerEngine) NetworkExists(ctx context.Context, networkname string) (*entities.BoolReport, error) {
+	exists, err := network.Exists(ic.ClientCtx, networkname, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &entities.BoolReport{
+		Value: exists,
+	}, nil
+}
+
+// Network prune removes unused cni networks
+func (ic *ContainerEngine) NetworkPrune(ctx context.Context, options entities.NetworkPruneOptions) ([]*entities.NetworkPruneReport, error) {
+	return network.Prune(ic.ClientCtx, nil)
 }

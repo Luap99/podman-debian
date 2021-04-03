@@ -6,7 +6,7 @@ import (
 	"github.com/containers/buildah/pkg/parse"
 	"github.com/containers/image/v5/docker/reference"
 	"github.com/containers/image/v5/types"
-	podmanVersion "github.com/containers/podman/v2/version"
+	podmanVersion "github.com/containers/podman/v3/version"
 )
 
 // DockerRegistryOptions encapsulates settings that affect how we connect or
@@ -69,6 +69,7 @@ func GetSystemContext(signaturePolicyPath, authFilePath string, forceCompress bo
 	sc.AuthFilePath = authFilePath
 	sc.DirForceCompress = forceCompress
 	sc.DockerRegistryUserAgent = fmt.Sprintf("libpod/%s", podmanVersion.Version)
+	sc.BigFilesTemporaryDir = parse.GetTempDir()
 
 	return sc
 }

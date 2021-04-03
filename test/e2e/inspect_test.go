@@ -4,7 +4,7 @@ import (
 	"os"
 	"strings"
 
-	. "github.com/containers/podman/v2/test/utils"
+	. "github.com/containers/podman/v3/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -489,5 +489,23 @@ var _ = Describe("Podman inspect", func() {
 			}
 		}
 		Expect(found).To(BeTrue())
+	})
+
+	It("Dropped capabilities are sorted", func() {
+		ctrName := "testCtr"
+		session := podmanTest.Podman([]string{"run", "-d", "--cap-drop", "CAP_AUDIT_WRITE", "--cap-drop", "CAP_MKNOD", "--cap-drop", "CAP_NET_RAW", "--name", ctrName, ALPINE, "top"})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(BeZero())
+
+		inspect := podmanTest.Podman([]string{"inspect", ctrName})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect.ExitCode()).To(BeZero())
+
+		data := inspect.InspectContainerToJSON()
+		Expect(len(data)).To(Equal(1))
+		Expect(len(data[0].HostConfig.CapDrop)).To(Equal(3))
+		Expect(data[0].HostConfig.CapDrop[0]).To(Equal("CAP_AUDIT_WRITE"))
+		Expect(data[0].HostConfig.CapDrop[1]).To(Equal("CAP_MKNOD"))
+		Expect(data[0].HostConfig.CapDrop[2]).To(Equal("CAP_NET_RAW"))
 	})
 })

@@ -4,13 +4,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/containers/podman/v2/pkg/bindings"
-	"github.com/containers/podman/v2/pkg/bindings/containers"
-	"github.com/containers/podman/v2/pkg/bindings/pods"
-	"github.com/containers/podman/v2/pkg/bindings/system"
-	"github.com/containers/podman/v2/pkg/bindings/volumes"
-	"github.com/containers/podman/v2/pkg/domain/entities"
-	"github.com/containers/podman/v2/pkg/domain/entities/reports"
+	"github.com/containers/podman/v3/pkg/bindings/containers"
+	"github.com/containers/podman/v3/pkg/bindings/pods"
+	"github.com/containers/podman/v3/pkg/bindings/system"
+	"github.com/containers/podman/v3/pkg/bindings/volumes"
+	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v3/pkg/domain/entities/reports"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
@@ -41,7 +40,7 @@ var _ = Describe("Podman system", func() {
 
 	It("podman events", func() {
 		var name = "top"
-		_, err := bt.RunTopContainer(&name, bindings.PFalse, nil)
+		_, err := bt.RunTopContainer(&name, nil)
 		Expect(err).To(BeNil())
 
 		filters := make(map[string][]string)
@@ -72,7 +71,7 @@ var _ = Describe("Podman system", func() {
 		Expect(err).To(BeNil())
 		// Start and stop a container to enter in exited state.
 		var name = "top"
-		_, err = bt.RunTopContainer(&name, bindings.PFalse, nil)
+		_, err = bt.RunTopContainer(&name, nil)
 		Expect(err).To(BeNil())
 		err = containers.Stop(bt.conn, name, nil)
 		Expect(err).To(BeNil())
@@ -98,14 +97,14 @@ var _ = Describe("Podman system", func() {
 
 		// Start and stop a container to enter in exited state.
 		var name = "top"
-		_, err = bt.RunTopContainer(&name, bindings.PFalse, nil)
+		_, err = bt.RunTopContainer(&name, nil)
 		Expect(err).To(BeNil())
 		err = containers.Stop(bt.conn, name, nil)
 		Expect(err).To(BeNil())
 
 		// Start container and leave in running
 		var name2 = "top2"
-		_, err = bt.RunTopContainer(&name2, bindings.PFalse, nil)
+		_, err = bt.RunTopContainer(&name2, nil)
 		Expect(err).To(BeNil())
 
 		// Adding an unused volume
@@ -132,14 +131,14 @@ var _ = Describe("Podman system", func() {
 
 		// Start and stop a container to enter in exited state.
 		var name = "top"
-		_, err = bt.RunTopContainer(&name, bindings.PFalse, nil)
+		_, err = bt.RunTopContainer(&name, nil)
 		Expect(err).To(BeNil())
 		err = containers.Stop(bt.conn, name, nil)
 		Expect(err).To(BeNil())
 
 		// Start second container and leave in running
 		var name2 = "top2"
-		_, err = bt.RunTopContainer(&name2, bindings.PFalse, nil)
+		_, err = bt.RunTopContainer(&name2, nil)
 		Expect(err).To(BeNil())
 
 		// Adding an unused volume should work
@@ -167,14 +166,14 @@ var _ = Describe("Podman system", func() {
 
 		// Start and stop a container to enter in exited state.
 		var name = "top"
-		_, err = bt.RunTopContainer(&name, bindings.PFalse, nil)
+		_, err = bt.RunTopContainer(&name, nil)
 		Expect(err).To(BeNil())
 		err = containers.Stop(bt.conn, name, nil)
 		Expect(err).To(BeNil())
 
 		// Start second container and leave in running
 		var name2 = "top2"
-		_, err = bt.RunTopContainer(&name2, bindings.PFalse, nil)
+		_, err = bt.RunTopContainer(&name2, nil)
 		Expect(err).To(BeNil())
 
 		// Adding an unused volume should work

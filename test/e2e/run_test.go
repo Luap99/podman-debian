@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	. "github.com/containers/podman/v2/test/utils"
+	. "github.com/containers/podman/v3/test/utils"
 	"github.com/containers/storage/pkg/stringid"
 	"github.com/mrunalp/fileutils"
 	. "github.com/onsi/ginkgo"
@@ -304,6 +304,42 @@ var _ = Describe("Podman run", func() {
 
 	})
 
+	It("podman run security-opt unmask on /sys/fs/cgroup", func() {
+
+		SkipIfCgroupV1("podman umask on /sys/fs/cgroup will fail with cgroups V1")
+		SkipIfRootless("/sys/fs/cgroup rw access is needed")
+		rwOnCGroups := "/sys/fs/cgroup cgroup2 rw"
+		session := podmanTest.Podman([]string{"run", "--security-opt", "unmask=ALL", "--security-opt", "mask=/sys/fs/cgroup", ALPINE, "cat", "/proc/mounts"})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+		Expect(session.OutputToString()).To(ContainSubstring(rwOnCGroups))
+
+		session = podmanTest.Podman([]string{"run", "--security-opt", "unmask=/sys/fs/cgroup", ALPINE, "cat", "/proc/mounts"})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+		Expect(session.OutputToString()).To(ContainSubstring(rwOnCGroups))
+
+		session = podmanTest.Podman([]string{"run", "--security-opt", "unmask=/sys/fs/cgroup///", ALPINE, "cat", "/proc/mounts"})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+		Expect(session.OutputToString()).To(ContainSubstring(rwOnCGroups))
+
+		session = podmanTest.Podman([]string{"run", "--security-opt", "unmask=ALL", ALPINE, "cat", "/proc/mounts"})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+		Expect(session.OutputToString()).To(ContainSubstring(rwOnCGroups))
+
+		session = podmanTest.Podman([]string{"run", "--security-opt", "unmask=/sys/fs/cgroup", "--security-opt", "mask=/sys/fs/cgroup", ALPINE, "cat", "/proc/mounts"})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+		Expect(session.OutputToString()).To(ContainSubstring(rwOnCGroups))
+
+		session = podmanTest.Podman([]string{"run", "--security-opt", "unmask=/sys/fs/cgroup", ALPINE, "ls", "/sys/fs/cgroup"})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+		Expect(session.OutputToString()).ToNot(BeEmpty())
+	})
+
 	It("podman run seccomp test", func() {
 		session := podmanTest.Podman([]string{"run", "-it", "--security-opt", strings.Join([]string{"seccomp=", forbidGetCWDSeccompProfile()}, ""), ALPINE, "pwd"})
 		session.WaitWithDefaultTimeout()
@@ -355,6 +391,9 @@ var _ = Describe("Podman run", func() {
 	It("podman run user capabilities test", func() {
 		// We need to ignore the containers.conf on the test distribution for this test
 		os.Setenv("CONTAINERS_CONF", "/dev/null")
+		if IsRemote() {
+			podmanTest.RestartRemoteService()
+		}
 		session := podmanTest.Podman([]string{"run", "--rm", "--user", "bin", ALPINE, "grep", "CapBnd", "/proc/self/status"})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
@@ -447,8 +486,11 @@ var _ = Describe("Podman run", func() {
 	It("podman run user capabilities test with image", func() {
 		// We need to ignore the containers.conf on the test distribution for this test
 		os.Setenv("CONTAINERS_CONF", "/dev/null")
-		dockerfile := `FROM busybox
-USER bin`
+		if IsRemote() {
+			podmanTest.RestartRemoteService()
+		}
+		dockerfile := fmt.Sprintf(`FROM %s
+USER bin`, BB)
 		podmanTest.BuildImage(dockerfile, "test", "false")
 		session := podmanTest.Podman([]string{"run", "--rm", "--user", "bin", "test", "grep", "CapBnd", "/proc/self/status"})
 		session.WaitWithDefaultTimeout()
@@ -534,23 +576,23 @@ USER bin`
 	})
 
 	It("podman run blkio-weight test", func() {
-		SkipIfRootless("FIXME: This is blowing up because of no /sys/fs/cgroup/user.slice/user-14467.slice/user@14467.service/cgroup.subtree_control file")
 		SkipIfRootlessCgroupsV1("Setting blkio-weight not supported on cgroupv1 for rootless users")
-		if !CGROUPSV2 {
+		SkipIfRootless("By default systemd doesn't delegate io to rootless users")
+		if CGROUPSV2 {
+			if _, err := os.Stat("/sys/fs/cgroup/io.stat"); os.IsNotExist(err) {
+				Skip("Kernel does not have io.stat")
+			}
+			session := podmanTest.Podman([]string{"run", "--rm", "--blkio-weight=15", ALPINE, "sh", "-c", "cat /sys/fs/cgroup/io.bfq.weight"})
+			session.WaitWithDefaultTimeout()
+			Expect(session.ExitCode()).To(Equal(0))
+			// there was a documentation issue in the kernel that reported a different range [1-10000] for the io controller.
+			// older versions of crun/runc used it.  For the time being allow both versions to pass the test.
+			// FIXME: drop "|51" once all the runtimes we test have the fix in place.
+			Expect(strings.Replace(session.OutputToString(), "default ", "", 1)).To(MatchRegexp("15|51"))
+		} else {
 			if _, err := os.Stat("/sys/fs/cgroup/blkio/blkio.weight"); os.IsNotExist(err) {
 				Skip("Kernel does not support blkio.weight")
 			}
-		}
-		if podmanTest.Host.Distribution == "ubuntu" {
-			Skip("Ubuntu <= 20.10 lacks BFQ scheduler")
-		}
-		if CGROUPSV2 {
-			// convert linearly from [10-1000] to [1-10000]
-			session := podmanTest.Podman([]string{"run", "--rm", "--blkio-weight=15", ALPINE, "sh", "-c", "cat /sys/fs/cgroup/$(sed -e 's|0::||' < /proc/self/cgroup)/io.bfq.weight"})
-			session.WaitWithDefaultTimeout()
-			Expect(session.ExitCode()).To(Equal(0))
-			Expect(session.OutputToString()).To(ContainSubstring("51"))
-		} else {
 			session := podmanTest.Podman([]string{"run", "--rm", "--blkio-weight=15", ALPINE, "cat", "/sys/fs/cgroup/blkio/blkio.weight"})
 			session.WaitWithDefaultTimeout()
 			Expect(session.ExitCode()).To(Equal(0))
@@ -691,7 +733,7 @@ USER bin`
 		Expect(session.ExitCode()).To(Equal(0))
 	})
 
-	It("podman run with secrets", func() {
+	It("podman run with subscription secrets", func() {
 		SkipIfRemote("--default-mount-file option is not supported in podman-remote")
 		containersDir := filepath.Join(podmanTest.TempDir, "containers")
 		err := os.MkdirAll(containersDir, 0755)
@@ -856,10 +898,10 @@ USER bin`
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
 
-		dockerfile := `FROM busybox
+		dockerfile := fmt.Sprintf(`FROM %s
 RUN mkdir -p /myvol/data && chown -R mail.0 /myvol
 VOLUME ["/myvol/data"]
-USER mail`
+USER mail`, BB)
 
 		podmanTest.BuildImage(dockerfile, "test", "false")
 		session = podmanTest.Podman([]string{"run", "--rm", "test", "ls", "-al", "/myvol/data"})
@@ -1222,9 +1264,10 @@ USER mail`
 		for _, line := range lines {
 			parts := strings.SplitN(line, ":", 3)
 			if !CGROUPSV2 {
-				// ignore unified on cgroup v1
+				// ignore unified on cgroup v1.
 				// both runc and crun do not set it.
-				if parts[1] == "" {
+				// crun does not set named hierarchies.
+				if parts[1] == "" || strings.Contains(parts[1], "name=") {
 					continue
 				}
 			}
@@ -1369,7 +1412,28 @@ USER mail`
 	})
 
 	It("podman run --tz", func() {
-		session := podmanTest.Podman([]string{"run", "--tz", "foo", "--rm", ALPINE, "date"})
+		testDir := filepath.Join(podmanTest.RunRoot, "tz-test")
+		err := os.MkdirAll(testDir, 0755)
+		Expect(err).To(BeNil())
+
+		tzFile := filepath.Join(testDir, "tzfile.txt")
+		file, err := os.Create(tzFile)
+		Expect(err).To(BeNil())
+
+		_, err = file.WriteString("Hello")
+		Expect(err).To(BeNil())
+		file.Close()
+
+		badTZFile := fmt.Sprintf("../../../%s", tzFile)
+		session := podmanTest.Podman([]string{"run", "--tz", badTZFile, "--rm", ALPINE, "date"})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Not(Equal(0)))
+		Expect(session.ErrorToString()).To(ContainSubstring("error finding timezone for container"))
+
+		err = os.Remove(tzFile)
+		Expect(err).To(BeNil())
+
+		session = podmanTest.Podman([]string{"run", "--tz", "foo", "--rm", ALPINE, "date"})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Not(Equal(0)))
 
@@ -1435,8 +1499,8 @@ USER mail`
 
 	It("podman run makes workdir from image", func() {
 		// BuildImage does not seem to work remote
-		dockerfile := `FROM busybox
-WORKDIR /madethis`
+		dockerfile := fmt.Sprintf(`FROM %s
+WORKDIR /madethis`, BB)
 		podmanTest.BuildImage(dockerfile, "test", "false")
 		session := podmanTest.Podman([]string{"run", "--rm", "test", "pwd"})
 		session.WaitWithDefaultTimeout()
@@ -1501,5 +1565,27 @@ WORKDIR /madethis`
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
 		Expect(session.OutputToString()).To(ContainSubstring(hostnameEnv))
+	})
+
+	It("podman run --secret", func() {
+		secretsString := "somesecretdata"
+		secretFilePath := filepath.Join(podmanTest.TempDir, "secret")
+		err := ioutil.WriteFile(secretFilePath, []byte(secretsString), 0755)
+		Expect(err).To(BeNil())
+
+		session := podmanTest.Podman([]string{"secret", "create", "mysecret", secretFilePath})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+
+		session = podmanTest.Podman([]string{"run", "--secret", "mysecret", "--name", "secr", ALPINE, "cat", "/run/secrets/mysecret"})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+		Expect(session.OutputToString()).To(Equal(secretsString))
+
+		session = podmanTest.Podman([]string{"inspect", "secr", "--format", " {{(index .Config.Secrets 0).Name}}"})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+		Expect(session.OutputToString()).To(ContainSubstring("mysecret"))
+
 	})
 })

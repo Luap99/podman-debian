@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	. "github.com/containers/podman/v2/test/utils"
+	. "github.com/containers/podman/v3/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
@@ -149,13 +149,12 @@ var _ = Describe("Podman stop", func() {
 		session := podmanTest.RunTopContainer("test4")
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
-		cid1 := session.OutputToString()
 
-		session = podmanTest.Podman([]string{"stop", "--time", "1", "test4"})
+		session = podmanTest.Podman([]string{"stop", "--time", "0", "test4"})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
 		output := session.OutputToString()
-		Expect(output).To(ContainSubstring(cid1))
+		Expect(output).To(ContainSubstring("test4"))
 
 		finalCtrs := podmanTest.Podman([]string{"ps", "-q"})
 		finalCtrs.WaitWithDefaultTimeout()
@@ -167,14 +166,13 @@ var _ = Describe("Podman stop", func() {
 		session := podmanTest.Podman([]string{"run", "-d", "--name", "test5", ALPINE, "sleep", "100"})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
-		cid1 := session.OutputToString()
-		session = podmanTest.Podman([]string{"stop", "--timeout", "1", "test5"})
+		session = podmanTest.Podman([]string{"stop", "--timeout", "0", "test5"})
 		// Without timeout container stops in 10 seconds
 		// If not stopped in 5 seconds, then --timeout did not work
 		session.Wait(5)
 		Expect(session.ExitCode()).To(Equal(0))
 		output := session.OutputToString()
-		Expect(output).To(ContainSubstring(cid1))
+		Expect(output).To(ContainSubstring("test5"))
 
 		finalCtrs := podmanTest.Podman([]string{"ps", "-q"})
 		finalCtrs.WaitWithDefaultTimeout()

@@ -4,10 +4,10 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/containers/podman/v2/pkg/bindings/containers"
-	"github.com/containers/podman/v2/pkg/bindings/images"
-	"github.com/containers/podman/v2/pkg/bindings/system"
-	"github.com/containers/podman/v2/pkg/specgen"
+	"github.com/containers/podman/v3/pkg/bindings/containers"
+	"github.com/containers/podman/v3/pkg/bindings/images"
+	"github.com/containers/podman/v3/pkg/bindings/system"
+	"github.com/containers/podman/v3/pkg/specgen"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
@@ -49,17 +49,17 @@ var _ = Describe("Podman info", func() {
 		_, err := containers.CreateWithSpec(bt.conn, s, nil)
 		Expect(err).To(BeNil())
 
-		idPause, err := bt.RunTopContainer(nil, nil, nil)
+		idPause, err := bt.RunTopContainer(nil, nil)
 		Expect(err).To(BeNil())
 		err = containers.Pause(bt.conn, idPause, nil)
 		Expect(err).To(BeNil())
 
-		idStop, err := bt.RunTopContainer(nil, nil, nil)
+		idStop, err := bt.RunTopContainer(nil, nil)
 		Expect(err).To(BeNil())
 		err = containers.Stop(bt.conn, idStop, nil)
 		Expect(err).To(BeNil())
 
-		_, err = bt.RunTopContainer(nil, nil, nil)
+		_, err = bt.RunTopContainer(nil, nil)
 		Expect(err).To(BeNil())
 
 		info, err := system.Info(bt.conn, nil)

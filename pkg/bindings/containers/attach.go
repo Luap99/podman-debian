@@ -15,10 +15,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/pkg/bindings"
-	sig "github.com/containers/podman/v2/pkg/signal"
-	"github.com/containers/podman/v2/utils"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/pkg/bindings"
+	sig "github.com/containers/podman/v3/pkg/signal"
+	"github.com/containers/podman/v3/utils"
 	"github.com/moby/term"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -307,6 +307,7 @@ func resizeTTY(ctx context.Context, endpoint string, height *int, width *int) er
 	if width != nil {
 		params.Set("w", strconv.Itoa(*width))
 	}
+	params.Set("running", "true")
 	rsp, err := conn.DoRequest(nil, http.MethodPost, endpoint, params, nil)
 	if err != nil {
 		return err
@@ -336,7 +337,7 @@ func attachHandleResize(ctx, winCtx context.Context, winChange chan os.Signal, i
 		case <-winCtx.Done():
 			return
 		case <-winChange:
-			h, w, err := terminal.GetSize(int(file.Fd()))
+			w, h, err := terminal.GetSize(int(file.Fd()))
 			if err != nil {
 				logrus.Warnf("failed to obtain TTY size: %v", err)
 			}

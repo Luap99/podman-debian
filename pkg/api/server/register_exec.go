@@ -3,7 +3,7 @@ package server
 import (
 	"net/http"
 
-	"github.com/containers/podman/v2/pkg/api/handlers/compat"
+	"github.com/containers/podman/v3/pkg/api/handlers/compat"
 	"github.com/gorilla/mux"
 )
 
@@ -136,6 +136,11 @@ func (s *APIServer) registerExecHandlers(r *mux.Router) error {
 	//    name: w
 	//    type: integer
 	//    description: Width of the TTY session in characters
+	//  - in: query
+	//    name: running
+	//    type: boolean
+	//    required: false
+	//    description: Ignore containers not running errors
 	// produces:
 	// - application/json
 	// responses:

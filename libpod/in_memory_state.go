@@ -3,8 +3,8 @@ package libpod
 import (
 	"strings"
 
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/pkg/registrar"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/pkg/registrar"
 	"github.com/containers/storage/pkg/truncindex"
 	"github.com/pkg/errors"
 )
@@ -815,6 +815,46 @@ func (s *InMemoryState) RewriteContainerConfig(ctr *Container, newCfg *Container
 	if !ok {
 		ctr.valid = false
 		return errors.Wrapf(define.ErrNoSuchCtr, "container with ID %s not found in state", ctr.ID())
+	}
+
+	stateCtr.config = newCfg
+
+	return nil
+}
+
+// SafeRewriteContainerConfig rewrites a container's configuration.
+// It's safer than RewriteContainerConfig, but still has limitations. Please
+// read the comment in state.go before using.
+func (s *InMemoryState) SafeRewriteContainerConfig(ctr *Container, oldName, newName string, newCfg *ContainerConfig) error {
+	if !ctr.valid {
+		return define.ErrCtrRemoved
+	}
+
+	if _, err := s.nameIndex.Get(newName); err == nil {
+		return errors.Wrapf(define.ErrCtrExists, "name %s is in use", newName)
+	}
+
+	// If the container does not exist, return error
+	stateCtr, ok := s.containers[ctr.ID()]
+	if !ok {
+		ctr.valid = false
+		return errors.Wrapf(define.ErrNoSuchCtr, "container with ID %s not found in state", ctr.ID())
+	}
+
+	// Change name in registry.
+	if s.namespace != "" {
+		nsIndex, ok := s.namespaceIndexes[s.namespace]
+		if !ok {
+			return define.ErrInternal
+		}
+		nsIndex.nameIndex.Release(oldName)
+		if err := nsIndex.nameIndex.Reserve(newName, ctr.ID()); err != nil {
+			return errors.Wrapf(err, "error registering name %s", newName)
+		}
+	}
+	s.nameIndex.Release(oldName)
+	if err := s.nameIndex.Reserve(newName, ctr.ID()); err != nil {
+		return errors.Wrapf(err, "error registering name %s", newName)
 	}
 
 	stateCtr.config = newCfg

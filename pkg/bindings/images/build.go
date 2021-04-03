@@ -15,11 +15,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/containers/buildah"
-	"github.com/containers/podman/v2/pkg/auth"
-	"github.com/containers/podman/v2/pkg/bindings"
-	"github.com/containers/podman/v2/pkg/domain/entities"
+	"github.com/containers/podman/v3/pkg/auth"
+	"github.com/containers/podman/v3/pkg/bindings"
+	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/containers/storage/pkg/fileutils"
+	"github.com/containers/storage/pkg/ioutils"
 	"github.com/docker/go-units"
 	"github.com/hashicorp/go-multierror"
 	jsoniter "github.com/json-iterator/go"
@@ -57,6 +57,13 @@ func Build(ctx context.Context, containerFiles []string, options entities.BuildO
 		}
 		params.Set("buildargs", bArgs)
 	}
+	if excludes := options.Excludes; len(excludes) > 0 {
+		bArgs, err := jsoniter.MarshalToString(excludes)
+		if err != nil {
+			return nil, err
+		}
+		params.Set("excludes", bArgs)
+	}
 	if cpuShares := options.CommonBuildOpts.CPUShares; cpuShares > 0 {
 		params.Set("cpushares", strconv.Itoa(int(cpuShares)))
 	}
@@ -80,6 +87,28 @@ func Build(ctx context.Context, containerFiles []string, options entities.BuildO
 		params.Add("devices", d)
 	}
 
+	if dnsservers := options.CommonBuildOpts.DNSServers; len(dnsservers) > 0 {
+		c, err := jsoniter.MarshalToString(dnsservers)
+		if err != nil {
+			return nil, err
+		}
+		params.Add("dnsservers", c)
+	}
+	if dnsoptions := options.CommonBuildOpts.DNSOptions; len(dnsoptions) > 0 {
+		c, err := jsoniter.MarshalToString(dnsoptions)
+		if err != nil {
+			return nil, err
+		}
+		params.Add("dnsoptions", c)
+	}
+	if dnssearch := options.CommonBuildOpts.DNSSearch; len(dnssearch) > 0 {
+		c, err := jsoniter.MarshalToString(dnssearch)
+		if err != nil {
+			return nil, err
+		}
+		params.Add("dnssearch", c)
+	}
+
 	if caps := options.DropCapabilities; len(caps) > 0 {
 		c, err := jsoniter.MarshalToString(caps)
 		if err != nil {
@@ -94,7 +123,9 @@ func Build(ctx context.Context, containerFiles []string, options entities.BuildO
 	if len(options.From) > 0 {
 		params.Set("from", options.From)
 	}
-
+	if options.IgnoreUnrecognizedInstructions {
+		params.Set("ignore", "1")
+	}
 	params.Set("isolation", strconv.Itoa(int(options.Isolation)))
 	if options.CommonBuildOpts.HTTPProxy {
 		params.Set("httpproxy", "1")
@@ -143,9 +174,9 @@ func Build(ctx context.Context, containerFiles []string, options entities.BuildO
 	if len(platform) > 0 {
 		params.Set("platform", platform)
 	}
-	if options.PullPolicy == buildah.PullAlways {
-		params.Set("pull", "1")
-	}
+
+	params.Set("pullpolicy", options.PullPolicy.String())
+
 	if options.Quiet {
 		params.Set("q", "1")
 	}
@@ -159,6 +190,13 @@ func Build(ctx context.Context, containerFiles []string, options entities.BuildO
 		}
 		params.Set("extrahosts", h)
 	}
+	if nsoptions := options.NamespaceOptions; len(nsoptions) > 0 {
+		ns, err := jsoniter.MarshalToString(nsoptions)
+		if err != nil {
+			return nil, err
+		}
+		params.Set("nsoptions", ns)
+	}
 	if shmSize := options.CommonBuildOpts.ShmSize; len(shmSize) > 0 {
 		shmBytes, err := units.RAMInBytes(shmSize)
 		if err != nil {
@@ -169,6 +207,12 @@ func Build(ctx context.Context, containerFiles []string, options entities.BuildO
 	if options.Squash {
 		params.Set("squash", "1")
 	}
+
+	if options.Timestamp != nil {
+		t := *options.Timestamp
+		params.Set("timestamp", strconv.FormatInt(t.Unix(), 10))
+	}
+
 	var (
 		headers map[string]string
 		err     error
@@ -208,7 +252,11 @@ func Build(ctx context.Context, containerFiles []string, options entities.BuildO
 		logrus.Errorf("cannot tar container entries %v error: %v", entries, err)
 		return nil, err
 	}
-	defer tarfile.Close()
+	defer func() {
+		if err := tarfile.Close(); err != nil {
+			logrus.Errorf("%v\n", err)
+		}
+	}()
 
 	containerFile, err := filepath.Abs(entries[0])
 	if err != nil {
@@ -296,7 +344,7 @@ func nTar(excludes []string, sources ...string) (io.ReadCloser, error) {
 	gw := gzip.NewWriter(pw)
 	tw := tar.NewWriter(gw)
 
-	var merr error
+	var merr *multierror.Error
 	go func() {
 		defer pw.Close()
 		defer gw.Close()
@@ -377,7 +425,14 @@ func nTar(excludes []string, sources ...string) (io.ReadCloser, error) {
 			merr = multierror.Append(merr, err)
 		}
 	}()
-	return pr, merr
+	rc := ioutils.NewReadCloserWrapper(pr, func() error {
+		if merr != nil {
+			merr = multierror.Append(merr, pr.Close())
+			return merr.ErrorOrNil()
+		}
+		return pr.Close()
+	})
+	return rc, nil
 }
 
 func parseDockerignore(root string) ([]string, error) {

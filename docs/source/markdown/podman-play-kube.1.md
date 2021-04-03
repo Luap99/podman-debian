@@ -4,22 +4,22 @@
 podman-play-kube - Create pods and containers based on Kubernetes YAML
 
 ## SYNOPSIS
-**podman play kube** [*options*] *file*__.yml__
+**podman play kube** [*options*] *file.yml|-*
 
 ## DESCRIPTION
-**podman play kube** will read in a structured file of Kubernetes YAML.  It will then recreate
-the pod and containers described in the YAML.  The containers within the pod are then started and
-the ID of the new Pod is output.
+**podman play kube** will read in a structured file of Kubernetes YAML.  It will then recreate the pod and containers described in the YAML.  The containers within the pod are then started and the ID of the new Pod is output. If the yaml file is specified as "-" then `podman play kube` with read the yaml file from stdin.
 
 Ideally the input file would be one created by Podman (see podman-generate-kube(1)).  This would guarantee a smooth import and expected results.
 
-Note: HostPath volume types created by play kube will be given an SELinux private label (Z)
+Only two volume types are supported by play kube, the *hostPath* and *persistentVolumeClaim* volume types. For the *hostPath* volume type, only the  *default (empty)*, *DirectoryOrCreate*, *Directory*, *FileOrCreate*, *File*, and *Socket* subtypes are supported. The *CharDevice* and *BlockDevice* subtypes are not supported. Podman interprets the value of *hostPath* *path* as a file path when it contains at least one forward slash, otherwise Podman treats the value as the name of a named volume. When using a *persistentVolumeClaim*, the value for *claimName* is the name for the Podman named volume.
+
+Note: *hostPath* volume types created by play kube will be given an SELinux private label (Z)
 
 Note: If the `:latest` tag is used, Podman will attempt to pull the image from a registry. If the image was built locally with Podman or Buildah, it will have `localhost` as the domain, in that case, Podman will use the image from the local store even if it has the `:latest` tag.
 
 ## OPTIONS
 
-#### **--authfile**=*path*
+#### **\-\-authfile**=*path*
 
 Path of the authentication file. Default is ${XDG\_RUNTIME\_DIR}/containers/auth.json, which is set using `podman login`.
 If the authorization state is not found there, $HOME/.docker/config.json is checked, which is set using `docker login`.
@@ -27,50 +27,50 @@ If the authorization state is not found there, $HOME/.docker/config.json is chec
 Note: You can also override the default path of the authentication file by setting the REGISTRY\_AUTH\_FILE
 environment variable. `export REGISTRY_AUTH_FILE=path`
 
-#### **--cert-dir**=*path*
+#### **\-\-cert-dir**=*path*
 
 Use certificates at *path* (\*.crt, \*.cert, \*.key) to connect to the registry.
-Default certificates directory is _/etc/containers/certs.d_. (Not available for remote commands)
+Default certificates directory is _/etc/containers/certs.d_. (This option is not available with the remote Podman client)
 
-#### **--configmap**=*path*
+#### **\-\-configmap**=*path*
 
 Use Kubernetes configmap YAML at path to provide a source for environment variable values within the containers of the pod.
 
 Note: The *--configmap* option can be used multiple times or a comma-separated list of paths can be used to pass multiple Kubernetes configmap YAMLs.
 
-#### **--creds**
+#### **\-\-creds**
 
 The [username[:password]] to use to authenticate with the registry if required.
 If one or both values are not supplied, a command line prompt will appear and the
 value can be entered.  The password is entered without echo.
 
-#### **--log-driver**=driver
+#### **\-\-log-driver**=driver
 
 Set logging driver for all created containers.
 
-#### **--network**=*networks*, **--net**
+#### **\-\-network**=*networks*, **\-\-net**
 
 A comma-separated list of the names of CNI networks the pod should join.
 
-#### **--quiet**, **-q**
+#### **\-\-quiet**, **-q**
 
 Suppress output information when pulling images
 
-#### **--seccomp-profile-root**=*path*
+#### **\-\-seccomp-profile-root**=*path*
 
-Directory path for seccomp profiles (default: "/var/lib/kubelet/seccomp"). (Not available for remote commands)
+Directory path for seccomp profiles (default: "/var/lib/kubelet/seccomp"). (This option is not available with the remote Podman client)
 
-#### **--start**=*true|false*
+#### **\-\-start**=*true|false*
 
 Start the pod after creating it, set to false to only create it.
 
-#### **--tls-verify**=*true|false*
+#### **\-\-tls-verify**=*true|false*
 
 Require HTTPS and verify certificates when contacting registries (default: true). If explicitly set to true,
 then TLS verification will be used. If set to false, then TLS verification will not be used. If not specified,
 TLS verification will be used unless the target registry is listed as an insecure registry in registries.conf.
 
-#### **--help**, **-h**
+#### **\-\-help**, **-h**
 
 Print usage statement
 
@@ -79,6 +79,12 @@ Print usage statement
 Recreate the pod and containers as described in a file called `demo.yml`
 ```
 $ podman play kube demo.yml
+52182811df2b1e73f36476003a66ec872101ea59034ac0d4d3a7b40903b955a6
+```
+
+Recreate the pod and containers as described in a file `demo.yml` sent to stdin
+```
+$ cat demo.yml | podman play kube -
 52182811df2b1e73f36476003a66ec872101ea59034ac0d4d3a7b40903b955a6
 ```
 

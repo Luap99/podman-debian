@@ -10,13 +10,13 @@ import (
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/image/v5/storage"
 	"github.com/containers/image/v5/transports/alltransports"
-	"github.com/containers/podman/v2/cmd/podman/common"
-	"github.com/containers/podman/v2/cmd/podman/registry"
-	"github.com/containers/podman/v2/cmd/podman/utils"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/pkg/domain/entities"
-	"github.com/containers/podman/v2/pkg/specgen"
-	"github.com/containers/podman/v2/pkg/util"
+	"github.com/containers/podman/v3/cmd/podman/common"
+	"github.com/containers/podman/v3/cmd/podman/registry"
+	"github.com/containers/podman/v3/cmd/podman/utils"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v3/pkg/specgen"
+	"github.com/containers/podman/v3/pkg/util"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -166,7 +166,11 @@ func createInit(c *cobra.Command) error {
 		return errors.Errorf("--cpu-quota and --cpus cannot be set together")
 	}
 
-	if c.Flag("no-hosts").Changed && c.Flag("add-host").Changed {
+	noHosts, err := c.Flags().GetBool("no-hosts")
+	if err != nil {
+		return err
+	}
+	if noHosts && c.Flag("add-host").Changed {
 		return errors.Errorf("--no-hosts and --add-host cannot be set together")
 	}
 	cliVals.UserNS = c.Flag("userns").Value.String()

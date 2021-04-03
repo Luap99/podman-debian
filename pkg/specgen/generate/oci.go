@@ -2,14 +2,16 @@ package generate
 
 import (
 	"context"
+	"path"
 	"strings"
 
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v2/libpod"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/libpod/image"
-	"github.com/containers/podman/v2/pkg/rootless"
-	"github.com/containers/podman/v2/pkg/specgen"
+	"github.com/containers/podman/v3/libpod"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/libpod/image"
+	"github.com/containers/podman/v3/pkg/cgroups"
+	"github.com/containers/podman/v3/pkg/rootless"
+	"github.com/containers/podman/v3/pkg/specgen"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/runtime-tools/generate"
 	"github.com/pkg/errors"
@@ -157,8 +159,32 @@ func canMountSys(isRootless, isNewUserns bool, s *specgen.SpecGenerator) bool {
 	return true
 }
 
+func getCGroupPermissons(unmask []string) string {
+	ro := "ro"
+	rw := "rw"
+	cgroup := "/sys/fs/cgroup"
+
+	cgroupv2, _ := cgroups.IsCgroup2UnifiedMode()
+	if !cgroupv2 {
+		return ro
+	}
+
+	if unmask != nil && unmask[0] == "ALL" {
+		return rw
+	}
+
+	for _, p := range unmask {
+		if path.Clean(p) == cgroup {
+			return rw
+		}
+	}
+	return ro
+}
+
+// SpecGenToOCI returns the base configuration for the container.
 func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runtime, rtc *config.Config, newImage *image.Image, mounts []spec.Mount, pod *libpod.Pod, finalCmd []string) (*spec.Spec, error) {
-	cgroupPerm := "ro"
+	cgroupPerm := getCGroupPermissons(s.Unmask)
+
 	g, err := generate.New("linux")
 	if err != nil {
 		return nil, err
@@ -251,7 +277,7 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 		g.RemoveMount("/proc")
 		procMount := spec.Mount{
 			Destination: "/proc",
-			Type:        TypeBind,
+			Type:        define.TypeBind,
 			Source:      "/proc",
 			Options:     []string{"rbind", "nosuid", "noexec", "nodev"},
 		}

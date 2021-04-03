@@ -9,12 +9,12 @@ import (
 	"github.com/containers/image/v5/docker/reference"
 	"github.com/containers/image/v5/manifest"
 	"github.com/containers/image/v5/transports/alltransports"
-	"github.com/containers/podman/v2/libpod"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/libpod/image"
-	"github.com/containers/podman/v2/pkg/systemd"
-	systemdGen "github.com/containers/podman/v2/pkg/systemd/generate"
-	"github.com/containers/podman/v2/pkg/util"
+	"github.com/containers/podman/v3/libpod"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/libpod/image"
+	"github.com/containers/podman/v3/pkg/systemd"
+	systemdDefine "github.com/containers/podman/v3/pkg/systemd/define"
+	"github.com/containers/podman/v3/pkg/util"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -178,10 +178,10 @@ func AutoUpdate(runtime *libpod.Runtime, options Options) ([]string, []error) {
 	updatedUnits := []string{}
 	for _, ctr := range containersToRestart {
 		labels := ctr.Labels()
-		unit, exists := labels[systemdGen.EnvVariable]
+		unit, exists := labels[systemdDefine.EnvVariable]
 		if !exists {
 			// Shouldn't happen but let's be sure of it.
-			errs = append(errs, errors.Errorf("error auto-updating container %q: no %s label found", ctr.ID(), systemdGen.EnvVariable))
+			errs = append(errs, errors.Errorf("error auto-updating container %q: no %s label found", ctr.ID(), systemdDefine.EnvVariable))
 			continue
 		}
 		_, err := conn.RestartUnit(unit, "replace", nil)
@@ -304,6 +304,7 @@ func updateImage(runtime *libpod.Runtime, name string, options Options) (*image.
 		image.SigningOptions{},
 		nil,
 		util.PullImageAlways,
+		nil,
 	)
 	if err != nil {
 		return nil, err

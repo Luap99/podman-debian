@@ -7,9 +7,8 @@ import (
 	"time"
 
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/pkg/copy"
-	"github.com/containers/podman/v2/pkg/specgen"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/pkg/specgen"
 	"github.com/cri-o/ocicni/pkg/ocicni"
 )
 
@@ -88,8 +87,9 @@ type StopOptions struct {
 }
 
 type StopReport struct {
-	Err error
-	Id  string //nolint
+	Err      error
+	Id       string //nolint
+	RawInput string
 }
 
 type TopOptions struct {
@@ -109,8 +109,9 @@ type KillOptions struct {
 }
 
 type KillReport struct {
-	Err error
-	Id  string //nolint
+	Err      error
+	Id       string //nolint
+	RawInput string
 }
 
 type RestartOptions struct {
@@ -143,7 +144,7 @@ type ContainerInspectReport struct {
 }
 
 type ContainerStatReport struct {
-	copy.FileInfo
+	define.FileInfo
 }
 
 type CommitOptions struct {

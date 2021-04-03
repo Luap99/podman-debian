@@ -151,6 +151,26 @@ EOF
     label_name=l$(random_string 8)
     label_value=$(random_string 12)
 
+    # #8679: Create a secrets directory, and mount it in the container
+    # (can only test locally; podman-remote has no --default-mounts-file opt)
+    MOUNTS_CONF=
+    secret_contents="ceci nest pas un secret"
+    CAT_SECRET="echo $secret_contents"
+    if ! is_remote; then
+        mkdir $tmpdir/secrets
+        echo  $tmpdir/secrets:/run/secrets > $tmpdir/mounts.conf
+
+        secret_filename=secretfile-$(random_string 20)
+        secret_contents=shhh-$(random_string 30)-shhh
+        echo $secret_contents >$tmpdir/secrets/$secret_filename
+
+        MOUNTS_CONF=--default-mounts-file=$tmpdir/mounts.conf
+        CAT_SECRET="cat /run/secrets/$secret_filename"
+    fi
+
+    # For --dns-search: a domain that is unlikely to exist
+    local nosuchdomain=nx$(random_string 10).net
+
     # Command to run on container startup with no args
     cat >$tmpdir/mycmd <<EOF
 #!/bin/sh
@@ -158,6 +178,7 @@ PATH=/usr/bin:/bin
 pwd
 echo "\$1"
 printenv | grep MYENV | sort | sed -e 's/^MYENV.=//'
+$CAT_SECRET
 EOF
 
     # For overriding with --env-file; using multiple files confirms that
@@ -170,11 +191,17 @@ EOF
 https_proxy=https-proxy-in-env-file
 EOF
 
+    # Build args: one explicit (foo=bar), one implicit (foo)
+    local arg_implicit_value=implicit_$(random_string 15)
+    local arg_explicit_value=explicit_$(random_string 15)
+
     # NOTE: it's important to not create the workdir.
     # Podman will make sure to create a missing workdir
     # if needed. See #9040.
     cat >$tmpdir/Containerfile <<EOF
 FROM $IMAGE
+ARG arg_explicit
+ARG arg_implicit
 LABEL $label_name=$label_value
 WORKDIR $workdir
 
@@ -196,14 +223,59 @@ ENV ftp_proxy  ftp-proxy-in-image
 ADD mycmd /bin/mydefaultcmd
 RUN chmod 755 /bin/mydefaultcmd
 RUN chown 2:3 /bin/mydefaultcmd
+
+RUN $CAT_SECRET
+
+RUN echo explicit-build-arg=\$arg_explicit
+RUN echo implicit-build-arg=\$arg_implicit
+
 CMD ["/bin/mydefaultcmd","$s_echo"]
+RUN cat /etc/resolv.conf
 EOF
+
+    # The goal is to test that a missing value will be inherited from
+    # environment - but that can't work with remote, so for simplicity
+    # just make it explicit in that case too.
+    local build_arg_implicit="--build-arg arg_implicit"
+    if is_remote; then
+        build_arg_implicit+="=$arg_implicit_value"
+    fi
+
+    # FIXME FIXME FIXME: 2021-03-15: workaround for #9567 (slow ubuntu 2004):
+    # we're seeing lots of timeouts in CI. Until/unless #9567 gets fixed,
+    # let's get CI passing by extending the timeout when remote on ubuntu
+    local localtimeout=${PODMAN_TIMEOUT}
+    if is_remote; then
+        if grep -qi ubuntu /etc/os-release; then
+            localtimeout=$(( 2 * $localtimeout ))
+        fi
+    fi
 
     # cd to the dir, so we test relative paths (important for podman-remote)
     cd $PODMAN_TMPDIR
-    run_podman build -t build_test -f build-test/Containerfile build-test
+    export arg_explicit="THIS SHOULD BE OVERRIDDEN BY COMMAND LINE!"
+    export arg_implicit=${arg_implicit_value}
+    PODMAN_TIMEOUT=$localtimeout run_podman ${MOUNTS_CONF} build \
+               --build-arg arg_explicit=${arg_explicit_value} \
+               $build_arg_implicit \
+               --dns-search $nosuchdomain \
+               -t build_test -f build-test/Containerfile build-test
     local iid="${lines[-1]}"
 
+    if [[ $output =~ missing.*build.argument ]]; then
+        die "podman did not see the given --build-arg(s)"
+    fi
+
+    # Make sure 'podman build' had the secret mounted
+    is "$output" ".*$secret_contents.*" "podman build has /run/secrets mounted"
+
+    # --build-arg should be set, both via 'foo=bar' and via just 'foo' ($foo)
+    is "$output" ".*explicit-build-arg=${arg_explicit_value}" \
+       "--build-arg arg_explicit=explicit-value works"
+    is "$output" ".*implicit-build-arg=${arg_implicit_value}" \
+       "--build-arg arg_implicit works (inheriting from environment)"
+    is "$output" ".*search $nosuchdomain" \
+       "--dns-search added to /etc/resolv.conf"
 
     if is_remote; then
         ENVHOST=""
@@ -214,7 +286,7 @@ EOF
     # Run without args - should run the above script. Verify its output.
     export MYENV2="$s_env2"
     export MYENV3="env-file-should-override-env-host!"
-    run_podman run --rm \
+    run_podman ${MOUNTS_CONF} run --rm \
                --env-file=$PODMAN_TMPDIR/env-file1 \
                --env-file=$PODMAN_TMPDIR/env-file2 \
                ${ENVHOST} \
@@ -233,6 +305,9 @@ EOF
 
     is "${lines[4]}" "$s_env3"  "container default command: env3 (from envfile)"
     is "${lines[5]}" "$s_env4"  "container default command: env4 (from cmdline)"
+
+    is "${lines[6]}" "$secret_contents" \
+       "Contents of /run/secrets/$secret_filename in container"
 
     # Proxies - environment should override container, but not env-file
     http_proxy=http-proxy-from-env  ftp_proxy=ftp-proxy-from-env \
@@ -278,8 +353,10 @@ Cmd[0]             | /bin/mydefaultcmd
 Cmd[1]             | $s_echo
 WorkingDir         | $workdir
 Labels.$label_name | $label_value
-Labels.\"io.buildah.version\" | $buildah_version
 "
+    # FIXME: 2021-02-24: Fixed in buildah #3036; reenable this once podman
+    #        vendors in a newer buildah!
+    # Labels.\"io.buildah.version\" | $buildah_version
 
     parse_table "$tests" | while read field expect; do
         actual=$(jq -r ".[0].Config.$field" <<<"$output")
@@ -331,6 +408,82 @@ Labels.\"io.buildah.version\" | $buildah_version
 
     # Clean up
     run_podman rmi -f build_test
+}
+
+@test "podman build - COPY with ignore" {
+    local tmpdir=$PODMAN_TMPDIR/build-test-$(random_string 10)
+    mkdir -p $tmpdir/subdir
+
+    # Create a bunch of files. Declare this as an array to avoid duplication
+    # because we iterate over that list below, checking for each file.
+    # A leading "-" indicates that the file SHOULD NOT exist in the built image
+    local -a files=(
+        -test1 -test1.txt
+         test2  test2.txt
+         subdir/sub1  subdir/sub1.txt
+         -subdir/sub2 -subdir/sub2.txt
+         this-file-does-not-match-anything-in-ignore-file
+         comment
+    )
+    for f in ${files[@]}; do
+        # The magic '##-' strips off the '-' prefix
+        echo "$f" > $tmpdir/${f##-}
+    done
+
+    # Directory that doesn't exist in the image; COPY should create it
+    local newdir=/newdir-$(random_string 12)
+    cat >$tmpdir/Containerfile <<EOF
+FROM $IMAGE
+COPY ./ $newdir/
+EOF
+
+    # Run twice: first with a custom --ignorefile, then with a default one.
+    # This ordering is deliberate: if we were to run with .dockerignore
+    # first, and forget to rm it, and then run with --ignorefile, _and_
+    # there was a bug in podman where --ignorefile was a NOP (eg #9570),
+    # the test might pass because of the existence of .dockerfile.
+    for ignorefile in ignoreme-$(random_string 5) .dockerignore; do
+        # Patterns to ignore. Mostly copied from buildah/tests/bud/dockerignore
+        cat >$tmpdir/$ignorefile <<EOF
+# comment
+test*
+!test2*
+subdir
+!*/sub1*
+EOF
+
+        # Build an image. For .dockerignore
+        local -a ignoreflag
+	unset ignoreflag
+        if [[ $ignorefile != ".dockerignore" ]]; then
+            ignoreflag="--ignorefile $tmpdir/$ignorefile"
+        fi
+        run_podman build -t build_test ${ignoreflag} $tmpdir
+
+        # Delete the ignore file! Otherwise, in the next iteration of the loop,
+        # we could end up with an existing .dockerignore that invisibly
+        # takes precedence over --ignorefile
+        rm -f $tmpdir/$ignorefile
+
+        # It would be much more readable, and probably safer, to iterate
+        # over each file, running 'podman run ... ls -l $f'. But each podman run
+        # takes a second or so, and we are mindful of each second.
+        run_podman run --rm build_test find $newdir -type f
+        for f in ${files[@]}; do
+            if [[ $f =~ ^- ]]; then
+                f=${f##-}
+                if [[ $output =~ $f ]]; then
+                    die "File '$f' found in image; it should have been ignored via $ignorefile"
+                fi
+            else
+                is "$output" ".*$newdir/$f" \
+                   "File '$f' should exist in container (no match in $ignorefile)"
+            fi
+        done
+
+        # Clean up
+        run_podman rmi -f build_test
+    done
 }
 
 @test "podman build - stdin test" {
@@ -449,6 +602,97 @@ EOF
     fi
 
     run_podman rmi -a --force
+}
+
+# Caveat lector: this test was mostly copy-pasted from buildah in #9275.
+# It's not entirely clear what it's testing, or if the 'mount' section is
+# necessary.
+@test "build with copy-from referencing the base image" {
+  target=derived
+  target_mt=derived-mt
+  tmpdir=$PODMAN_TMPDIR/build-test
+  mkdir -p $tmpdir
+
+  containerfile1=$tmpdir/Containerfile1
+  cat >$containerfile1 <<EOF
+FROM $IMAGE AS build
+RUN rm -f /etc/issue
+USER 1001
+COPY --from=$IMAGE /etc/issue /test/
+EOF
+
+  containerfile2=$tmpdir/Containerfile2
+  cat >$containerfile2 <<EOF
+FROM $IMAGE AS test
+RUN rm -f /etc/alpine-release
+FROM quay.io/libpod/alpine AS final
+COPY --from=$IMAGE /etc/alpine-release /test/
+EOF
+
+  # Before the build, $IMAGE's base image should not be present
+  local base_image=quay.io/libpod/alpine:latest
+  run_podman 1 image exists $base_image
+
+  run_podman build --jobs 1 -t ${target} -f ${containerfile2} ${tmpdir}
+  run_podman build --no-cache --jobs 4 -t ${target_mt} -f ${containerfile2} ${tmpdir}
+
+  # After the build, the base image should exist
+  run_podman image exists $base_image
+
+  # (can only test locally; podman-remote has no image mount command)
+  # (can also only test as root; mounting under rootless podman is too hard)
+  # We perform the test as a conditional, not a 'skip', because there's
+  # value in testing the above 'build' commands even remote & rootless.
+  if ! is_remote && ! is_rootless; then
+    run_podman image mount ${target}
+    root_single_job=$output
+
+    run_podman image mount ${target_mt}
+    root_multi_job=$output
+
+    # Check that both the version with --jobs 1 and --jobs=N have the same number of files
+    nfiles_single=$(find $root_single_job -type f | wc -l)
+    nfiles_multi=$(find $root_multi_job -type f | wc -l)
+    run_podman image umount ${target_mt}
+    run_podman image umount ${target}
+
+    is "$nfiles_single" "$nfiles_multi" \
+       "Number of files (--jobs=1) == (--jobs=4)"
+
+    # Make sure the number is reasonable
+    test "$nfiles_single" -gt 50
+  fi
+
+  # Clean up
+  run_podman rmi ${target_mt} ${target} ${base_image}
+  run_podman image prune -f
+}
+
+@test "podman build --pull-never" {
+    local tmpdir=$PODMAN_TMPDIR/build-test
+    mkdir -p $tmpdir
+
+    # First, confirm that --pull-never is a NOP if image exists locally
+    local random_string=$(random_string 15)
+
+    cat >$tmpdir/Containerfile <<EOF
+FROM $IMAGE
+RUN echo $random_string
+EOF
+
+    run_podman build -t build_test --pull-never $tmpdir
+    is "$output" ".*$random_string" "pull-never is OK if image already exists"
+    run_podman rmi build_test
+
+    # Now try an image that does not exist locally nor remotely
+    cat >$tmpdir/Containerfile <<EOF
+FROM quay.io/libpod/nosuchimage:nosuchtag
+RUN echo $random_string
+EOF
+
+    run_podman 125 build -t build_test --pull-never $tmpdir
+    is "$output" ".* pull policy is .never. but .* could not be found locally" \
+       "--pull-never fails with expected error message"
 }
 
 @test "podman build --logfile test" {

@@ -4,7 +4,7 @@ import (
 	"os"
 
 	"github.com/containers/common/pkg/parse"
-	"github.com/containers/podman/v2/libpod"
+	"github.com/containers/podman/v3/libpod"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	v1 "k8s.io/api/core/v1"
@@ -116,7 +116,7 @@ func InitializeVolumes(specVolumes []v1.Volume) (map[string]*KubeVolume, error) 
 	for _, specVolume := range specVolumes {
 		volume, err := VolumeFromSource(specVolume.VolumeSource)
 		if err != nil {
-			return nil, err
+			return nil, errors.Wrapf(err, "failed to create volume %q", specVolume.Name)
 		}
 
 		volumes[specVolume.Name] = volume

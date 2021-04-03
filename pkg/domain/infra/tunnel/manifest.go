@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	"github.com/containers/image/v5/types"
-	images "github.com/containers/podman/v2/pkg/bindings/images"
-	"github.com/containers/podman/v2/pkg/bindings/manifests"
-	"github.com/containers/podman/v2/pkg/domain/entities"
+	images "github.com/containers/podman/v3/pkg/bindings/images"
+	"github.com/containers/podman/v3/pkg/bindings/manifests"
+	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/pkg/errors"
 )
 
@@ -21,6 +21,15 @@ func (ir *ImageEngine) ManifestCreate(ctx context.Context, names, images []strin
 		return imageID, errors.Wrapf(err, "error creating manifest")
 	}
 	return imageID, err
+}
+
+// ManifestExists checks if a manifest list with the given name exists
+func (ir *ImageEngine) ManifestExists(ctx context.Context, name string) (*entities.BoolReport, error) {
+	exists, err := manifests.Exists(ir.ClientCtx, name, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &entities.BoolReport{Value: exists}, nil
 }
 
 // ManifestInspect returns contents of manifest list with given name

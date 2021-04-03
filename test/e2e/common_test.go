@@ -11,14 +11,15 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/pkg/cgroups"
-	"github.com/containers/podman/v2/pkg/inspect"
-	"github.com/containers/podman/v2/pkg/rootless"
-	. "github.com/containers/podman/v2/test/utils"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/pkg/cgroups"
+	"github.com/containers/podman/v3/pkg/inspect"
+	"github.com/containers/podman/v3/pkg/rootless"
+	. "github.com/containers/podman/v3/test/utils"
 	"github.com/containers/storage"
 	"github.com/containers/storage/pkg/reexec"
 	"github.com/containers/storage/pkg/stringid"
@@ -85,6 +86,7 @@ type testResultsSortedLength struct{ testResultsSorted }
 func (a testResultsSorted) Less(i, j int) bool { return a[i].length < a[j].length }
 
 var testResults []testResult
+var testResultsMutex sync.Mutex
 
 func TestMain(m *testing.M) {
 	if reexec.Init() {
@@ -350,7 +352,9 @@ func (p *PodmanTestIntegration) InspectContainer(name string) []define.InspectCo
 
 func processTestResult(f GinkgoTestDescription) {
 	tr := testResult{length: f.Duration.Seconds(), name: f.TestText}
+	testResultsMutex.Lock()
 	testResults = append(testResults, tr)
+	testResultsMutex.Unlock()
 }
 
 func GetPortLock(port string) storage.Locker {
@@ -436,7 +440,7 @@ func (p *PodmanTestIntegration) BuildImage(dockerfile, imageName string, layers 
 	dockerfilePath := filepath.Join(p.TempDir, "Dockerfile")
 	err := ioutil.WriteFile(dockerfilePath, []byte(dockerfile), 0755)
 	Expect(err).To(BeNil())
-	cmd := []string{"build", "--layers=" + layers, "--file", dockerfilePath}
+	cmd := []string{"build", "--pull-never", "--layers=" + layers, "--file", dockerfilePath}
 	if len(imageName) > 0 {
 		cmd = append(cmd, []string{"-t", imageName}...)
 	}
@@ -492,6 +496,21 @@ func (p *PodmanTestIntegration) CleanupVolume() {
 	session.Wait(90)
 
 	p.Cleanup()
+}
+
+// CleanupSecret cleans up the temporary store
+func (p *PodmanTestIntegration) CleanupSecrets() {
+	// Remove all containers
+	session := p.Podman([]string{"secret", "rm", "-a"})
+	session.Wait(90)
+
+	// Stop remove service on secret cleanup
+	p.StopRemoteService()
+
+	// Nuke tempdir
+	if err := os.RemoveAll(p.TempDir); err != nil {
+		fmt.Printf("%q\n", err)
+	}
 }
 
 // InspectContainerToJSON takes the session output of an inspect

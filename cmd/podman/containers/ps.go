@@ -13,12 +13,12 @@ import (
 	tm "github.com/buger/goterm"
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/report"
-	"github.com/containers/podman/v2/cmd/podman/common"
-	"github.com/containers/podman/v2/cmd/podman/parse"
-	"github.com/containers/podman/v2/cmd/podman/registry"
-	"github.com/containers/podman/v2/cmd/podman/utils"
-	"github.com/containers/podman/v2/cmd/podman/validate"
-	"github.com/containers/podman/v2/pkg/domain/entities"
+	"github.com/containers/podman/v3/cmd/podman/common"
+	"github.com/containers/podman/v3/cmd/podman/parse"
+	"github.com/containers/podman/v3/cmd/podman/registry"
+	"github.com/containers/podman/v3/cmd/podman/utils"
+	"github.com/containers/podman/v3/cmd/podman/validate"
+	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/cri-o/ocicni/pkg/ocicni"
 	"github.com/docker/go-units"
 	"github.com/pkg/errors"
@@ -232,9 +232,7 @@ func ps(cmd *cobra.Command, _ []string) error {
 	ns := strings.NewReplacer(".Namespaces.", ".")
 	format = ns.Replace(format)
 
-	tmpl, err := template.New("listContainers").
-		Funcs(template.FuncMap(report.DefaultFuncs)).
-		Parse(format)
+	tmpl, err := template.New("listContainers").Parse(format)
 	if err != nil {
 		return err
 	}

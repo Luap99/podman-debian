@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	. "github.com/containers/podman/v2/test/utils"
+	. "github.com/containers/podman/v3/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
@@ -91,7 +91,7 @@ var _ = Describe("Podman run", func() {
 		if IsRemote() {
 			podmanTest.RestartRemoteService()
 		}
-		session := podmanTest.Podman([]string{"run", "busybox", "grep", "CapEff", "/proc/self/status"})
+		session := podmanTest.Podman([]string{"run", BB, "grep", "CapEff", "/proc/self/status"})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
 		Expect(session.OutputToString()).ToNot(Equal(cap.OutputToString()))
@@ -311,7 +311,7 @@ var _ = Describe("Podman run", func() {
 		session = podmanTest.Podman([]string{"run", ALPINE, "date", "+'%H %Z'"})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
-		Expect(session.OutputToString()).To(ContainSubstring("EST"))
+		Expect(session.OutputToString()).To(Or(ContainSubstring("EST"), ContainSubstring("EDT")))
 
 		// Umask
 		session = podmanTest.Podman([]string{"run", "--rm", ALPINE, "sh", "-c", "umask"})
@@ -320,4 +320,37 @@ var _ = Describe("Podman run", func() {
 		Expect(session.OutputToString()).To(Equal("0022"))
 	})
 
+	It("podman run containers.conf annotations test", func() {
+		//containers.conf is set to   "run.oci.keep_original_groups=1"
+		session := podmanTest.Podman([]string{"create", "--rm", "--name", "test", fedoraMinimal})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+
+		inspect := podmanTest.Podman([]string{"inspect", "--format", "{{ .Config.Annotations }}", "test"})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect.OutputToString()).To(ContainSubstring("run.oci.keep_original_groups:1"))
+	})
+
+	It("podman run with --add-host and no-hosts=true fails", func() {
+		session := podmanTest.Podman([]string{"run", "-dt", "--add-host", "test1:127.0.0.1", ALPINE, "top"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).To(ExitWithError())
+		Expect(session.ErrorToString()).To(ContainSubstring("--no-hosts and --add-host cannot be set together"))
+
+		session = podmanTest.Podman([]string{"run", "-dt", "--add-host", "test1:127.0.0.1", "--no-hosts=false", ALPINE, "top"})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+	})
+
+	It("podman run with no-hosts=true /etc/hosts does not include hostname", func() {
+		session := podmanTest.Podman([]string{"run", "--rm", "--name", "test", ALPINE, "cat", "/etc/hosts"})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+		Expect(session.OutputToString()).To(Not(ContainSubstring("test")))
+
+		session = podmanTest.Podman([]string{"run", "--rm", "--name", "test", "--no-hosts=false", ALPINE, "cat", "/etc/hosts"})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+		Expect(session.OutputToString()).To(ContainSubstring("test"))
+	})
 })

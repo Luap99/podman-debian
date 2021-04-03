@@ -10,7 +10,8 @@ import (
 	"github.com/containernetworking/cni/libcni"
 	"github.com/containernetworking/plugins/plugins/ipam/host-local/backend/allocator"
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v2/libpod/define"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/pkg/network"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -67,7 +68,7 @@ func GetCNIConfigPathByNameOrID(config *config.Config, name string) (string, err
 		if conf.Name == name {
 			return confFile, nil
 		}
-		if strings.HasPrefix(GetNetworkID(conf.Name), name) {
+		if strings.HasPrefix(network.GetNetworkID(conf.Name), name) {
 			idMatch++
 			file = confFile
 		}
@@ -81,25 +82,15 @@ func GetCNIConfigPathByNameOrID(config *config.Config, name string) (string, err
 	return "", errors.Wrap(define.ErrNoSuchNetwork, fmt.Sprintf("unable to find network configuration for %s", name))
 }
 
-// ReadRawCNIConfByName reads the raw CNI configuration for a CNI
+// ReadRawCNIConfByNameOrID reads the raw CNI configuration for a CNI
 // network by name
-func ReadRawCNIConfByName(config *config.Config, name string) ([]byte, error) {
+func ReadRawCNIConfByNameOrID(config *config.Config, name string) ([]byte, error) {
 	confFile, err := GetCNIConfigPathByNameOrID(config, name)
 	if err != nil {
 		return nil, err
 	}
 	b, err := ioutil.ReadFile(confFile)
 	return b, err
-}
-
-// GetCNIPlugins returns a list of plugins that a given network
-// has in the form of a string
-func GetCNIPlugins(list *libcni.NetworkConfigList) string {
-	plugins := make([]string, 0, len(list.Plugins))
-	for _, plug := range list.Plugins {
-		plugins = append(plugins, plug.Network.Type)
-	}
-	return strings.Join(plugins, ",")
 }
 
 // GetNetworkLabels returns a list of labels as a string

@@ -10,18 +10,18 @@ import (
 
 	"github.com/containers/buildah"
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/libpod/events"
-	"github.com/containers/podman/v2/libpod/shutdown"
-	"github.com/containers/podman/v2/pkg/cgroups"
-	"github.com/containers/podman/v2/pkg/domain/entities/reports"
-	"github.com/containers/podman/v2/pkg/rootless"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/libpod/events"
+	"github.com/containers/podman/v3/libpod/network"
+	"github.com/containers/podman/v3/libpod/shutdown"
+	"github.com/containers/podman/v3/pkg/cgroups"
+	"github.com/containers/podman/v3/pkg/domain/entities/reports"
+	"github.com/containers/podman/v3/pkg/rootless"
 	"github.com/containers/storage"
 	"github.com/containers/storage/pkg/stringid"
 	"github.com/docker/go-units"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/runtime-tools/generate"
-	"github.com/opentracing/opentracing-go"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -73,8 +73,7 @@ func (r *Runtime) RestoreContainer(ctx context.Context, rSpec *spec.Spec, config
 }
 
 // RenameContainer renames the given container.
-// The given container object will be rendered unusable, and a new, renamed
-// Container will be returned.
+// Returns a copy of the container that has been renamed if successful.
 func (r *Runtime) RenameContainer(ctx context.Context, ctr *Container, newName string) (*Container, error) {
 	ctr.lock.Lock()
 	defer ctr.lock.Unlock()
@@ -87,26 +86,6 @@ func (r *Runtime) RenameContainer(ctx context.Context, ctr *Container, newName s
 		return nil, define.RegexError
 	}
 
-	// Check if the name is available.
-	// This is *100% NOT ATOMIC* so any failures in-flight will do
-	// *VERY BAD THINGS* to the state. So we have to try and catch all we
-	// can before starting.
-	if _, err := r.state.LookupContainerID(newName); err == nil {
-		return nil, errors.Wrapf(define.ErrCtrExists, "name %s is already in use by another container", newName)
-	}
-	if _, err := r.state.LookupPod(newName); err == nil {
-		return nil, errors.Wrapf(define.ErrPodExists, "name %s is already in use by another pod", newName)
-	}
-
-	// TODO: Investigate if it is possible to remove this limitation.
-	depCtrs, err := r.state.ContainerInUse(ctr)
-	if err != nil {
-		return nil, err
-	}
-	if len(depCtrs) > 0 {
-		return nil, errors.Wrapf(define.ErrCtrExists, "cannot rename container %s as it is in use by other containers: %v", ctr.ID(), strings.Join(depCtrs, ","))
-	}
-
 	// We need to pull an updated config, in case another rename fired and
 	// the config was re-written.
 	newConf, err := r.state.GetContainerConfig(ctr.ID())
@@ -115,95 +94,33 @@ func (r *Runtime) RenameContainer(ctx context.Context, ctr *Container, newName s
 	}
 	ctr.config = newConf
 
-	// TODO: This is going to fail if we have active exec sessions, too.
-	// Investigate fixing that at a later date.
-
-	var pod *Pod
-	if ctr.config.Pod != "" {
-		tmpPod, err := r.state.Pod(ctr.config.Pod)
-		if err != nil {
-			return nil, errors.Wrapf(err, "error retrieving container %s pod", ctr.ID())
-		}
-		pod = tmpPod
-		// Lock pod to ensure it's not removed while we're working
-		pod.lock.Lock()
-		defer pod.lock.Unlock()
-	}
-
-	// Lock all volumes to ensure they are not removed while we're working
-	volsLocked := make(map[string]bool)
-	for _, namedVol := range ctr.config.NamedVolumes {
-		if volsLocked[namedVol.Name] {
-			continue
-		}
-		vol, err := r.state.Volume(namedVol.Name)
-		if err != nil {
-			return nil, errors.Wrapf(err, "error retrieving volume used by container %s", ctr.ID())
-		}
-
-		volsLocked[vol.Name()] = true
-		vol.lock.Lock()
-		defer vol.lock.Unlock()
-	}
-
 	logrus.Infof("Going to rename container %s from %q to %q", ctr.ID(), ctr.Name(), newName)
 
-	// Step 1: remove the old container.
-	if pod != nil {
-		if err := r.state.RemoveContainerFromPod(pod, ctr); err != nil {
-			return nil, errors.Wrapf(err, "error renaming container %s", ctr.ID())
-		}
-	} else {
-		if err := r.state.RemoveContainer(ctr); err != nil {
-			return nil, errors.Wrapf(err, "error renaming container %s", ctr.ID())
-		}
+	// Step 1: Alter the config. Save the old name, we need it to rewrite
+	// the config.
+	oldName := ctr.config.Name
+	ctr.config.Name = newName
+
+	// Step 2: rewrite the old container's config in the DB.
+	if err := r.state.SafeRewriteContainerConfig(ctr, oldName, ctr.config.Name, ctr.config); err != nil {
+		// Assume the rename failed.
+		// Set config back to the old name so reflect what is actually
+		// present in the DB.
+		ctr.config.Name = oldName
+		return nil, errors.Wrapf(err, "error renaming container %s", ctr.ID())
 	}
 
-	// Step 2: Make a new container based on the old one.
-	// TODO: Should we deep-copy the container config and state, to be safe?
-	newCtr := new(Container)
-	newCtr.config = ctr.config
-	newCtr.state = ctr.state
-	newCtr.lock = ctr.lock
-	newCtr.ociRuntime = ctr.ociRuntime
-	newCtr.runtime = r
-	newCtr.rootlessSlirpSyncR = ctr.rootlessSlirpSyncR
-	newCtr.rootlessSlirpSyncW = ctr.rootlessSlirpSyncW
-	newCtr.rootlessPortSyncR = ctr.rootlessPortSyncR
-	newCtr.rootlessPortSyncW = ctr.rootlessPortSyncW
-
-	newCtr.valid = true
-	newCtr.config.Name = newName
-
-	// Step 3: Add that new container to the DB
-	if pod != nil {
-		if err := r.state.AddContainerToPod(pod, newCtr); err != nil {
-			return nil, errors.Wrapf(err, "error renaming container %s", newCtr.ID())
-		}
-	} else {
-		if err := r.state.AddContainer(newCtr); err != nil {
-			return nil, errors.Wrapf(err, "error renaming container %s", newCtr.ID())
-		}
-	}
-
-	// Step 4: Save the new container, to force the state to be written to
-	// the DB. This may not be necessary, depending on DB implementation,
-	// but let's do it to be safe.
-	if err := newCtr.save(); err != nil {
-		return nil, err
-	}
-
-	// Step 5: rename the container in c/storage.
+	// Step 3: rename the container in c/storage.
 	// This can fail if the name is already in use by a non-Podman
 	// container. This puts us in a bad spot - we've already renamed the
 	// container in Podman. We can swap the order, but then we have the
 	// opposite problem. Atomicity is a real problem here, with no easy
 	// solution.
-	if err := r.store.SetNames(newCtr.ID(), []string{newCtr.Name()}); err != nil {
+	if err := r.store.SetNames(ctr.ID(), []string{ctr.Name()}); err != nil {
 		return nil, err
 	}
 
-	return newCtr, nil
+	return ctr, nil
 }
 
 func (r *Runtime) initContainerVariables(rSpec *spec.Spec, config *ContainerConfig) (*Container, error) {
@@ -261,10 +178,6 @@ func (r *Runtime) initContainerVariables(rSpec *spec.Spec, config *ContainerConf
 }
 
 func (r *Runtime) newContainer(ctx context.Context, rSpec *spec.Spec, options ...CtrCreateOption) (*Container, error) {
-	span, _ := opentracing.StartSpanFromContext(ctx, "newContainer")
-	span.SetTag("type", "runtime")
-	defer span.Finish()
-
 	ctr, err := r.initContainerVariables(rSpec, nil)
 	if err != nil {
 		return nil, errors.Wrapf(err, "error initializing container variables")
@@ -283,6 +196,21 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 	// Validate the container
 	if err := ctr.validate(); err != nil {
 		return nil, err
+	}
+
+	// normalize the networks to names
+	// ocicni only knows about cni names so we have to make
+	// sure we do not use ids internally
+	if len(ctr.config.Networks) > 0 {
+		netNames := make([]string, 0, len(ctr.config.Networks))
+		for _, nameOrID := range ctr.config.Networks {
+			netName, err := network.NormalizeName(r.config, nameOrID)
+			if err != nil {
+				return nil, err
+			}
+			netNames = append(netNames, netName)
+		}
+		ctr.config.Networks = netNames
 	}
 
 	// Inhibit shutdown until creation succeeds
@@ -422,6 +350,18 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 		}
 	}()
 
+	ctr.config.SecretsPath = filepath.Join(ctr.config.StaticDir, "secrets")
+	err = os.MkdirAll(ctr.config.SecretsPath, 0644)
+	if err != nil {
+		return nil, err
+	}
+	for _, secr := range ctr.config.Secrets {
+		err = ctr.extractSecretToCtrStorage(secr.Name)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	if ctr.config.ConmonPidFile == "" {
 		ctr.config.ConmonPidFile = filepath.Join(ctr.state.RunDir, "conmon.pid")
 	}
@@ -452,7 +392,7 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 		logrus.Debugf("Creating new volume %s for container", vol.Name)
 
 		// The volume does not exist, so we need to create it.
-		volOptions := []VolumeCreateOption{WithVolumeName(vol.Name), WithVolumeUID(ctr.RootUID()), WithVolumeGID(ctr.RootGID()), WithVolumeNeedsChown()}
+		volOptions := []VolumeCreateOption{WithVolumeName(vol.Name), WithVolumeUID(ctr.RootUID()), WithVolumeGID(ctr.RootGID())}
 		if isAnonymous {
 			volOptions = append(volOptions, withSetAnon())
 		}
@@ -492,7 +432,6 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 		toLock.lock.Lock()
 		defer toLock.lock.Unlock()
 	}
-
 	// Add the container to the state
 	// TODO: May be worth looking into recovering from name/ID collisions here
 	if ctr.config.Pod != "" {
@@ -528,10 +467,6 @@ func (r *Runtime) RemoveContainer(ctx context.Context, c *Container, force bool,
 // infra container protections, and *not* remove from the database (as pod
 // remove will handle that).
 func (r *Runtime) removeContainer(ctx context.Context, c *Container, force, removeVolume, removePod bool) error {
-	span, _ := opentracing.StartSpanFromContext(ctx, "removeContainer")
-	span.SetTag("type", "runtime")
-	defer span.Finish()
-
 	if !c.valid {
 		if ok, _ := r.state.HasContainer(c.ID()); !ok {
 			// Container probably already removed
@@ -779,7 +714,7 @@ func (r *Runtime) evictContainer(ctx context.Context, idOrName string, removeVol
 
 	id, err := r.state.LookupContainerID(idOrName)
 	if err != nil {
-		return "", errors.Wrapf(err, "failed to find container %q in state", idOrName)
+		return "", err
 	}
 
 	// Begin by trying a normal removal. Valid containers will be removed normally.
@@ -809,7 +744,7 @@ func (r *Runtime) evictContainer(ctx context.Context, idOrName string, removeVol
 		return id, err
 	}
 	if !exists {
-		return id, errors.Wrapf(err, "failed to find container ID %q for eviction", id)
+		return id, err
 	}
 
 	// Re-create a container struct for removal purposes

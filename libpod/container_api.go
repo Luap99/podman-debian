@@ -2,19 +2,18 @@ package libpod
 
 import (
 	"context"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"os"
 	"sync"
 	"time"
 
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/libpod/events"
-	"github.com/containers/podman/v2/pkg/signal"
-	"github.com/opentracing/opentracing-go"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/libpod/events"
+	"github.com/containers/podman/v3/pkg/signal"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-	"k8s.io/client-go/tools/remotecommand"
 )
 
 // Init creates a container in the OCI runtime, moving a container from
@@ -28,10 +27,6 @@ import (
 // containers). The `recursive` parameter will, if set to true, start these
 // dependency containers before initializing this container.
 func (c *Container) Init(ctx context.Context, recursive bool) error {
-	span, _ := opentracing.StartSpanFromContext(ctx, "containerInit")
-	span.SetTag("struct", "container")
-	defer span.Finish()
-
 	if !c.batched {
 		c.lock.Lock()
 		defer c.lock.Unlock()
@@ -84,10 +79,6 @@ func (c *Container) Init(ctx context.Context, recursive bool) error {
 // running before being run. The recursive parameter, if set, will start all
 // dependencies before starting this container.
 func (c *Container) Start(ctx context.Context, recursive bool) error {
-	span, _ := opentracing.StartSpanFromContext(ctx, "containerStart")
-	span.SetTag("struct", "container")
-	defer span.Finish()
-
 	if !c.batched {
 		c.lock.Lock()
 		defer c.lock.Unlock()
@@ -110,7 +101,7 @@ func (c *Container) Start(ctx context.Context, recursive bool) error {
 // Attach call occurs before Start).
 // In overall functionality, it is identical to the Start call, with the added
 // side effect that an attach session will also be started.
-func (c *Container) StartAndAttach(ctx context.Context, streams *define.AttachStreams, keys string, resize <-chan remotecommand.TerminalSize, recursive bool) (<-chan error, error) {
+func (c *Container) StartAndAttach(ctx context.Context, streams *define.AttachStreams, keys string, resize <-chan define.TerminalSize, recursive bool) (<-chan error, error) {
 	if !c.batched {
 		c.lock.Lock()
 		defer c.lock.Unlock()
@@ -236,7 +227,7 @@ func (c *Container) Kill(signal uint) error {
 // Attach attaches to a container.
 // This function returns when the attach finishes. It does not hold the lock for
 // the duration of its runtime, only using it at the beginning to verify state.
-func (c *Container) Attach(streams *define.AttachStreams, keys string, resize <-chan remotecommand.TerminalSize) error {
+func (c *Container) Attach(streams *define.AttachStreams, keys string, resize <-chan define.TerminalSize) error {
 	if !c.batched {
 		c.lock.Lock()
 		if err := c.syncContainer(); err != nil {
@@ -319,7 +310,7 @@ func (c *Container) HTTPAttach(r *http.Request, w http.ResponseWriter, streams *
 
 // AttachResize resizes the container's terminal, which is displayed by Attach
 // and HTTPAttach.
-func (c *Container) AttachResize(newSize remotecommand.TerminalSize) error {
+func (c *Container) AttachResize(newSize define.TerminalSize) error {
 	if !c.batched {
 		c.lock.Lock()
 		defer c.lock.Unlock()
@@ -350,10 +341,6 @@ func (c *Container) Mount() (string, error) {
 		}
 	}
 
-	if c.state.State == define.ContainerStateRemoving {
-		return "", errors.Wrapf(define.ErrCtrStateInvalid, "cannot mount container %s as it is being removed", c.ID())
-	}
-
 	defer c.newContainerEvent(events.Mount)
 	return c.mount()
 }
@@ -368,7 +355,6 @@ func (c *Container) Unmount(force bool) error {
 			return err
 		}
 	}
-
 	if c.state.Mounted {
 		mounted, err := c.runtime.storageService.MountedContainerImage(c.ID())
 		if err != nil {
@@ -848,31 +834,59 @@ func (c *Container) ShouldRestart(ctx context.Context) bool {
 	return c.shouldRestart()
 }
 
-// ResolvePath resolves the specified path on the root for the container.  The
-// root must either be the mounted image of the container or the already
-// mounted container storage.
-//
-// It returns the resolved root and the resolved path.  Note that the path may
-// resolve to the container's mount point or to a volume or bind mount.
-func (c *Container) ResolvePath(ctx context.Context, root string, path string) (string, string, error) {
-	logrus.Debugf("Resolving path %q (root %q) on container %s", path, root, c.ID())
-
-	// Minimal sanity checks.
-	if len(root)*len(path) == 0 {
-		return "", "", errors.Wrapf(define.ErrInternal, "ResolvePath: root (%q) and path (%q) must be non empty", root, path)
-	}
-	if _, err := os.Stat(root); err != nil {
-		return "", "", errors.Wrapf(err, "cannot locate root to resolve path on container %s", c.ID())
-	}
-
+// CopyFromArchive copies the contents from the specified tarStream to path
+// *inside* the container.
+func (c *Container) CopyFromArchive(ctx context.Context, containerPath string, tarStream io.Reader) (func() error, error) {
 	if !c.batched {
 		c.lock.Lock()
 		defer c.lock.Unlock()
 
 		if err := c.syncContainer(); err != nil {
-			return "", "", err
+			return nil, err
 		}
 	}
 
-	return c.resolvePath(root, path)
+	return c.copyFromArchive(ctx, containerPath, tarStream)
+}
+
+// CopyToArchive copies the contents from the specified path *inside* the
+// container to the tarStream.
+func (c *Container) CopyToArchive(ctx context.Context, containerPath string, tarStream io.Writer) (func() error, error) {
+	if !c.batched {
+		c.lock.Lock()
+		defer c.lock.Unlock()
+
+		if err := c.syncContainer(); err != nil {
+			return nil, err
+		}
+	}
+
+	return c.copyToArchive(ctx, containerPath, tarStream)
+}
+
+// Stat the specified path *inside* the container and return a file info.
+func (c *Container) Stat(ctx context.Context, containerPath string) (*define.FileInfo, error) {
+	if !c.batched {
+		c.lock.Lock()
+		defer c.lock.Unlock()
+
+		if err := c.syncContainer(); err != nil {
+			return nil, err
+		}
+	}
+
+	var mountPoint string
+	var err error
+	if c.state.Mounted {
+		mountPoint = c.state.Mountpoint
+	} else {
+		mountPoint, err = c.mount()
+		if err != nil {
+			return nil, err
+		}
+		defer c.unmount(false)
+	}
+
+	info, _, _, err := c.stat(ctx, mountPoint, containerPath)
+	return info, err
 }

@@ -6,6 +6,7 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/containers/common/pkg/retry"
 	cp "github.com/containers/image/v5/copy"
@@ -19,10 +20,9 @@ import (
 	"github.com/containers/image/v5/transports"
 	"github.com/containers/image/v5/transports/alltransports"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v2/libpod/events"
-	"github.com/containers/podman/v2/pkg/errorhandling"
-	"github.com/containers/podman/v2/pkg/registries"
-	"github.com/opentracing/opentracing-go"
+	"github.com/containers/podman/v3/libpod/events"
+	"github.com/containers/podman/v3/pkg/errorhandling"
+	"github.com/containers/podman/v3/pkg/registries"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -171,9 +171,6 @@ func (ir *Runtime) getPullRefPairsFromDockerArchiveReference(ctx context.Context
 // pullGoalFromImageReference returns a pull goal for a single ImageReference, depending on the used transport.
 // Note that callers are responsible for invoking (*pullGoal).cleanUp() to clean up possibly open resources.
 func (ir *Runtime) pullGoalFromImageReference(ctx context.Context, srcRef types.ImageReference, imgName string, sc *types.SystemContext) (*pullGoal, error) {
-	span, _ := opentracing.StartSpanFromContext(ctx, "pullGoalFromImageReference")
-	defer span.Finish()
-
 	// supports pulling from docker-archive, oci, and registries
 	switch srcRef.Transport().Name() {
 	case DockerArchive:
@@ -241,16 +238,14 @@ func toLocalImageName(imageName string) string {
 
 // pullImageFromHeuristicSource pulls an image based on inputName, which is heuristically parsed and may involve configured registries.
 // Use pullImageFromReference if the source is known precisely.
-func (ir *Runtime) pullImageFromHeuristicSource(ctx context.Context, inputName string, writer io.Writer, authfile, signaturePolicyPath string, signingOptions SigningOptions, dockerOptions *DockerRegistryOptions, retryOptions *retry.RetryOptions, label *string) ([]string, error) {
-	span, _ := opentracing.StartSpanFromContext(ctx, "pullImageFromHeuristicSource")
-	defer span.Finish()
-
+func (ir *Runtime) pullImageFromHeuristicSource(ctx context.Context, inputName string, writer io.Writer, authfile, signaturePolicyPath string, signingOptions SigningOptions, dockerOptions *DockerRegistryOptions, retryOptions *retry.RetryOptions, label *string, progress chan types.ProgressProperties) ([]string, error) {
 	var goal *pullGoal
 	sc := GetSystemContext(signaturePolicyPath, authfile, false)
 	if dockerOptions != nil {
 		sc.OSChoice = dockerOptions.OSChoice
 		sc.ArchitectureChoice = dockerOptions.ArchitectureChoice
 		sc.VariantChoice = dockerOptions.VariantChoice
+		sc.SystemRegistriesConfPath = dockerOptions.RegistriesConfPath
 	}
 	if signaturePolicyPath == "" {
 		sc.SignaturePolicyPath = ir.SignaturePolicyPath
@@ -275,14 +270,11 @@ func (ir *Runtime) pullImageFromHeuristicSource(ctx context.Context, inputName s
 		}
 	}
 	defer goal.cleanUp()
-	return ir.doPullImage(ctx, sc, *goal, writer, signingOptions, dockerOptions, retryOptions, label)
+	return ir.doPullImage(ctx, sc, *goal, writer, signingOptions, dockerOptions, retryOptions, label, progress)
 }
 
 // pullImageFromReference pulls an image from a types.imageReference.
 func (ir *Runtime) pullImageFromReference(ctx context.Context, srcRef types.ImageReference, writer io.Writer, authfile, signaturePolicyPath string, signingOptions SigningOptions, dockerOptions *DockerRegistryOptions, retryOptions *retry.RetryOptions) ([]string, error) {
-	span, _ := opentracing.StartSpanFromContext(ctx, "pullImageFromReference")
-	defer span.Finish()
-
 	sc := GetSystemContext(signaturePolicyPath, authfile, false)
 	if dockerOptions != nil {
 		sc.OSChoice = dockerOptions.OSChoice
@@ -294,7 +286,7 @@ func (ir *Runtime) pullImageFromReference(ctx context.Context, srcRef types.Imag
 		return nil, errors.Wrapf(err, "error determining pull goal for image %q", transports.ImageName(srcRef))
 	}
 	defer goal.cleanUp()
-	return ir.doPullImage(ctx, sc, *goal, writer, signingOptions, dockerOptions, retryOptions, nil)
+	return ir.doPullImage(ctx, sc, *goal, writer, signingOptions, dockerOptions, retryOptions, nil, nil)
 }
 
 func cleanErrorMessage(err error) string {
@@ -304,10 +296,7 @@ func cleanErrorMessage(err error) string {
 }
 
 // doPullImage is an internal helper interpreting pullGoal. Almost everyone should call one of the callers of doPullImage instead.
-func (ir *Runtime) doPullImage(ctx context.Context, sc *types.SystemContext, goal pullGoal, writer io.Writer, signingOptions SigningOptions, dockerOptions *DockerRegistryOptions, retryOptions *retry.RetryOptions, label *string) ([]string, error) {
-	span, _ := opentracing.StartSpanFromContext(ctx, "doPullImage")
-	defer span.Finish()
-
+func (ir *Runtime) doPullImage(ctx context.Context, sc *types.SystemContext, goal pullGoal, writer io.Writer, signingOptions SigningOptions, dockerOptions *DockerRegistryOptions, retryOptions *retry.RetryOptions, label *string, progress chan types.ProgressProperties) ([]string, error) {
 	policyContext, err := getPolicyContext(sc)
 	if err != nil {
 		return nil, err
@@ -318,7 +307,12 @@ func (ir *Runtime) doPullImage(ctx context.Context, sc *types.SystemContext, goa
 		}
 	}()
 
-	systemRegistriesConfPath := registries.SystemRegistriesConfPath()
+	var systemRegistriesConfPath string
+	if dockerOptions != nil && dockerOptions.RegistriesConfPath != "" {
+		systemRegistriesConfPath = dockerOptions.RegistriesConfPath
+	} else {
+		systemRegistriesConfPath = registries.SystemRegistriesConfPath()
+	}
 
 	var (
 		images     []string
@@ -328,6 +322,10 @@ func (ir *Runtime) doPullImage(ctx context.Context, sc *types.SystemContext, goa
 	for _, imageInfo := range goal.refPairs {
 		copyOptions := getCopyOptions(sc, writer, dockerOptions, nil, signingOptions, "", nil)
 		copyOptions.SourceCtx.SystemRegistriesConfPath = systemRegistriesConfPath // FIXME: Set this more globally.  Probably no reason not to have it in every types.SystemContext, and to compute the value just once in one place.
+		if progress != nil {
+			copyOptions.Progress = progress
+			copyOptions.ProgressInterval = time.Second
+		}
 		// Print the following statement only when pulling from a docker or atomic registry
 		if writer != nil && (imageInfo.srcRef.Transport().Name() == DockerTransport || imageInfo.srcRef.Transport().Name() == AtomicTransport) {
 			if _, err := io.WriteString(writer, fmt.Sprintf("Trying to pull %s...\n", imageInfo.image)); err != nil {

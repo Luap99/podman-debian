@@ -5,11 +5,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containers/podman/v2/libpod"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/libpod/network"
-	"github.com/containers/podman/v2/pkg/timetype"
-	"github.com/containers/podman/v2/pkg/util"
+	"github.com/containers/podman/v3/libpod"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/pkg/network"
+	"github.com/containers/podman/v3/pkg/util"
 	"github.com/pkg/errors"
 )
 
@@ -24,27 +23,7 @@ func GenerateContainerFilterFuncs(filter string, filterValues []string, r *libpo
 	case "label":
 		// we have to match that all given labels exits on that container
 		return func(c *libpod.Container) bool {
-			labels := c.Labels()
-			for _, filterValue := range filterValues {
-				matched := false
-				filterArray := strings.SplitN(filterValue, "=", 2)
-				filterKey := filterArray[0]
-				if len(filterArray) > 1 {
-					filterValue = filterArray[1]
-				} else {
-					filterValue = ""
-				}
-				for labelKey, labelValue := range labels {
-					if labelKey == filterKey && (filterValue == "" || labelValue == filterValue) {
-						matched = true
-						break
-					}
-				}
-				if !matched {
-					return false
-				}
-			}
-			return true
+			return util.MatchLabelFilters(filterValues, c.Labels())
 		}, nil
 	case "name":
 		// we only have to match one name
@@ -186,18 +165,10 @@ func GenerateContainerFilterFuncs(filter string, filterValues []string, r *libpo
 			return false
 		}, nil
 	case "until":
-		if len(filterValues) != 1 {
-			return nil, errors.Errorf("specify exactly one timestamp for %s", filter)
-		}
-		ts, err := timetype.GetTimestamp(filterValues[0], time.Now())
+		until, err := util.ComputeUntilTimestamp(filterValues)
 		if err != nil {
 			return nil, err
 		}
-		seconds, nanoseconds, err := timetype.ParseTimestamps(ts, 0)
-		if err != nil {
-			return nil, err
-		}
-		until := time.Unix(seconds, nanoseconds)
 		return func(c *libpod.Container) bool {
 			if !until.IsZero() && c.CreatedTime().After((until)) {
 				return true

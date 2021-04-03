@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/containers/podman/v2/pkg/rootless"
-	. "github.com/containers/podman/v2/test/utils"
+	"github.com/containers/podman/v3/pkg/rootless"
+	. "github.com/containers/podman/v3/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
@@ -63,7 +63,7 @@ var _ = Describe("Podman push", func() {
 	})
 
 	It("podman push to local registry", func() {
-		SkipIfRemote("Remote does not support --digestfile or --remove-sginatures")
+		SkipIfRemote("Remote does not support --digestfile or --remove-signatures")
 		if podmanTest.Host.Arch == "ppc64le" {
 			Skip("No registry image for ppc64le")
 		}
@@ -145,7 +145,7 @@ var _ = Describe("Podman push", func() {
 		session = podmanTest.Podman([]string{"logs", "registry"})
 		session.WaitWithDefaultTimeout()
 
-		push := podmanTest.Podman([]string{"push", "--creds=podmantest:test", ALPINE, "localhost:5000/tlstest"})
+		push := podmanTest.Podman([]string{"push", "--format=v2s2", "--creds=podmantest:test", ALPINE, "localhost:5000/tlstest"})
 		push.WaitWithDefaultTimeout()
 		Expect(push).To(ExitWithError())
 

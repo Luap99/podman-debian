@@ -17,8 +17,8 @@ import (
 	"github.com/containers/image/v5/transports"
 	"github.com/containers/image/v5/transports/alltransports"
 	"github.com/containers/image/v5/types"
-	libpodImage "github.com/containers/podman/v2/libpod/image"
-	"github.com/containers/podman/v2/pkg/domain/entities"
+	libpodImage "github.com/containers/podman/v3/libpod/image"
+	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/opencontainers/go-digest"
 	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
@@ -36,6 +36,18 @@ func (ir *ImageEngine) ManifestCreate(ctx context.Context, names, images []strin
 		return imageID, err
 	}
 	return imageID, err
+}
+
+// ManifestExists checks if a manifest list with the given name exists in local storage
+func (ir *ImageEngine) ManifestExists(ctx context.Context, name string) (*entities.BoolReport, error) {
+	if image, err := ir.Libpod.ImageRuntime().NewFromLocal(name); err == nil {
+		exists, err := image.ExistsManifest()
+		if err != nil && errors.Cause(err) != buildahManifests.ErrManifestTypeNotSupported {
+			return nil, err
+		}
+		return &entities.BoolReport{Value: exists}, nil
+	}
+	return &entities.BoolReport{Value: false}, nil
 }
 
 // ManifestInspect returns the content of a manifest list or image

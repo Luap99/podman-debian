@@ -3,25 +3,12 @@ package server
 import (
 	"net/http"
 
-	"github.com/containers/podman/v2/pkg/api/handlers/compat"
-	"github.com/containers/podman/v2/pkg/api/handlers/libpod"
+	"github.com/containers/podman/v3/pkg/api/handlers/compat"
+	"github.com/containers/podman/v3/pkg/api/handlers/libpod"
 	"github.com/gorilla/mux"
 )
 
 func (s *APIServer) registerNetworkHandlers(r *mux.Router) error {
-	// swagger:operation POST /networks/prune compat compatPruneNetwork
-	// ---
-	// tags:
-	// - networks (compat)
-	// Summary: Delete unused networks
-	// description: Not supported
-	// produces:
-	// - application/json
-	// responses:
-	//   404:
-	//     $ref: "#/responses/NoSuchNetwork"
-	r.HandleFunc(VersionedPath("/networks/prune"), compat.UnsupportedHandler).Methods(http.MethodPost)
-	r.HandleFunc("/networks/prune", compat.UnsupportedHandler).Methods(http.MethodPost)
 	// swagger:operation DELETE /networks/{name} compat compatRemoveNetwork
 	// ---
 	// tags:
@@ -172,6 +159,34 @@ func (s *APIServer) registerNetworkHandlers(r *mux.Router) error {
 	//     $ref: "#/responses/InternalError"
 	r.HandleFunc(VersionedPath("/networks/{name}/disconnect"), s.APIHandler(compat.Disconnect)).Methods(http.MethodPost)
 	r.HandleFunc("/networks/{name}/disconnect", s.APIHandler(compat.Disconnect)).Methods(http.MethodPost)
+	// swagger:operation POST /networks/prune compat compatPruneNetwork
+	// ---
+	// tags:
+	//  - networks (compat)
+	// summary: Delete unused networks
+	// description: Remove CNI networks that do not have containers
+	// produces:
+	// - application/json
+	// parameters:
+	//  - in: query
+	//    name: filters
+	//    type: string
+	//    description: |
+	//      Filters to process on the prune list, encoded as JSON (a map[string][]string).
+	//      Available filters:
+	//        - until=<timestamp> Prune networks created before this timestamp. The <timestamp> can be Unix timestamps, date formatted timestamps, or Go duration strings (e.g. 10m, 1h30m) computed relative to the daemon machine’s time.
+	//	      - label (label=<key>, label=<key>=<value>, label!=<key>, or label!=<key>=<value>) Prune networks with (or without, in case label!=... is used) the specified labels.
+	// responses:
+	//   200:
+	//     description: OK
+	//     schema:
+	//       type: array
+	//       items:
+	//         type: string
+	//   500:
+	//     $ref: "#/responses/InternalError"
+	r.HandleFunc(VersionedPath("/networks/prune"), s.APIHandler(compat.Prune)).Methods(http.MethodPost)
+	r.HandleFunc("/networks/prune", s.APIHandler(compat.Prune)).Methods(http.MethodPost)
 
 	// swagger:operation DELETE /libpod/networks/{name} libpod libpodRemoveNetwork
 	// ---
@@ -204,28 +219,28 @@ func (s *APIServer) registerNetworkHandlers(r *mux.Router) error {
 	*/
 
 	r.HandleFunc(VersionedPath("/libpod/networks/{name}"), s.APIHandler(libpod.RemoveNetwork)).Methods(http.MethodDelete)
-	// swagger:operation GET /libpod/networks/{name}/json libpod libpodInspectNetwork
+	// swagger:operation GET /libpod/networks/{name}/exists libpod libpodExistsNetwork
 	// ---
 	// tags:
 	//  - networks
-	// summary: Inspect a network
-	// description: Display low level configuration for a CNI network
+	// summary: Network exists
+	// description: Check if network exists
 	// parameters:
 	//  - in: path
 	//    name: name
 	//    type: string
 	//    required: true
-	//    description: the name of the network
+	//    description: the name or ID of the network
 	// produces:
 	// - application/json
 	// responses:
-	//   200:
-	//     $ref: "#/responses/NetworkInspectReport"
+	//   204:
+	//     description: network exists
 	//   404:
-	//     $ref: "#/responses/NoSuchNetwork"
+	//     $ref: '#/responses/NoSuchNetwork'
 	//   500:
-	//     $ref: "#/responses/InternalError"
-	r.HandleFunc(VersionedPath("/libpod/networks/{name}/json"), s.APIHandler(libpod.InspectNetwork)).Methods(http.MethodGet)
+	//     $ref: '#/responses/InternalError'
+	r.Handle(VersionedPath("/libpod/networks/{name}/exists"), s.APIHandler(libpod.ExistsNetwork)).Methods(http.MethodGet)
 	// swagger:operation GET /libpod/networks/json libpod libpodListNetwork
 	// ---
 	// tags:
@@ -251,6 +266,29 @@ func (s *APIServer) registerNetworkHandlers(r *mux.Router) error {
 	//   500:
 	//     $ref: "#/responses/InternalError"
 	r.HandleFunc(VersionedPath("/libpod/networks/json"), s.APIHandler(libpod.ListNetworks)).Methods(http.MethodGet)
+	// swagger:operation GET /libpod/networks/{name}/json libpod libpodInspectNetwork
+	// ---
+	// tags:
+	//  - networks
+	// summary: Inspect a network
+	// description: Display low level configuration for a CNI network
+	// parameters:
+	//  - in: path
+	//    name: name
+	//    type: string
+	//    required: true
+	//    description: the name of the network
+	// produces:
+	// - application/json
+	// responses:
+	//   200:
+	//     $ref: "#/responses/NetworkInspectReport"
+	//   404:
+	//     $ref: "#/responses/NoSuchNetwork"
+	//   500:
+	//     $ref: "#/responses/InternalError"
+	r.HandleFunc(VersionedPath("/libpod/networks/{name}/json"), s.APIHandler(libpod.InspectNetwork)).Methods(http.MethodGet)
+	r.HandleFunc(VersionedPath("/libpod/networks/{name}"), s.APIHandler(libpod.InspectNetwork)).Methods(http.MethodGet)
 	// swagger:operation POST /libpod/networks/create libpod libpodCreateNetwork
 	// ---
 	// tags:
@@ -331,5 +369,29 @@ func (s *APIServer) registerNetworkHandlers(r *mux.Router) error {
 	//   500:
 	//     $ref: "#/responses/InternalError"
 	r.HandleFunc(VersionedPath("/libpod/networks/{name}/disconnect"), s.APIHandler(compat.Disconnect)).Methods(http.MethodPost)
+	// swagger:operation POST /libpod/networks/prune libpod libpodPruneNetwork
+	// ---
+	// tags:
+	//  - networks
+	// summary: Delete unused networks
+	// description: Remove CNI networks that do not have containers
+	// produces:
+	// - application/json
+	// parameters:
+	//  - in: query
+	//    name: filters
+	//    type: string
+	//    description: |
+	//      NOT IMPLEMENTED
+	//      Filters to process on the prune list, encoded as JSON (a map[string][]string).
+	//      Available filters:
+	//        - until=<timestamp> Prune networks created before this timestamp. The <timestamp> can be Unix timestamps, date formatted timestamps, or Go duration strings (e.g. 10m, 1h30m) computed relative to the daemon machine’s time.
+	//	      - label (label=<key>, label=<key>=<value>, label!=<key>, or label!=<key>=<value>) Prune networks with (or without, in case label!=... is used) the specified labels.
+	// responses:
+	//   200:
+	//     $ref: "#/responses/NetworkPruneResponse"
+	//   500:
+	//     $ref: "#/responses/InternalError"
+	r.HandleFunc(VersionedPath("/libpod/networks/prune"), s.APIHandler(libpod.Prune)).Methods(http.MethodPost)
 	return nil
 }

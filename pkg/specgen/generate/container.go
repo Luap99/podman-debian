@@ -3,14 +3,15 @@ package generate
 import (
 	"context"
 	"os"
+	"strings"
 
 	"github.com/containers/image/v5/manifest"
-	"github.com/containers/podman/v2/libpod"
-	"github.com/containers/podman/v2/libpod/image"
-	ann "github.com/containers/podman/v2/pkg/annotations"
-	envLib "github.com/containers/podman/v2/pkg/env"
-	"github.com/containers/podman/v2/pkg/signal"
-	"github.com/containers/podman/v2/pkg/specgen"
+	"github.com/containers/podman/v3/libpod"
+	"github.com/containers/podman/v3/libpod/image"
+	ann "github.com/containers/podman/v3/pkg/annotations"
+	envLib "github.com/containers/podman/v3/pkg/env"
+	"github.com/containers/podman/v3/pkg/signal"
+	"github.com/containers/podman/v3/pkg/specgen"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -197,6 +198,15 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 		annotations[ann.ContainerType] = ann.ContainerTypeContainer
 	}
 
+	for _, v := range rtc.Containers.Annotations {
+		split := strings.SplitN(v, "=", 2)
+		k := split[0]
+		v := ""
+		if len(split) == 2 {
+			v = split[1]
+		}
+		annotations[k] = v
+	}
 	// now pass in the values from client
 	for k, v := range s.Annotations {
 		annotations[k] = v

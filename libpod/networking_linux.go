@@ -22,13 +22,13 @@ import (
 
 	cnitypes "github.com/containernetworking/cni/pkg/types/current"
 	"github.com/containernetworking/plugins/pkg/ns"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/libpod/events"
-	"github.com/containers/podman/v2/libpod/network"
-	"github.com/containers/podman/v2/pkg/errorhandling"
-	"github.com/containers/podman/v2/pkg/netns"
-	"github.com/containers/podman/v2/pkg/rootless"
-	"github.com/containers/podman/v2/pkg/rootlessport"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/libpod/events"
+	"github.com/containers/podman/v3/libpod/network"
+	"github.com/containers/podman/v3/pkg/errorhandling"
+	"github.com/containers/podman/v3/pkg/netns"
+	"github.com/containers/podman/v3/pkg/rootless"
+	"github.com/containers/podman/v3/pkg/rootlessport"
 	"github.com/cri-o/ocicni/pkg/ocicni"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -559,13 +559,25 @@ func (r *Runtime) setupRootlessPortMappingViaRLK(ctr *Container, netnsPath strin
 		}
 	}
 
+	childIP := slirp4netnsIP
+outer:
+	for _, r := range ctr.state.NetworkStatus {
+		for _, i := range r.IPs {
+			ipv4 := i.Address.IP.To4()
+			if ipv4 != nil {
+				childIP = ipv4.String()
+				break outer
+			}
+		}
+	}
+
 	cfg := rootlessport.Config{
 		Mappings:  ctr.config.PortMappings,
 		NetNSPath: netnsPath,
 		ExitFD:    3,
 		ReadyFD:   4,
 		TmpDir:    ctr.runtime.config.Engine.TmpDir,
-		ChildIP:   slirp4netnsIP,
+		ChildIP:   childIP,
 	}
 	cfgJSON, err := json.Marshal(cfg)
 	if err != nil {
@@ -797,7 +809,7 @@ func (r *Runtime) teardownCNI(ctr *Container) error {
 			requestedMAC = ctr.config.StaticMAC
 		}
 
-		podNetwork := r.getPodNetwork(ctr.ID(), ctr.Name(), ctr.state.NetNS.Path(), networks, ctr.config.PortMappings, requestedIP, requestedMAC, ContainerNetworkDescriptions{})
+		podNetwork := r.getPodNetwork(ctr.ID(), ctr.Name(), ctr.state.NetNS.Path(), networks, ctr.config.PortMappings, requestedIP, requestedMAC, ctr.state.NetInterfaceDescriptions)
 
 		if err := r.netPlugin.TearDownPod(podNetwork); err != nil {
 			return errors.Wrapf(err, "error tearing down CNI namespace configuration for container %s", ctr.ID())
@@ -1122,17 +1134,21 @@ func (w *logrusDebugWriter) Write(p []byte) (int, error) {
 
 // NetworkDisconnect removes a container from the network
 func (c *Container) NetworkDisconnect(nameOrID, netName string, force bool) error {
+	// only the bridge mode supports cni networks
+	if !c.config.NetMode.IsBridge() {
+		return errors.Errorf("network mode %q is not supported", c.config.NetMode)
+	}
+
 	networks, err := c.networksByNameIndex()
 	if err != nil {
 		return err
 	}
 
-	exists, err := network.Exists(c.runtime.config, netName)
+	// check if network exists and if the input is a ID we get the name
+	// ocicni only uses names so it is important that we only use the name
+	netName, err = network.NormalizeName(c.runtime.config, netName)
 	if err != nil {
 		return err
-	}
-	if !exists {
-		return errors.Wrap(define.ErrNoSuchNetwork, netName)
 	}
 
 	index, nameExists := networks[netName]
@@ -1179,17 +1195,21 @@ func (c *Container) NetworkDisconnect(nameOrID, netName string, force bool) erro
 
 // ConnectNetwork connects a container to a given network
 func (c *Container) NetworkConnect(nameOrID, netName string, aliases []string) error {
+	// only the bridge mode supports cni networks
+	if !c.config.NetMode.IsBridge() {
+		return errors.Errorf("network mode %q is not supported", c.config.NetMode)
+	}
+
 	networks, err := c.networksByNameIndex()
 	if err != nil {
 		return err
 	}
 
-	exists, err := network.Exists(c.runtime.config, netName)
+	// check if network exists and if the input is a ID we get the name
+	// ocicni only uses names so it is important that we only use the name
+	netName, err = network.NormalizeName(c.runtime.config, netName)
 	if err != nil {
 		return err
-	}
-	if !exists {
-		return errors.Wrap(define.ErrNoSuchNetwork, netName)
 	}
 
 	c.lock.Lock()

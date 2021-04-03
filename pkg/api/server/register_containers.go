@@ -3,8 +3,8 @@ package server
 import (
 	"net/http"
 
-	"github.com/containers/podman/v2/pkg/api/handlers/compat"
-	"github.com/containers/podman/v2/pkg/api/handlers/libpod"
+	"github.com/containers/podman/v3/pkg/api/handlers/compat"
+	"github.com/containers/podman/v3/pkg/api/handlers/libpod"
 	"github.com/gorilla/mux"
 )
 
@@ -587,6 +587,11 @@ func (s *APIServer) registerContainersHandlers(r *mux.Router) error {
 	//    type: integer
 	//    required: false
 	//    description: Width to set for the terminal, in characters
+	//  - in: query
+	//    name: running
+	//    type: boolean
+	//    required: false
+	//    description: Ignore containers not running errors
 	// produces:
 	// - application/json
 	// responses:
@@ -1176,15 +1181,19 @@ func (s *APIServer) registerContainersHandlers(r *mux.Router) error {
 	//    description: the name or ID of the container
 	//  - in: query
 	//    name: condition
-	//    type: string
-	//    description: |
-	//      wait until container is to a given condition. default is stopped. valid conditions are:
-	//        - configured
-	//        - created
-	//        - exited
-	//        - paused
-	//        - running
-	//        - stopped
+	//    type: array
+	//    items:
+	//      type: string
+	//      enum:
+	//       - configured
+	//       - created
+	//       - running
+	//       - stopped
+	//       - paused
+	//       - exited
+	//       - removing
+	//       - stopping
+	//    description: "Conditions to wait for. If no condition provided the 'exited' condition is assumed."
 	// produces:
 	// - application/json
 	// responses:

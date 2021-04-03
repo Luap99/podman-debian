@@ -6,15 +6,15 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/containers/podman/v2/libpod"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/pkg/api/handlers"
-	"github.com/containers/podman/v2/pkg/api/handlers/utils"
-	"github.com/containers/podman/v2/pkg/domain/entities"
-	"github.com/containers/podman/v2/pkg/domain/infra/abi"
-	"github.com/containers/podman/v2/pkg/specgen"
-	"github.com/containers/podman/v2/pkg/specgen/generate"
-	"github.com/containers/podman/v2/pkg/util"
+	"github.com/containers/podman/v3/libpod"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/pkg/api/handlers"
+	"github.com/containers/podman/v3/pkg/api/handlers/utils"
+	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v3/pkg/domain/infra/abi"
+	"github.com/containers/podman/v3/pkg/specgen"
+	"github.com/containers/podman/v3/pkg/specgen/generate"
+	"github.com/containers/podman/v3/pkg/util"
 	"github.com/gorilla/schema"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -44,13 +44,9 @@ func PodCreate(w http.ResponseWriter, r *http.Request) {
 
 func Pods(w http.ResponseWriter, r *http.Request) {
 	runtime := r.Context().Value("runtime").(*libpod.Runtime)
-	decoder := r.Context().Value("decoder").(*schema.Decoder)
-	query := struct {
-		Filters map[string][]string `schema:"filters"`
-	}{
-		// override any golang type defaults
-	}
-	if err := decoder.Decode(&query, r.URL.Query()); err != nil {
+
+	filterMap, err := util.PrepareFilters(r)
+	if err != nil {
 		utils.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest,
 			errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
 		return
@@ -58,7 +54,7 @@ func Pods(w http.ResponseWriter, r *http.Request) {
 
 	containerEngine := abi.ContainerEngine{Libpod: runtime}
 	podPSOptions := entities.PodPSOptions{
-		Filters: query.Filters,
+		Filters: *filterMap,
 	}
 	pods, err := containerEngine.PodPs(r.Context(), podPSOptions)
 	if err != nil {

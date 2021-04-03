@@ -3,7 +3,7 @@ package integration
 import (
 	"os"
 
-	. "github.com/containers/podman/v2/test/utils"
+	. "github.com/containers/podman/v3/test/utils"
 	"github.com/containers/storage/pkg/stringid"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -37,7 +37,6 @@ var _ = Describe("Podman network connect and disconnect", func() {
 		dis := podmanTest.Podman([]string{"network", "disconnect", "foobar", "test"})
 		dis.WaitWithDefaultTimeout()
 		Expect(dis.ExitCode()).ToNot(BeZero())
-
 	})
 
 	It("bad container name in network disconnect should result in error", func() {
@@ -51,7 +50,25 @@ var _ = Describe("Podman network connect and disconnect", func() {
 		dis := podmanTest.Podman([]string{"network", "disconnect", netName, "foobar"})
 		dis.WaitWithDefaultTimeout()
 		Expect(dis.ExitCode()).ToNot(BeZero())
+	})
 
+	It("network disconnect with net mode slirp4netns should result in error", func() {
+		SkipIfRootless("network connect and disconnect are only rootful")
+		netName := "slirp" + stringid.GenerateNonCryptoID()
+		session := podmanTest.Podman([]string{"network", "create", netName})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(BeZero())
+		defer podmanTest.removeCNINetwork(netName)
+
+		session = podmanTest.Podman([]string{"create", "--name", "test", "--network", "slirp4netns", ALPINE})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(BeZero())
+		defer podmanTest.removeCNINetwork(netName)
+
+		con := podmanTest.Podman([]string{"network", "disconnect", netName, "test"})
+		con.WaitWithDefaultTimeout()
+		Expect(con.ExitCode()).ToNot(BeZero())
+		Expect(con.ErrorToString()).To(ContainSubstring(`network mode "slirp4netns" is not supported`))
 	})
 
 	It("podman network disconnect", func() {
@@ -89,7 +106,6 @@ var _ = Describe("Podman network connect and disconnect", func() {
 		dis := podmanTest.Podman([]string{"network", "connect", "foobar", "test"})
 		dis.WaitWithDefaultTimeout()
 		Expect(dis.ExitCode()).ToNot(BeZero())
-
 	})
 
 	It("bad container name in network connect should result in error", func() {
@@ -103,7 +119,25 @@ var _ = Describe("Podman network connect and disconnect", func() {
 		dis := podmanTest.Podman([]string{"network", "connect", netName, "foobar"})
 		dis.WaitWithDefaultTimeout()
 		Expect(dis.ExitCode()).ToNot(BeZero())
+	})
 
+	It("network connect with net mode slirp4netns should result in error", func() {
+		SkipIfRootless("network connect and disconnect are only rootful")
+		netName := "slirp" + stringid.GenerateNonCryptoID()
+		session := podmanTest.Podman([]string{"network", "create", netName})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(BeZero())
+		defer podmanTest.removeCNINetwork(netName)
+
+		session = podmanTest.Podman([]string{"create", "--name", "test", "--network", "slirp4netns", ALPINE})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(BeZero())
+		defer podmanTest.removeCNINetwork(netName)
+
+		con := podmanTest.Podman([]string{"network", "connect", netName, "test"})
+		con.WaitWithDefaultTimeout()
+		Expect(con.ExitCode()).ToNot(BeZero())
+		Expect(con.ErrorToString()).To(ContainSubstring(`network mode "slirp4netns" is not supported`))
 	})
 
 	It("podman connect on a container that already is connected to the network should error", func() {
@@ -159,6 +193,13 @@ var _ = Describe("Podman network connect and disconnect", func() {
 		exec = podmanTest.Podman([]string{"exec", "-it", "test", "ip", "addr", "show", "eth1"})
 		exec.WaitWithDefaultTimeout()
 		Expect(exec.ExitCode()).To(BeZero())
+
+		// make sure no logrus errors are shown https://github.com/containers/podman/issues/9602
+		rm := podmanTest.Podman([]string{"rm", "-f", "test"})
+		rm.WaitWithDefaultTimeout()
+		Expect(rm.ExitCode()).To(BeZero())
+		Expect(rm.ErrorToString()).To(Equal(""))
+
 	})
 
 	It("podman network connect when not running", func() {
@@ -189,6 +230,55 @@ var _ = Describe("Podman network connect and disconnect", func() {
 		exec := podmanTest.Podman([]string{"exec", "-it", "test", "ip", "addr", "show", "eth0"})
 		exec.WaitWithDefaultTimeout()
 		Expect(exec.ExitCode()).To(BeZero())
+
+		exec = podmanTest.Podman([]string{"exec", "-it", "test", "ip", "addr", "show", "eth1"})
+		exec.WaitWithDefaultTimeout()
+		Expect(exec.ExitCode()).To(BeZero())
+	})
+
+	It("podman network connect and run with network ID", func() {
+		SkipIfRemote("remote flakes to much I will fix this in another PR")
+		SkipIfRootless("network connect and disconnect are only rootful")
+		netName := "ID" + stringid.GenerateNonCryptoID()
+		session := podmanTest.Podman([]string{"network", "create", netName})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(BeZero())
+		defer podmanTest.removeCNINetwork(netName)
+
+		session = podmanTest.Podman([]string{"network", "ls", "--format", "{{.ID}}", "--filter", "name=" + netName})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(BeZero())
+		netID := session.OutputToString()
+
+		ctr := podmanTest.Podman([]string{"run", "-dt", "--name", "test", "--network", netID, ALPINE, "top"})
+		ctr.WaitWithDefaultTimeout()
+		Expect(ctr.ExitCode()).To(BeZero())
+
+		exec := podmanTest.Podman([]string{"exec", "-it", "test", "ip", "addr", "show", "eth0"})
+		exec.WaitWithDefaultTimeout()
+		Expect(exec.ExitCode()).To(BeZero())
+
+		// Create a second network
+		newNetName := "ID2" + stringid.GenerateNonCryptoID()
+		session = podmanTest.Podman([]string{"network", "create", newNetName})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(BeZero())
+		defer podmanTest.removeCNINetwork(newNetName)
+
+		session = podmanTest.Podman([]string{"network", "ls", "--format", "{{.ID}}", "--filter", "name=" + newNetName})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(BeZero())
+		newNetID := session.OutputToString()
+
+		connect := podmanTest.Podman([]string{"network", "connect", newNetID, "test"})
+		connect.WaitWithDefaultTimeout()
+		Expect(connect.ExitCode()).To(BeZero())
+
+		inspect := podmanTest.Podman([]string{"container", "inspect", "test", "--format", "{{.NetworkSettings.Networks}}"})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect.ExitCode()).To(BeZero())
+		Expect(inspect.OutputToString()).To(ContainSubstring(netName))
+		Expect(inspect.OutputToString()).To(ContainSubstring(newNetName))
 
 		exec = podmanTest.Podman([]string{"exec", "-it", "test", "ip", "addr", "show", "eth1"})
 		exec.WaitWithDefaultTimeout()
@@ -231,6 +321,42 @@ var _ = Describe("Podman network connect and disconnect", func() {
 		Expect(exec.ExitCode()).To(BeZero())
 
 		exec = podmanTest.Podman([]string{"exec", "-it", "test", "ip", "addr", "show", "eth1"})
+		exec.WaitWithDefaultTimeout()
+		Expect(exec.ExitCode()).ToNot(BeZero())
+	})
+
+	It("podman network disconnect and run with network ID", func() {
+		SkipIfRemote("remote flakes to much I will fix this in another PR")
+		SkipIfRootless("network connect and disconnect are only rootful")
+		netName := "aliasTest" + stringid.GenerateNonCryptoID()
+		session := podmanTest.Podman([]string{"network", "create", netName})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(BeZero())
+		defer podmanTest.removeCNINetwork(netName)
+
+		session = podmanTest.Podman([]string{"network", "ls", "--format", "{{.ID}}", "--filter", "name=" + netName})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(BeZero())
+		netID := session.OutputToString()
+
+		ctr := podmanTest.Podman([]string{"run", "-dt", "--name", "test", "--network", netID, ALPINE, "top"})
+		ctr.WaitWithDefaultTimeout()
+		Expect(ctr.ExitCode()).To(BeZero())
+
+		exec := podmanTest.Podman([]string{"exec", "-it", "test", "ip", "addr", "show", "eth0"})
+		exec.WaitWithDefaultTimeout()
+		Expect(exec.ExitCode()).To(BeZero())
+
+		dis := podmanTest.Podman([]string{"network", "disconnect", netID, "test"})
+		dis.WaitWithDefaultTimeout()
+		Expect(dis.ExitCode()).To(BeZero())
+
+		inspect := podmanTest.Podman([]string{"container", "inspect", "test", "--format", "{{len .NetworkSettings.Networks}}"})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect.ExitCode()).To(BeZero())
+		Expect(inspect.OutputToString()).To(Equal("0"))
+
+		exec = podmanTest.Podman([]string{"exec", "-it", "test", "ip", "addr", "show", "eth0"})
 		exec.WaitWithDefaultTimeout()
 		Expect(exec.ExitCode()).ToNot(BeZero())
 	})

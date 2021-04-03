@@ -1,11 +1,11 @@
 package server
 
 import (
-	"github.com/containers/podman/v2/libpod"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/pkg/domain/entities"
-	"github.com/containers/podman/v2/pkg/domain/entities/reports"
-	"github.com/containers/podman/v2/pkg/errorhandling"
+	"github.com/containers/podman/v3/libpod"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v3/pkg/domain/entities/reports"
+	"github.com/containers/podman/v3/pkg/errorhandling"
 )
 
 // No such image
@@ -224,5 +224,14 @@ type swagSystemPruneReport struct {
 	// in:body
 	Body struct {
 		entities.SystemPruneReport
+	}
+}
+
+// Auth response
+// swagger:response SystemAuthResponse
+type swagSystemAuthResponse struct {
+	// in:body
+	Body struct {
+		entities.AuthReport
 	}
 }

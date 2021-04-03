@@ -10,15 +10,14 @@ import (
 	"path/filepath"
 
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v2/libpod/define"
-	"github.com/containers/podman/v2/pkg/errorhandling"
-	"github.com/containers/podman/v2/pkg/kubeutils"
-	"github.com/containers/podman/v2/utils"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/pkg/errorhandling"
+	"github.com/containers/podman/v3/pkg/kubeutils"
+	"github.com/containers/podman/v3/utils"
 	"github.com/moby/term"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
-	"k8s.io/client-go/tools/remotecommand"
 )
 
 /* Sync with stdpipe_t in conmon.c */
@@ -40,7 +39,7 @@ func openUnixSocket(path string) (*net.UnixConn, error) {
 // Attach to the given container
 // Does not check if state is appropriate
 // started is only required if startContainer is true
-func (c *Container) attach(streams *define.AttachStreams, keys string, resize <-chan remotecommand.TerminalSize, startContainer bool, started chan bool, attachRdy chan<- bool) error {
+func (c *Container) attach(streams *define.AttachStreams, keys string, resize <-chan define.TerminalSize, startContainer bool, started chan bool, attachRdy chan<- bool) error {
 	if !streams.AttachOutput && !streams.AttachError && !streams.AttachInput {
 		return errors.Wrapf(define.ErrInvalidArg, "must provide at least one stream to attach to")
 	}
@@ -172,8 +171,8 @@ func processDetachKeys(keys string) ([]byte, error) {
 	return detachKeys, nil
 }
 
-func registerResizeFunc(resize <-chan remotecommand.TerminalSize, bundlePath string) {
-	kubeutils.HandleResizing(resize, func(size remotecommand.TerminalSize) {
+func registerResizeFunc(resize <-chan define.TerminalSize, bundlePath string) {
+	kubeutils.HandleResizing(resize, func(size define.TerminalSize) {
 		controlPath := filepath.Join(bundlePath, "ctl")
 		controlFile, err := os.OpenFile(controlPath, unix.O_WRONLY, 0)
 		if err != nil {

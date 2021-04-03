@@ -3,7 +3,7 @@ package server
 import (
 	"net/http"
 
-	"github.com/containers/podman/v2/pkg/api/handlers/libpod"
+	"github.com/containers/podman/v3/pkg/api/handlers/libpod"
 	"github.com/gorilla/mux"
 )
 
@@ -36,11 +36,11 @@ func (s *APIServer) registerPodsHandlers(r *mux.Router) error {
 	//   name: create
 	//   description: attributes for creating a pod
 	//   schema:
-	//     type: object
 	//     $ref: "#/definitions/PodSpecGenerator"
 	// responses:
 	//   200:
-	//     $ref: "#/definitions/IdResponse"
+	//     schema:
+	//       $ref: "#/definitions/IdResponse"
 	//   400:
 	//     $ref: "#/responses/BadParamError"
 	//   409:
