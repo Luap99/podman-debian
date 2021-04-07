@@ -1,6 +1,14 @@
 libpod (3.1.0+ds1-1) experimental; urgency=medium
 
   * New upstream release
+  * Reorganized git source layout. Drop a number of vendored libraries
+    (in favor of versions from the Debian archive)
+    - github.com/go-logr/logr
+    - github.com/moby/term
+    - github.com/nxadm/tail
+    - github.com/willf/bitset
+    - go.etcd.io/bbolt
+    - google.golang.org/protobuf
 
  -- Reinhard Tartler <siretart@tauware.de>  Sat, 03 Apr 2021 16:28:54 -0400
 
