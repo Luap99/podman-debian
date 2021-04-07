@@ -2,16 +2,13 @@ Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: libpod
 Source: https://github.com/containers/libpod
 Comment:
-    "~~" does not build with system library.
-    "~"  not packaged or not available (e.g. removed).
- .
  Upstream "github.com/uber/*" libraries depend on forked prometheus so
  using bundled/vendored ones make sense to avoid burden of non-reusable
  packages with heavier dependencies than vendored subset of those libs.
  .
  Protobuf in debian is not ready yet, cf. #961814
 Files-Excluded:
-    vendor/
+    vendor
 Files-Included:
     vendor/github.com/containers/conmon
     vendor/github.com/cri-o/ocicni
@@ -67,80 +64,15 @@ Files: vendor/github.com/docker/go-plugins-helpers/NOTICE
 Copyright: 2012-2015, Docker, Inc.
 License: Expat
 
-Files: vendor/github.com/go-logr/logr/logr.go
-Copyright: 2019, The logr Authors.
-License: Apache-2.0
-
-Files: vendor/github.com/gorilla/*
-Copyright: 2012, Rodrigo Moraes
-License: BSD-3-clause
-
 Files: vendor/github.com/gorilla/schema/*
 Copyright: 2012, Rodrigo Moraes
 License: BSD-3-clause
 
-Files: vendor/github.com/mattn/*
-Copyright:
-    2016-2019 Red Hat, Inc.
- 2016, Yasuhiro Matsumoto
-License: Apache-2.0 or Expat
-
-Files: vendor/github.com/moby/term/*
-Copyright: 2015, Docker, inc. Code released under the Apache 2.0 license. Docs released under Creative commons.
-License: Apache-2.0
-
-Files: vendor/github.com/moby/term/ascii.go
-  vendor/github.com/moby/term/go.mod
-  vendor/github.com/moby/term/proxy.go
-  vendor/github.com/moby/term/tc.go
-  vendor/github.com/moby/term/term.go
-  vendor/github.com/moby/term/term_windows.go
-  vendor/github.com/moby/term/termios.go
-  vendor/github.com/moby/term/termios_bsd.go
-  vendor/github.com/moby/term/termios_nonbsd.go
-  vendor/github.com/moby/term/winsize.go
-Copyright:
-    2016-2019 Red Hat, Inc.
-License: Apache-2.0
-
-Files: vendor/github.com/moby/term/windows/*
-Copyright: 2016-2019, Red Hat, Inc.
-License: Apache-2.0
-
-Files: vendor/github.com/nxadm/*
-Copyright: 2015, Hewlett Packard Enterprise Development LP
-  2013, 2014, ActiveState
-License: Expat
-
-Files: vendor/github.com/nxadm/tail/ratelimiter/*
-Copyright: 2013, 99designs
-License: Expat
-
 Files: vendor/github.com/uber/*
-Copyright: 2017, 2018, Uber Technologies, Inc.
+Copyright: 2017,2018 Uber Technologies, Inc.
 License: Apache-2.0
-
-Files: vendor/github.com/willf/*
-Copyright: 2014, Will Fitzgerald.
-License: BSD-3-clause
-
-Files: vendor/go.etcd.io/*
-Copyright: 2013, Ben Johnson
-License: Expat
-
-Files: vendor/google.golang.org/*
-Copyright: 2018, The Go Authors.
-License: BSD-3-clause
-
-Files: vendor/google.golang.org/protobuf/types/*
-Copyright: 2008, Google Inc.
-License: BSD-3-clause
 
 Files: vendor/k8s.io/*
-Copyright: 2014-2020, The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/api/*
 Copyright: The Kubernetes Authors.
 License: Apache-2.0
 
@@ -168,11 +100,6 @@ Files: vendor/k8s.io/apimachinery/pkg/*
 Copyright: 2014-2020, The Kubernetes Authors.
 License: Apache-2.0
 
-Files: vendor/k8s.io/apimachinery/pkg/api/errors/OWNERS
-Copyright:
-    2014-2019 The Kubernetes Authors.
-License: Apache-2.0
-
 Files: vendor/k8s.io/apimachinery/pkg/api/resource/OWNERS
 Copyright:
     2014-2019 The Kubernetes Authors.
@@ -193,10 +120,6 @@ Files: vendor/k8s.io/apimachinery/pkg/apis/meta/v1/generated.pb.go
   vendor/k8s.io/apimachinery/pkg/apis/meta/v1/zz_generated.conversion.go
   vendor/k8s.io/apimachinery/pkg/apis/meta/v1/zz_generated.deepcopy.go
   vendor/k8s.io/apimachinery/pkg/apis/meta/v1/zz_generated.defaults.go
-Copyright: The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/apimachinery/pkg/apis/meta/v1/unstructured/zz_generated.deepcopy.go
 Copyright: The Kubernetes Authors.
 License: Apache-2.0
 
@@ -225,80 +148,9 @@ Files: vendor/k8s.io/apimachinery/pkg/watch/zz_generated.deepcopy.go
 Copyright: The Kubernetes Authors.
 License: Apache-2.0
 
-Files: vendor/k8s.io/client-go/pkg/apis/clientauthentication/OWNERS
-Copyright:
-    2014-2019 The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/client-go/pkg/apis/clientauthentication/v1alpha1/*
-Copyright: The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/client-go/pkg/apis/clientauthentication/v1alpha1/doc.go
-  vendor/k8s.io/client-go/pkg/apis/clientauthentication/v1alpha1/register.go
-  vendor/k8s.io/client-go/pkg/apis/clientauthentication/v1alpha1/types.go
-Copyright: 2014-2020, The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/client-go/pkg/apis/clientauthentication/v1beta1/zz_generated.conversion.go
-  vendor/k8s.io/client-go/pkg/apis/clientauthentication/v1beta1/zz_generated.deepcopy.go
-  vendor/k8s.io/client-go/pkg/apis/clientauthentication/v1beta1/zz_generated.defaults.go
-Copyright: The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/client-go/pkg/apis/clientauthentication/zz_generated.deepcopy.go
-Copyright: The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/client-go/rest/OWNERS
-Copyright:
-    2014-2019 The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/client-go/rest/zz_generated.deepcopy.go
-Copyright: The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/client-go/tools/clientcmd/api/zz_generated.deepcopy.go
-Copyright: The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/client-go/tools/metrics/*
-Copyright:
-    2014-2019 The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/client-go/tools/metrics/metrics.go
-Copyright: 2014-2020, The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/client-go/transport/OWNERS
-Copyright:
-    2014-2019 The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/client-go/util/cert/OWNERS
-Copyright:
-    2014-2019 The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/client-go/util/keyutil/*
-Copyright:
-    2014-2019 The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/client-go/util/keyutil/key.go
-Copyright: 2014-2020, The Kubernetes Authors.
-License: Apache-2.0
-
 Files: vendor/k8s.io/klog/*
 Copyright:
     2013 Google Inc
-License: Apache-2.0
-
-Files: vendor/k8s.io/klog/klog.go
-  vendor/k8s.io/klog/klog_file.go
-Copyright: 2013, Google Inc.
 License: Apache-2.0
 
 Files: vendor/k8s.io/klog/v2/klog.go
