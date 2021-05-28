@@ -170,7 +170,6 @@ Depends: ${misc:Depends},
     ,golang-github-pkg-errors-dev
     ,golang-github-pkg-profile-dev
     ,golang-github-rootless-containers-rootlesskit-dev
-    ,golang-github-seccomp-containers-golang-dev
     ,golang-github-seccomp-libseccomp-golang-dev
     ,golang-github-sirupsen-logrus-dev
     ,golang-github-stretchr-testify-dev
