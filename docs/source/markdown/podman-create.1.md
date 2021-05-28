@@ -968,11 +968,72 @@ Remote connections use local containers.conf for defaults
 Set the umask inside the container. Defaults to `0022`.
 Remote connections use local containers.conf for defaults
 
-#### **\-\-uidmap**=*container_uid:host_uid:amount*
+#### **\-\-uidmap**=*container_uid*:*from_uid*:*amount*
 
-UID map for the user namespace. Using this flag will run the container with user namespace enabled. It conflicts with the `--userns` and `--subuidname` flags.
+Run the container in a new user namespace using the supplied mapping. This
+option conflicts with the **\-\-userns** and **\-\-subuidname** options. This
+option provides a way to map host UIDs to container UIDs. It can be passed
+several times to map different ranges.
 
-The following example maps uids 0-2000 in the container to the uids 30000-31999 on the host and gids 0-2000 in the container to the gids 30000-31999 on the host. `--uidmap=0:30000:2000`
+The _from_uid_ value is based upon the user running the command, either rootful or rootless users.
+* rootful user:  *container_uid*:*host_uid*:*amount*
+* rootless user: *container_uid*:*intermediate_uid*:*amount*
+
+When **podman create** is called by a privileged user, the option **\-\-uidmap**
+works as a direct mapping between host UIDs and container UIDs.
+
+host UID -> container UID
+
+The _amount_ specifies the number of consecutive UIDs that will be mapped.
+If for example _amount_ is **4** the mapping would look like:
+
+|   host UID     |    container UID    |
+| -              | -                   |
+| _from_uid_     | _container_uid_     |
+| _from_uid_ + 1 | _container_uid_ + 1 |
+| _from_uid_ + 2 | _container_uid_ + 2 |
+| _from_uid_ + 3 | _container_uid_ + 3 |
+
+When **podman create** is called by an unprivileged user (i.e. running rootless),
+the value _from_uid_ is interpreted as an "intermediate UID". In the rootless
+case, host UIDs are not mapped directly to container UIDs. Instead the mapping
+happens over two mapping steps:
+
+host UID -> intermediate UID -> container UID
+
+The **\-\-uidmap** option only influences the second mapping step.
+
+The first mapping step is derived by Podman from the contents of the file
+_/etc/subuid_ and the UID of the user calling Podman.
+
+First mapping step:
+
+| host UID                                         | intermediate UID |
+| -                                                |                - |
+| UID for the user starting Podman                 |                0 |
+| 1st subordinate UID for the user starting Podman |                1 |
+| 2nd subordinate UID for the user starting Podman |                2 |
+| 3rd subordinate UID for the user starting Podman |                3 |
+| nth subordinate UID for the user starting Podman |                n |
+
+To be able to use intermediate UIDs greater than zero, the user needs to have
+subordinate UIDs configured in _/etc/subuid_. See **subuid**(5).
+
+The second mapping step is configured with **\-\-uidmap**.
+
+If for example _amount_ is **5** the second mapping step would look like:
+
+|   intermediate UID   |    container UID    |
+| -                    | -                   |
+| _from_uid_           | _container_uid_     |
+| _from_uid_ + 1       | _container_uid_ + 1 |
+| _from_uid_ + 2       | _container_uid_ + 2 |
+| _from_uid_ + 3       | _container_uid_ + 3 |
+| _from_uid_ + 4       | _container_uid_ + 4 |
+
+Even if a user does not have any subordinate UIDs in  _/etc/subuid_,
+**\-\-uidmap** could still be used to map the normal UID of the user to a
+container UID by running `podman create --uidmap $container_uid:0:1 --user $container_uid ...`.
 
 #### **\-\-ulimit**=*option*
 
@@ -989,25 +1050,21 @@ The following examples are all valid:
 
 Without this argument the command will be run as root in the container.
 
-#### **\-\-userns**=*auto*[:OPTIONS]
-#### **\-\-userns**=*host*
-#### **\-\-userns**=*keep-id*
-#### **\-\-userns**=container:container
-#### **\-\-userns**=private
-#### **\-\-userns**=*ns:my_namespace*
+#### **\-\-userns**=*mode*
 
-Set the user namespace mode for the container. It defaults to the **PODMAN_USERNS** environment variable. An empty value means user namespaces are disabled.
+Set the user namespace mode for the container. It defaults to the **PODMAN_USERNS** environment variable. An empty value ("") means user namespaces are disabled unless an explicit mapping is set with the **\-\-uidmap** and **\-\-gidmap** options.
 
+Valid _mode_ values are:
 
-- `auto`: automatically create a namespace. It is possible to specify other options to `auto`. The supported options are
-  **size=SIZE** to specify an explicit size for the automatic user namespace. e.g. `--userns=auto:size=8192`. If `size` is not specified, `auto` will guess a size for the user namespace.
-  **uidmapping=HOST_UID:CONTAINER_UID:SIZE** to force a UID mapping to be present in the user namespace.
-  **gidmapping=HOST_UID:CONTAINER_UID:SIZE** to force a GID mapping to be present in the user namespace.
-- `container`: join the user namespace of the specified container.
-- `host`: run in the user namespace of the caller. This is the default if no user namespace options are set. The processes running in the container will have the same privileges on the host as any other process launched by the calling user.
-- `keep-id`: creates a user namespace where the current rootless user's UID:GID are mapped to the same values in the container. This option is ignored for containers created by the root user.
-- `ns`: run the container in the given existing user namespace.
-- `private`: create a new namespace for the container (default)
+- **auto[:**_OPTIONS,..._**]**: automatically create a namespace. It is possible to specify these options to `auto`:
+  - **gidmapping=**_HOST_GID:CONTAINER_GID:SIZE_: to force a GID mapping to be present in the user namespace.
+  - **size=**_SIZE_: to specify an explicit size for the automatic user namespace. e.g. `--userns=auto:size=8192`. If `size` is not specified, `auto` will estimate a size for the user namespace.
+  - **uidmapping=**_HOST_UID:CONTAINER_UID:SIZE_: to force a UID mapping to be present in the user namespace.
+- **container:**_id_: join the user namespace of the specified container.
+- **host**: run in the user namespace of the caller. The processes running in the container will have the same privileges on the host as any other process launched by the calling user (default).
+- **keep-id**: creates a user namespace where the current rootless user's UID:GID are mapped to the same values in the container. This option is ignored for containers created by the root user.
+- **ns:**_namespace_: run the container in the given existing user namespace.
+- **private**: create a new namespace for the container.
 
 This option is incompatible with **\-\-gidmap**, **\-\-uidmap**, **\-\-subuidname** and **\-\-subgidname**.
 
@@ -1029,7 +1086,7 @@ Create a bind mount. If you specify, ` -v /HOST-DIR:/CONTAINER-DIR`, Podman
 bind mounts `/HOST-DIR` in the host to `/CONTAINER-DIR` in the Podman
 container. Similarly, `-v SOURCE-VOLUME:/CONTAINER-DIR` will mount the volume
 in the host to the container. If no such named volume exists, Podman will
-create one. The `OPTIONS` are a comma delimited list and can be: <sup>[[1]](#Footnote1)</sup>
+create one. The `OPTIONS` are a comma delimited list and can be: <sup>[[1]](#Footnote1)</sup>  (Note when using the remote client, the volumes will be mounted from the remote server, not necessarly the client machine.)
 
 The _options_ is a comma delimited list and can be:
 
@@ -1073,9 +1130,14 @@ See examples.
 
   `Chowning Volume Mounts`
 
-By default, Podman does not change the owner and group of source volume directories mounted into containers. If a container is created in a new user namespace, the UID and GID in the container may correspond to another UID and GID on the host.
+By default, Podman does not change the owner and group of source volume
+directories mounted into containers. If a container is created in a new user
+namespace, the UID and GID in the container may correspond to another UID and
+GID on the host.
 
-The `:U` suffix tells Podman to use the correct host UID and GID based on the UID and GID within the container, to change recursively the owner and group of the source volume.
+The `:U` suffix tells Podman to use the correct host UID and GID based on the
+UID and GID within the container, to change recursively the owner and group of
+the source volume.
 
 **Warning** use with caution since this will modify the host filesystem.
 
