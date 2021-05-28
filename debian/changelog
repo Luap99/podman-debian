@@ -1,8 +1,10 @@
 libpod (3.1.2+ds1-1) experimental; urgency=medium
 
   * New upstream release
+  * Drop dependency on golang-github-seccomp-containers-golang-dev,
+    Closes: #988445
 
- -- Reinhard Tartler <siretart@tauware.de>  Fri, 28 May 2021 17:39:51 -0400
+ -- Reinhard Tartler <siretart@tauware.de>  Fri, 28 May 2021 17:57:28 -0400
 
 libpod (3.1.0+ds1-1) experimental; urgency=medium
 
