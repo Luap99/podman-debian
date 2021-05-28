@@ -10,13 +10,16 @@ Comment:
 Files-Excluded:
     vendor
 Files-Included:
+    vendor/github.com/checkpoint-restore
     vendor/github.com/containers/conmon
     vendor/github.com/cri-o/ocicni
     vendor/github.com/docker/go-plugins-helpers
     vendor/github.com/gorilla/schema
-    vendor/github.com/fatih/camelcase
     vendor/github.com/moby/sys
     vendor/github.com/uber/jaeger-client-go
+    vendor/k8s.io/api
+    vendor/k8s.io/apimachinery
+    vendor/k8s.io/klog
 
 Files: *
 Copyright:
