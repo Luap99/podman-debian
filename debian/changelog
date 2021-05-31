@@ -1,3 +1,10 @@
+libpod (3.1.2+ds1-2) experimental; urgency=medium
+
+  * add missing vendored files included in tarball
+  * (explicitly) build-depend on golang-github-moby-term-dev
+
+ -- Reinhard Tartler <siretart@tauware.de>  Mon, 31 May 2021 09:55:52 -0400
+
 libpod (3.1.2+ds1-1) experimental; urgency=medium
 
   * New upstream release
