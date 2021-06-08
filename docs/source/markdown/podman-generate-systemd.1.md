@@ -10,7 +10,7 @@ podman\-generate\-systemd - Generate systemd unit file(s) for a container or pod
 **podman generate systemd** will create a systemd unit file that can be used to control a container or pod.
 By default, the command will print the content of the unit files to stdout.
 
-_Note: If you use this command with the remote client, you would still have to place the generated units on the remote system._
+_Note: If you use this command with the remote client, you would still have to place the generated units on the remote system.  Moreover, please make sure that the XDG_RUNTIME_DIR environment variable is set.  If unset, you may set it via `export XDG_RUNTIME_DIR=/run/user/$(id -u)`._
 
 ## OPTIONS
 
@@ -75,7 +75,7 @@ Description=Podman container-de1e3223b1b888bc02d0962dd6cb5855eb00734061013ffdd34
 Documentation=man:podman-generate-systemd(1)
 Wants=network.target
 After=network-online.target
-RequiresMountsFor=/var/lib/containers/storage /var/run/container/storage
+RequiresMountsFor=/var/run/container/storage
 
 [Service]
 Restart=always
@@ -104,7 +104,7 @@ Description=Podman container-busy_moser.service
 Documentation=man:podman-generate-systemd(1)
 Wants=network.target
 After=network-online.target
-RequiresMountsFor=/var/lib/containers/storage /var/run/container/storage
+RequiresMountsFor=/var/run/container/storage
 
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
@@ -146,7 +146,7 @@ Requires=container-amazing_chandrasekhar.service container-jolly_shtern.service
 Before=container-amazing_chandrasekhar.service container-jolly_shtern.service
 Wants=network.target
 After=network-online.target
-RequiresMountsFor=/var/lib/containers/storage /var/run/container/storage
+RequiresMountsFor=/var/run/container/storage
 
 [Service]
 Restart=on-failure
@@ -233,10 +233,10 @@ CONTAINER ID  IMAGE                            COMMAND  CREATED        STATUS   
 bb310a0780ae  docker.io/library/alpine:latest  /bin/sh  3 minutes ago  Created                      busy_moser
 ```
 ## SEE ALSO
-[podman(1)](podman.1.md), [podman-container(1)](podman-container.1.md), systemctl(1), systemd.unit(5), systemd.service(5)
+[**podman**(1)](podman.1.md), [**podman-container**(1)](podman-container.1.md), **systemctl**(1), **systemd.unit**(5), **systemd.service**(5), **conmon**(8).
 
 ## HISTORY
-April 2020, Updated details and added usecase to use generated .service files as root and non-root, by Sujil Shah (sushah at redhat dot com)
+April 2020, Updated details and added use case to use generated .service files as root and non-root, by Sujil Shah (sushah at redhat dot com)
 
 August 2019, Updated with pod support by Valentin Rothberg (rothberg at redhat dot com)
 

@@ -82,7 +82,7 @@ Assign a name to the pod.
 #### **\-\-network**=*mode*, **\-\-net**
 
 Set network mode for the pod. Supported values are
-- **bridge**: Create a network stack on the default bridge. This is the default for rootful containers.
+- **bridge**: Create a network stack on the default bridge. This is the default for rootfull containers.
 - **host**: Do not create a network namespace, all containers in the pod will use the host's network. Note: the host mode gives the container full access to local system services such as D-bus and is therefore considered insecure.
 - Comma-separated list of the names of CNI networks the pod should join.
 - **slirp4netns[:OPTIONS,...]**: use slirp4netns to create a user network stack.  This is the default for rootless containers.  It is possible to specify these additional options:
@@ -125,7 +125,7 @@ If another pod with the same name already exists, replace and remove it.  The de
 
 #### **\-\-share**=*namespace*
 
-A comma delimited list of kernel namespaces to share. If none or "" is specified, no namespaces will be shared. The namespaces to choose from are ipc, net, pid, uts.
+A comma-separated list of kernel namespaces to share. If none or "" is specified, no namespaces will be shared. The namespaces to choose from are ipc, net, pid, uts.
 
 The operator can identify a pod in three ways:
 UUID long identifier (“f78375b1c487e03c9438c729345e54db9d20cfa2ac1fc3494b6eb60872e74778”)

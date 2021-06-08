@@ -109,4 +109,40 @@ var _ = Describe("Podman Info", func() {
 		Expect(err).To(BeNil())
 		Expect(string(out)).To(Equal(expect))
 	})
+
+	It("podman info check RemoteSocket", func() {
+		session := podmanTest.Podman([]string{"info", "--format", "{{.Host.RemoteSocket.Path}}"})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+		Expect(session.OutputToString()).To(MatchRegexp("/run/.*podman.*sock"))
+
+		if IsRemote() {
+			session = podmanTest.Podman([]string{"info", "--format", "{{.Host.RemoteSocket.Exists}}"})
+			session.WaitWithDefaultTimeout()
+			Expect(session.ExitCode()).To(Equal(0))
+			Expect(session.OutputToString()).To(ContainSubstring("true"))
+		}
+	})
+
+	It("verify ServiceIsRemote", func() {
+		session := podmanTest.Podman([]string{"info", "--format", "{{.Host.ServiceIsRemote}}"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).To(Exit(0))
+
+		if podmanTest.RemoteTest {
+			Expect(session.OutputToString()).To(ContainSubstring("true"))
+		} else {
+			Expect(session.OutputToString()).To(ContainSubstring("false"))
+		}
+	})
+
+	It("Podman info must contain cgroupControllers with ReleventControllers", func() {
+		SkipIfRootless("Hard to tell which controllers are going to be enabled for rootless")
+		SkipIfRootlessCgroupsV1("Disable cgroups not supported on cgroupv1 for rootless users")
+		session := podmanTest.Podman([]string{"info", "--format", "{{.Host.CgroupControllers}}"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).To(Exit(0))
+		Expect(session.OutputToString()).To(ContainSubstring("memory"))
+		Expect(session.OutputToString()).To(ContainSubstring("pids"))
+	})
 })

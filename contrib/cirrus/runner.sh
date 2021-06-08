@@ -74,6 +74,10 @@ function _run_upgrade_test() {
     bats test/upgrade |& logformatter
 }
 
+function _run_bud() {
+    ./test/buildah-bud/run-buildah-bud-tests |& logformatter
+}
+
 function _run_bindings() {
     # shellcheck disable=SC2155
     export PATH=$PATH:$GOSRC/hack
@@ -198,8 +202,7 @@ function _run_build() {
     # Ensure always start from clean-slate with all vendor modules downloaded
     make clean
     make vendor
-    make podman-release
-    make podman-remote-linux-release
+    make podman-release.tar.gz  # includes podman, podman-remote, and docs
 }
 
 function _run_altbuild() {
@@ -215,7 +218,7 @@ function _run_altbuild() {
             make build-all-new-commits GIT_BASE_BRANCH=origin/$DEST_BRANCH
             ;;
         *Windows*)
-            make podman-remote-windows-release
+            make podman-remote-release-windows.zip
             make podman.msi
             ;;
         *Without*)
@@ -265,13 +268,18 @@ function _run_release() {
 }
 
 logformatter() {
-    # Use similar format as human-friendly task name from .cirrus.yml
-    # shellcheck disable=SC2154
-    output_name="$TEST_FLAVOR-$PODBIN_NAME-$DISTRO_NV-$PRIV_NAME-$TEST_ENVIRON"
-    # Requires stdin and stderr combined!
-    cat - \
-        |& awk --file "${CIRRUS_WORKING_DIR}/${SCRIPT_BASE}/timestamp.awk" \
-        |& "${CIRRUS_WORKING_DIR}/${SCRIPT_BASE}/logformatter" "$output_name"
+    if [[ "$CI" == "true" ]]; then
+        # Use similar format as human-friendly task name from .cirrus.yml
+        # shellcheck disable=SC2154
+        output_name="$TEST_FLAVOR-$PODBIN_NAME-$DISTRO_NV-$PRIV_NAME-$TEST_ENVIRON"
+        # Requires stdin and stderr combined!
+        cat - \
+            |& awk --file "${CIRRUS_WORKING_DIR}/${SCRIPT_BASE}/timestamp.awk" \
+            |& "${CIRRUS_WORKING_DIR}/${SCRIPT_BASE}/logformatter" "$output_name"
+    else
+        # Assume script is run by a human, they want output immediately
+        cat -
+    fi
 }
 
 # Handle local|remote integration|system testing in a uniform way
@@ -283,18 +291,6 @@ dotest() {
     if ((CONTAINER==0)) && [[ "$TEST_ENVIRON" == "container" ]]; then
         exec_container  # does not return
     fi;
-
-    # shellcheck disable=SC2154
-    if [[ "$PRIV_NAME" == "rootless" ]] && [[ "$UID" -eq 0 ]]; then
-        req_env_vars ROOTLESS_USER
-        msg "Re-executing runner through ssh as user '$ROOTLESS_USER'"
-        msg "************************************************************"
-        set -x
-        exec ssh $ROOTLESS_USER@localhost \
-                -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no \
-                -o CheckHostIP=no $GOSRC/$SCRIPT_BASE/runner.sh
-        # does not return
-    fi
 
     # containers/automation sets this to 0 for its dbg() function
     # but the e2e integration tests are also sensitive to it.
@@ -335,6 +331,19 @@ msg "************************************************************"
 
 ((${SETUP_ENVIRONMENT:-0})) || \
     die "Expecting setup_environment.sh to have completed successfully"
+
+# shellcheck disable=SC2154
+if [[ "$PRIV_NAME" == "rootless" ]] && [[ "$UID" -eq 0 ]]; then
+    req_env_vars ROOTLESS_USER
+    msg "Re-executing runner through ssh as user '$ROOTLESS_USER'"
+    msg "************************************************************"
+    set -x
+    exec ssh $ROOTLESS_USER@localhost \
+            -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no \
+            -o CheckHostIP=no $GOSRC/$SCRIPT_BASE/runner.sh
+    # Does not return!
+fi
+# else: not running rootless, do nothing special
 
 cd "${GOSRC}/"
 

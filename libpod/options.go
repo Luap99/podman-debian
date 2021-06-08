@@ -293,6 +293,17 @@ func WithHooksDir(hooksDirs ...string) RuntimeOption {
 	}
 }
 
+// WithCDI sets the devices to check for for CDI configuration.
+func WithCDI(devices []string) CtrCreateOption {
+	return func(ctr *Container) error {
+		if ctr.valid {
+			return define.ErrCtrFinalized
+		}
+		ctr.config.CDIDevices = devices
+		return nil
+	}
+}
+
 // WithDefaultMountsFile sets the file to look at for default mounts (mainly
 // secrets).
 // Note we are not saving this in the database as it is for testing purposes
@@ -753,6 +764,19 @@ func WithStopTimeout(timeout uint) CtrCreateOption {
 		}
 
 		ctr.config.StopTimeout = timeout
+
+		return nil
+	}
+}
+
+// WithTimeout sets the maximum time a container is allowed to run"
+func WithTimeout(timeout uint) CtrCreateOption {
+	return func(ctr *Container) error {
+		if ctr.valid {
+			return define.ErrCtrFinalized
+		}
+
+		ctr.config.Timeout = timeout
 
 		return nil
 	}
@@ -1692,6 +1716,39 @@ func WithSecrets(secretNames []string) CtrCreateOption {
 	}
 }
 
+// WithSecrets adds environment variable secrets to the container
+func WithEnvSecrets(envSecrets map[string]string) CtrCreateOption {
+	return func(ctr *Container) error {
+		ctr.config.EnvSecrets = make(map[string]*secrets.Secret)
+		if ctr.valid {
+			return define.ErrCtrFinalized
+		}
+		manager, err := secrets.NewManager(ctr.runtime.GetSecretsStorageDir())
+		if err != nil {
+			return err
+		}
+		for target, src := range envSecrets {
+			secr, err := manager.Lookup(src)
+			if err != nil {
+				return err
+			}
+			ctr.config.EnvSecrets[target] = secr
+		}
+		return nil
+	}
+}
+
+// WithPidFile adds pidFile to the container
+func WithPidFile(pidFile string) CtrCreateOption {
+	return func(ctr *Container) error {
+		if ctr.valid {
+			return define.ErrCtrFinalized
+		}
+		ctr.config.PidFile = pidFile
+		return nil
+	}
+}
+
 // Pod Creation Options
 
 // WithInfraImage sets the infra image for libpod.
@@ -2280,6 +2337,19 @@ func WithPodSlirp4netns(networkOptions map[string][]string) PodCreateOption {
 		pod.config.InfraContainer.Slirp4netns = true
 		pod.config.InfraContainer.NetworkOptions = networkOptions
 
+		return nil
+	}
+}
+
+// WithVolatile sets the volatile flag for the container storage.
+// The option can potentially cause data loss when used on a container that must survive a machine reboot.
+func WithVolatile() CtrCreateOption {
+	return func(ctr *Container) error {
+		if ctr.valid {
+			return define.ErrCtrFinalized
+		}
+
+		ctr.config.Volatile = true
 		return nil
 	}
 }

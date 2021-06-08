@@ -23,7 +23,7 @@ touch: cannot touch '/content/file': Permission denied
 
 #### Solution
 
-This is usually caused by SELinux.
+This is sometimes caused by SELinux, and sometimes by user namespaces.
 
 Labeling systems like SELinux require that proper labels are placed on volume
 content mounted into a container. Without a label, the security system might
@@ -46,6 +46,14 @@ types of containers we recommend that disable SELinux separation.  The option `-
 will disable SELinux separation for the container.
 
 $ podman run --security-opt label=disable -v ~:/home/user fedora touch /home/user/file
+
+In cases where the container image runs as a specific, non-root user, though, the
+solution is to fix the user namespace.  This would include container images such as
+the Jupyter Notebook image (which runs as "jovyan") and the Postgres image (which runs
+as "postgres").  In either case, use the `--userns` switch to map user namespaces,
+most of the time by using keep_id option.
+
+$ podman run -v "$PWD":/home/jovyan/work --userns=keep_id jupyter/scipy-notebook
 
 ---
 ### 3) No such image or Bare keys cannot contain ':'
@@ -203,12 +211,12 @@ Rootless Podman requires the newuidmap and newgidmap programs to be installed.
 
 #### Symptom
 
-If you are running Podman or buildah as a not root user, you get an error complaining about
+If you are running Podman or Buildah as a rootless user, you get an error complaining about
 a missing newuidmap executable.
 
 ```
 podman run -ti fedora sh
-cannot find newuidmap: exec: "newuidmap": executable file not found in $PATH
+command required for rootless mode with multiple IDs: exec: "newuidmap": executable file not found in $PATH
 ```
 
 #### Solution
@@ -487,10 +495,10 @@ $ podman unshare cat /proc/self/uid_map
 
 Reference [subuid](http://man7.org/linux/man-pages/man5/subuid.5.html) and [subgid](http://man7.org/linux/man-pages/man5/subgid.5.html) man pages for more detail.
 
-### 20) Passed-in device can't be accessed in rootless container
+### 20) Passed-in devices or files can't be accessed in rootless container
 
-As a non-root user you have group access rights to a device that you want to
-pass into a rootless container with `--device=...`.
+As a non-root user you have group access rights to a device or files that you
+want to pass into a rootless container with `--device=...` or `--volume=...`
 
 #### Symptom
 
@@ -499,9 +507,9 @@ Any access inside the container is rejected with "Permission denied".
 #### Solution
 
 The runtime uses `setgroups(2)` hence the process looses all additional groups
-the non-root user has. If you use the `crun` runtime, 0.10.4 or newer,
-then you can enable a workaround by adding `--annotation io.crun.keep_original_groups=1`
-to the `podman` command line.
+the non-root user has. Use the `--group-add keep-groups` flag to pass the
+user's supplementary group access into the container. Currently only available
+with the `crun` OCI runtime.
 
 ### 21) A rootless container running in detached mode is closed at logout
 

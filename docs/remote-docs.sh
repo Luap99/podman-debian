@@ -6,7 +6,17 @@ PLATFORM=$1                         ## linux, windows or darwin
 TARGET=${2}                         ## where to output files
 SOURCES=${@:3}                      ## directories to find markdown files
 
-PODMAN=${PODMAN:-bin/podman-remote} ## location overridden for testing
+# Overridden for testing.  Native podman-remote binary expected filepaths
+if [[ -z "$PODMAN" ]]; then
+    case $(env -i HOME=$HOME PATH=$PATH go env GOOS) in
+        windows)
+            PODMAN=bin/windows/podman.exe ;;
+        darwin)
+            PODMAN=bin/darwin/podman ;;
+        *)  # Assume "linux"
+            PODMAN=bin/podman-remote ;;
+    esac
+fi
 
 function usage() {
     echo >&2 "$0 PLATFORM TARGET SOURCES..."
@@ -70,7 +80,10 @@ function html_fn() {
         local link=$(sed -e 's?.so man1/\(.*\)?\1?' <$dir/links/${file%.md})
         markdown=$dir/$link.md
     fi
-    pandoc --ascii --lua-filter=docs/links-to-html.lua -o $TARGET/${file%%.*}.html $markdown
+    pandoc --ascii --standalone --from markdown-smart \
+        --lua-filter=docs/links-to-html.lua \
+        --lua-filter=docs/use-pagetitle.lua \
+        -o $TARGET/${file%%.*}.html $markdown
 }
 
 # Run 'podman help' (possibly against a subcommand, e.g. 'podman help image')

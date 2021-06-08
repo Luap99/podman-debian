@@ -93,6 +93,7 @@ type ContainerCLIOpts struct {
 	ReadOnlyTmpFS     bool
 	Restart           string
 	Replace           bool
+	Requires          []string
 	Rm                bool
 	RootFS            bool
 	Secrets           []string
@@ -107,6 +108,7 @@ type ContainerCLIOpts struct {
 	SubGIDName        string
 	Sysctl            []string
 	Systemd           string
+	Timeout           uint
 	TmpFS             []string
 	TTY               bool
 	Timezone          string
@@ -121,6 +123,7 @@ type ContainerCLIOpts struct {
 	VolumesFrom       []string
 	Workdir           string
 	SeccompPolicy     string
+	PidFile           string
 
 	Net *entities.NetOptions
 
@@ -250,21 +253,24 @@ func ContainerCreateToContainerCLIOpts(cc handlers.CreateContainerConfig, cgroup
 		return nil, nil, err
 	}
 
-	netNS := specgen.Namespace{
-		NSMode: nsmode.NSMode,
-		Value:  nsmode.Value,
+	var netOpts map[string][]string
+	parts := strings.SplitN(string(cc.HostConfig.NetworkMode), ":", 2)
+	if len(parts) > 1 {
+		netOpts = make(map[string][]string)
+		netOpts[parts[0]] = strings.Split(parts[1], ",")
 	}
 
 	// network
 	// Note: we cannot emulate compat exactly here. we only allow specifics of networks to be
 	// defined when there is only one network.
 	netInfo := entities.NetOptions{
-		AddHosts:     cc.HostConfig.ExtraHosts,
-		DNSOptions:   cc.HostConfig.DNSOptions,
-		DNSSearch:    cc.HostConfig.DNSSearch,
-		DNSServers:   dns,
-		Network:      netNS,
-		PublishPorts: specPorts,
+		AddHosts:       cc.HostConfig.ExtraHosts,
+		DNSOptions:     cc.HostConfig.DNSOptions,
+		DNSSearch:      cc.HostConfig.DNSSearch,
+		DNSServers:     dns,
+		Network:        nsmode,
+		PublishPorts:   specPorts,
+		NetworkOptions: netOpts,
 	}
 
 	// network names
@@ -294,6 +300,11 @@ func ContainerCreateToContainerCLIOpts(cc handlers.CreateContainerConfig, cgroup
 				// if IP address is provided
 				if len(ep.IPAddress) > 0 {
 					staticIP := net.ParseIP(ep.IPAddress)
+					netInfo.StaticIP = &staticIP
+				}
+				// if IPAMConfig.IPv4Address is provided
+				if ep.IPAMConfig != nil && ep.IPAMConfig.IPv4Address != "" {
+					staticIP := net.ParseIP(ep.IPAMConfig.IPv4Address)
 					netInfo.StaticIP = &staticIP
 				}
 				// If MAC address is provided

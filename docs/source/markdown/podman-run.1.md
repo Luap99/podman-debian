@@ -150,7 +150,7 @@ Default is **enabled**.
 The **enabled** option will create a new cgroup under the cgroup-parent.
 The **disabled** option will force the container to not create CGroups, and thus conflicts with CGroup options (**\-\-cgroupns** and **\-\-cgroup-parent**).
 The **no-conmon** option disables a new CGroup only for the **conmon** process.
-The **split** option splits the current cgroup in two sub-cgroups: one for conmon and one for the container payload. It is not possible to set **\-\-cgroup-parent** with **split**.
+The **split** option splits the current CGroup in two sub-cgroups: one for conmon and one for the container payload. It is not possible to set **--cgroup-parent** with **split**.
 
 #### **\-\-cgroup-parent**=*path*
 
@@ -167,6 +167,7 @@ Write the container ID to *file*.
 #### **\-\-conmon-pidfile**=*file*
 
 Write the pid of the **conmon** process to a file. As **conmon** runs in a separate process than Podman, this is necessary when using systemd to restart Podman containers.
+(This option is not available with the remote Podman client)
 
 #### **\-\-cpu-period**=*limit*
 
@@ -298,8 +299,8 @@ Note: if _host_device_ is a symbolic link then it will be resolved first.
 The container will only store the major and minor numbers of the host device.
 
 Note: if the user only has access rights via a group, accessing the device
-from inside a rootless container will fail. The **crun**(1) runtime offers a
-workaround for this by adding the option **\-\-annotation run.oci.keep_original_groups=1**.
+from inside a rootless container will fail. Use the `--group-add keep-groups`
+flag to pass the user's supplementary group access into the container.
 
 Podman may load kernel modules required for using the specified
 device. The devices that Podman will load modules when necessary are:
@@ -404,9 +405,17 @@ Meaning **groupname** is initially mapped to gid **100000** which is referenced 
 above: The group **groupname** is mapped to group **100000** of the initial namespace then the
 **30000**st id of this namespace (which is gid 130000 in this namespace) is mapped to container namespace group id **0**. (groupname -> 100000 / 30000 -> 0)
 
-#### **\-\-group-add**=*group*
+#### **--group-add**=*group|keep-groups*
 
-Add additional groups to run as
+Add additional groups to assign to primary user running within the container process.
+
+- `keep-groups` is a special flag that tells Podman to keep the supplementary group access.
+
+Allows container to use the user's supplementary group access. If file systems or
+devices are only accessible by the rootless user's group, this flag tells the OCI
+runtime to pass the group access into the container. Currently only available
+with the `crun` OCI runtime. Note: `keep-groups` is exclusive, you cannot add any other groups
+with this flag. (Not available for remote commands)
 
 #### **\-\-health-cmd**=*"command"* | *'["command", "arg1", ...]'*
 
@@ -669,7 +678,7 @@ Valid _mode_ values are:
 - **none**: no networking;
 - **container:**_id_: reuse another container's network stack;
 - **host**: use the Podman host network stack. Note: the host mode gives the container full access to local system services such as D-bus and is therefore considered insecure;
-- _network-id_: connect to a user-defined network, multiple networks should be comma separated;
+- _network-id_: connect to a user-defined network, multiple networks should be comma-separated;
 - **ns:**_path_: path to a network namespace to join;
 - **private**: create a new namespace for the container (default)
 - **slirp4netns[:OPTIONS,...]**: use **slirp4netns**(1) to create a user network stack. This is the default for rootless containers. It is possible to specify these additional options:
@@ -825,7 +834,13 @@ If container is running in **\-\-read-only** mode, then mount a read-write tmpfs
 
 If another container with the same name already exists, replace and remove it. The default is **false**.
 
-#### **\-\-restart**=*policy*
+#### **--requires**=**container**
+
+Specify one or more requirements.
+A requirement is a dependency container that will be started before this container.
+Containers can be specified by name or ID, with multiple containers being separated by commas.
+
+#### **--restart**=*policy*
 
 Restart policy to follow when containers exit.
 Restart policy will not take effect if a container is stopped via the **podman kill** or **podman stop** commands.
@@ -877,7 +892,7 @@ Specify the policy to select the seccomp profile. If set to *image*, Podman will
 
 Note that this feature is experimental and may change in the future.
 
-#### **\-\-secret**=*secret*
+#### **--secret**=*secret*[,opt=opt ...]
 
 Give the container access to a secret. Can be specified multiple times.
 
@@ -885,12 +900,17 @@ A secret is a blob of sensitive data which a container needs at runtime but
 should not be stored in the image or in source control, such as usernames and passwords,
 TLS certificates and keys, SSH keys or other important generic strings or binary content (up to 500 kb in size).
 
-Secrets are copied and mounted into the container when a container is created. If a secret is deleted using
-`podman secret rm`, the container will still have access to the secret. If a secret is deleted and
-another secret is created with the same name, the secret inside the container will not change; the old
-secret value will still remain.
+When secrets are specified as type `mount`, the secrets are copied and mounted into the container when a container is created.
+When secrets are specified as type `env`, the secret will be set as an environment variable within the container.
+Secrets are written in the container at the time of container creation, and modifying the secret using `podman secret` commands
+after the container is created will not affect the secret inside the container.
 
-Secrets are managed using the `podman secret` command
+Secrets and its storage are managed using the `podman secret` command.
+
+Secret Options
+
+- `type=mount|env`    : How the secret will be exposed to the container. Default mount.
+- `target=target`     : Target of secret. Defauts to secret name.
 
 #### **\-\-security-opt**=*option*
 
@@ -898,21 +918,28 @@ Security Options
 
 - **apparmor=unconfined** : Turn off apparmor confinement for the container
 - **apparmor**=_your-profile_ : Set the apparmor confinement profile for the container
+
 - **label=user:**_USER_: Set the label user for the container processes
 - **label=role:**_ROLE_: Set the label role for the container processes
 - **label=type:**_TYPE_: Set the label process type for the container processes
 - **label=level:**_LEVEL_: Set the label level for the container processes
 - **label=filetype:**TYPE_: Set the label file type for the container files
 - **label=disable**: Turn off label separation for the container
+
+Note: Labeling can be disabled for all containers by setting label=false in the **containers.conf** (`/etc/containers/containers.conf` or `$HOME/.config/containers/containers.conf`) file.
+
 - **mask**=_/path/1:/path/2_: The paths to mask separated by a colon. A masked path
   cannot be accessed inside the container.
+
 - **no-new-privileges**: Disable container processes from gaining additional privileges
+
 - **seccomp=unconfined**: Turn off seccomp confinement for the container
 - **seccomp**=_profile.json_: Allowed syscall list seccomp JSON file to be used as a seccomp filter
-- **proc-opts**=_OPTIONS_ : Comma separated list of options to use for the /proc mount. More details
-  for the possible mount options are specified at **proc(5)** man page.
-- **unmask**=_ALL_ or _/path/1:/path/2_: Paths to unmask separated by a colon. If set to **ALL**, it will
-  unmask all the paths that are masked or made read only by default.
+
+- **proc-opts**=_OPTIONS_ : Comma-separated list of options to use for the /proc mount. More details
+  for the possible mount options are specified in the **proc(5)** man page.
+
+- **unmask**=_ALL_ or _/path/1:/path/2_, or shell expanded paths (/proc/*): Paths to unmask separated by a colon. If set to **ALL**, it will unmask all the paths that are masked or made read only by default.
   The default masked paths are **/proc/acpi, /proc/kcore, /proc/keys, /proc/latency_stats, /proc/sched_debug, /proc/scsi, /proc/timer_list, /proc/timer_stats, /sys/firmware, and /sys/fs/selinux.**.  The default paths that are read only are **/proc/asound**, **/proc/bus**, **/proc/fs**, **/proc/irq**, **/proc/sys**, **/proc/sysrq-trigger**, **/sys/fs/cgroup**.
 
 Note: Labeling can be disabled for all containers by setting **label=false** in the **containers.conf**(5) file.
@@ -1001,7 +1028,13 @@ The **container_manage_cgroup** boolean must be enabled for this to be allowed o
 setsebool -P container_manage_cgroup true
 ```
 
-#### **\-\-tmpfs**=*fs*
+#### **--timeout**=*seconds*
+
+Maximum time a container is allowed to run before conmon sends it the kill
+signal.  By default containers will run until they exit or are stopped by
+`podman stop`.
+
+#### **--tmpfs**=*fs*
 
 Create a tmpfs mount.
 
@@ -1040,21 +1073,72 @@ Remote connections use local containers.conf for defaults
 Set the umask inside the container. Defaults to `0022`.
 Remote connections use local containers.conf for defaults
 
-#### **\-\-uidmap**=*container_uid*:*from_uid*:*amount*
+#### **--uidmap**=*container_uid*:*from_uid*:*amount*
 
 Run the container in a new user namespace using the supplied mapping. This
-option conflicts with the **\-\-userns** and **\-\-subuidname** options. This
+option conflicts with the **--userns** and **--subuidname** options. This
 option provides a way to map host UIDs to container UIDs. It can be passed
 several times to map different ranges.
 
-The _from_uid_ value is based upon the user running the command, either rootful or rootless users.
-* rootful user:  *container_uid*:*host_uid*:*amount*
+The _from_uid_ value is based upon the user running the command, either rootfull or rootless users.
+* rootfull user:  *container_uid*:*host_uid*:*amount*
 * rootless user: *container_uid*:*intermediate_uid*:*amount*
 
-When **podman run** is called by a privileged user, the option **\-\-uidmap**
+When **podman run** is called by a privileged user, the option **--uidmap**
 works as a direct mapping between host UIDs and container UIDs.
 
 host UID -> container UID
+
+The _amount_ specifies the number of consecutive UIDs that will be mapped.
+If for example _amount_ is **4** the mapping would look like:
+
+|   host UID     |    container UID    |
+| -              | -                   |
+| _from_uid_     | _container_uid_     |
+| _from_uid_ + 1 | _container_uid_ + 1 |
+| _from_uid_ + 2 | _container_uid_ + 2 |
+| _from_uid_ + 3 | _container_uid_ + 3 |
+
+When **podman run** is called by an unprivileged user (i.e. running rootless),
+the value _from_uid_ is interpreted as an "intermediate UID". In the rootless
+case, host UIDs are not mapped directly to container UIDs. Instead the mapping
+happens over two mapping steps:
+
+host UID -> intermediate UID -> container UID
+
+The **--uidmap** option only influences the second mapping step.
+
+The first mapping step is derived by Podman from the contents of the file
+_/etc/subuid_ and the UID of the user calling Podman.
+
+First mapping step:
+
+| host UID                                         | intermediate UID |
+| -                                                |                - |
+| UID for the user starting Podman                 |                0 |
+| 1st subordinate UID for the user starting Podman |                1 |
+| 2nd subordinate UID for the user starting Podman |                2 |
+| 3rd subordinate UID for the user starting Podman |                3 |
+| nth subordinate UID for the user starting Podman |                n |
+
+To be able to use intermediate UIDs greater than zero, the user needs to have
+subordinate UIDs configured in _/etc/subuid_. See **subuid**(5).
+
+The second mapping step is configured with **--uidmap**.
+
+If for example _amount_ is **5** the second mapping step would look like:
+
+|   intermediate UID   |    container UID    |
+| -                    | -                   |
+| _from_uid_           | _container_uid_     |
+| _from_uid_ + 1       | _container_uid_ + 1 |
+| _from_uid_ + 2       | _container_uid_ + 2 |
+| _from_uid_ + 3       | _container_uid_ + 3 |
+| _from_uid_ + 4       | _container_uid_ + 4 |
+
+Even if a user does not have any subordinate UIDs in  _/etc/subuid_,
+**--uidmap** could still be used to map the normal UID of the user to a
+container UID by running `podman run --uidmap $container_uid:0:1 --user $container_uid ...`.
 
 The _amount_ specifies the number of consecutive UIDs that will be mapped.
 If for example _amount_ is **4** the mapping would look like:
@@ -1119,9 +1203,9 @@ Without this argument, the command will run as the user specified in the contain
 
 When a user namespace is not in use, the UID and GID used within the container and on the host will match. When user namespaces are in use, however, the UID and GID in the container may correspond to another UID and GID on the host. In rootless containers, for example, a user namespace is always used, and root in the container will by default correspond to the UID and GID of the user invoking Podman.
 
-#### **\-\-userns**=*mode*
+#### **--userns**=*mode*
 
-Set the user namespace mode for the container. It defaults to the **PODMAN_USERNS** environment variable. An empty value ("") means user namespaces are disabled unless an explicit mapping is set with the **\-\-uidmap** and **\-\-gidmap** options.
+Set the user namespace mode for the container. It defaults to the **PODMAN_USERNS** environment variable. An empty value ("") means user namespaces are disabled unless an explicit mapping is set with the **--uidmap** and **--gidmap** options.
 
 Valid _mode_ values are:
 
@@ -1155,9 +1239,9 @@ Create a bind mount. If you specify _/HOST-DIR_:_/CONTAINER-DIR_, Podman
 bind mounts _host-dir_ in the host to _CONTAINER-DIR_ in the Podman
 container. Similarly, _SOURCE-VOLUME_:_/CONTAINER-DIR_ will mount the volume
 in the host to the container. If no such named volume exists, Podman will
-create one. (Note when using the remote client, the volumes will be mounted from the remote server, not necessarly the client machine.)
+create one. (Note when using the remote client, the volumes will be mounted from the remote server, not necessarily the client machine.)
 
-The _options_ is a comma delimited list and can be: <sup>[[1]](#Footnote1)</sup>
+The _options_ is a comma-separated list and can be: <sup>[[1]](#Footnote1)</sup>
 
 * **rw**|**ro**
 * **z**|**Z**
@@ -1245,7 +1329,7 @@ host into the container to allow speeding up builds.
 Content mounted into the container is labeled with the private label.
        On SELinux systems, labels in the source directory must be readable
 by the container label. Usually containers can read/execute `container_share_t`
-and can read/write `container_file_t`. If you can not change the labels on a
+and can read/write `container_file_t`. If you cannot change the labels on a
 source volume, SELinux container separation must be disabled for the container
 to work.
      - The source directory mounted into the container with an overlay mount
@@ -1307,10 +1391,14 @@ will convert /foo into a shared mount point. Alternatively, one can directly
 change propagation properties of source mount. Say, if _/_ is source mount for
 _/foo_, then use **mount --make-shared /** to convert _/_ into a shared mount.
 
-#### **\-\-volumes-from**[=*CONTAINER*[:*OPTIONS*]]
+Note: if the user only has access rights via a group, accessing the volume
+from inside a rootless container will fail. Use the `--group-add keep-groups`
+flag to pass the user's supplementary group access into the container.
+
+#### **--volumes-from**[=*CONTAINER*[:*OPTIONS*]]
 
 Mount volumes from the specified container(s). Used to share volumes between
-containers. The *options* is a comma delimited list with the following available elements:
+containers. The *options* is a comma-separated list with the following available elements:
 
 * **rw**|**ro**
 * **z**
@@ -1347,6 +1435,16 @@ Working directory inside the container.
 The default working directory for running binaries within a container is the root directory (**/**).
 The image developer can set a different default with the WORKDIR instruction. The operator
 can override the working directory by using the **-w** option.
+
+#### **--pidfile**=*path*
+
+When the pidfile location is specified, the container process' PID will be written to the pidfile. (This option is not available with the remote Podman client)
+If the pidfile option is not specified, the container process' PID will be written to /run/containers/storage/${storage-driver}-containers/$CID/userdata/pidfile.
+
+After the container is started, the location for the pidfile can be discovered with the following `podman inspect` command:
+
+    $ podman inspect --format '{{ .PidFile }}' $CID
+    /run/containers/storage/${storage-driver}-containers/$CID/userdata/pidfile
 
 ## Exit Status
 
@@ -1601,6 +1699,13 @@ the **mask** option.
 $ podman run --security-opt unmask=ALL fedora bash
 ```
 
+To unmask all the paths that start with /proc, set the **unmask** option to
+**/proc/***.
+
+```
+$ podman run --security-opt unmask=/proc/* fedora bash
+```
+
 ```
 $ podman run --security-opt unmask=/foo/bar:/sys/firmware fedora bash
 ```
@@ -1666,6 +1771,30 @@ $ podman run --tz=Asia/Shanghai alpine date
 $ podman run --tz=US/Eastern alpine date
 ```
 
+### Adding dependency containers
+
+The first container, container1, is not started initially, but must be running before container2 will start.
+The `podman run` command will start the container automatically before starting container2.
+
+```
+$ podman create --name container1 -t -i fedora bash
+$ podman run --name container2 --requires container1 -t -i fedora bash
+```
+
+Multiple containers can be required.
+
+```
+$ podman create --name container1 -t -i fedora bash
+$ podman create --name container2 -t -i fedora bash
+$ podman run --name container3 --requires container1,container2 -t -i fedora bash
+```
+
+### Configure keep supplemental groups for access to volume
+
+```
+$ podman run -v /var/lib/design:/var/lib/design --group-add keep-groups ubi8
+```
+
 ### Rootless Containers
 
 Podman runs as a non root user on most systems. This feature requires that a new enough version of **shadow-utils**
@@ -1702,6 +1831,20 @@ $ podman run --env ENV*****=b alpine printenv ENV*****
 b
 ```
 
+## CONMON
+
+When Podman starts a container it actually executes the conmon program, which
+then executes the OCI Runtime.  Conmon is the container monitor.  It is a small
+program whose job is to watch the primary process of the container, and if the
+container dies, save the exit code.  It also holds open the tty of the
+container, so that it can be attached to later. This is what allows Podman to
+run in detached mode (backgrounded), so Podman can exit but conmon continues to
+run.  Each container has their own instance of conmon. Conmon waits for the
+container to exit, gathers and saves the exit code, and then launches a Podman
+process to complete the container cleanup, by shutting down the network and
+storage.   For more information on conmon, please reference the conmon(8) man
+page.
+
 ## FILES
 
 **/etc/subuid**
@@ -1711,8 +1854,8 @@ b
 NOTE: Use the environment variable `TMPDIR` to change the temporary storage location of downloaded container images. Podman defaults to use `/var/tmp`.
 
 ## SEE ALSO
-**podman**(1), **podman-save**(1), **podman-ps**(1), **podman-attach**(1), **podman-pod-create**(1), **podman-port**(1), **podman-kill**(1), **podman-stop**(1),
-**podman-generate-systemd**(1) **podman-rm**(1), **subgid**(5), **subuid**(5), **containers.conf**(5), **systemd.unit**(5), **setsebool**(8), **slirp4netns**(1), **fuse-overlayfs**(1), **proc**(5)**.
+**podman**(1), **podman-save**(1), **podman-ps**(1), **podman-attach**(1), **podman-pod-create**(1), **podman-port**(1), **podman-start**(1), **podman-kill**(1), **podman-stop**(1),
+**podman-generate-systemd**(1) **podman-rm**(1), **subgid**(5), **subuid**(5), **containers.conf**(5), **systemd.unit**(5), **setsebool**(8), **slirp4netns**(1), **fuse-overlayfs**(1), **proc**(5), **conmon**(8).
 
 ## HISTORY
 September 2018, updated by Kunal Kushwaha `<kushwaha_kunal_v7@lab.ntt.co.jp>`

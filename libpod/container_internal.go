@@ -283,6 +283,14 @@ func (c *Container) handleRestartPolicy(ctx context.Context) (_ bool, retErr err
 		return false, err
 	}
 
+	// setup slirp4netns again because slirp4netns will die when conmon exits
+	if c.config.NetMode.IsSlirp4netns() {
+		err := c.runtime.setupSlirp4netns(c)
+		if err != nil {
+			return false, err
+		}
+	}
+
 	if c.state.State == define.ContainerStateStopped {
 		// Reinitialize the container if we need to
 		if err := c.reinit(ctx, true); err != nil {
@@ -450,6 +458,8 @@ func (c *Container) setupStorage(ctx context.Context) error {
 		}
 		options.MountOpts = newOptions
 	}
+
+	options.Volatile = c.config.Volatile
 
 	c.setupStorageMapping(&options.IDMappingOptions, &c.config.IDMappings)
 
@@ -685,7 +695,11 @@ func (c *Container) removeIPv4Allocations() error {
 // This is necessary for restarting containers
 func (c *Container) removeConmonFiles() error {
 	// Files are allowed to not exist, so ignore ENOENT
-	attachFile := filepath.Join(c.bundlePath(), "attach")
+	attachFile, err := c.AttachSocketPath()
+	if err != nil {
+		return errors.Wrapf(err, "failed to get attach socket path for container %s", c.ID())
+	}
+
 	if err := os.Remove(attachFile); err != nil && !os.IsNotExist(err) {
 		return errors.Wrapf(err, "error removing container %s attach file", c.ID())
 	}
@@ -966,9 +980,7 @@ func (c *Container) completeNetworkSetup() error {
 	if err := c.syncContainer(); err != nil {
 		return err
 	}
-	if rootless.IsRootless() {
-		return c.runtime.setupRootlessNetNS(c)
-	} else if c.config.NetMode.IsSlirp4netns() {
+	if c.config.NetMode.IsSlirp4netns() {
 		return c.runtime.setupSlirp4netns(c)
 	}
 	if err := c.runtime.setupNetNS(c); err != nil {
@@ -1311,7 +1323,7 @@ func (c *Container) stop(timeout uint) error {
 	}
 
 	// We have to check stopErr *after* we lock again - otherwise, we have a
-	// change of panicing on a double-unlock. Ref: GH Issue 9615
+	// change of panicking on a double-unlock. Ref: GH Issue 9615
 	if stopErr != nil {
 		return stopErr
 	}
@@ -1674,7 +1686,7 @@ func (c *Container) chownVolume(volumeName string) error {
 
 	// TODO: For now, I've disabled chowning volumes owned by non-Podman
 	// drivers. This may be safe, but it's really going to be a case-by-case
-	// thing, I think - safest to leave disabled now and reenable later if
+	// thing, I think - safest to leave disabled now and re-enable later if
 	// there is a demand.
 	if vol.state.NeedsChown && !vol.UsesVolumeDriver() {
 		vol.state.NeedsChown = false
@@ -1840,7 +1852,7 @@ func (c *Container) cleanup(ctx context.Context) error {
 
 	// Unmount image volumes
 	for _, v := range c.config.ImageVolumes {
-		img, err := c.runtime.ImageRuntime().NewFromLocal(v.Source)
+		img, _, err := c.runtime.LibimageRuntime().LookupImage(v.Source, nil)
 		if err != nil {
 			if lastError == nil {
 				lastError = err

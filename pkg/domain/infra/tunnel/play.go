@@ -12,6 +12,7 @@ func (ic *ContainerEngine) PlayKube(ctx context.Context, path string, opts entit
 	options := new(play.KubeOptions).WithAuthfile(opts.Authfile).WithUsername(opts.Username).WithPassword(opts.Password)
 	options.WithCertDir(opts.CertDir).WithQuiet(opts.Quiet).WithSignaturePolicy(opts.SignaturePolicy).WithConfigMaps(opts.ConfigMaps)
 	options.WithLogDriver(opts.LogDriver).WithNetwork(opts.Network).WithSeccompProfileRoot(opts.SeccompProfileRoot)
+	options.WithStaticIPs(opts.StaticIPs).WithStaticMACs(opts.StaticMACs)
 
 	if s := opts.SkipTLSVerify; s != types.OptionalBoolUndefined {
 		options.WithSkipTLSVerify(s == types.OptionalBoolTrue)

@@ -1,6 +1,7 @@
 package play
 
 import (
+	"net"
 	"net/url"
 
 	"github.com/containers/podman/v3/pkg/bindings/internal/util"
@@ -162,6 +163,38 @@ func (o *KubeOptions) GetSeccompProfileRoot() string {
 		return seccompProfileRoot
 	}
 	return *o.SeccompProfileRoot
+}
+
+// WithStaticIPs
+func (o *KubeOptions) WithStaticIPs(value []net.IP) *KubeOptions {
+	v := &value
+	o.StaticIPs = v
+	return o
+}
+
+// GetStaticIPs
+func (o *KubeOptions) GetStaticIPs() []net.IP {
+	var staticIPs []net.IP
+	if o.StaticIPs == nil {
+		return staticIPs
+	}
+	return *o.StaticIPs
+}
+
+// WithStaticMACs
+func (o *KubeOptions) WithStaticMACs(value []net.HardwareAddr) *KubeOptions {
+	v := &value
+	o.StaticMACs = v
+	return o
+}
+
+// GetStaticMACs
+func (o *KubeOptions) GetStaticMACs() []net.HardwareAddr {
+	var staticMACs []net.HardwareAddr
+	if o.StaticMACs == nil {
+		return staticMACs
+	}
+	return *o.StaticMACs
 }
 
 // WithConfigMaps

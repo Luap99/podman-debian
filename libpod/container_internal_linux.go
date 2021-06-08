@@ -20,6 +20,7 @@ import (
 	"time"
 
 	metadata "github.com/checkpoint-restore/checkpointctl/lib"
+	cdi "github.com/container-orchestrated-devices/container-device-interface/pkg"
 	cnitypes "github.com/containernetworking/cni/pkg/types/current"
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/containers/buildah/pkg/chrootuser"
@@ -28,6 +29,7 @@ import (
 	"github.com/containers/common/pkg/apparmor"
 	"github.com/containers/common/pkg/chown"
 	"github.com/containers/common/pkg/config"
+	"github.com/containers/common/pkg/secrets"
 	"github.com/containers/common/pkg/subscriptions"
 	"github.com/containers/common/pkg/umask"
 	"github.com/containers/podman/v3/libpod/define"
@@ -92,11 +94,7 @@ func (c *Container) prepare() error {
 		// Set up network namespace if not already set up
 		noNetNS := c.state.NetNS == nil
 		if c.config.CreateNetNS && noNetNS && !c.config.PostConfigureNetNS {
-			if rootless.IsRootless() && len(c.config.Networks) > 0 {
-				netNS, networkStatus, createNetNSErr = AllocRootlessCNI(context.Background(), c)
-			} else {
-				netNS, networkStatus, createNetNSErr = c.runtime.createNetNS(c)
-			}
+			netNS, networkStatus, createNetNSErr = c.runtime.createNetNS(c)
 			if createNetNSErr != nil {
 				return
 			}
@@ -468,11 +466,11 @@ func (c *Container) generateSpec(ctx context.Context) (*spec.Spec, error) {
 	// Add image volumes as overlay mounts
 	for _, volume := range c.config.ImageVolumes {
 		// Mount the specified image.
-		img, err := c.runtime.ImageRuntime().NewFromLocal(volume.Source)
+		img, _, err := c.runtime.LibimageRuntime().LookupImage(volume.Source, nil)
 		if err != nil {
 			return nil, errors.Wrapf(err, "error creating image volume %q:%q", volume.Source, volume.Dest)
 		}
-		mountPoint, err := img.Mount(nil, "")
+		mountPoint, err := img.Mount(ctx, nil, "")
 		if err != nil {
 			return nil, errors.Wrapf(err, "error mounting image volume %q:%q", volume.Source, volume.Dest)
 		}
@@ -708,6 +706,13 @@ func (c *Container) generateSpec(ctx context.Context) (*spec.Spec, error) {
 	}
 	g.SetLinuxCgroupsPath(cgroupPath)
 
+	// Warning: CDI may alter g.Config in place.
+	if len(c.config.CDIDevices) > 0 {
+		if err = cdi.UpdateOCISpecForDevices(g.Config, c.config.CDIDevices); err != nil {
+			return nil, errors.Wrapf(err, "error setting up CDI devices")
+		}
+	}
+
 	// Mounts need to be sorted so paths will not cover other paths
 	mounts := sortMounts(g.Mounts())
 	g.ClearMounts()
@@ -758,6 +763,19 @@ func (c *Container) generateSpec(ctx context.Context) (*spec.Spec, error) {
 	// Warning: precreate hooks may alter g.Config in place.
 	if c.state.ExtensionStageHooks, err = c.setupOCIHooks(ctx, g.Config); err != nil {
 		return nil, errors.Wrapf(err, "error setting up OCI Hooks")
+	}
+	if len(c.config.EnvSecrets) > 0 {
+		manager, err := secrets.NewManager(c.runtime.GetSecretsStorageDir())
+		if err != nil {
+			return nil, err
+		}
+		for name, secr := range c.config.EnvSecrets {
+			_, data, err := manager.LookupSecretData(secr.Name)
+			if err != nil {
+				return nil, err
+			}
+			g.AddProcessEnv(name, string(data))
+		}
 	}
 
 	return g.Config, nil
@@ -1346,6 +1364,34 @@ func (c *Container) restore(ctx context.Context, options ContainerCheckpointOpti
 	return c.save()
 }
 
+// Retrieves a container's "root" net namespace container dependency.
+func (c *Container) getRootNetNsDepCtr() (depCtr *Container, err error) {
+	containersVisited := map[string]int{c.config.ID: 1}
+	nextCtr := c.config.NetNsCtr
+	for nextCtr != "" {
+		// Make sure we aren't in a loop
+		if _, visited := containersVisited[nextCtr]; visited {
+			return nil, errors.New("loop encountered while determining net namespace container")
+		}
+		containersVisited[nextCtr] = 1
+
+		depCtr, err = c.runtime.state.Container(nextCtr)
+		if err != nil {
+			return nil, errors.Wrapf(err, "error fetching dependency %s of container %s", c.config.NetNsCtr, c.ID())
+		}
+		// This should never happen without an error
+		if depCtr == nil {
+			break
+		}
+		nextCtr = depCtr.config.NetNsCtr
+	}
+
+	if depCtr == nil {
+		return nil, errors.New("unexpected error depCtr is nil without reported error from runtime state")
+	}
+	return depCtr, nil
+}
+
 // Make standard bind mounts to include in the container
 func (c *Container) makeBindMounts() error {
 	if err := os.Chown(c.state.RunDir, c.RootUID(), c.RootGID()); err != nil {
@@ -1384,24 +1430,9 @@ func (c *Container) makeBindMounts() error {
 			// We want /etc/resolv.conf and /etc/hosts from the
 			// other container. Unless we're not creating both of
 			// them.
-			var (
-				depCtr  *Container
-				nextCtr string
-			)
-
-			// I don't like infinite loops, but I don't think there's
-			// a serious risk of looping dependencies - too many
-			// protections against that elsewhere.
-			nextCtr = c.config.NetNsCtr
-			for {
-				depCtr, err = c.runtime.state.Container(nextCtr)
-				if err != nil {
-					return errors.Wrapf(err, "error fetching dependency %s of container %s", c.config.NetNsCtr, c.ID())
-				}
-				nextCtr = depCtr.config.NetNsCtr
-				if nextCtr == "" {
-					break
-				}
+			depCtr, err := c.getRootNetNsDepCtr()
+			if err != nil {
+				return errors.Wrapf(err, "error fetching network namespace dependency container for container %s", c.ID())
 			}
 
 			// We need that container's bind mounts
@@ -1641,17 +1672,16 @@ func (c *Container) generateResolvConf() (string, error) {
 		return "", err
 	}
 
-	// Ensure that the container's /etc/resolv.conf is compatible with its
-	// network configuration.
-	// TODO: set ipv6 enable bool more sanely
-	resolv, err := resolvconf.FilterResolvDNS(contents, true, c.config.CreateNetNS)
-	if err != nil {
-		return "", errors.Wrapf(err, "error parsing host resolv.conf")
-	}
-
+	ipv6 := false
 	// Check if CNI gave back and DNS servers for us to add in
 	cniResponse := c.state.NetworkStatus
 	for _, i := range cniResponse {
+		for _, ip := range i.IPs {
+			// Note: only using To16() does not work since it also returns a vaild ip for ipv4
+			if ip.Address.IP.To4() == nil && ip.Address.IP.To16() != nil {
+				ipv6 = true
+			}
+		}
 		if i.DNS.Nameservers != nil {
 			cniNameServers = append(cniNameServers, i.DNS.Nameservers...)
 			logrus.Debugf("adding nameserver(s) from cni response of '%q'", i.DNS.Nameservers)
@@ -1660,6 +1690,25 @@ func (c *Container) generateResolvConf() (string, error) {
 			cniSearchDomains = append(cniSearchDomains, i.DNS.Search...)
 			logrus.Debugf("adding search domain(s) from cni response of '%q'", i.DNS.Search)
 		}
+	}
+
+	if c.config.NetMode.IsSlirp4netns() {
+		ctrNetworkSlipOpts := []string{}
+		if c.config.NetworkOptions != nil {
+			ctrNetworkSlipOpts = append(ctrNetworkSlipOpts, c.config.NetworkOptions["slirp4netns"]...)
+		}
+		slirpOpts, err := parseSlirp4netnsNetworkOptions(c.runtime, ctrNetworkSlipOpts)
+		if err != nil {
+			return "", err
+		}
+		ipv6 = slirpOpts.enableIPv6
+	}
+
+	// Ensure that the container's /etc/resolv.conf is compatible with its
+	// network configuration.
+	resolv, err := resolvconf.FilterResolvDNS(contents, ipv6, c.config.CreateNetNS)
+	if err != nil {
+		return "", errors.Wrapf(err, "error parsing host resolv.conf")
 	}
 
 	dns := make([]net.IP, 0, len(c.runtime.config.Containers.DNSServers))
@@ -1686,7 +1735,12 @@ func (c *Container) generateResolvConf() (string, error) {
 		nameservers = resolvconf.GetNameservers(resolv.Content)
 		// slirp4netns has a built in DNS server.
 		if c.config.NetMode.IsSlirp4netns() {
-			nameservers = append([]string{slirp4netnsDNS}, nameservers...)
+			slirp4netnsDNS, err := GetSlirp4netnsDNS(c.slirp4netnsSubnet)
+			if err != nil {
+				logrus.Warn("failed to determine Slirp4netns DNS: ", err.Error())
+			} else {
+				nameservers = append([]string{slirp4netnsDNS.String()}, nameservers...)
+			}
 		}
 	}
 
@@ -1767,7 +1821,12 @@ func (c *Container) getHosts() string {
 	if c.Hostname() != "" {
 		if c.config.NetMode.IsSlirp4netns() {
 			// When using slirp4netns, the interface gets a static IP
-			hosts += fmt.Sprintf("# used by slirp4netns\n%s\t%s %s\n", slirp4netnsIP, c.Hostname(), c.config.Name)
+			slirp4netnsIP, err := GetSlirp4netnsGateway(c.slirp4netnsSubnet)
+			if err != nil {
+				logrus.Warn("failed to determine slirp4netnsIP: ", err.Error())
+			} else {
+				hosts += fmt.Sprintf("# used by slirp4netns\n%s\t%s %s\n", slirp4netnsIP.String(), c.Hostname(), c.config.Name)
+			}
 		} else {
 			hasNetNS := false
 			netNone := false
@@ -1790,6 +1849,36 @@ func (c *Container) getHosts() string {
 			}
 		}
 	}
+
+	// Add gateway entry
+	var depCtr *Container
+	if c.config.NetNsCtr != "" {
+		// ignoring the error because there isn't anything to do
+		depCtr, _ = c.getRootNetNsDepCtr()
+	} else if len(c.state.NetworkStatus) != 0 {
+		depCtr = c
+	} else {
+		depCtr = nil
+	}
+
+	if depCtr != nil {
+		for _, pluginResultsRaw := range depCtr.state.NetworkStatus {
+			pluginResult, _ := cnitypes.GetResult(pluginResultsRaw)
+			for _, ip := range pluginResult.IPs {
+				hosts += fmt.Sprintf("%s host.containers.internal\n", ip.Gateway)
+			}
+		}
+	} else if c.config.NetMode.IsSlirp4netns() {
+		gatewayIP, err := GetSlirp4netnsGateway(c.slirp4netnsSubnet)
+		if err != nil {
+			logrus.Warn("failed to determine gatewayIP: ", err.Error())
+		} else {
+			hosts += fmt.Sprintf("%s host.containers.internal\n", gatewayIP.String())
+		}
+	} else {
+		logrus.Debug("network configuration does not support host.containers.internal address")
+	}
+
 	return hosts
 }
 
@@ -2212,6 +2301,17 @@ func (c *Container) generatePasswdAndGroup() (string, string, error) {
 	return passwdPath, groupPath, nil
 }
 
+func isRootlessCgroupSet(cgroup string) bool {
+	// old versions of podman were setting the CgroupParent to CgroupfsDefaultCgroupParent
+	// by default.  Avoid breaking these versions and check whether the cgroup parent is
+	// set to the default and in this case enable the old behavior.  It should not be a real
+	// problem because the default CgroupParent is usually owned by root so rootless users
+	// cannot access it.
+	// This check might be lifted in a future version of Podman.
+	// Check both that the cgroup or its parent is set to the default value (used by pods).
+	return cgroup != CgroupfsDefaultCgroupParent && filepath.Dir(cgroup) != CgroupfsDefaultCgroupParent
+}
+
 // Get cgroup path in a format suitable for the OCI spec
 func (c *Container) getOCICgroupPath() (string, error) {
 	unified, err := cgroups.IsCgroup2UnifiedMode()
@@ -2220,8 +2320,13 @@ func (c *Container) getOCICgroupPath() (string, error) {
 	}
 	cgroupManager := c.CgroupManager()
 	switch {
-	case (rootless.IsRootless() && (cgroupManager == config.CgroupfsCgroupsManager || !unified)) || c.config.NoCgroups:
+	case c.config.NoCgroups:
 		return "", nil
+	case (rootless.IsRootless() && (cgroupManager == config.CgroupfsCgroupsManager || !unified)):
+		if !isRootlessCgroupSet(c.config.CgroupParent) {
+			return "", nil
+		}
+		return c.config.CgroupParent, nil
 	case c.config.CgroupsMode == cgroupSplit:
 		if c.config.CgroupParent != "" {
 			return c.config.CgroupParent, nil

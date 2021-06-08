@@ -10,6 +10,8 @@ function setup() {
     :
 }
 
+#### DO NOT ADD ANY TESTS HERE! ADD NEW TESTS AT BOTTOM!
+
 @test "podman version emits reasonable output" {
     run_podman version
 
@@ -33,6 +35,17 @@ function setup() {
     fi
 }
 
+
+@test "podman --context emits reasonable output" {
+    # All we care about here is that the command passes
+    run_podman --context=default version
+
+    # This one must fail
+    run_podman 125 --context=swarm version
+    is "$output" \
+       "Error: Podman does not support swarm, the only --context value allowed is \"default\"" \
+       "--context=default or fail"
+}
 
 @test "podman can pull an image" {
     run_podman pull $IMAGE

@@ -14,6 +14,7 @@ import (
 	"github.com/containers/podman/v3/cmd/podman/parse"
 	"github.com/containers/podman/v3/cmd/podman/registry"
 	"github.com/containers/podman/v3/cmd/podman/validate"
+	"github.com/containers/podman/v3/libpod/define"
 	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
@@ -60,8 +61,9 @@ func init() {
 
 	formatFlagName := "format"
 	flags.StringVar(&cliOpts.Format, formatFlagName, "{{.Driver}}\t{{.Name}}\n", "Format volume output using Go template")
-	_ = lsCommand.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteJSONFormat)
+	_ = lsCommand.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteFormat(define.InspectVolumeData{}))
 
+	flags.Bool("noheading", false, "Do not print headers")
 	flags.BoolVarP(&cliOpts.Quiet, "quiet", "q", false, "Print volume output in quiet mode")
 }
 
@@ -94,6 +96,7 @@ func list(cmd *cobra.Command, args []string) error {
 }
 
 func outputTemplate(cmd *cobra.Command, responses []*entities.VolumeListReport) error {
+	noHeading, _ := cmd.Flags().GetBool("noheading")
 	headers := report.Headers(entities.VolumeListReport{}, map[string]string{
 		"Name": "VOLUME NAME",
 	})
@@ -111,7 +114,7 @@ func outputTemplate(cmd *cobra.Command, responses []*entities.VolumeListReport) 
 	w := tabwriter.NewWriter(os.Stdout, 12, 2, 2, ' ', 0)
 	defer w.Flush()
 
-	if !cliOpts.Quiet && !cmd.Flag("format").Changed {
+	if !(noHeading || cliOpts.Quiet || cmd.Flag("format").Changed) {
 		if err := tmpl.Execute(w, headers); err != nil {
 			return errors.Wrapf(err, "failed to write report column headers")
 		}

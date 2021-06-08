@@ -21,6 +21,7 @@ import (
 	"github.com/containers/podman/v3/pkg/util"
 	"github.com/containers/podman/v3/utils"
 	"github.com/containers/storage"
+	"github.com/containers/storage/pkg/unshare"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -32,17 +33,11 @@ func (ic *ContainerEngine) Info(ctx context.Context) (*define.Info, error) {
 	if err != nil {
 		return nil, err
 	}
-	xdg, err := util.GetRuntimeDir()
+
+	socketPath, err := util.SocketPath()
 	if err != nil {
 		return nil, err
 	}
-	if len(xdg) == 0 {
-		// If no xdg is returned, assume root socket
-		xdg = "/run"
-	}
-
-	// Glue the socket path together
-	socketPath := filepath.Join(xdg, "podman", "podman.sock")
 	rs := define.RemoteSocket{
 		Path:   socketPath,
 		Exists: false,
@@ -64,10 +59,14 @@ func (ic *ContainerEngine) Info(ctx context.Context) (*define.Info, error) {
 
 func (ic *ContainerEngine) SetupRootless(_ context.Context, cmd *cobra.Command) error {
 	// do it only after podman has already re-execed and running with uid==0.
-	if os.Geteuid() == 0 {
+	hasCapSysAdmin, err := unshare.HasCapSysAdmin()
+	if err != nil {
+		return err
+	}
+	if hasCapSysAdmin {
 		ownsCgroup, err := cgroups.UserOwnsCurrentSystemdCgroup()
 		if err != nil {
-			logrus.Warnf("Failed to detect the owner for the current cgroup: %v", err)
+			logrus.Infof("Failed to detect the owner for the current cgroup: %v", err)
 		}
 		if !ownsCgroup {
 			conf, err := ic.Config(context.Background())
@@ -165,7 +164,10 @@ func movePauseProcessToScope(r *libpod.Runtime) error {
 // SystemPrune removes unused data from the system. Pruning pods, containers, volumes and images.
 func (ic *ContainerEngine) SystemPrune(ctx context.Context, options entities.SystemPruneOptions) (*entities.SystemPruneReport, error) {
 	var systemPruneReport = new(entities.SystemPruneReport)
-	var filters []string
+	filters := []string{}
+	for k, v := range options.Filters {
+		filters = append(filters, fmt.Sprintf("%s=%s", k, v[0]))
+	}
 	reclaimedSpace := (uint64)(0)
 	found := true
 	for found {
@@ -189,10 +191,12 @@ func (ic *ContainerEngine) SystemPrune(ctx context.Context, options entities.Sys
 		}
 		reclaimedSpace = reclaimedSpace + reports.PruneReportsSize(containerPruneReports)
 		systemPruneReport.ContainerPruneReports = append(systemPruneReport.ContainerPruneReports, containerPruneReports...)
-		for k, v := range options.Filters {
-			filters = append(filters, fmt.Sprintf("%s=%s", k, v[0]))
+		imagePruneOptions := entities.ImagePruneOptions{
+			All:    options.All,
+			Filter: filters,
 		}
-		imagePruneReports, err := ic.Libpod.ImageRuntime().PruneImages(ctx, options.All, filters)
+		imageEngine := ImageEngine{Libpod: ic.Libpod}
+		imagePruneReports, err := imageEngine.Prune(ctx, imagePruneOptions)
 		reclaimedSpace = reclaimedSpace + reports.PruneReportsSize(imagePruneReports)
 
 		if err != nil {
@@ -226,13 +230,7 @@ func (ic *ContainerEngine) SystemDf(ctx context.Context, options entities.System
 		dfImages = []*entities.SystemDfImageReport{}
 	)
 
-	// Compute disk-usage stats for all local images.
-	imgs, err := ic.Libpod.ImageRuntime().GetImages()
-	if err != nil {
-		return nil, err
-	}
-
-	imageStats, err := ic.Libpod.ImageRuntime().DiskUsage(ctx, imgs)
+	imageStats, err := ic.Libpod.LibimageRuntime().DiskUsage(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -390,13 +388,25 @@ func unshareEnv(graphroot, runroot string) []string {
 		fmt.Sprintf("CONTAINERS_RUNROOT=%s", runroot))
 }
 
-func (ic *ContainerEngine) Unshare(ctx context.Context, args []string) error {
-	cmd := exec.Command(args[0], args[1:]...)
-	cmd.Env = unshareEnv(ic.Libpod.StorageConfig().GraphRoot, ic.Libpod.StorageConfig().RunRoot)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+func (ic *ContainerEngine) Unshare(ctx context.Context, args []string, options entities.SystemUnshareOptions) error {
+	unshare := func() error {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Env = unshareEnv(ic.Libpod.StorageConfig().GraphRoot, ic.Libpod.StorageConfig().RunRoot)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	}
+
+	if options.RootlessCNI {
+		rootlesscni, err := ic.Libpod.GetRootlessCNINetNs(true)
+		if err != nil {
+			return err
+		}
+		defer rootlesscni.Cleanup(ic.Libpod)
+		return rootlesscni.Do(unshare)
+	}
+	return unshare()
 }
 
 func (ic ContainerEngine) Version(ctx context.Context) (*entities.SystemVersionReport, error) {

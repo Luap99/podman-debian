@@ -10,7 +10,9 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/containers/podman/v3/pkg/util"
 	. "github.com/containers/podman/v3/test/utils"
+	"github.com/containers/storage/pkg/stringid"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/opencontainers/selinux/go-selinux"
@@ -25,6 +27,44 @@ metadata:
   name: unknown
 spec:
   hostname: unknown
+`
+var sharedNamespacePodYaml = `
+apiVersion: v1
+kind: Pod
+metadata:
+  creationTimestamp: "2021-05-07T17:25:01Z"
+  labels:
+    app: testpod1
+  name: testpod1
+spec:
+  containers:
+  - command:
+    - top
+    - -d
+    - "1.5"
+    env:
+    - name: PATH
+      value: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    - name: TERM
+      value: xterm
+    - name: container
+      value: podman
+    - name: HOSTNAME
+      value: label-pod
+    image: quay.io/libpod/alpine:latest
+    name: alpine
+    resources: {}
+    securityContext:
+      allowPrivilegeEscalation: true
+      capabilities: {}
+      privileged: false
+      readOnlyRootFilesystem: false
+      seLinuxOptions: {}
+    workingDir: /
+  dnsConfig: {}
+  restartPolicy: Never
+  shareProcessNamespace: true
+status: {}
 `
 
 var selinuxLabelPodYaml = `
@@ -81,6 +121,26 @@ data:
     {{ $key }}: {{ $value }}
   {{ end }}
 {{ end }}
+`
+
+var persistentVolumeClaimYamlTemplate = `
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Name }}
+{{ with .Annotations }}
+  annotations:
+  {{ range $key, $value := . }}
+    {{ $key }}: {{ $value }}
+  {{ end }}
+{{ end }}
+spec:
+  accessModes:
+    - "ReadWriteOnce"
+  resources:
+    requests:
+      storage: "1Gi"
+  storageClassName: default
 `
 
 var podYamlTemplate = `
@@ -141,7 +201,16 @@ spec:
         configMapKeyRef:
           name: {{ .RefName }}
           key: {{ .RefKey }}
-    {{ else }}
+          optional: {{ .Optional }}
+    {{ end }}
+    {{ if (eq .ValueFrom "secret") }}
+      valueFrom:
+        secretKeyRef:
+          name: {{ .RefName }}
+          key: {{ .RefKey }}
+          optional: {{ .Optional }}
+    {{ end }}
+    {{ if (eq .ValueFrom "") }}
       value: {{ .Value }}
     {{ end }}
     {{ end }}
@@ -151,6 +220,12 @@ spec:
     {{ if (eq .From "configmap") }}
     - configMapRef:
         name: {{ .Name }}
+        optional: {{ .Optional }}
+    {{ end }}
+    {{ if (eq .From "secret") }}
+    - secretRef:
+        name: {{ .Name }}
+        optional: {{ .Optional }}
     {{ end }}
     {{ end }}
     {{ end }}
@@ -322,10 +397,31 @@ spec:
           privileged: false
           readOnlyRootFilesystem: false
         workingDir: /
+        volumeMounts:
+        {{ if .VolumeMount }}
+        - name: {{.VolumeName}}
+          mountPath: {{ .VolumeMountPath }}
+          readonly: {{.VolumeReadOnly}}
+        {{ end }}
         {{ end }}
       {{ end }}
     {{ end }}
-  {{ end }}
+    {{ with .Volumes }}
+      volumes:
+      {{ range . }}
+      - name: {{ .Name }}
+        {{- if (eq .VolumeType "HostPath") }}
+        hostPath:
+          path: {{ .HostPath.Path }}
+          type: {{ .HostPath.Type }}
+        {{- end }}
+        {{- if (eq .VolumeType "PersistentVolumeClaim") }}
+        persistentVolumeClaim:
+          claimName: {{ .PersistentVolumeClaim.ClaimName }}
+        {{- end }}
+      {{ end }}
+    {{ end }}
+{{ end }}
 `
 
 var (
@@ -337,9 +433,12 @@ var (
 	defaultVolName        = "testVol"
 	defaultDeploymentName = "testDeployment"
 	defaultConfigMapName  = "testConfigMap"
+	defaultPVCName        = "testPVC"
 	seccompPwdEPERM       = []byte(`{"defaultAction":"SCMP_ACT_ALLOW","syscalls":[{"name":"getcwd","action":"SCMP_ACT_ERRNO"}]}`)
 	// CPU Period in ms
 	defaultCPUPeriod = 100
+	// Default secret in JSON. Note that the values ("foo" and "bar") are base64 encoded.
+	defaultSecret = []byte(`{"FOO":"Zm9v","BAR":"YmFy"}`)
 )
 
 func writeYaml(content string, fileName string) error {
@@ -369,6 +468,8 @@ func getKubeYaml(kind string, object interface{}) (string, error) {
 		yamlTemplate = podYamlTemplate
 	case "deployment":
 		yamlTemplate = deploymentYamlTemplate
+	case "persistentVolumeClaim":
+		yamlTemplate = persistentVolumeClaimYamlTemplate
 	default:
 		return "", fmt.Errorf("unsupported kubernetes kind")
 	}
@@ -407,6 +508,16 @@ func generateMultiDocKubeYaml(kubeObjects []string, pathname string) error {
 	return writeYaml(multiKube, pathname)
 }
 
+func createSecret(podmanTest *PodmanTestIntegration, name string, value []byte) {
+	secretFilePath := filepath.Join(podmanTest.TempDir, "secret")
+	err := ioutil.WriteFile(secretFilePath, value, 0755)
+	Expect(err).To(BeNil())
+
+	secret := podmanTest.Podman([]string{"secret", "create", name, secretFilePath})
+	secret.WaitWithDefaultTimeout()
+	Expect(secret.ExitCode()).To(Equal(0))
+}
+
 // ConfigMap describes the options a kube yaml can be configured at configmap level
 type ConfigMap struct {
 	Name string
@@ -437,6 +548,39 @@ func withConfigMapName(name string) configMapOption {
 func withConfigMapData(k, v string) configMapOption {
 	return func(configmap *ConfigMap) {
 		configmap.Data[k] = v
+	}
+}
+
+// PVC describes the options a kube yaml can be configured at persistent volume claim level
+type PVC struct {
+	Name        string
+	Annotations map[string]string
+}
+
+func getPVC(options ...pvcOption) *PVC {
+	pvc := PVC{
+		Name:        defaultPVCName,
+		Annotations: map[string]string{},
+	}
+
+	for _, option := range options {
+		option(&pvc)
+	}
+
+	return &pvc
+}
+
+type pvcOption func(*PVC)
+
+func withPVCName(name string) pvcOption {
+	return func(pvc *PVC) {
+		pvc.Name = name
+	}
+}
+
+func withPVCAnnotations(k, v string) pvcOption {
+	return func(pvc *PVC) {
+		pvc.Annotations[k] = v
 	}
 }
 
@@ -662,6 +806,12 @@ func getCtr(options ...ctrOption) *Ctr {
 
 type ctrOption func(*Ctr)
 
+func withName(name string) ctrOption {
+	return func(c *Ctr) {
+		c.Name = name
+	}
+}
+
 func withCmd(cmd []string) ctrOption {
 	return func(c *Ctr) {
 		c.Cmd = cmd
@@ -746,7 +896,7 @@ func withVolumeMount(mountPath string, readonly bool) ctrOption {
 	}
 }
 
-func withEnv(name, value, valueFrom, refName, refKey string) ctrOption {
+func withEnv(name, value, valueFrom, refName, refKey string, optional bool) ctrOption {
 	return func(c *Ctr) {
 		e := Env{
 			Name:      name,
@@ -754,17 +904,19 @@ func withEnv(name, value, valueFrom, refName, refKey string) ctrOption {
 			ValueFrom: valueFrom,
 			RefName:   refName,
 			RefKey:    refKey,
+			Optional:  optional,
 		}
 
 		c.Env = append(c.Env, e)
 	}
 }
 
-func withEnvFrom(name, from string) ctrOption {
+func withEnvFrom(name, from string, optional bool) ctrOption {
 	return func(c *Ctr) {
 		e := EnvFrom{
-			Name: name,
-			From: from,
+			Name:     name,
+			From:     from,
+			Optional: optional,
 		}
 
 		c.EnvFrom = append(c.EnvFrom, e)
@@ -822,11 +974,13 @@ type Env struct {
 	ValueFrom string
 	RefName   string
 	RefKey    string
+	Optional  bool
 }
 
 type EnvFrom struct {
-	Name string
-	From string
+	Name     string
+	From     string
+	Optional bool
 }
 
 func milliCPUToQuota(milliCPU string) int {
@@ -886,6 +1040,24 @@ var _ = Describe("Podman play kube", func() {
 		label := inspect.OutputToString()
 
 		Expect(label).To(ContainSubstring("unconfined_u:system_r:spc_t:s0"))
+	})
+
+	It("podman play kube should share ipc,net,uts when shareProcessNamespace is set", func() {
+		SkipIfRootless("Requires root priviledges for sharing few namespaces")
+		err := writeYaml(sharedNamespacePodYaml, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube.ExitCode()).To(Equal(0))
+
+		inspect := podmanTest.Podman([]string{"inspect", "testpod1", "--format", "'{{ .SharedNamespaces }}'"})
+		inspect.WaitWithDefaultTimeout()
+		sharednamespaces := inspect.OutputToString()
+		Expect(sharednamespaces).To(ContainSubstring("ipc"))
+		Expect(sharednamespaces).To(ContainSubstring("net"))
+		Expect(sharednamespaces).To(ContainSubstring("uts"))
+		Expect(sharednamespaces).To(ContainSubstring("pid"))
 	})
 
 	It("podman play kube fail with nonexistent authfile", func() {
@@ -1062,7 +1234,7 @@ var _ = Describe("Podman play kube", func() {
 		err := generateKubeYaml("configmap", cm, cmYamlPathname)
 		Expect(err).To(BeNil())
 
-		pod := getPod(withCtr(getCtr(withEnv("FOO", "", "configmap", "foo", "FOO"))))
+		pod := getPod(withCtr(getCtr(withEnv("FOO", "", "configmap", "foo", "FOO", false))))
 		err = generateKubeYaml("pod", pod, kubeYaml)
 		Expect(err).To(BeNil())
 
@@ -1076,6 +1248,68 @@ var _ = Describe("Podman play kube", func() {
 		Expect(inspect.OutputToString()).To(ContainSubstring(`FOO=foo`))
 	})
 
+	It("podman play kube test required env value from configmap with missing key", func() {
+		SkipIfRemote("configmap list is not supported as a param")
+		cmYamlPathname := filepath.Join(podmanTest.TempDir, "foo-cm.yaml")
+		cm := getConfigMap(withConfigMapName("foo"), withConfigMapData("FOO", "foo"))
+		err := generateKubeYaml("configmap", cm, cmYamlPathname)
+		Expect(err).To(BeNil())
+
+		pod := getPod(withCtr(getCtr(withEnv("FOO", "", "configmap", "foo", "MISSING_KEY", false))))
+		err = generateKubeYaml("pod", pod, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml, "--configmap", cmYamlPathname})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube.ExitCode()).To(Not(Equal(0)))
+	})
+
+	It("podman play kube test required env value from missing configmap", func() {
+		pod := getPod(withCtr(getCtr(withEnv("FOO", "", "configmap", "missing_cm", "FOO", false))))
+		err = generateKubeYaml("pod", pod, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube.ExitCode()).To(Not(Equal(0)))
+	})
+
+	It("podman play kube test optional env value from configmap with missing key", func() {
+		SkipIfRemote("configmap list is not supported as a param")
+		cmYamlPathname := filepath.Join(podmanTest.TempDir, "foo-cm.yaml")
+		cm := getConfigMap(withConfigMapName("foo"), withConfigMapData("FOO", "foo"))
+		err := generateKubeYaml("configmap", cm, cmYamlPathname)
+		Expect(err).To(BeNil())
+
+		pod := getPod(withCtr(getCtr(withEnv("FOO", "", "configmap", "foo", "MISSING_KEY", true))))
+		err = generateKubeYaml("pod", pod, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml, "--configmap", cmYamlPathname})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube.ExitCode()).To(Equal(0))
+
+		inspect := podmanTest.Podman([]string{"inspect", getCtrNameInPod(pod), "--format", "'{{ range .Config.Env }}[{{ . }}]{{end}}'"})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect.ExitCode()).To(Equal(0))
+		Expect(inspect.OutputToString()).To(ContainSubstring(`[FOO=]`))
+	})
+
+	It("podman play kube test optional env value from missing configmap", func() {
+		pod := getPod(withCtr(getCtr(withEnv("FOO", "", "configmap", "missing_cm", "FOO", true))))
+		err = generateKubeYaml("pod", pod, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube.ExitCode()).To(Equal(0))
+
+		inspect := podmanTest.Podman([]string{"inspect", getCtrNameInPod(pod), "--format", "'{{ range .Config.Env }}[{{ . }}]{{end}}'"})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect.ExitCode()).To(Equal(0))
+		Expect(inspect.OutputToString()).To(ContainSubstring(`[FOO=]`))
+	})
+
 	It("podman play kube test get all key-value pairs from configmap as envs", func() {
 		SkipIfRemote("configmap list is not supported as a param")
 		cmYamlPathname := filepath.Join(podmanTest.TempDir, "foo-cm.yaml")
@@ -1083,7 +1317,7 @@ var _ = Describe("Podman play kube", func() {
 		err := generateKubeYaml("configmap", cm, cmYamlPathname)
 		Expect(err).To(BeNil())
 
-		pod := getPod(withCtr(getCtr(withEnvFrom("foo", "configmap"))))
+		pod := getPod(withCtr(getCtr(withEnvFrom("foo", "configmap", false))))
 		err = generateKubeYaml("pod", pod, kubeYaml)
 		Expect(err).To(BeNil())
 
@@ -1096,6 +1330,131 @@ var _ = Describe("Podman play kube", func() {
 		Expect(inspect.ExitCode()).To(Equal(0))
 		Expect(inspect.OutputToString()).To(ContainSubstring(`FOO1=foo1`))
 		Expect(inspect.OutputToString()).To(ContainSubstring(`FOO2=foo2`))
+	})
+
+	It("podman play kube test get all key-value pairs from required configmap as envs", func() {
+		pod := getPod(withCtr(getCtr(withEnvFrom("missing_cm", "configmap", false))))
+		err = generateKubeYaml("pod", pod, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube.ExitCode()).To(Not(Equal(0)))
+	})
+
+	It("podman play kube test get all key-value pairs from optional configmap as envs", func() {
+		pod := getPod(withCtr(getCtr(withEnvFrom("missing_cm", "configmap", true))))
+		err = generateKubeYaml("pod", pod, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube.ExitCode()).To(Equal(0))
+	})
+
+	It("podman play kube test env value from secret", func() {
+		createSecret(podmanTest, "foo", defaultSecret)
+		pod := getPod(withCtr(getCtr(withEnv("FOO", "", "secret", "foo", "FOO", false))))
+		err = generateKubeYaml("pod", pod, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube.ExitCode()).To(Equal(0))
+
+		inspect := podmanTest.Podman([]string{"inspect", getCtrNameInPod(pod), "--format", "'{{ .Config.Env }}'"})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect.ExitCode()).To(Equal(0))
+		Expect(inspect.OutputToString()).To(ContainSubstring(`FOO=foo`))
+	})
+
+	It("podman play kube test required env value from missing secret", func() {
+		pod := getPod(withCtr(getCtr(withEnv("FOO", "", "secret", "foo", "FOO", false))))
+		err = generateKubeYaml("pod", pod, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube.ExitCode()).To(Not(Equal(0)))
+	})
+
+	It("podman play kube test required env value from secret with missing key", func() {
+		createSecret(podmanTest, "foo", defaultSecret)
+		pod := getPod(withCtr(getCtr(withEnv("FOO", "", "secret", "foo", "MISSING", false))))
+		err = generateKubeYaml("pod", pod, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube.ExitCode()).To(Not(Equal(0)))
+	})
+
+	It("podman play kube test optional env value from missing secret", func() {
+		pod := getPod(withCtr(getCtr(withEnv("FOO", "", "secret", "foo", "FOO", true))))
+		err = generateKubeYaml("pod", pod, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube.ExitCode()).To(Equal(0))
+
+		inspect := podmanTest.Podman([]string{"inspect", getCtrNameInPod(pod), "--format", "'{{ range .Config.Env }}[{{ . }}]{{end}}'"})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect.ExitCode()).To(Equal(0))
+		Expect(inspect.OutputToString()).To(ContainSubstring(`[FOO=]`))
+	})
+
+	It("podman play kube test optional env value from secret with missing key", func() {
+		createSecret(podmanTest, "foo", defaultSecret)
+		pod := getPod(withCtr(getCtr(withEnv("FOO", "", "secret", "foo", "MISSING", true))))
+		err = generateKubeYaml("pod", pod, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube.ExitCode()).To(Equal(0))
+
+		inspect := podmanTest.Podman([]string{"inspect", getCtrNameInPod(pod), "--format", "'{{ range .Config.Env }}[{{ . }}]{{end}}'"})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect.ExitCode()).To(Equal(0))
+		Expect(inspect.OutputToString()).To(ContainSubstring(`[FOO=]`))
+	})
+
+	It("podman play kube test get all key-value pairs from secret as envs", func() {
+		createSecret(podmanTest, "foo", defaultSecret)
+		pod := getPod(withCtr(getCtr(withEnvFrom("foo", "secret", false))))
+		err = generateKubeYaml("pod", pod, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube.ExitCode()).To(Equal(0))
+
+		inspect := podmanTest.Podman([]string{"inspect", getCtrNameInPod(pod), "--format", "'{{ .Config.Env }}'"})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect.ExitCode()).To(Equal(0))
+		Expect(inspect.OutputToString()).To(ContainSubstring(`FOO=foo`))
+		Expect(inspect.OutputToString()).To(ContainSubstring(`BAR=bar`))
+	})
+
+	It("podman play kube test get all key-value pairs from required secret as envs", func() {
+		pod := getPod(withCtr(getCtr(withEnvFrom("missing_secret", "secret", false))))
+		err = generateKubeYaml("pod", pod, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube.ExitCode()).To(Not(Equal(0)))
+	})
+
+	It("podman play kube test get all key-value pairs from optional secret as envs", func() {
+		pod := getPod(withCtr(getCtr(withEnvFrom("missing_secret", "secret", true))))
+		err = generateKubeYaml("pod", pod, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube.ExitCode()).To(Equal(0))
 	})
 
 	It("podman play kube test hostname", func() {
@@ -1420,6 +1779,49 @@ spec:
 		}
 	})
 
+	It("podman play kube --ip and --mac-address", func() {
+		var i, numReplicas int32
+		numReplicas = 3
+		deployment := getDeployment(withReplicas(numReplicas))
+		err := generateKubeYaml("deployment", deployment, kubeYaml)
+		Expect(err).To(BeNil())
+
+		net := "playkube" + stringid.GenerateNonCryptoID()
+		session := podmanTest.Podman([]string{"network", "create", "--subnet", "10.25.31.0/24", net})
+		session.WaitWithDefaultTimeout()
+		defer podmanTest.removeCNINetwork(net)
+		Expect(session.ExitCode()).To(BeZero())
+
+		ips := []string{"10.25.31.5", "10.25.31.10", "10.25.31.15"}
+		playArgs := []string{"play", "kube", "--network", net}
+		for _, ip := range ips {
+			playArgs = append(playArgs, "--ip", ip)
+		}
+		macs := []string{"e8:d8:82:c9:80:40", "e8:d8:82:c9:80:50", "e8:d8:82:c9:80:60"}
+		for _, mac := range macs {
+			playArgs = append(playArgs, "--mac-address", mac)
+		}
+
+		kube := podmanTest.Podman(append(playArgs, kubeYaml))
+		kube.WaitWithDefaultTimeout()
+		Expect(kube.ExitCode()).To(Equal(0))
+
+		podNames := getPodNamesInDeployment(deployment)
+		for i = 0; i < numReplicas; i++ {
+			inspect := podmanTest.Podman([]string{"inspect", getCtrNameInPod(&podNames[i]), "--format", "{{ .NetworkSettings.Networks." + net + ".IPAddress }}"})
+			inspect.WaitWithDefaultTimeout()
+			Expect(inspect.ExitCode()).To(Equal(0))
+			Expect(inspect.OutputToString()).To(Equal(ips[i]))
+		}
+
+		for i = 0; i < numReplicas; i++ {
+			inspect := podmanTest.Podman([]string{"inspect", getCtrNameInPod(&podNames[i]), "--format", "{{ .NetworkSettings.Networks." + net + ".MacAddress }}"})
+			inspect.WaitWithDefaultTimeout()
+			Expect(inspect.ExitCode()).To(Equal(0))
+			Expect(inspect.OutputToString()).To(Equal(macs[i]))
+		}
+	})
+
 	It("podman play kube test with network portbindings", func() {
 		ip := "127.0.0.100"
 		port := "5000"
@@ -1659,8 +2061,7 @@ VOLUME %s`, ALPINE, hostPathDir+"/")
 
 	It("podman play kube allows setting resource limits", func() {
 		SkipIfContainerized("Resource limits require a running systemd")
-		SkipIfRootlessCgroupsV1("Limits require root or cgroups v2")
-		SkipIfUnprivilegedCPULimits()
+		SkipIfRootless("CPU limits require root")
 		podmanTest.CgroupManager = "systemd"
 
 		var (
@@ -1770,8 +2171,106 @@ MemoryReservation: {{ .HostConfig.MemoryReservation }}`})
 		Expect(inspect.OutputToString()).To(Equal("true"))
 	})
 
+	It("podman play kube persistentVolumeClaim", func() {
+		volName := "myvol"
+		volDevice := "tmpfs"
+		volType := "tmpfs"
+		volOpts := "nodev,noexec"
+
+		pvc := getPVC(withPVCName(volName),
+			withPVCAnnotations(util.VolumeDeviceAnnotation, volDevice),
+			withPVCAnnotations(util.VolumeTypeAnnotation, volType),
+			withPVCAnnotations(util.VolumeMountOptsAnnotation, volOpts))
+		err = generateKubeYaml("persistentVolumeClaim", pvc, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube.ExitCode()).To(Equal(0))
+
+		inspect := podmanTest.Podman([]string{"inspect", volName, "--format", `
+Name: {{ .Name }}
+Device: {{ .Options.device }}
+Type: {{ .Options.type }}
+o: {{ .Options.o }}`})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect.ExitCode()).To(Equal(0))
+		Expect(inspect.OutputToString()).To(ContainSubstring("Name: " + volName))
+		Expect(inspect.OutputToString()).To(ContainSubstring("Device: " + volDevice))
+		Expect(inspect.OutputToString()).To(ContainSubstring("Type: " + volType))
+		Expect(inspect.OutputToString()).To(ContainSubstring("o: " + volOpts))
+	})
+
 	// Multi doc related tests
-	It("podman play kube multi doc yaml", func() {
+	It("podman play kube multi doc yaml with persistentVolumeClaim, service and deployment", func() {
+		yamlDocs := []string{}
+
+		serviceTemplate := `apiVersion: v1
+kind: Service
+metadata:
+  name: %s
+spec:
+  ports:
+  - port: 80
+    protocol: TCP
+    targetPort: 9376
+  selector:
+    app: %s
+`
+		// generate persistentVolumeClaim
+		volName := "multiFoo"
+		pvc := getPVC(withPVCName(volName))
+
+		// generate deployment
+		deploymentName := "multiFoo"
+		podName := "multiFoo"
+		ctrName := "ctr-01"
+		ctr := getCtr(withVolumeMount("/test", false))
+		ctr.Name = ctrName
+		pod := getPod(withPodName(podName), withVolume(getPersistentVolumeClaimVolume(volName)), withCtr(ctr))
+		deployment := getDeployment(withPod(pod))
+		deployment.Name = deploymentName
+
+		// add pvc
+		k, err := getKubeYaml("persistentVolumeClaim", pvc)
+		Expect(err).To(BeNil())
+		yamlDocs = append(yamlDocs, k)
+
+		// add service
+		yamlDocs = append(yamlDocs, fmt.Sprintf(serviceTemplate, deploymentName, deploymentName))
+
+		// add deployment
+		k, err = getKubeYaml("deployment", deployment)
+		Expect(err).To(BeNil())
+		yamlDocs = append(yamlDocs, k)
+
+		// generate multi doc yaml
+		err = generateMultiDocKubeYaml(yamlDocs, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube.ExitCode()).To(Equal(0))
+
+		inspectVolume := podmanTest.Podman([]string{"inspect", volName, "--format", "'{{ .Name }}'"})
+		inspectVolume.WaitWithDefaultTimeout()
+		Expect(inspectVolume.ExitCode()).To(Equal(0))
+		Expect(inspectVolume.OutputToString()).To(ContainSubstring(volName))
+
+		inspectPod := podmanTest.Podman([]string{"inspect", podName + "-pod-0", "--format", "'{{ .State }}'"})
+		inspectPod.WaitWithDefaultTimeout()
+		Expect(inspectPod.ExitCode()).To(Equal(0))
+		Expect(inspectPod.OutputToString()).To(ContainSubstring(`Running`))
+
+		inspectMounts := podmanTest.Podman([]string{"inspect", podName + "-pod-0-" + ctrName, "--format", "{{ (index .Mounts 0).Type }}:{{ (index .Mounts 0).Name }}"})
+		inspectMounts.WaitWithDefaultTimeout()
+		Expect(inspectMounts.ExitCode()).To(Equal(0))
+
+		correct := fmt.Sprintf("volume:%s", volName)
+		Expect(inspectMounts.OutputToString()).To(Equal(correct))
+	})
+
+	It("podman play kube multi doc yaml with multiple services, pods and deployments", func() {
 		yamlDocs := []string{}
 		podNames := []string{}
 
@@ -1787,7 +2286,7 @@ spec:
   selector:
     app: %s
 `
-		// generate servies, pods and deployments
+		// generate services, pods and deployments
 		for i := 0; i < 2; i++ {
 			podName := fmt.Sprintf("testPod%d", i)
 			deploymentName := fmt.Sprintf("testDeploy%d", i)
@@ -1866,5 +2365,80 @@ invalid kube kind
 		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
 		kube.WaitWithDefaultTimeout()
 		Expect(kube.ExitCode()).To(Not(Equal(0)))
+	})
+
+	It("podman play kube with auto update annotations for all containers", func() {
+		ctr01Name := "ctr01"
+		ctr02Name := "ctr02"
+		podName := "foo"
+		autoUpdateRegistry := "io.containers.autoupdate"
+		autoUpdateRegistryValue := "registry"
+		autoUpdateAuthfile := "io.containers.autoupdate.authfile"
+		autoUpdateAuthfileValue := "/some/authfile.json"
+
+		ctr01 := getCtr(withName(ctr01Name))
+		ctr02 := getCtr(withName(ctr02Name))
+
+		pod := getPod(
+			withPodName(podName),
+			withCtr(ctr01),
+			withCtr(ctr02),
+			withAnnotation(autoUpdateRegistry, autoUpdateRegistryValue),
+			withAnnotation(autoUpdateAuthfile, autoUpdateAuthfileValue))
+
+		err = generateKubeYaml("pod", pod, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube.ExitCode()).To(Equal(0))
+
+		for _, ctr := range []string{podName + "-" + ctr01Name, podName + "-" + ctr02Name} {
+			inspect := podmanTest.Podman([]string{"inspect", ctr, "--format", "'{{.Config.Labels}}'"})
+			inspect.WaitWithDefaultTimeout()
+			Expect(inspect.ExitCode()).To(Equal(0))
+
+			Expect(inspect.OutputToString()).To(ContainSubstring(autoUpdateRegistry + ":" + autoUpdateRegistryValue))
+			Expect(inspect.OutputToString()).To(ContainSubstring(autoUpdateAuthfile + ":" + autoUpdateAuthfileValue))
+		}
+	})
+
+	It("podman play kube with auto update annotations for first container only", func() {
+		ctr01Name := "ctr01"
+		ctr02Name := "ctr02"
+		autoUpdateRegistry := "io.containers.autoupdate"
+		autoUpdateRegistryValue := "local"
+
+		ctr01 := getCtr(withName(ctr01Name))
+		ctr02 := getCtr(withName(ctr02Name))
+
+		pod := getPod(
+			withCtr(ctr01),
+			withCtr(ctr02),
+		)
+
+		deployment := getDeployment(
+			withPod(pod),
+			withDeploymentAnnotation(autoUpdateRegistry+"/"+ctr01Name, autoUpdateRegistryValue),
+		)
+
+		err = generateKubeYaml("deployment", deployment, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube.ExitCode()).To(Equal(0))
+
+		podName := getPodNamesInDeployment(deployment)[0].Name
+
+		inspect := podmanTest.Podman([]string{"inspect", podName + "-" + ctr01Name, "--format", "'{{.Config.Labels}}'"})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect.ExitCode()).To(Equal(0))
+		Expect(inspect.OutputToString()).To(ContainSubstring(autoUpdateRegistry + ":" + autoUpdateRegistryValue))
+
+		inspect = podmanTest.Podman([]string{"inspect", podName + "-" + ctr02Name, "--format", "'{{.Config.Labels}}'"})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect.ExitCode()).To(Equal(0))
+		Expect(inspect.OutputToString()).To(ContainSubstring(`map[]`))
 	})
 })

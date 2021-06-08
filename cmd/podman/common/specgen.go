@@ -486,6 +486,8 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *ContainerCLIOpts, args []string
 	s.ReadOnlyFilesystem = c.ReadOnly
 	s.ConmonPidFile = c.ConmonPIDFile
 
+	s.DependencyContainers = c.Requires
+
 	// TODO
 	// outside of specgen and oci though
 	// defaults to true, check spec/storage
@@ -538,7 +540,7 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *ContainerCLIOpts, args []string
 					return fmt.Errorf("invalid systempaths option %q, only `unconfined` is supported", con[1])
 				}
 			case "unmask":
-				s.ContainerSecurityConfig.Unmask = append(s.ContainerSecurityConfig.Unmask, strings.Split(con[1], ":")...)
+				s.ContainerSecurityConfig.Unmask = append(s.ContainerSecurityConfig.Unmask, con[1:]...)
 			default:
 				return fmt.Errorf("invalid --security-opt 2: %q", opt)
 			}
@@ -637,11 +639,18 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *ContainerCLIOpts, args []string
 		}
 		s.RestartPolicy = splitRestart[0]
 	}
+
+	s.Secrets, s.EnvSecrets, err = parseSecrets(c.Secrets)
+	if err != nil {
+		return err
+	}
 	s.Remove = c.Rm
 	s.StopTimeout = &c.StopTimeout
+	s.Timeout = c.Timeout
 	s.Timezone = c.Timezone
 	s.Umask = c.Umask
-	s.Secrets = c.Secrets
+	s.PidFile = c.PidFile
+	s.Volatile = c.Rm
 
 	return nil
 }
@@ -767,4 +776,71 @@ func parseThrottleIOPsDevices(iopsDevices []string) (map[string]specs.LinuxThrot
 		td[split[0]] = specs.LinuxThrottleDevice{Rate: rate}
 	}
 	return td, nil
+}
+
+func parseSecrets(secrets []string) ([]string, map[string]string, error) {
+	secretParseError := errors.New("error parsing secret")
+	var mount []string
+	envs := make(map[string]string)
+	for _, val := range secrets {
+		source := ""
+		secretType := ""
+		target := ""
+		split := strings.Split(val, ",")
+
+		// --secret mysecret
+		if len(split) == 1 {
+			source = val
+			mount = append(mount, source)
+			continue
+		}
+		// --secret mysecret,opt=opt
+		if !strings.Contains(split[0], "=") {
+			source = split[0]
+			split = split[1:]
+		}
+		// TODO: implement other secret options
+		for _, val := range split {
+			kv := strings.SplitN(val, "=", 2)
+			if len(kv) < 2 {
+				return nil, nil, errors.Wrapf(secretParseError, "option %s must be in form option=value", val)
+			}
+			switch kv[0] {
+			case "source":
+				source = kv[1]
+			case "type":
+				if secretType != "" {
+					return nil, nil, errors.Wrap(secretParseError, "cannot set more tha one secret type")
+				}
+				if kv[1] != "mount" && kv[1] != "env" {
+					return nil, nil, errors.Wrapf(secretParseError, "type %s is invalid", kv[1])
+				}
+				secretType = kv[1]
+			case "target":
+				target = kv[1]
+			default:
+				return nil, nil, errors.Wrapf(secretParseError, "option %s invalid", val)
+			}
+		}
+
+		if secretType == "" {
+			secretType = "mount"
+		}
+		if source == "" {
+			return nil, nil, errors.Wrapf(secretParseError, "no source found %s", val)
+		}
+		if secretType == "mount" {
+			if target != "" {
+				return nil, nil, errors.Wrapf(secretParseError, "target option is invalid for mounted secrets")
+			}
+			mount = append(mount, source)
+		}
+		if secretType == "env" {
+			if target == "" {
+				target = source
+			}
+			envs[target] = source
+		}
+	}
+	return mount, envs, nil
 }

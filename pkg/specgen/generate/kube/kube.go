@@ -2,12 +2,14 @@ package kube
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"strings"
 
+	"github.com/containers/common/libimage"
 	"github.com/containers/common/pkg/parse"
-	"github.com/containers/podman/v3/libpod/image"
+	"github.com/containers/common/pkg/secrets"
 	ann "github.com/containers/podman/v3/pkg/annotations"
 	"github.com/containers/podman/v3/pkg/specgen"
 	"github.com/containers/podman/v3/pkg/util"
@@ -21,6 +23,10 @@ func ToPodGen(ctx context.Context, podName string, podYAML *v1.PodTemplateSpec) 
 	p := specgen.NewPodSpecGenerator()
 	p.Name = podName
 	p.Labels = podYAML.ObjectMeta.Labels
+	// Kube pods must share {ipc, net, uts} by default
+	p.SharedNamespaces = append(p.SharedNamespaces, "ipc")
+	p.SharedNamespaces = append(p.SharedNamespaces, "net")
+	p.SharedNamespaces = append(p.SharedNamespaces, "uts")
 	// TODO we only configure Process namespace. We also need to account for Host{IPC,Network,PID}
 	// which is not currently possible with pod create
 	if podYAML.Spec.ShareProcessNamespace != nil && *podYAML.Spec.ShareProcessNamespace {
@@ -54,7 +60,7 @@ func ToPodGen(ctx context.Context, podName string, podYAML *v1.PodTemplateSpec) 
 			}
 			p.DNSServer = servers
 		}
-		// search domans
+		// search domains
 		if domains := dnsConfig.Searches; len(domains) > 0 {
 			p.DNSSearch = domains
 		}
@@ -77,7 +83,7 @@ type CtrSpecGenOptions struct {
 	// Container as read from the pod yaml
 	Container v1.Container
 	// Image available to use (pulled or found local)
-	Image *image.Image
+	Image *libimage.Image
 	// Volumes for all containers
 	Volumes map[string]*KubeVolume
 	// PodID of the parent pod
@@ -94,8 +100,12 @@ type CtrSpecGenOptions struct {
 	RestartPolicy string
 	// NetNSIsHost tells the container to use the host netns
 	NetNSIsHost bool
+	// SecretManager to access the secrets
+	SecretsManager *secrets.SecretsManager
 	// LogDriver which should be used for the container
 	LogDriver string
+	// Labels define key-value pairs of metadata
+	Labels map[string]string
 }
 
 func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGenerator, error) {
@@ -161,7 +171,7 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 
 	// TODO: We don't understand why specgen does not take of this, but
 	// integration tests clearly pointed out that it was required.
-	imageData, err := opts.Image.Inspect(ctx)
+	imageData, err := opts.Image.Inspect(ctx, false)
 	if err != nil {
 		return nil, err
 	}
@@ -216,12 +226,18 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 	}
 
 	for _, env := range opts.Container.Env {
-		value := envVarValue(env, opts.ConfigMaps)
+		value, err := envVarValue(env, opts)
+		if err != nil {
+			return nil, err
+		}
 
 		envs[env.Name] = value
 	}
 	for _, envFrom := range opts.Container.EnvFrom {
-		cmEnvs := envVarsFromConfigMap(envFrom, opts.ConfigMaps)
+		cmEnvs, err := envVarsFrom(envFrom, opts)
+		if err != nil {
+			return nil, err
+		}
 
 		for k, v := range cmEnvs {
 			envs[k] = v
@@ -266,6 +282,19 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 
 	if opts.NetNSIsHost {
 		s.NetNS.NSMode = specgen.Host
+	}
+
+	// Add labels that come from kube
+	if len(s.Labels) == 0 {
+		// If there are no labels, let's use the map that comes
+		// from kube
+		s.Labels = opts.Labels
+	} else {
+		// If there are already labels in the map, append the ones
+		// obtained from kube
+		for k, v := range opts.Labels {
+			s.Labels[k] = v
+		}
 	}
 
 	return s, nil
@@ -331,40 +360,96 @@ func quantityToInt64(quantity *resource.Quantity) (int64, error) {
 	return 0, errors.Errorf("Quantity cannot be represented as int64: %v", quantity)
 }
 
-// envVarsFromConfigMap returns all key-value pairs as env vars from a configMap that matches the envFrom setting of a container
-func envVarsFromConfigMap(envFrom v1.EnvFromSource, configMaps []v1.ConfigMap) map[string]string {
+// read a k8s secret in JSON format from the secret manager
+func k8sSecretFromSecretManager(name string, secretsManager *secrets.SecretsManager) (map[string][]byte, error) {
+	_, jsonSecret, err := secretsManager.LookupSecretData(name)
+	if err != nil {
+		return nil, err
+	}
+
+	var secrets map[string][]byte
+	if err := json.Unmarshal(jsonSecret, &secrets); err != nil {
+		return nil, errors.Errorf("Secret %v is not valid JSON: %v", name, err)
+	}
+	return secrets, nil
+}
+
+// envVarsFrom returns all key-value pairs as env vars from a configMap or secret that matches the envFrom setting of a container
+func envVarsFrom(envFrom v1.EnvFromSource, opts *CtrSpecGenOptions) (map[string]string, error) {
 	envs := map[string]string{}
 
 	if envFrom.ConfigMapRef != nil {
-		cmName := envFrom.ConfigMapRef.Name
+		cmRef := envFrom.ConfigMapRef
+		err := errors.Errorf("Configmap %v not found", cmRef.Name)
 
-		for _, c := range configMaps {
-			if cmName == c.Name {
+		for _, c := range opts.ConfigMaps {
+			if cmRef.Name == c.Name {
 				envs = c.Data
+				err = nil
 				break
 			}
 		}
-	}
 
-	return envs
-}
-
-// envVarValue returns the environment variable value configured within the container's env setting.
-// It gets the value from a configMap if specified, otherwise returns env.Value
-func envVarValue(env v1.EnvVar, configMaps []v1.ConfigMap) string {
-	for _, c := range configMaps {
-		if env.ValueFrom != nil {
-			if env.ValueFrom.ConfigMapKeyRef != nil {
-				if env.ValueFrom.ConfigMapKeyRef.Name == c.Name {
-					if value, ok := c.Data[env.ValueFrom.ConfigMapKeyRef.Key]; ok {
-						return value
-					}
-				}
-			}
+		if err != nil && (cmRef.Optional == nil || !*cmRef.Optional) {
+			return nil, err
 		}
 	}
 
-	return env.Value
+	if envFrom.SecretRef != nil {
+		secRef := envFrom.SecretRef
+		secret, err := k8sSecretFromSecretManager(secRef.Name, opts.SecretsManager)
+		if err == nil {
+			for k, v := range secret {
+				envs[k] = string(v)
+			}
+		} else if secRef.Optional == nil || !*secRef.Optional {
+			return nil, err
+		}
+	}
+
+	return envs, nil
+}
+
+// envVarValue returns the environment variable value configured within the container's env setting.
+// It gets the value from a configMap or secret if specified, otherwise returns env.Value
+func envVarValue(env v1.EnvVar, opts *CtrSpecGenOptions) (string, error) {
+	if env.ValueFrom != nil {
+		if env.ValueFrom.ConfigMapKeyRef != nil {
+			cmKeyRef := env.ValueFrom.ConfigMapKeyRef
+			err := errors.Errorf("Cannot set env %v: configmap %v not found", env.Name, cmKeyRef.Name)
+
+			for _, c := range opts.ConfigMaps {
+				if cmKeyRef.Name == c.Name {
+					if value, ok := c.Data[cmKeyRef.Key]; ok {
+						return value, nil
+					}
+					err = errors.Errorf("Cannot set env %v: key %s not found in configmap %v", env.Name, cmKeyRef.Key, cmKeyRef.Name)
+					break
+				}
+			}
+			if cmKeyRef.Optional == nil || !*cmKeyRef.Optional {
+				return "", err
+			}
+			return "", nil
+		}
+
+		if env.ValueFrom.SecretKeyRef != nil {
+			secKeyRef := env.ValueFrom.SecretKeyRef
+			secret, err := k8sSecretFromSecretManager(secKeyRef.Name, opts.SecretsManager)
+			if err == nil {
+				if val, ok := secret[secKeyRef.Key]; ok {
+					return string(val), nil
+				}
+				err = errors.Errorf("Secret %v has not %v key", secKeyRef.Name, secKeyRef.Key)
+			}
+			if secKeyRef.Optional == nil || !*secKeyRef.Optional {
+				return "", errors.Errorf("Cannot set env %v: %v", env.Name, err)
+			}
+			return "", nil
+		}
+	}
+
+	return env.Value, nil
 }
 
 // getPodPorts converts a slice of kube container descriptions to an

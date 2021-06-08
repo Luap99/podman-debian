@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/containers/podman/v3/pkg/util"
 	. "github.com/containers/podman/v3/test/utils"
 	"github.com/ghodss/yaml"
 	. "github.com/onsi/ginkgo"
@@ -495,6 +496,29 @@ var _ = Describe("Podman generate kube", func() {
 		Expect(inspect.OutputToString()).To(ContainSubstring(vol1))
 	})
 
+	It("podman generate kube when bind-mounting '/' and '/root' at the same time ", func() {
+		// Fixes https://github.com/containers/podman/issues/9764
+
+		ctrName := "mount-root-ctr"
+		session1 := podmanTest.Podman([]string{"run", "-d", "--pod", "new:mount-root-conflict", "--name", ctrName,
+			"-v", "/:/volume1/",
+			"-v", "/root:/volume2/",
+			"alpine", "top"})
+		session1.WaitWithDefaultTimeout()
+		Expect(session1.ExitCode()).To(Equal(0))
+
+		kube := podmanTest.Podman([]string{"generate", "kube", "mount-root-conflict"})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube.ExitCode()).To(Equal(0))
+
+		pod := new(v1.Pod)
+		err := yaml.Unmarshal(kube.Out.Contents(), pod)
+		Expect(err).To(BeNil())
+
+		Expect(len(pod.Spec.Volumes)).To(Equal(2))
+
+	})
+
 	It("podman generate kube with persistent volume claim", func() {
 		vol := "vol-test-persistent-volume-claim"
 
@@ -554,7 +578,7 @@ var _ = Describe("Podman generate kube", func() {
 		Expect(inspect.OutputToString()).To(ContainSubstring(`"pid"`))
 	})
 
-	It("podman generate kube with pods and containers should fail", func() {
+	It("podman generate kube with pods and containers", func() {
 		pod1 := podmanTest.Podman([]string{"run", "-dt", "--pod", "new:pod1", ALPINE, "top"})
 		pod1.WaitWithDefaultTimeout()
 		Expect(pod1.ExitCode()).To(Equal(0))
@@ -565,7 +589,7 @@ var _ = Describe("Podman generate kube", func() {
 
 		kube := podmanTest.Podman([]string{"generate", "kube", "pod1", "top"})
 		kube.WaitWithDefaultTimeout()
-		Expect(kube.ExitCode()).ToNot(Equal(0))
+		Expect(kube.ExitCode()).To(Equal(0))
 	})
 
 	It("podman generate kube with containers in a pod should fail", func() {
@@ -630,7 +654,7 @@ var _ = Describe("Podman generate kube", func() {
 		Expect(*pod.Spec.DNSConfig.Options[0].Value).To(Equal("blue"))
 	})
 
-	It("podman generate kube multiple contianer dns servers and options are cumulative", func() {
+	It("podman generate kube multiple container dns servers and options are cumulative", func() {
 		top1 := podmanTest.Podman([]string{"run", "-dt", "--name", "top1", "--dns", "8.8.8.8", "--dns-search", "foobar.com", ALPINE, "top"})
 		top1.WaitWithDefaultTimeout()
 		Expect(top1.ExitCode()).To(BeZero())
@@ -798,4 +822,105 @@ USER test1`
 		Expect(*pod.Spec.Containers[0].SecurityContext.RunAsUser).To(Equal(int64(10001)))
 	})
 
+	It("podman generate kube on named volume", func() {
+		vol := "simple-named-volume"
+
+		session := podmanTest.Podman([]string{"volume", "create", vol})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+
+		kube := podmanTest.Podman([]string{"generate", "kube", vol})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube.ExitCode()).To(Equal(0))
+
+		pvc := new(v1.PersistentVolumeClaim)
+		err := yaml.Unmarshal(kube.Out.Contents(), pvc)
+		Expect(err).To(BeNil())
+		Expect(pvc.GetName()).To(Equal(vol))
+		Expect(pvc.Spec.AccessModes[0]).To(Equal(v1.ReadWriteOnce))
+		Expect(pvc.Spec.Resources.Requests.Storage().String()).To(Equal("1Gi"))
+	})
+
+	It("podman generate kube on named volume with options", func() {
+		vol := "complex-named-volume"
+		volDevice := "tmpfs"
+		volType := "tmpfs"
+		volOpts := "nodev,noexec"
+
+		session := podmanTest.Podman([]string{"volume", "create", "--opt", "device=" + volDevice, "--opt", "type=" + volType, "--opt", "o=" + volOpts, vol})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+
+		kube := podmanTest.Podman([]string{"generate", "kube", vol})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube.ExitCode()).To(Equal(0))
+
+		pvc := new(v1.PersistentVolumeClaim)
+		err := yaml.Unmarshal(kube.Out.Contents(), pvc)
+		Expect(err).To(BeNil())
+		Expect(pvc.GetName()).To(Equal(vol))
+		Expect(pvc.Spec.AccessModes[0]).To(Equal(v1.ReadWriteOnce))
+		Expect(pvc.Spec.Resources.Requests.Storage().String()).To(Equal("1Gi"))
+
+		for k, v := range pvc.GetAnnotations() {
+			switch k {
+			case util.VolumeDeviceAnnotation:
+				Expect(v).To(Equal(volDevice))
+			case util.VolumeTypeAnnotation:
+				Expect(v).To(Equal(volType))
+			case util.VolumeMountOptsAnnotation:
+				Expect(v).To(Equal(volOpts))
+			}
+		}
+	})
+
+	It("podman generate kube on container with auto update labels", func() {
+		top := podmanTest.Podman([]string{"run", "-dt", "--name", "top", "--label", "io.containers.autoupdate=local", ALPINE, "top"})
+		top.WaitWithDefaultTimeout()
+		Expect(top.ExitCode()).To(Equal(0))
+
+		kube := podmanTest.Podman([]string{"generate", "kube", "top"})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube.ExitCode()).To(Equal(0))
+
+		pod := new(v1.Pod)
+		err := yaml.Unmarshal(kube.Out.Contents(), pod)
+		Expect(err).To(BeNil())
+
+		v, ok := pod.GetAnnotations()["io.containers.autoupdate/top"]
+		Expect(ok).To(Equal(true))
+		Expect(v).To(Equal("local"))
+	})
+
+	It("podman generate kube on pod with auto update labels in all containers", func() {
+		pod1 := podmanTest.Podman([]string{"pod", "create", "--name", "pod1"})
+		pod1.WaitWithDefaultTimeout()
+		Expect(pod1.ExitCode()).To(Equal(0))
+
+		top1 := podmanTest.Podman([]string{"run", "-dt", "--name", "top1", "--pod", "pod1", "--label", "io.containers.autoupdate=registry", "--label", "io.containers.autoupdate.authfile=/some/authfile.json", ALPINE, "top"})
+		top1.WaitWithDefaultTimeout()
+		Expect(top1.ExitCode()).To(Equal(0))
+
+		top2 := podmanTest.Podman([]string{"run", "-dt", "--name", "top2", "--pod", "pod1", "--label", "io.containers.autoupdate=registry", "--label", "io.containers.autoupdate.authfile=/some/authfile.json", ALPINE, "top"})
+		top2.WaitWithDefaultTimeout()
+		Expect(top2.ExitCode()).To(Equal(0))
+
+		kube := podmanTest.Podman([]string{"generate", "kube", "pod1"})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube.ExitCode()).To(Equal(0))
+
+		pod := new(v1.Pod)
+		err := yaml.Unmarshal(kube.Out.Contents(), pod)
+		Expect(err).To(BeNil())
+
+		for _, ctr := range []string{"top1", "top2"} {
+			v, ok := pod.GetAnnotations()["io.containers.autoupdate/"+ctr]
+			Expect(ok).To(Equal(true))
+			Expect(v).To(Equal("registry"))
+
+			v, ok = pod.GetAnnotations()["io.containers.autoupdate.authfile/"+ctr]
+			Expect(ok).To(Equal(true))
+			Expect(v).To(Equal("/some/authfile.json"))
+		}
+	})
 })

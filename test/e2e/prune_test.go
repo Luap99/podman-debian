@@ -88,6 +88,53 @@ var _ = Describe("Podman prune", func() {
 		Expect(podmanTest.NumberOfContainers()).To(Equal(0))
 	})
 
+	It("podman image prune - remove only dangling images", func() {
+		session := podmanTest.Podman([]string{"images", "-a"})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+		hasNone, _ := session.GrepString("<none>")
+		Expect(hasNone).To(BeFalse())
+		numImages := len(session.OutputToStringArray())
+
+		// Since there's no dangling image, none should be removed.
+		session = podmanTest.Podman([]string{"image", "prune", "-f"})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+		Expect(len(session.OutputToStringArray())).To(Equal(0))
+
+		// Let's be extra sure that the same number of images is
+		// reported.
+		session = podmanTest.Podman([]string{"images", "-a"})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+		Expect(len(session.OutputToStringArray())).To(Equal(numImages))
+
+		// Now build a new image with dangling intermediate images.
+		podmanTest.BuildImage(pruneImage, "alpine_bash:latest", "true")
+
+		session = podmanTest.Podman([]string{"images", "-a"})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+		hasNone, _ = session.GrepString("<none>")
+		Expect(hasNone).To(BeTrue()) // ! we have dangling ones
+		numImages = len(session.OutputToStringArray())
+
+		// Since there's at least one dangling image, prune should
+		// remove them.
+		session = podmanTest.Podman([]string{"image", "prune", "-f"})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+		numPrunedImages := len(session.OutputToStringArray())
+		Expect(numPrunedImages >= 1).To(BeTrue())
+
+		// Now make sure that exactly the number of pruned images has
+		// been removed.
+		session = podmanTest.Podman([]string{"images", "-a"})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+		Expect(len(session.OutputToStringArray())).To(Equal(numImages - numPrunedImages))
+	})
+
 	It("podman image prune skip cache images", func() {
 		podmanTest.BuildImage(pruneImage, "alpine_bash:latest", "true")
 
@@ -104,8 +151,9 @@ var _ = Describe("Podman prune", func() {
 		after := podmanTest.Podman([]string{"images", "-a"})
 		after.WaitWithDefaultTimeout()
 		Expect(none.ExitCode()).To(Equal(0))
+		// Check if all "dangling" images were pruned.
 		hasNoneAfter, _ := after.GrepString("<none>")
-		Expect(hasNoneAfter).To(BeTrue())
+		Expect(hasNoneAfter).To(BeFalse())
 		Expect(len(after.OutputToStringArray()) > 1).To(BeTrue())
 	})
 
@@ -135,12 +183,18 @@ var _ = Describe("Podman prune", func() {
 	It("podman image prune unused images", func() {
 		podmanTest.AddImageToRWStore(ALPINE)
 		podmanTest.AddImageToRWStore(BB)
+
+		images := podmanTest.Podman([]string{"images", "-a"})
+		images.WaitWithDefaultTimeout()
+		Expect(images.ExitCode()).To(Equal(0))
+
 		prune := podmanTest.Podman([]string{"image", "prune", "-af"})
 		prune.WaitWithDefaultTimeout()
 		Expect(prune.ExitCode()).To(Equal(0))
 
-		images := podmanTest.Podman([]string{"images", "-aq"})
+		images = podmanTest.Podman([]string{"images", "-aq"})
 		images.WaitWithDefaultTimeout()
+		Expect(images.ExitCode()).To(Equal(0))
 		// all images are unused, so they all should be deleted!
 		Expect(len(images.OutputToStringArray())).To(Equal(len(CACHE_IMAGES)))
 	})

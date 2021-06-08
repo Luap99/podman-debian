@@ -215,8 +215,7 @@ var _ = Describe("Toolbox-specific testing", func() {
 		useradd := fmt.Sprintf("useradd --home-dir %s --shell %s --uid %s %s",
 			homeDir, shell, uid, username)
 		passwd := fmt.Sprintf("passwd --delete %s", username)
-		podmanTest.AddImageToRWStore(fedoraToolbox)
-		session = podmanTest.Podman([]string{"create", "--name", "test", "--userns=keep-id", "--user", "root:root", fedoraToolbox, "sh", "-c",
+		session = podmanTest.Podman([]string{"create", "--log-driver", "k8s-file", "--name", "test", "--userns=keep-id", "--user", "root:root", fedoraToolbox, "sh", "-c",
 			fmt.Sprintf("%s; %s; echo READY; sleep 1000", useradd, passwd)})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
@@ -251,8 +250,7 @@ var _ = Describe("Toolbox-specific testing", func() {
 
 		groupadd := fmt.Sprintf("groupadd --gid %s %s", gid, groupName)
 
-		podmanTest.AddImageToRWStore(fedoraToolbox)
-		session = podmanTest.Podman([]string{"create", "--name", "test", "--userns=keep-id", "--user", "root:root", fedoraToolbox, "sh", "-c",
+		session = podmanTest.Podman([]string{"create", "--log-driver", "k8s-file", "--name", "test", "--userns=keep-id", "--user", "root:root", fedoraToolbox, "sh", "-c",
 			fmt.Sprintf("%s; echo READY; sleep 1000", groupadd)})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
@@ -296,8 +294,7 @@ var _ = Describe("Toolbox-specific testing", func() {
 		usermod := fmt.Sprintf("usermod --append --groups wheel --home %s --shell %s --uid %s --gid %s %s",
 			homeDir, shell, uid, gid, username)
 
-		podmanTest.AddImageToRWStore(fedoraToolbox)
-		session = podmanTest.Podman([]string{"create", "--name", "test", "--userns=keep-id", "--user", "root:root", fedoraToolbox, "sh", "-c",
+		session = podmanTest.Podman([]string{"create", "--log-driver", "k8s-file", "--name", "test", "--userns=keep-id", "--user", "root:root", fedoraToolbox, "sh", "-c",
 			fmt.Sprintf("%s; %s; %s; echo READY; sleep 1000", useradd, groupadd, usermod)})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
@@ -341,8 +338,8 @@ var _ = Describe("Toolbox-specific testing", func() {
 
 		// These should be most of the switches that Toolbox uses to create a "toolbox" container
 		// https://github.com/containers/toolbox/blob/master/src/cmd/create.go
-		podmanTest.AddImageToRWStore(fedoraToolbox)
 		session = podmanTest.Podman([]string{"create",
+			"--log-driver", "k8s-file",
 			"--dns", "none",
 			"--hostname", "toolbox",
 			"--ipc", "host",
@@ -378,7 +375,6 @@ var _ = Describe("Toolbox-specific testing", func() {
 		currentUser, err := user.Current()
 		Expect(err).To(BeNil())
 
-		podmanTest.AddImageToRWStore(fedoraToolbox)
 		session = podmanTest.Podman([]string{"run", "-v", fmt.Sprintf("%s:%s", currentUser.HomeDir, currentUser.HomeDir), "--userns=keep-id", fedoraToolbox, "sh", "-c", "echo $HOME"})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))

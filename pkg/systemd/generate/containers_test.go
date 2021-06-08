@@ -48,7 +48,7 @@ Description=Podman container-639c53578af4d84b8800b4635fa4e680ee80fd67e0e6a2d4eea
 Documentation=man:podman-generate-systemd(1)
 Wants=network.target
 After=network-online.target
-RequiresMountsFor=/var/lib/containers/storage /var/run/containers/storage
+RequiresMountsFor=/var/run/containers/storage
 
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
@@ -74,7 +74,7 @@ Description=Podman container-foobar.service
 Documentation=man:podman-generate-systemd(1)
 Wants=network.target
 After=network-online.target
-RequiresMountsFor=/var/lib/containers/storage /var/run/containers/storage
+RequiresMountsFor=/var/run/containers/storage
 
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
@@ -98,7 +98,7 @@ Description=Podman container-foobar.service
 Documentation=man:podman-generate-systemd(1)
 Wants=network.target
 After=network-online.target
-RequiresMountsFor=/var/lib/containers/storage /var/run/containers/storage
+RequiresMountsFor=/var/run/containers/storage
 BindsTo=a.service b.service c.service pod.service
 After=a.service b.service c.service pod.service
 
@@ -124,7 +124,7 @@ Description=Podman jadda-jadda.service
 Documentation=man:podman-generate-systemd(1)
 Wants=network.target
 After=network-online.target
-RequiresMountsFor=/var/lib/containers/storage /var/run/containers/storage
+RequiresMountsFor=/var/run/containers/storage
 
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
@@ -149,7 +149,7 @@ Description=Podman jadda-jadda.service
 Documentation=man:podman-generate-systemd(1)
 Wants=network.target
 After=network-online.target
-RequiresMountsFor=/var/lib/containers/storage /var/run/containers/storage
+RequiresMountsFor=/var/run/containers/storage
 
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
@@ -174,7 +174,7 @@ Description=Podman jadda-jadda.service
 Documentation=man:podman-generate-systemd(1)
 Wants=network.target
 After=network-online.target
-RequiresMountsFor=/var/lib/containers/storage /var/run/containers/storage
+RequiresMountsFor=/var/run/containers/storage
 
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
@@ -199,7 +199,7 @@ Description=Podman jadda-jadda.service
 Documentation=man:podman-generate-systemd(1)
 Wants=network.target
 After=network-online.target
-RequiresMountsFor=/var/lib/containers/storage /var/run/containers/storage
+RequiresMountsFor=/var/run/containers/storage
 
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
@@ -224,7 +224,7 @@ Description=Podman container-639c53578af4d84b8800b4635fa4e680ee80fd67e0e6a2d4eea
 Documentation=man:podman-generate-systemd(1)
 Wants=network.target
 After=network-online.target
-RequiresMountsFor=/var/lib/containers/storage /var/run/containers/storage
+RequiresMountsFor=/var/run/containers/storage
 
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
@@ -250,7 +250,7 @@ Description=Podman jadda-jadda.service
 Documentation=man:podman-generate-systemd(1)
 Wants=network.target
 After=network-online.target
-RequiresMountsFor=/var/lib/containers/storage /var/run/containers/storage
+RequiresMountsFor=/var/run/containers/storage
 
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
@@ -279,7 +279,7 @@ Description=Podman jadda-jadda.service
 Documentation=man:podman-generate-systemd(1)
 Wants=network.target
 After=network-online.target
-RequiresMountsFor=/var/lib/containers/storage /var/run/containers/storage
+RequiresMountsFor=/var/run/containers/storage
 
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
@@ -304,7 +304,7 @@ Description=Podman jadda-jadda.service
 Documentation=man:podman-generate-systemd(1)
 Wants=network.target
 After=network-online.target
-RequiresMountsFor=/var/lib/containers/storage /var/run/containers/storage
+RequiresMountsFor=/var/run/containers/storage
 
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
@@ -329,7 +329,7 @@ Description=Podman jadda-jadda.service
 Documentation=man:podman-generate-systemd(1)
 Wants=network.target
 After=network-online.target
-RequiresMountsFor=/var/lib/containers/storage /var/run/containers/storage
+RequiresMountsFor=/var/run/containers/storage
 
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
@@ -354,7 +354,7 @@ Description=Podman jadda-jadda.service
 Documentation=man:podman-generate-systemd(1)
 Wants=network.target
 After=network-online.target
-RequiresMountsFor=/var/lib/containers/storage /var/run/containers/storage
+RequiresMountsFor=/var/run/containers/storage
 
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
@@ -379,7 +379,7 @@ Description=Podman jadda-jadda.service
 Documentation=man:podman-generate-systemd(1)
 Wants=network.target
 After=network-online.target
-RequiresMountsFor=/var/lib/containers/storage /var/run/containers/storage
+RequiresMountsFor=/var/run/containers/storage
 
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
@@ -404,7 +404,7 @@ Description=Podman jadda-jadda.service
 Documentation=man:podman-generate-systemd(1)
 Wants=network.target
 After=network-online.target
-RequiresMountsFor=/var/lib/containers/storage /var/run/containers/storage
+RequiresMountsFor=/var/run/containers/storage
 
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
@@ -429,7 +429,7 @@ Description=Podman jadda-jadda.service
 Documentation=man:podman-generate-systemd(1)
 Wants=network.target
 After=network-online.target
-RequiresMountsFor=/var/lib/containers/storage /var/run/containers/storage
+RequiresMountsFor=/var/run/containers/storage
 
 [Service]
 Environment=PODMAN_SYSTEMD_UNIT=%n
@@ -437,6 +437,32 @@ Restart=always
 TimeoutStopSec=70
 ExecStartPre=/bin/rm -f %t/jadda-jadda.pid %t/jadda-jadda.ctr-id
 ExecStart=/usr/bin/podman run --conmon-pidfile %t/jadda-jadda.pid --cidfile %t/jadda-jadda.ctr-id --cgroups=no-conmon --pod-id-file %t/pod-foobar.pod-id-file -d awesome-image:latest podman run --cgroups=foo --conmon-pidfile=foo --cidfile=foo --pod-id-file /tmp/pod-foobar.pod-id-file alpine
+ExecStop=/usr/bin/podman stop --ignore --cidfile %t/jadda-jadda.ctr-id -t 10
+ExecStopPost=/usr/bin/podman rm --ignore -f --cidfile %t/jadda-jadda.ctr-id
+PIDFile=%t/jadda-jadda.pid
+Type=forking
+
+[Install]
+WantedBy=multi-user.target default.target
+`
+
+	goodNewWithEnvar := `# jadda-jadda.service
+# autogenerated by Podman CI
+
+[Unit]
+Description=Podman jadda-jadda.service
+Documentation=man:podman-generate-systemd(1)
+Wants=network.target
+After=network-online.target
+RequiresMountsFor=/var/run/containers/storage
+
+[Service]
+Environment=PODMAN_SYSTEMD_UNIT=%n
+Environment=FOO=abc "BAR=my test" USER=%%a
+Restart=always
+TimeoutStopSec=70
+ExecStartPre=/bin/rm -f %t/jadda-jadda.pid %t/jadda-jadda.ctr-id
+ExecStart=/usr/bin/podman run --conmon-pidfile %t/jadda-jadda.pid --cidfile %t/jadda-jadda.ctr-id --cgroups=no-conmon -d --env FOO --env=BAR --env=MYENV=2 -e USER awesome-image:latest
 ExecStop=/usr/bin/podman stop --ignore --cidfile %t/jadda-jadda.ctr-id -t 10
 ExecStopPost=/usr/bin/podman rm --ignore -f --cidfile %t/jadda-jadda.ctr-id
 PIDFile=%t/jadda-jadda.pid
@@ -869,6 +895,26 @@ WantedBy=multi-user.target default.target
 				},
 			},
 			goodNewWithPodIDFiles,
+			true,
+			false,
+			false,
+		},
+		{"good with environment variables",
+			containerInfo{
+				Executable:        "/usr/bin/podman",
+				ServiceName:       "jadda-jadda",
+				ContainerNameOrID: "jadda-jadda",
+				RestartPolicy:     "always",
+				PIDFile:           "/var/run/containers/storage/overlay-containers/639c53578af4d84b8800b4635fa4e680ee80fd67e0e6a2d4eea48d1e3230f401/userdata/conmon.pid",
+				StopTimeout:       10,
+				PodmanVersion:     "CI",
+				GraphRoot:         "/var/lib/containers/storage",
+				RunRoot:           "/var/run/containers/storage",
+				CreateCommand:     []string{"I'll get stripped", "create", "--env", "FOO", "--env=BAR", "--env=MYENV=2", "-e", "USER", "awesome-image:latest"},
+				containerEnv:      []string{"FOO=abc", "BAR=my test", "USER=%a", "MYENV=2"},
+				EnvVariable:       define.EnvVariable,
+			},
+			goodNewWithEnvar,
 			true,
 			false,
 			false,

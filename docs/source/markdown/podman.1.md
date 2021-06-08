@@ -223,7 +223,7 @@ the exit codes follow the `chroot` standard, see below:
 | [podman-events(1)](podman-events.1.md)           | Monitor Podman events                                                       |
 | [podman-exec(1)](podman-exec.1.md)               | Execute a command in a running container.                                   |
 | [podman-export(1)](podman-export.1.md)           | Export a container's filesystem contents as a tar archive.                  |
-| [podman-generate(1)](podman-generate.1.md)       | Generate structured data based for a containers and pods.                   |
+| [podman-generate(1)](podman-generate.1.md)       | Generate structured data based on containers, pods or volumes.                   |
 | [podman-healthcheck(1)](podman-healthcheck.1.md) | Manage healthchecks for containers                                          |
 | [podman-history(1)](podman-history.1.md)         | Show the history of an image.                                               |
 | [podman-image(1)](podman-image.1.md)             | Manage images.                                                              |
@@ -237,11 +237,12 @@ the exit codes follow the `chroot` standard, see below:
 | [podman-login(1)](podman-login.1.md)             | Login to a container registry.                                              |
 | [podman-logout(1)](podman-logout.1.md)           | Logout of a container registry.                                             |
 | [podman-logs(1)](podman-logs.1.md)               | Display the logs of one or more containers.                                 |
+| [podman-machine(1)](podman-machine.1.md)         | Manage Podman's virtual machine                                             |
 | [podman-manifest(1)](podman-manifest.1.md)       | Create and manipulate manifest lists and image indexes.                     |
 | [podman-mount(1)](podman-mount.1.md)             | Mount a working container's root filesystem.                                |
 | [podman-network(1)](podman-network.1.md)         | Manage Podman CNI networks.                                                 |
 | [podman-pause(1)](podman-pause.1.md)             | Pause one or more containers.                                               |
-| [podman-play(1)](podman-play.1.md)               | Play pods and containers based on a structured input file.                  |
+| [podman-play(1)](podman-play.1.md)               | Play containers, pods or volumes based on a structured input file.                  |
 | [podman-pod(1)](podman-pod.1.md)                 | Management tool for groups of containers, called pods.                      |
 | [podman-port(1)](podman-port.1.md)               | List port mappings for a container.                                         |
 | [podman-ps(1)](podman-ps.1.md)                   | Prints out information about containers.                                    |
@@ -342,7 +343,7 @@ The Network File System (NFS) and other distributed file systems (for example: L
 For more information, please refer to the [Podman Troubleshooting Page](https://github.com/containers/podman/blob/master/troubleshooting.md).
 
 ## SEE ALSO
-`containers-mounts.conf(5)`, `containers-registries.conf(5)`, `containers-storage.conf(5)`, `buildah(1)`, `containers.conf(5)`, `oci-hooks(5)`, `containers-policy.json(5)`, `crun(8)`, `runc(8)`, `subuid(5)`, `subgid(5)`, `slirp4netns(1)`
+**containers-mounts.conf**(5), **containers-registries.conf**(5), **containers-storage.conf**(5), **buildah**(1), **containers.conf**(5), **oci-hooks**(5), **containers-policy.json**(5), **crun**(8), **runc**(8), **subuid**(5), **subgid**(5), **slirp4netns**(1), **conmon**(8).
 
 ## HISTORY
 Dec 2016, Originally compiled by Dan Walsh <dwalsh@redhat.com>

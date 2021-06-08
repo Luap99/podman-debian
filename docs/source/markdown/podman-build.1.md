@@ -111,7 +111,7 @@ given.
 #### **\-\-cert-dir**=*path*
 
 Use certificates at *path* (\*.crt, \*.cert, \*.key) to connect to the registry.
-Default certificates directory is _/etc/containers/certs.d_. (This option is not available with the remote Podman client)
+Please refer to containers-certs.d(5) for details. (This option is not available with the remote Podman client)
 
 #### **\-\-cgroup-parent**=*path*
 
@@ -381,13 +381,7 @@ BUILDAH\_LAYERS environment variable. `export BUILDAH_LAYERS=true`
 Log output which would be sent to standard output and standard error to the
 specified file instead of to standard output and standard error.
 
-#### **\-\-loglevel**=*number*
-
-Adjust the logging level up or down.  Valid option values range from -2 to 3,
-with 3 being roughly equivalent to using the global *--debug* option, and
-values below 0 omitting even error messages which accompany fatal errors.
-
-#### **\-\-manifest** "manifest"
+#### **--manifest** "manifest"
 
 Name of the manifest list to which the image will be added. Creates the manifest list
 if it does not exist. This option is useful for building multi architecture images.
@@ -490,7 +484,19 @@ commands specified by the **RUN** instruction.
 Note: You can also override the default runtime by setting the BUILDAH\_RUNTIME
 environment variable.  `export BUILDAH_RUNTIME=/usr/local/bin/runc`
 
-#### **\-\-security-opt**=*option*
+
+#### **--secret**=**id=id,src=path**
+
+Pass secret information to be used in the Containerfile for building images
+in a safe way that will not end up stored in the final image, or be seen in other stages.
+The secret will be mounted in the container at the default location of `/run/secrets/id`.
+
+To later use the secret, use the --mount flag in a `RUN` instruction within a `Containerfile`:
+
+`RUN --mount=type=secret,id=mysecret cat /run/secrets/mysecret`
+
+
+#### **--security-opt**=*option*
 
 Security Options
 
@@ -651,10 +657,10 @@ specified, `podman` will assume that the specified group name is also a
 suitable user name to use as the default setting for this option.
 
 **NOTE:** When this option is specified by a rootless user, the specified
-mappings are relative to the rootless usernamespace in the container, rather
-than being relative to the host as it would be when run rootful.
+mappings are relative to the rootless user namespace in the container, rather
+than being relative to the host as it would be when run rootfull.
 
-#### **\-\-userns-gid-map-group**=*group*
+#### **--userns-gid-map-group**=*group*
 
 Specifies that a GID mapping which should be used to set ownership, at the
 filesystem level, on the working container's contents, can be found in entries
@@ -666,10 +672,10 @@ specified, `podman` will assume that the specified user name is also a
 suitable group name to use as the default setting for this option.
 
 **NOTE:** When this option is specified by a rootless user, the specified
-mappings are relative to the rootless usernamespace in the container, rather
-than being relative to the host as it would be when run rootful.
+mappings are relative to the rootless user namespace in the container, rather
+than being relative to the host as it would be when run rootfull.
 
-#### **\-\-uts**=*how*
+#### **--uts**=*how*
 
 Sets the configuration for UTS namespaces when the handling `RUN` instructions.
 The configured value can be "" (the empty string) or "container" to indicate
@@ -688,7 +694,7 @@ Set the architecture variant of the image to be pulled.
    bind mounts `/HOST-DIR` in the host to `/CONTAINER-DIR` in the Podman
    container. (This option is not available with the remote Podman client)
 
-   The `OPTIONS` are a comma delimited list and can be: <sup>[[1]](#Footnote1)</sup>
+   The `OPTIONS` are a comma-separated list and can be: <sup>[[1]](#Footnote1)</sup>
 
    * [rw|ro]
    * [z|Z|O]
@@ -966,7 +972,7 @@ If you are using `useradd` within your build script, you should pass the
 useradd to stop creating the lastlog file.
 
 ## SEE ALSO
-podman(1), buildah(1), containers-registries.conf(5), crun(8), runc(8), useradd(8), podman-ps(1), podman-rm(1)
+podman(1), buildah(1), containers-certs.d(5), containers-registries.conf(5), crun(8), runc(8), useradd(8), podman-ps(1), podman-rm(1)
 
 ## HISTORY
 Aug 2020, Additional options and .dockerignore added by Dan Walsh `<dwalsh@redhat.com>`
