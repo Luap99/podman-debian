@@ -1,3 +1,9 @@
+libpod (3.2.0+ds1-1) experimental; urgency=medium
+
+  * New upstream release
+
+ -- Reinhard Tartler <siretart@tauware.de>  Tue, 08 Jun 2021 17:33:43 -0400
+
 libpod (3.1.2+ds1-2) experimental; urgency=medium
 
   * add missing vendored files included in tarball
