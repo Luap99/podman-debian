@@ -5,8 +5,8 @@ Bugs-Debian: https://bugs.debian.org/981097
 
 --- a/contrib/systemd/auto-update/podman-auto-update.service
 +++ b/contrib/systemd/auto-update/podman-auto-update.service
-@@ -9,4 +9,4 @@
- ExecStart=/usr/bin/podman auto-update
+@@ -10,4 +10,4 @@
+ ExecStartPost=/usr/bin/podman image prune -f
  
  [Install]
 -WantedBy=multi-user.target default.target
