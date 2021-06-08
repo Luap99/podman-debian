@@ -64,11 +64,6 @@ func GetImages(w http.ResponseWriter, r *http.Request) ([]*libimage.Image, error
 		// This is where you can override the golang default value for one of fields
 	}
 
-	filterMap, err := util.PrepareFilters(r)
-	if err != nil {
-		return nil, err
-	}
-
 	if err := decoder.Decode(&query, r.URL.Query()); err != nil {
 		return nil, err
 	}

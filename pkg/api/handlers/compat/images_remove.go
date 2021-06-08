@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"github.com/containers/podman/v3/libpod"
-	"github.com/containers/podman/v3/libpod/define"
 	"github.com/containers/podman/v3/pkg/api/handlers/utils"
 	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/containers/podman/v3/pkg/domain/infra/abi"

@@ -4,6 +4,8 @@ import (
 	"net/url"
 
 	"github.com/containers/podman/v3/libpod/define"
+	docker_api_types "github.com/docker/docker/api/types"
+	docker_api_types_volume "github.com/docker/docker/api/types/volume"
 )
 
 // Volume volume
@@ -155,7 +157,7 @@ type SwagDockerVolumeInfoResponse struct {
 type SwagDockerVolumePruneResponse struct {
 	// in:body
 	Body struct {
-		//		docker_api_types.VolumesPruneReport
+		docker_api_types.VolumesPruneReport
 	}
 }
 

@@ -236,7 +236,6 @@ func generateKubeOutput(content [][]byte) ([]byte, error) {
 
 		output = append(output, b...)
 	}
-	output = append(output, marshalledPods...)
 
 	return output, nil
 }

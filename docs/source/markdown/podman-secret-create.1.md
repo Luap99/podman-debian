@@ -28,7 +28,7 @@ Read secret data from environment variable
 
 Specify the secret driver (default **file**, which is unencrypted).
 
-#### **\-\-help**
+#### **--help**
 
 Print usage statement.
 

@@ -584,11 +584,6 @@ func libpodMountsToKubeVolumeMounts(c *Container) ([]v1.VolumeMount, []v1.Volume
 		vms = append(vms, vm)
 		vos = append(vos, vo)
 	}
-	for _, v := range namedVolumes {
-		vm, vo := generateKubePersistentVolumeClaim(v)
-		vms = append(vms, vm)
-		vos = append(vos, vo)
-	}
 	return vms, vos, nil
 }
 

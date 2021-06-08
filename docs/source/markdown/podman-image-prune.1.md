@@ -13,11 +13,11 @@ you can delete all unused images (i.e., images not in use by any container).
 The image prune command does not prune cache images that only use layers that are necessary for other images.
 
 ## OPTIONS
-#### **\-\-all**, **-a**
+#### **--all**, **-a**
 
 Remove dangling images and images that have no associated containers.
 
-#### **\-\-filter**=*filters*
+#### **--filter**=*filters*
 
 Provide filter values.
 
@@ -32,11 +32,11 @@ The until filter can be Unix timestamps, date formatted timestamps, or Go durati
 
 The label filter accepts two formats. One is the label=... (label=_key_ or label=_key=value_), which removes images with the specified labels. The other format is the label!=... (label!=_key_ or label!=_key=value_), which removes images without the specified labels.
 
-#### **\-\-force**, **-f**
+#### **--force**, **-f**
 
 Do not provide an interactive prompt for container removal.
 
-#### **\-\-help**, **-h**
+#### **--help**, **-h**
 
 Print usage statement
 
