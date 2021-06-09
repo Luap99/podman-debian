@@ -5,6 +5,9 @@
 
 include /usr/share/dpkg/pkg-info.mk
 
+# cf. https://wiki.debian.org/ToolChain/LTO and https://github.com/golang/go/issues/45275
+export DEB_BUILD_MAINT_OPTIONS=optimize=-lto
+
 export GO111MODULE=off
 
 export DH_GOLANG_GO_GENERATE := 1
