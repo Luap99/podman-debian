@@ -1,3 +1,9 @@
+libpod (3.2.0+ds5-2) experimental; urgency=medium
+
+  * Add patch from upstream to fix FTBFS on !(arm64, amd64)
+
+ -- Reinhard Tartler <siretart@tauware.de>  Sat, 12 Jun 2021 07:07:45 -0400
+
 libpod (3.2.0+ds5-1) experimental; urgency=medium
 
   * New upstream release
