@@ -1,3 +1,9 @@
+libpod (3.2.1+ds1-2) experimental; urgency=medium
+
+  * Provide 'podman-docker' package, Closes: #984770
+
+ -- Reinhard Tartler <siretart@tauware.de>  Mon, 14 Jun 2021 19:53:11 -0400
+
 libpod (3.2.1+ds1-1) experimental; urgency=medium
 
   * New upstream release
