@@ -1,2 +1,2 @@
-docs/build/man/*.1
+docs/build/man/podman*.1
 pkg/hooks/docs/*.5

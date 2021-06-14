@@ -214,3 +214,30 @@ Description: engine to run OCI-based containers in Pods (library)
  .
  This package contains golang sources that other packages may require for
  building.
+
+Package: podman-docker
+Architecture: any
+Depends: ${misc:Depends}, ${shlibs:Depends}, podman
+Conflicts: docker.io
+Recommends: docker-compose
+Description: engine to run OCI-based containers in Pods - wrapper for docker
+ Podman is an engine for running OCI-based containers in Pods.
+ Podman provides a CLI interface for managing Pods, Containers, and
+ Container Images.
+ .
+ At a high level, the scope of libpod and podman is the following:
+  * Support multiple image formats including the OCI and Docker image
+    formats.
+  * Support for multiple means to download images including trust & image
+    verification.
+  * Container image management (managing image layers, overlay filesystems,
+    etc).
+  * Full management of container lifecycle.
+  * Support for pods to manage groups of containers together.
+  * Resource isolation of containers and pods.
+  * Support for a Docker-compatible CLI interface through Podman.
+ .
+ Podman is a daemon-less alternative to Docker.
+ .
+ This package installs a wrapper script that acts like the original docker
+ implementation

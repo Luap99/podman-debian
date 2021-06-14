@@ -25,7 +25,7 @@ BUILDTAGS := apparmor,ostree,seccomp,selinux,systemd
 	dh $@ --buildsystem=golang --with=golang,bash-completion --builddirectory=_output
 
 override_dh_auto_build:
-	$(MAKE) docs
+	$(MAKE) docs docker-docs
 
 #	LDFLAGS_PODMAN="-X main.gitCommit=$(GIT_COMMIT)"
 	dh_auto_build -v  --builddirectory=_output -- -tags "$(BUILDTAGS)" \
