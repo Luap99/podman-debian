@@ -64,6 +64,7 @@ Build-Depends: debhelper-compat (= 13)
     ,golang-go-zfs-dev
     ,golang-go.opencensus-dev
     ,golang-golang-x-crypto-dev
+    ,golang-golang-x-net-dev (>= 1:0.0+git20210119)
     ,golang-golang-x-sys-dev
     ,golang-golang-x-text-dev
     ,golang-golang-x-tools
