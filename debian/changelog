@@ -1,8 +1,9 @@
 libpod (3.2.1+ds1-2) experimental; urgency=medium
 
   * Provide 'podman-docker' package, Closes: #984770
+  * Tighten build dependency on golang-golang-x-net-dev
 
- -- Reinhard Tartler <siretart@tauware.de>  Mon, 14 Jun 2021 19:53:11 -0400
+ -- Reinhard Tartler <siretart@tauware.de>  Tue, 15 Jun 2021 13:41:46 -0400
 
 libpod (3.2.1+ds1-1) experimental; urgency=medium
 
