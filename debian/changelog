@@ -1,3 +1,10 @@
+libpod (3.2.2+ds1-1) experimental; urgency=medium
+
+  * New upstream relases, Closes: #990333
+  * Bump dependency on golang-github-containers-common
+
+ -- Reinhard Tartler <siretart@tauware.de>  Mon, 28 Jun 2021 08:15:51 -0400
+
 libpod (3.2.1+ds1-2) experimental; urgency=medium
 
   * Provide 'podman-docker' package, Closes: #984770
