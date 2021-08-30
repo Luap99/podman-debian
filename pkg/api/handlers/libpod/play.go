@@ -3,6 +3,7 @@ package libpod
 import (
 	"io"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"os"
 
@@ -20,10 +21,12 @@ func PlayKube(w http.ResponseWriter, r *http.Request) {
 	runtime := r.Context().Value("runtime").(*libpod.Runtime)
 	decoder := r.Context().Value("decoder").(*schema.Decoder)
 	query := struct {
-		Network   string `schema:"reference"`
-		TLSVerify bool   `schema:"tlsVerify"`
-		LogDriver string `schema:"logDriver"`
-		Start     bool   `schema:"start"`
+		Network    string   `schema:"network"`
+		TLSVerify  bool     `schema:"tlsVerify"`
+		LogDriver  string   `schema:"logDriver"`
+		Start      bool     `schema:"start"`
+		StaticIPs  []string `schema:"staticIPs"`
+		StaticMACs []string `schema:"staticMACs"`
 	}{
 		TLSVerify: true,
 		Start:     true,
@@ -33,6 +36,28 @@ func PlayKube(w http.ResponseWriter, r *http.Request) {
 		utils.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest,
 			errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
 		return
+	}
+
+	staticIPs := make([]net.IP, 0, len(query.StaticIPs))
+	for _, ipString := range query.StaticIPs {
+		ip := net.ParseIP(ipString)
+		if ip == nil {
+			utils.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest,
+				errors.Errorf("Invalid IP address %s", ipString))
+			return
+		}
+		staticIPs = append(staticIPs, ip)
+	}
+
+	staticMACs := make([]net.HardwareAddr, 0, len(query.StaticMACs))
+	for _, macString := range query.StaticMACs {
+		mac, err := net.ParseMAC(macString)
+		if err != nil {
+			utils.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest,
+				err)
+			return
+		}
+		staticMACs = append(staticMACs, mac)
 	}
 
 	// Fetch the K8s YAML file from the body, and copy it to a temp file.
@@ -65,12 +90,14 @@ func PlayKube(w http.ResponseWriter, r *http.Request) {
 
 	containerEngine := abi.ContainerEngine{Libpod: runtime}
 	options := entities.PlayKubeOptions{
-		Authfile:  authfile,
-		Username:  username,
-		Password:  password,
-		Network:   query.Network,
-		Quiet:     true,
-		LogDriver: query.LogDriver,
+		Authfile:   authfile,
+		Username:   username,
+		Password:   password,
+		Network:    query.Network,
+		Quiet:      true,
+		LogDriver:  query.LogDriver,
+		StaticIPs:  staticIPs,
+		StaticMACs: staticMACs,
 	}
 	if _, found := r.URL.Query()["tlsVerify"]; found {
 		options.SkipTLSVerify = types.NewOptionalBool(!query.TLSVerify)

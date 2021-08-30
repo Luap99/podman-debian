@@ -2,25 +2,30 @@ package libpod
 
 import (
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/containers/common/pkg/capabilities"
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/podman/v3/libpod/define"
 	"github.com/containers/podman/v3/pkg/errorhandling"
+	"github.com/containers/podman/v3/pkg/lookup"
 	"github.com/containers/podman/v3/pkg/util"
 	"github.com/containers/podman/v3/utils"
+	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 )
 
 // ExecContainer executes a command in a running container
-func (r *ConmonOCIRuntime) ExecContainer(c *Container, sessionID string, options *ExecOptions, streams *define.AttachStreams) (int, chan error, error) {
+func (r *ConmonOCIRuntime) ExecContainer(c *Container, sessionID string, options *ExecOptions, streams *define.AttachStreams, newSize *define.TerminalSize) (int, chan error, error) {
 	if options == nil {
 		return -1, nil, errors.Wrapf(define.ErrInvalidArg, "must provide an ExecOptions struct to ExecContainer")
 	}
@@ -63,7 +68,7 @@ func (r *ConmonOCIRuntime) ExecContainer(c *Container, sessionID string, options
 	attachChan := make(chan error)
 	go func() {
 		// attachToExec is responsible for closing pipes
-		attachChan <- c.attachToExec(streams, options.DetachKeys, sessionID, pipes.startPipe, pipes.attachPipe)
+		attachChan <- c.attachToExec(streams, options.DetachKeys, sessionID, pipes.startPipe, pipes.attachPipe, newSize)
 		close(attachChan)
 	}()
 
@@ -78,7 +83,8 @@ func (r *ConmonOCIRuntime) ExecContainer(c *Container, sessionID string, options
 
 // ExecContainerHTTP executes a new command in an existing container and
 // forwards its standard streams over an attach
-func (r *ConmonOCIRuntime) ExecContainerHTTP(ctr *Container, sessionID string, options *ExecOptions, req *http.Request, w http.ResponseWriter, streams *HTTPAttachStreams, cancel <-chan bool, hijackDone chan<- bool, holdConnOpen <-chan bool) (int, chan error, error) {
+func (r *ConmonOCIRuntime) ExecContainerHTTP(ctr *Container, sessionID string, options *ExecOptions, req *http.Request, w http.ResponseWriter,
+	streams *HTTPAttachStreams, cancel <-chan bool, hijackDone chan<- bool, holdConnOpen <-chan bool, newSize *define.TerminalSize) (int, chan error, error) {
 	if streams != nil {
 		if !streams.Stdin && !streams.Stdout && !streams.Stderr {
 			return -1, nil, errors.Wrapf(define.ErrInvalidArg, "must provide at least one stream to attach to")
@@ -128,7 +134,7 @@ func (r *ConmonOCIRuntime) ExecContainerHTTP(ctr *Container, sessionID string, o
 	conmonPipeDataChan := make(chan conmonPipeData)
 	go func() {
 		// attachToExec is responsible for closing pipes
-		attachChan <- attachExecHTTP(ctr, sessionID, req, w, streams, pipes, detachKeys, options.Terminal, cancel, hijackDone, holdConnOpen, execCmd, conmonPipeDataChan, ociLog)
+		attachChan <- attachExecHTTP(ctr, sessionID, req, w, streams, pipes, detachKeys, options.Terminal, cancel, hijackDone, holdConnOpen, execCmd, conmonPipeDataChan, ociLog, newSize)
 		close(attachChan)
 	}()
 
@@ -279,17 +285,6 @@ func (r *ConmonOCIRuntime) ExecUpdateStatus(ctr *Container, sessionID string) (b
 	return true, nil
 }
 
-// ExecContainerCleanup cleans up files created when a command is run via
-// ExecContainer. This includes the attach socket for the exec session.
-func (r *ConmonOCIRuntime) ExecContainerCleanup(ctr *Container, sessionID string) error {
-	// Clean up the sockets dir. Issue #3962
-	// Also ignore if it doesn't exist for some reason; hence the conditional return below
-	if err := os.RemoveAll(filepath.Join(r.socketsDir, sessionID)); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
-}
-
 // ExecAttachSocketPath is the path to a container's exec session attach socket.
 func (r *ConmonOCIRuntime) ExecAttachSocketPath(ctr *Container, sessionID string) (string, error) {
 	// We don't even use container, so don't validity check it
@@ -297,7 +292,7 @@ func (r *ConmonOCIRuntime) ExecAttachSocketPath(ctr *Container, sessionID string
 		return "", errors.Wrapf(define.ErrInvalidArg, "must provide a valid session ID to get attach socket path")
 	}
 
-	return filepath.Join(r.socketsDir, sessionID, "attach"), nil
+	return filepath.Join(ctr.execBundlePath(sessionID), "attach"), nil
 }
 
 // This contains pipes used by the exec API.
@@ -492,7 +487,7 @@ func (r *ConmonOCIRuntime) startExec(c *Container, sessionID string, options *Ex
 }
 
 // Attach to a container over HTTP
-func attachExecHTTP(c *Container, sessionID string, r *http.Request, w http.ResponseWriter, streams *HTTPAttachStreams, pipes *execPipes, detachKeys []byte, isTerminal bool, cancel <-chan bool, hijackDone chan<- bool, holdConnOpen <-chan bool, execCmd *exec.Cmd, conmonPipeDataChan chan<- conmonPipeData, ociLog string) (deferredErr error) {
+func attachExecHTTP(c *Container, sessionID string, r *http.Request, w http.ResponseWriter, streams *HTTPAttachStreams, pipes *execPipes, detachKeys []byte, isTerminal bool, cancel <-chan bool, hijackDone chan<- bool, holdConnOpen <-chan bool, execCmd *exec.Cmd, conmonPipeDataChan chan<- conmonPipeData, ociLog string, newSize *define.TerminalSize) (deferredErr error) {
 	// NOTE: As you may notice, the attach code is quite complex.
 	// Many things happen concurrently and yet are interdependent.
 	// If you ever change this function, make sure to write to the
@@ -528,6 +523,14 @@ func attachExecHTTP(c *Container, sessionID string, r *http.Request, w http.Resp
 	if _, err := readConmonPipeData(pipes.attachPipe, ""); err != nil {
 		conmonPipeDataChan <- conmonPipeData{-1, err}
 		return err
+	}
+
+	// resize before we start the container process
+	if newSize != nil {
+		err = c.ociRuntime.ExecAttachResize(c, sessionID, *newSize)
+		if err != nil {
+			logrus.Warn("resize failed", err)
+		}
 	}
 
 	// 2: then attach
@@ -653,4 +656,123 @@ func attachExecHTTP(c *Container, sessionID string, r *http.Request, w http.Resp
 			return nil
 		}
 	}
+}
+
+// prepareProcessExec returns the path of the process.json used in runc exec -p
+// caller is responsible to close the returned *os.File if needed.
+func prepareProcessExec(c *Container, options *ExecOptions, env []string, sessionID string) (*os.File, error) {
+	f, err := ioutil.TempFile(c.execBundlePath(sessionID), "exec-process-")
+	if err != nil {
+		return nil, err
+	}
+	pspec := new(spec.Process)
+	if err := JSONDeepCopy(c.config.Spec.Process, pspec); err != nil {
+		return nil, err
+	}
+	pspec.SelinuxLabel = c.config.ProcessLabel
+	pspec.Args = options.Cmd
+
+	// We need to default this to false else it will inherit terminal as true
+	// from the container.
+	pspec.Terminal = false
+	if options.Terminal {
+		pspec.Terminal = true
+	}
+	if len(env) > 0 {
+		pspec.Env = append(pspec.Env, env...)
+	}
+
+	if options.Cwd != "" {
+		pspec.Cwd = options.Cwd
+	}
+
+	var addGroups []string
+	var sgids []uint32
+
+	// if the user is empty, we should inherit the user that the container is currently running with
+	user := options.User
+	if user == "" {
+		logrus.Debugf("Set user to %s", c.config.User)
+		user = c.config.User
+		addGroups = c.config.Groups
+	}
+
+	overrides := c.getUserOverrides()
+	execUser, err := lookup.GetUserGroupInfo(c.state.Mountpoint, user, overrides)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(addGroups) > 0 {
+		sgids, err = lookup.GetContainerGroups(addGroups, c.state.Mountpoint, overrides)
+		if err != nil {
+			return nil, errors.Wrapf(err, "error looking up supplemental groups for container %s exec session %s", c.ID(), sessionID)
+		}
+	}
+
+	// If user was set, look it up in the container to get a UID to use on
+	// the host
+	if user != "" || len(sgids) > 0 {
+		if user != "" {
+			for _, sgid := range execUser.Sgids {
+				sgids = append(sgids, uint32(sgid))
+			}
+		}
+		processUser := spec.User{
+			UID:            uint32(execUser.Uid),
+			GID:            uint32(execUser.Gid),
+			AdditionalGids: sgids,
+		}
+
+		pspec.User = processUser
+	}
+
+	ctrSpec, err := c.specFromState()
+	if err != nil {
+		return nil, err
+	}
+
+	allCaps, err := capabilities.BoundingSet()
+	if err != nil {
+		return nil, err
+	}
+	if options.Privileged {
+		pspec.Capabilities.Bounding = allCaps
+	} else {
+		pspec.Capabilities.Bounding = ctrSpec.Process.Capabilities.Bounding
+	}
+	if execUser.Uid == 0 {
+		pspec.Capabilities.Effective = pspec.Capabilities.Bounding
+		pspec.Capabilities.Inheritable = pspec.Capabilities.Bounding
+		pspec.Capabilities.Permitted = pspec.Capabilities.Bounding
+		pspec.Capabilities.Ambient = pspec.Capabilities.Bounding
+	} else {
+		if user == c.config.User {
+			pspec.Capabilities.Effective = ctrSpec.Process.Capabilities.Effective
+			pspec.Capabilities.Inheritable = ctrSpec.Process.Capabilities.Effective
+			pspec.Capabilities.Permitted = ctrSpec.Process.Capabilities.Effective
+			pspec.Capabilities.Ambient = ctrSpec.Process.Capabilities.Effective
+		}
+	}
+
+	hasHomeSet := false
+	for _, s := range pspec.Env {
+		if strings.HasPrefix(s, "HOME=") {
+			hasHomeSet = true
+			break
+		}
+	}
+	if !hasHomeSet {
+		pspec.Env = append(pspec.Env, fmt.Sprintf("HOME=%s", execUser.Home))
+	}
+
+	processJSON, err := json.Marshal(pspec)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := ioutil.WriteFile(f.Name(), processJSON, 0644); err != nil {
+		return nil, err
+	}
+	return f, nil
 }

@@ -277,7 +277,7 @@ func DefineCreateFlags(cmd *cobra.Command, cf *ContainerCLIOpts) {
 	createFlags.StringSliceVar(
 		&cf.GroupAdd,
 		groupAddFlagName, []string{},
-		"Add additional groups to join",
+		"Add additional groups to the primary container process. 'keep-groups' allows container processes to use supplementary groups.",
 	)
 	_ = cmd.RegisterFlagCompletionFunc(groupAddFlagName, completion.AutocompleteNone)
 
@@ -576,6 +576,14 @@ func DefineCreateFlags(cmd *cobra.Command, cf *ContainerCLIOpts) {
 		`If a container with the same name exists, replace it`,
 	)
 
+	requiresFlagName := "requires"
+	createFlags.StringSliceVar(
+		&cf.Requires,
+		requiresFlagName, []string{},
+		"Add one or more requirement containers that must be started before this container will start",
+	)
+	_ = cmd.RegisterFlagCompletionFunc(requiresFlagName, AutocompleteContainers)
+
 	restartFlagName := "restart"
 	createFlags.StringVar(
 		&cf.Restart,
@@ -643,7 +651,7 @@ func DefineCreateFlags(cmd *cobra.Command, cf *ContainerCLIOpts) {
 	createFlags.UintVar(
 		&cf.StopTimeout,
 		stopTimeoutFlagName, containerConfig.Engine.StopTimeout,
-		"Timeout (in seconds) to stop a container. Default is 10",
+		"Timeout (in seconds) that containers stopped by user command have to exit. If exceeded, the container will be forcibly stopped via SIGKILL.",
 	)
 	_ = cmd.RegisterFlagCompletionFunc(stopTimeoutFlagName, completion.AutocompleteNone)
 
@@ -688,6 +696,14 @@ func DefineCreateFlags(cmd *cobra.Command, cf *ContainerCLIOpts) {
 		`Run container in systemd mode ("true"|"false"|"always")`,
 	)
 	_ = cmd.RegisterFlagCompletionFunc(systemdFlagName, AutocompleteSystemdFlag)
+
+	timeoutFlagName := "timeout"
+	createFlags.UintVar(
+		&cf.Timeout,
+		timeoutFlagName, 0,
+		"Maximum length of time a container is allowed to run. The container will be killed automatically after the time expires.",
+	)
+	_ = cmd.RegisterFlagCompletionFunc(timeoutFlagName, completion.AutocompleteNone)
 
 	tmpfsFlagName := "tmpfs"
 	createFlags.StringArrayVar(
@@ -765,11 +781,15 @@ func DefineCreateFlags(cmd *cobra.Command, cf *ContainerCLIOpts) {
 	)
 	_ = cmd.RegisterFlagCompletionFunc(mountFlagName, AutocompleteMountFlag)
 
+	volumeDesciption := "Bind mount a volume into the container"
+	if registry.IsRemote() {
+		volumeDesciption = "Bind mount a volume into the container. Volume src will be on the server machine, not the client"
+	}
 	volumeFlagName := "volume"
 	createFlags.StringArrayVarP(
 		&cf.Volume,
 		volumeFlagName, "v", volumes(),
-		"Bind mount a volume into the container",
+		volumeDesciption,
 	)
 	_ = cmd.RegisterFlagCompletionFunc(volumeFlagName, AutocompleteVolumeFlag)
 
@@ -804,4 +824,17 @@ func DefineCreateFlags(cmd *cobra.Command, cf *ContainerCLIOpts) {
 		"Configure cgroup v2 (key=value)",
 	)
 	_ = cmd.RegisterFlagCompletionFunc(cgroupConfFlagName, completion.AutocompleteNone)
+
+	pidFileFlagName := "pidfile"
+	createFlags.StringVar(
+		&cf.PidFile,
+		pidFileFlagName, "",
+		"Write the container process ID to the file")
+	_ = cmd.RegisterFlagCompletionFunc(pidFileFlagName, completion.AutocompleteDefault)
+
+	_ = createFlags.MarkHidden("signature-policy")
+	if registry.IsRemote() {
+		_ = createFlags.MarkHidden("env-host")
+		_ = createFlags.MarkHidden("http-proxy")
+	}
 }

@@ -130,6 +130,22 @@ load helpers
 }
 
 
+@test "podman cp file from/to host while --pid=host" {
+    if is_rootless && ! is_cgroupsv2; then
+        skip "'podman cp --pid=host' (rootless) only works with cgroups v2"
+    fi
+
+    srcdir=$PODMAN_TMPDIR/cp-pid-equals-host
+    mkdir -p $srcdir
+    touch $srcdir/hostfile
+
+    run_podman run --pid=host -d --name cpcontainer $IMAGE sleep infinity
+    run_podman cp $srcdir/hostfile cpcontainer:/tmp/hostfile
+    run_podman cp cpcontainer:/tmp/hostfile $srcdir/hostfile1
+    run_podman kill cpcontainer
+    run_podman rm -f cpcontainer
+}
+
 @test "podman cp file from container to host" {
     srcdir=$PODMAN_TMPDIR/cp-test-file-ctr-to-host
     mkdir -p $srcdir
@@ -256,6 +272,11 @@ load helpers
         run_podman rm -f cpcontainer
     done < <(parse_table "$tests")
 
+    run_podman create --name cpcontainer --workdir=/srv $cpimage sleep infinity
+    run_podman 125 cp $srcdir cpcontainer:/etc/os-release
+    is "$output" "Error: destination must be a directory when copying a directory" "cannot copy directory to file"
+    run_podman rm -f cpcontainer
+
     run_podman rmi -f $cpimage
 }
 
@@ -327,6 +348,10 @@ load helpers
         is "$(< $destdir$dest_fullname/containerfile1)" "${randomcontent[1]}" "$description"
         rm -rf $destdir/*
     done < <(parse_table "$tests")
+
+    touch $destdir/testfile
+    run_podman 125 cp cpcontainer:/etc/ $destdir/testfile
+    is "$output" "Error: destination must be a directory when copying a directory" "cannot copy directory to file"
     run_podman rm -f cpcontainer
 
     run_podman rmi -f $cpimage

@@ -87,12 +87,16 @@ network, and the one will be created as a bridge network.
 $ podman network create
 ```
 
-When rootless containers are run with a CNI networking configuration, a “side-car”
-container for running CNI is also run. Do not remove this container while your rootless
-containers are running.  if you remove this container (e.g by accident) all attached
-containers lose network connectivity. In order to restore the network connectivity
-all containers with networks must be restarted. This will automatically recreate
-the "side-car" container. For rootfull containers, there is no “side-car” container
+When rootless containers are run with a CNI networking configuration, CNI operations
+will be executed inside an extra network namespace. To join this namespace, use
+`podman unshare --rootless-cni`. Podman version 3.1 and earlier use a special “side-car”
+container called rootless-cni-infra. Do not remove this container while your rootless
+containers are running. If you remove this container (e.g. by accident), all attached
+containers lose network connectivity. In order to restore the network connectivity, all
+containers with networks must be restarted. This will automatically recreate the "side-car"
+container. When you are using version 3.2 or newer the “side-car” container can be
+safely removed. Therefore, it is no longer used.
+For rootfull containers, there is no extra namespace or “side-car” container
 as rootfull users have the permissions to create and modify network interfaces on
 the host.
 
@@ -151,7 +155,7 @@ host. This interface can configure multiple subinterfaces.  And each subinterfac
 is capable of having its own MAC and IP address.  In the case of Podman containers,
 the container will present itself as if it is on the same network as the host.
 
-![macvlan_network](podman_bridge.png)
+![macvlan_network](podman_macvlan.png)
 
 In the illustration, outside clients will be able to access the web container by
 its IP address directly.  Usually the network information, including IP address,

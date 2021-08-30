@@ -20,8 +20,8 @@ import (
 	"github.com/containers/podman/v3/pkg/namespaces"
 	"github.com/containers/podman/v3/pkg/rootless"
 	"github.com/containers/podman/v3/pkg/signal"
-	"github.com/containers/storage"
 	"github.com/containers/storage/pkg/idtools"
+	stypes "github.com/containers/storage/types"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
@@ -344,8 +344,8 @@ func ParseSignal(rawSignal string) (syscall.Signal, error) {
 }
 
 // GetKeepIDMapping returns the mappings and the user to use when keep-id is used
-func GetKeepIDMapping() (*storage.IDMappingOptions, int, int, error) {
-	options := storage.IDMappingOptions{
+func GetKeepIDMapping() (*stypes.IDMappingOptions, int, int, error) {
+	options := stypes.IDMappingOptions{
 		HostUIDMapping: true,
 		HostGIDMapping: true,
 	}
@@ -395,8 +395,8 @@ func GetKeepIDMapping() (*storage.IDMappingOptions, int, int, error) {
 }
 
 // ParseIDMapping takes idmappings and subuid and subgid maps and returns a storage mapping
-func ParseIDMapping(mode namespaces.UsernsMode, uidMapSlice, gidMapSlice []string, subUIDMap, subGIDMap string) (*storage.IDMappingOptions, error) {
-	options := storage.IDMappingOptions{
+func ParseIDMapping(mode namespaces.UsernsMode, uidMapSlice, gidMapSlice []string, subUIDMap, subGIDMap string) (*stypes.IDMappingOptions, error) {
+	options := stypes.IDMappingOptions{
 		HostUIDMapping: true,
 		HostGIDMapping: true,
 	}
@@ -479,7 +479,7 @@ type tomlConfig struct {
 	} `toml:"storage"`
 }
 
-func getTomlStorage(storeOptions *storage.StoreOptions) *tomlConfig {
+func getTomlStorage(storeOptions *stypes.StoreOptions) *tomlConfig {
 	config := new(tomlConfig)
 
 	config.Storage.Driver = storeOptions.GraphDriverName
@@ -496,7 +496,7 @@ func getTomlStorage(storeOptions *storage.StoreOptions) *tomlConfig {
 }
 
 // WriteStorageConfigFile writes the configuration to a file
-func WriteStorageConfigFile(storageOpts *storage.StoreOptions, storageConf string) error {
+func WriteStorageConfigFile(storageOpts *stypes.StoreOptions, storageConf string) error {
 	if err := os.MkdirAll(filepath.Dir(storageConf), 0755); err != nil {
 		return err
 	}
@@ -552,23 +552,6 @@ func OpenExclusiveFile(path string) (*os.File, error) {
 		}
 	}
 	return os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0666)
-}
-
-type PullType = config.PullPolicy
-
-var (
-	// PullImageAlways always try to pull new image when create or run
-	PullImageAlways = config.PullImageAlways
-	// PullImageMissing pulls image if it is not locally
-	PullImageMissing = config.PullImageMissing
-	// PullImageNever will never pull new image
-	PullImageNever = config.PullImageNever
-)
-
-// ValidatePullType check if the pullType from CLI is valid and returns the valid enum type
-// if the value from CLI is invalid returns the error
-func ValidatePullType(pullType string) (PullType, error) {
-	return config.ValidatePullPolicy(pullType)
 }
 
 // ExitCode reads the error message when failing to executing container process
@@ -705,4 +688,27 @@ func IDtoolsToRuntimeSpec(idMaps []idtools.IDMap) (convertedIDMap []specs.LinuxI
 		convertedIDMap = append(convertedIDMap, tempIDMap)
 	}
 	return convertedIDMap
+}
+
+var socketPath string
+
+func SetSocketPath(path string) {
+	socketPath = path
+}
+
+func SocketPath() (string, error) {
+	if socketPath != "" {
+		return socketPath, nil
+	}
+	xdg, err := GetRuntimeDir()
+	if err != nil {
+		return "", err
+	}
+	if len(xdg) == 0 {
+		// If no xdg is returned, assume root socket
+		xdg = "/run"
+	}
+
+	// Glue the socket path together
+	return filepath.Join(xdg, "podman", "podman.sock"), nil
 }

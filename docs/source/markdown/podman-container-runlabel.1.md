@@ -13,7 +13,7 @@ exist, `podman container runlabel` will just exit.
 
 If the container image has a LABEL INSTALL instruction like the following:
 
-`LABEL INSTALL /usr/bin/podman run -t -i --rm \${OPT1} --privileged -v /:/host --net=host --ipc=host --pid=host -e HOST=/host -e NAME=\${NAME} -e IMAGE=\${IMAGE} -e CONFDIR=\/etc/${NAME} -e LOGDIR=/var/log/\${NAME} -e DATADIR=/var/lib/\${NAME} \${IMAGE} \${OPT2} /bin/install.sh \${OPT3}`
+`LABEL INSTALL /usr/bin/podman run -t -i --rm \${OPT1} --privileged -v /:/host --net=host --ipc=host --pid=host -e HOST=/host -e NAME=\${NAME} -e IMAGE=\${IMAGE} -e CONFDIR=/etc/\${NAME} -e LOGDIR=/var/log/\${NAME} -e DATADIR=/var/lib/\${NAME} \${IMAGE} \${OPT2} /bin/install.sh \${OPT3}`
 
 `podman container runlabel` will set the following environment variables for use in the command:
 
@@ -41,7 +41,7 @@ is used.
 Any additional arguments will be appended to the command.
 
 ## OPTIONS
-#### **\-\-authfile**=*path*
+#### **--authfile**=*path*
 
 Path of the authentication file. Default is ${XDG\_RUNTIME\_DIR}/containers/auth.json, which is set using `podman login`.
 If the authorization state is not found there, $HOME/.docker/config.json is checked, which is set using `docker login`.
@@ -49,39 +49,39 @@ If the authorization state is not found there, $HOME/.docker/config.json is chec
 Note: You can also override the default path of the authentication file by setting the REGISTRY\_AUTH\_FILE
 environment variable. `export REGISTRY_AUTH_FILE=path`
 
-#### **\-\-display**
+#### **--display**
 
 Display the label's value of the image having populated its environment variables.
 The runlabel command will not execute if --display is specified.
 
-#### **\-\-cert-dir**=*path*
+#### **--cert-dir**=*path*
 
 Use certificates at *path* (\*.crt, \*.cert, \*.key) to connect to the registry.
-Default certificates directory is _/etc/containers/certs.d_. (This option is not available with the remote Podman client)
+Please refer to containers-certs.d(5) for details. (This option is not available with the remote Podman client)
 
-#### **\-\-creds**=*[username[:password]]*
+#### **--creds**=*[username[:password]]*
 
 The [username[:password]] to use to authenticate with the registry if required.
 If one or both values are not supplied, a command line prompt will appear and the
 value can be entered.  The password is entered without echo.
 
-#### **\-\-help**, **-h**
+#### **--help**, **-h**
 Print usage statement
 
-#### **\-\-name**, **-n**=*name*
+#### **--name**, **-n**=*name*
 
 Use this name for creating content for the container. NAME will default to the IMAGENAME if it is not specified.
 
-#### **\-\-quiet**, **-q**
+#### **--quiet**, **-q**
 
 Suppress output information when pulling images
 
-#### **\-\-replace**
+#### **--replace**
 
 If a container exists of the default or given name, as needed it will be stopped, deleted and a new container will be
 created from this image.
 
-#### **\-\-tls-verify**
+#### **--tls-verify**
 
 Require HTTPS and verify certificates when contacting registries (default: true). If explicitly set to true,
 then TLS verification will be used. If set to false, then TLS verification will not be used. If not specified,
@@ -105,7 +105,7 @@ $ sudo podman container runlabel --display run foobar
 ```
 
 ## SEE ALSO
-podman(1)
+podman(1), containers-certs.d(5)
 
 ## HISTORY
 September 2018, Originally compiled by Brent Baude (bbaude at redhat dot com)

@@ -14,7 +14,7 @@ load helpers
     # ...but check the configured runtime engine, and switch to crun as needed
     run_podman info --format '{{ .Host.OCIRuntime.Path }}'
     if expr "$output" : ".*/crun"; then
-        err_no_such_cmd="Error: executable file.* not found in \$PATH: No such file or directory: OCI not found"
+        err_no_such_cmd="Error: executable file.* not found in \$PATH: No such file or directory: OCI runtime attempted to invoke a command that was not found"
         err_no_exec_dir="Error: open executable: Operation not permitted: OCI permission denied"
     fi
 
@@ -142,7 +142,7 @@ echo $rand        |   0 | $rand
     NONLOCAL_IMAGE="$PODMAN_NONLOCAL_IMAGE_FQN"
 
     run_podman 125 run --pull=never $NONLOCAL_IMAGE true
-    is "$output" "Error: unable to find a name and tag match for $NONLOCAL_IMAGE in repotags: no such image" "--pull=never [with image not present]: error"
+    is "$output" "Error: $NONLOCAL_IMAGE: image not known" "--pull=never [with image not present]: error"
 
     run_podman run --pull=missing $NONLOCAL_IMAGE true
     is "$output" "Trying to pull .*" "--pull=missing [with image NOT PRESENT]: fetches"
@@ -153,13 +153,11 @@ echo $rand        |   0 | $rand
     run_podman run --pull=always $NONLOCAL_IMAGE true
     is "$output" "Trying to pull .*" "--pull=always [with image PRESENT]: re-fetches"
 
-    # Very weird corner case fixed by #7770: 'podman run foo' will run 'myfoo'
-    # if it exists, because the string 'foo' appears in 'myfoo'. This test
-    # covers that, as well as making sure that our testimage (which is always
-    # tagged :YYYYMMDD, never :latest) doesn't match either.
-    run_podman tag $IMAGE my${PODMAN_TEST_IMAGE_NAME}:latest
-    run_podman 125 run --pull=never $PODMAN_TEST_IMAGE_NAME true
-    is "$output" "Error: unable to find a name and tag match for $PODMAN_TEST_IMAGE_NAME in repotags: no such image" \
+    # NOTE: older version of podman would match "foo" against "myfoo". That
+    # behaviour was changed with introduction of `containers/common/libimage`
+    # which will only match at repository boundaries (/).
+    run_podman 125 run --pull=never my$PODMAN_TEST_IMAGE_NAME true
+    is "$output" "Error: my$PODMAN_TEST_IMAGE_NAME: image not known" \
        "podman run --pull=never with shortname (and implicit :latest)"
 
     # ...but if we add a :latest tag (without 'my'), it should now work
@@ -169,7 +167,7 @@ echo $rand        |   0 | $rand
        "podman run --pull=never, with shortname, succeeds if img is present"
 
     run_podman rm -a
-    run_podman rmi $NONLOCAL_IMAGE {my,}${PODMAN_TEST_IMAGE_NAME}:latest
+    run_podman rmi $NONLOCAL_IMAGE ${PODMAN_TEST_IMAGE_NAME}:latest
 }
 
 # 'run --rmi' deletes the image in the end unless it's used by another container
@@ -243,7 +241,7 @@ echo $rand        |   0 | $rand
     # Save it as a tar archive
     run_podman commit myc myi
     archive=$PODMAN_TMPDIR/archive.tar
-    run_podman save myi -o $archive
+    run_podman save --quiet myi -o $archive
     is "$output" "" "podman save"
 
     # Clean up image and container from container storage...
@@ -501,6 +499,7 @@ json-file | f
     run_podman inspect --format '{{.OCIRuntime}}' $cid
     is "$output" "$new_runtime" "podman inspect shows configured runtime"
     run_podman kill $cid
+    run_podman wait $cid
     run_podman rm $cid
     rm -f $new_runtime
 }
@@ -601,12 +600,12 @@ json-file | f
     echo "$randomcontent" > $testdir/content
 
     # Workdir does not exist on the image but is volume mounted.
-    run_podman run --rm --workdir /IamNotOnTheImage -v $testdir:/IamNotOnTheImage $IMAGE cat content
+    run_podman run --rm --workdir /IamNotOnTheImage -v $testdir:/IamNotOnTheImage:Z $IMAGE cat content
     is "$output" "$randomcontent" "cat random content"
 
     # Workdir does not exist on the image but is created by the runtime as it's
     # a subdir of a volume.
-    run_podman run --rm --workdir /IamNotOntheImage -v $testdir/content:/IamNotOntheImage/foo $IMAGE cat foo
+    run_podman run --rm --workdir /IamNotOntheImage -v $testdir/content:/IamNotOntheImage/foo:Z $IMAGE cat foo
     is "$output" "$randomcontent" "cat random content"
 
     # Make sure that running on a read-only rootfs works (#9230).
@@ -668,15 +667,41 @@ json-file | f
     is "$output" ".*HOME=/.*"
 }
 
-@test "podman run --tty -i failure with no tty" {
-    run_podman run --tty -i --rm $IMAGE echo hello < /dev/null
-    is "$output" ".*The input device is not a TTY.*"
+@test "podman run --timeout - basic test" {
+    cid=timeouttest
+    t0=$SECONDS
+    run_podman 255 run --name $cid --timeout 10 $IMAGE sleep 60
+    t1=$SECONDS
+    # Confirm that container is stopped. Podman-remote unfortunately
+    # cannot tell the difference between "stopped" and "exited", and
+    # spits them out interchangeably, so we need to recognize either.
+    run_podman inspect --format '{{.State.Status}} {{.State.ExitCode}}' $cid
+    is "$output" "\\(stopped\|exited\\) \-1" \
+       "Status and exit code of stopped container"
 
-    run_podman run --tty=false -i --rm $IMAGE echo hello < /dev/null
-    is "$output" "hello"
+    # This operation should take
+    # exactly 10 seconds. Give it some leeway.
+    delta_t=$(( $t1 - $t0 ))
+    [ $delta_t -gt 8 ]  ||\
+        die "podman stop: ran too quickly! ($delta_t seconds; expected >= 10)"
+    [ $delta_t -le 14 ] ||\
+        die "podman stop: took too long ($delta_t seconds; expected ~10)"
 
-    run_podman run --tty -i=false --rm $IMAGE echo hello < /dev/null
-    is "$output" "hello"
+    run_podman rm $cid
+}
+
+@test "podman run no /etc/mtab " {
+    tmpdir=$PODMAN_TMPDIR/build-test
+    mkdir -p $tmpdir
+
+    cat >$tmpdir/Dockerfile <<EOF
+FROM $IMAGE
+RUN rm /etc/mtab
+EOF
+    expected="'/etc/mtab' -> '/proc/mounts'"
+    run_podman build -t nomtab $tmpdir
+    run_podman run --rm nomtab stat -c %N /etc/mtab
+    is "$output" "$expected" "/etc/mtab should be created"
 }
 
 # vim: filetype=sh

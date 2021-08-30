@@ -78,7 +78,7 @@ var _ = Describe("Podman images", func() {
 		session = podmanTest.Podman([]string{"images", "-qn"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(len(session.OutputToStringArray())).To(BeNumerically("==", 11))
+		Expect(len(session.OutputToStringArray())).To(BeNumerically("==", len(CACHE_IMAGES)))
 	})
 
 	It("podman images with digests", func() {
@@ -194,7 +194,7 @@ WORKDIR /test
 		result := podmanTest.Podman([]string{"images", "-q", "-f", "since=quay.io/libpod/alpine:latest"})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
-		Expect(len(result.OutputToStringArray())).To(Equal(8))
+		Expect(len(result.OutputToStringArray())).To(Equal(9))
 	})
 
 	It("podman image list filter after image", func() {
@@ -204,7 +204,7 @@ WORKDIR /test
 		result := podmanTest.Podman([]string{"image", "list", "-q", "-f", "after=quay.io/libpod/alpine:latest"})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
-		Expect(result.OutputToStringArray()).Should(HaveLen(8), "list filter output: %q", result.OutputToString())
+		Expect(result.OutputToStringArray()).Should(HaveLen(9), "list filter output: %q", result.OutputToString())
 	})
 
 	It("podman images filter dangling", func() {
@@ -219,7 +219,6 @@ WORKDIR /test
 	})
 
 	It("podman pull by digest and list --all", func() {
-		Skip("FIXME-8165: 'rmi -af' fails with 'layer not known' (#6510)")
 		// Prevent regressing on issue #7651.
 		digestPullAndList := func(noneTag bool) {
 			session := podmanTest.Podman([]string{"pull", ALPINEAMD64DIGEST})
@@ -424,6 +423,27 @@ LABEL "com.example.vendor"="Example Vendor"
 		result1.WaitWithDefaultTimeout()
 		Expect(result1).Should(Exit(0))
 		Expect(result.OutputToStringArray()).To(Not(Equal(result1.OutputToStringArray())))
+	})
+
+	It("podman image prune --filter", func() {
+		dockerfile := `FROM quay.io/libpod/alpine:latest
+RUN > file
+`
+		dockerfile2 := `FROM quay.io/libpod/alpine:latest
+RUN > file2
+`
+		podmanTest.BuildImageWithLabel(dockerfile, "foobar.com/workdir:latest", "false", "abc")
+		podmanTest.BuildImageWithLabel(dockerfile2, "foobar.com/workdir:latest", "false", "xyz")
+		// --force used to to avoid y/n question
+		result := podmanTest.Podman([]string{"image", "prune", "--filter", "label=abc", "--force"})
+		result.WaitWithDefaultTimeout()
+		Expect(result).Should(Exit(0))
+		Expect(len(result.OutputToStringArray())).To(Equal(1))
+
+		//check if really abc is removed
+		result = podmanTest.Podman([]string{"image", "list", "--filter", "label=abc"})
+		Expect(len(result.OutputToStringArray())).To(Equal(0))
+
 	})
 
 })

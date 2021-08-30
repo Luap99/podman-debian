@@ -114,7 +114,7 @@ load helpers
 @test "podman stop - unlock while waiting for timeout" {
     # Test that the container state transitions to "stopping" and that other
     # commands can get the container's lock.  To do that, run a container that
-    # ingores SIGTERM such that the Podman would wait 20 seconds for the stop
+    # ignores SIGTERM such that the Podman would wait 20 seconds for the stop
     # to finish.  This gives us enough time to try some commands and inspect
     # the container's status.
 
@@ -132,6 +132,7 @@ load helpers
     is "$output" "stopping" "Status of container should be 'stopping'"
 
     run_podman kill stopme
+    run_podman wait stopme
 
     # Exit code should be 137 as it was killed
     run_podman inspect --format '{{.State.ExitCode}}' stopme

@@ -4,16 +4,15 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"net/url"
 	"os"
 	"strings"
 
 	"github.com/containers/common/pkg/completion"
+	"github.com/containers/podman/v3/cmd/podman/common"
 	"github.com/containers/podman/v3/cmd/podman/registry"
 	"github.com/containers/podman/v3/cmd/podman/utils"
 	"github.com/containers/podman/v3/cmd/podman/validate"
 	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
@@ -44,12 +43,13 @@ func init() {
 	flags.BoolVarP(&force, "force", "f", false, "Do not prompt for confirmation.  The default is false")
 	filterFlagName := "filter"
 	flags.StringArrayVar(&filter, filterFlagName, []string{}, "Provide filter values (e.g. 'label=<key>=<value>')")
-	_ = pruneCommand.RegisterFlagCompletionFunc(filterFlagName, completion.AutocompleteNone)
+	_ = pruneCommand.RegisterFlagCompletionFunc(filterFlagName, common.AutocompletePruneFilters)
 }
 
 func prune(cmd *cobra.Command, args []string) error {
 	var (
 		pruneOptions = entities.ContainerPruneOptions{}
+		err          error
 	)
 	if !force {
 		reader := bufio.NewReader(os.Stdin)
@@ -64,14 +64,9 @@ func prune(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// TODO Remove once filter refactor is finished and url.Values done.
-	for _, f := range filter {
-		t := strings.SplitN(f, "=", 2)
-		pruneOptions.Filters = make(url.Values)
-		if len(t) < 2 {
-			return errors.Errorf("filter input must be in the form of filter=value: %s is invalid", f)
-		}
-		pruneOptions.Filters.Add(t[0], t[1])
+	pruneOptions.Filters, err = common.ParseFilters(filter)
+	if err != nil {
+		return err
 	}
 	responses, err := registry.ContainerEngine().ContainerPrune(context.Background(), pruneOptions)
 

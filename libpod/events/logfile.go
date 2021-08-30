@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/containers/podman/v3/pkg/util"
-	"github.com/containers/storage"
+	"github.com/containers/storage/pkg/lockfile"
 	"github.com/pkg/errors"
 )
 
@@ -20,7 +20,7 @@ type EventLogFile struct {
 // Writes to the log file
 func (e EventLogFile) Write(ee Event) error {
 	// We need to lock events file
-	lock, err := storage.GetLockfile(e.options.LogFilePath + ".lock")
+	lock, err := lockfile.GetLockfile(e.options.LogFilePath + ".lock")
 	if err != nil {
 		return err
 	}
@@ -44,9 +44,9 @@ func (e EventLogFile) Write(ee Event) error {
 // Reads from the log file
 func (e EventLogFile) Read(ctx context.Context, options ReadOptions) error {
 	defer close(options.EventChannel)
-	eventOptions, err := generateEventOptions(options.Filters, options.Since, options.Until)
+	filterMap, err := generateEventFilters(options.Filters, options.Since, options.Until)
 	if err != nil {
-		return errors.Wrapf(err, "unable to generate event options")
+		return errors.Wrapf(err, "failed to parse event filters")
 	}
 	t, err := e.getTail(options)
 	if err != nil {
@@ -92,11 +92,7 @@ func (e EventLogFile) Read(ctx context.Context, options ReadOptions) error {
 		default:
 			return errors.Errorf("event type %s is not valid in %s", event.Type.String(), e.options.LogFilePath)
 		}
-		include := true
-		for _, filter := range eventOptions {
-			include = include && filter(event)
-		}
-		if include && copy {
+		if copy && applyFilters(event, filterMap) {
 			options.EventChannel <- event
 		}
 	}

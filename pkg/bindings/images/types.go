@@ -1,7 +1,7 @@
 package images
 
 import (
-	"github.com/containers/buildah/imagebuildah"
+	buildahDefine "github.com/containers/buildah/define"
 )
 
 //go:generate go run ../generator/generator.go RemoveOptions
@@ -147,6 +147,9 @@ type PullOptions struct {
 	// OS will overwrite the local operating system (OS) for image
 	// pulls.
 	OS *string
+	// Policy is the pull policy. Supported values are "missing", "never",
+	// "newer", "always". An empty string defaults to "always".
+	Policy *string
 	// Password for authenticating against the registry.
 	Password *string
 	// Quiet can be specified to suppress pull progress when pulling.  Ignored
@@ -162,7 +165,7 @@ type PullOptions struct {
 
 //BuildOptions are optional options for building images
 type BuildOptions struct {
-	imagebuildah.BuildOptions
+	buildahDefine.BuildOptions
 }
 
 //go:generate go run ../generator/generator.go ExistsOptions

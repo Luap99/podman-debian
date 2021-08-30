@@ -9,18 +9,18 @@ podman\-network\-reload - Reload network configuration for containers
 ## DESCRIPTION
 Reload one or more container network configurations.
 
-Rootful Podman relies on iptables rules in order to provide network connectivity. If the iptables rules are deleted,
+Rootfull Podman relies on iptables rules in order to provide network connectivity. If the iptables rules are deleted,
 this happens for example with `firewall-cmd --reload`, the container loses network connectivity. This command restores
 the network connectivity.
 
 This command is not available for rootless users since rootless containers are not affected by such connectivity problems.
 
 ## OPTIONS
-#### **\-\-all**, **-a**
+#### **--all**, **-a**
 
 Reload network configuration of all containers.
 
-#### **\-\-latest**, **-l**
+#### **--latest**, **-l**
 
 Instead of providing the container name or ID, use the last created container. If you use methods other than Podman
 to run containers such as CRI-O, the last started container could be from either of those methods. (This option is not available with the remote Podman client)

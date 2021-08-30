@@ -3,13 +3,10 @@ package containers
 import (
 	"fmt"
 	"os"
-	"text/tabwriter"
-	"text/template"
 
 	tm "github.com/buger/goterm"
 	"github.com/containers/common/pkg/report"
 	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/parse"
 	"github.com/containers/podman/v3/cmd/podman/registry"
 	"github.com/containers/podman/v3/cmd/podman/validate"
 	"github.com/containers/podman/v3/libpod/define"
@@ -71,7 +68,7 @@ func statFlags(cmd *cobra.Command) {
 
 	formatFlagName := "format"
 	flags.StringVar(&statsOptions.Format, formatFlagName, "", "Pretty-print container statistics to JSON or using a Go template")
-	_ = cmd.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteJSONFormat)
+	_ = cmd.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteFormat(define.ContainerStats{}))
 
 	flags.BoolVar(&statsOptions.NoReset, "no-reset", false, "Disable resetting the screen between intervals")
 	flags.BoolVar(&statsOptions.NoStream, "no-stream", false, "Disable streaming stats and only pull the first result, default setting is false")
@@ -172,13 +169,17 @@ func outputStats(reports []define.ContainerStats) error {
 	if len(statsOptions.Format) > 0 {
 		format = report.NormalizeFormat(statsOptions.Format)
 	}
-	format = parse.EnforceRange(format)
+	format = report.EnforceRange(format)
 
-	tmpl, err := template.New("stats").Parse(format)
+	tmpl, err := report.NewTemplate("stats").Parse(format)
 	if err != nil {
 		return err
 	}
-	w := tabwriter.NewWriter(os.Stdout, 8, 2, 2, ' ', 0)
+
+	w, err := report.NewWriterDefault(os.Stdout)
+	if err != nil {
+		return err
+	}
 	defer w.Flush()
 
 	if len(statsOptions.Format) < 1 {

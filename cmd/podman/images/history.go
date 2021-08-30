@@ -5,14 +5,11 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"text/tabwriter"
-	"text/template"
 	"time"
 	"unicode"
 
 	"github.com/containers/common/pkg/report"
 	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/parse"
 	"github.com/containers/podman/v3/cmd/podman/registry"
 	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/docker/go-units"
@@ -74,7 +71,7 @@ func historyFlags(cmd *cobra.Command) {
 
 	formatFlagName := "format"
 	flags.StringVar(&opts.format, formatFlagName, "", "Change the output to JSON or a Go template")
-	_ = cmd.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteJSONFormat)
+	_ = cmd.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteFormat(entities.ImageHistoryLayer{}))
 
 	flags.BoolVarP(&opts.human, "human", "H", true, "Display sizes and dates in human readable format")
 	flags.BoolVar(&opts.noTrunc, "no-trunc", false, "Do not truncate the output")
@@ -127,13 +124,17 @@ func history(cmd *cobra.Command, args []string) error {
 	case opts.quiet:
 		row = "{{.ID}}\n"
 	}
-	format := parse.EnforceRange(row)
+	format := report.EnforceRange(row)
 
-	tmpl, err := template.New("report").Parse(format)
+	tmpl, err := report.NewTemplate("history").Parse(format)
 	if err != nil {
 		return err
 	}
-	w := tabwriter.NewWriter(os.Stdout, 8, 2, 2, ' ', 0)
+
+	w, err := report.NewWriterDefault(os.Stdout)
+	if err != nil {
+		return err
+	}
 	defer w.Flush()
 
 	if !opts.quiet && !cmd.Flags().Changed("format") {

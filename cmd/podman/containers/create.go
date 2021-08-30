@@ -8,17 +8,14 @@ import (
 	"strings"
 
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/image/v5/storage"
 	"github.com/containers/image/v5/transports/alltransports"
 	"github.com/containers/podman/v3/cmd/podman/common"
 	"github.com/containers/podman/v3/cmd/podman/registry"
 	"github.com/containers/podman/v3/cmd/podman/utils"
-	"github.com/containers/podman/v3/libpod/define"
 	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/containers/podman/v3/pkg/specgen"
 	"github.com/containers/podman/v3/pkg/util"
 	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
 
@@ -64,9 +61,9 @@ func createFlags(cmd *cobra.Command) {
 
 	flags.SetNormalizeFunc(utils.AliasFlags)
 
-	_ = flags.MarkHidden("signature-policy")
 	if registry.IsRemote() {
-		_ = flags.MarkHidden("http-proxy")
+		_ = flags.MarkHidden("conmon-pidfile")
+		_ = flags.MarkHidden("pidfile")
 	}
 }
 
@@ -193,6 +190,25 @@ func createInit(c *cobra.Command) error {
 		val := c.Flag("entrypoint").Value.String()
 		cliVals.Entrypoint = &val
 	}
+
+	if c.Flags().Changed("group-add") {
+		groups := []string{}
+		for _, g := range cliVals.GroupAdd {
+			if g == "keep-groups" {
+				if len(cliVals.GroupAdd) > 1 {
+					return errors.New("the '--group-add keep-groups' option is not allowed with any other --group-add options")
+				}
+				if registry.IsRemote() {
+					return errors.New("the '--group-add keep-groups' option is not supported in remote mode")
+				}
+				cliVals.Annotation = append(cliVals.Annotation, "run.oci.keep_original_groups=1")
+			} else {
+				groups = append(groups, g)
+			}
+		}
+		cliVals.GroupAdd = groups
+	}
+
 	if c.Flags().Changed("pids-limit") {
 		val := c.Flag("pids-limit").Value.String()
 		pidsLimit, err := strconv.ParseInt(val, 10, 32)
@@ -225,22 +241,6 @@ func pullImage(imageName string) (string, error) {
 		return "", err
 	}
 
-	// Check if the image is missing and hence if we need to pull it.
-	imageMissing := true
-	imageRef, err := alltransports.ParseImageName(imageName)
-	switch {
-	case err != nil:
-		// Assume we specified a local image without the explicit storage transport.
-		fallthrough
-
-	case imageRef.Transport().Name() == storage.Transport.Name():
-		br, err := registry.ImageEngine().Exists(registry.GetContext(), imageName)
-		if err != nil {
-			return "", err
-		}
-		imageMissing = !br.Value
-	}
-
 	if cliVals.Platform != "" || cliVals.Arch != "" || cliVals.OS != "" {
 		if cliVals.Platform != "" {
 			if cliVals.Arch != "" || cliVals.OS != "" {
@@ -252,31 +252,28 @@ func pullImage(imageName string) (string, error) {
 				cliVals.Arch = split[1]
 			}
 		}
-
-		if pullPolicy != config.PullImageAlways {
-			logrus.Info("--platform --arch and --os causes the pull policy to be \"always\"")
-			pullPolicy = config.PullImageAlways
-		}
 	}
 
-	if imageMissing || pullPolicy == config.PullImageAlways {
-		if pullPolicy == config.PullImageNever {
-			return "", errors.Wrapf(define.ErrNoSuchImage, "unable to find a name and tag match for %s in repotags", imageName)
-		}
-		pullReport, pullErr := registry.ImageEngine().Pull(registry.GetContext(), imageName, entities.ImagePullOptions{
-			Authfile:        cliVals.Authfile,
-			Quiet:           cliVals.Quiet,
-			Arch:            cliVals.Arch,
-			OS:              cliVals.OS,
-			Variant:         cliVals.Variant,
-			SignaturePolicy: cliVals.SignaturePolicy,
-			PullPolicy:      pullPolicy,
-		})
-		if pullErr != nil {
-			return "", pullErr
-		}
+	pullReport, pullErr := registry.ImageEngine().Pull(registry.GetContext(), imageName, entities.ImagePullOptions{
+		Authfile:        cliVals.Authfile,
+		Quiet:           cliVals.Quiet,
+		Arch:            cliVals.Arch,
+		OS:              cliVals.OS,
+		Variant:         cliVals.Variant,
+		SignaturePolicy: cliVals.SignaturePolicy,
+		PullPolicy:      pullPolicy,
+	})
+	if pullErr != nil {
+		return "", pullErr
+	}
+
+	// Return the input name such that the image resolves to correct
+	// repo/tag in the backend (see #8082).  Unless we're referring to
+	// the image via a transport.
+	if _, err := alltransports.ParseImageName(imageName); err == nil {
 		imageName = pullReport.Images[0]
 	}
+
 	return imageName, nil
 }
 

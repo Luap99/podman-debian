@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"text/template"
 
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/report"
@@ -52,7 +51,7 @@ func init() {
 
 	formatFlagName := "format"
 	flags.StringVar(&eventFormat, formatFlagName, "", "format the output using a Go template")
-	_ = eventsCommand.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteJSONFormat)
+	_ = eventsCommand.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteFormat(events.Event{}))
 
 	flags.BoolVar(&eventOptions.Stream, "stream", true, "stream new events; for testing only")
 
@@ -76,7 +75,7 @@ func eventsCmd(cmd *cobra.Command, _ []string) error {
 	errChannel := make(chan error)
 
 	var (
-		tmpl   *template.Template
+		tmpl   *report.Template
 		doJSON bool
 	)
 
@@ -84,7 +83,7 @@ func eventsCmd(cmd *cobra.Command, _ []string) error {
 		doJSON = report.IsJSON(eventFormat)
 		if !doJSON {
 			var err error
-			tmpl, err = template.New("events").Parse(eventFormat)
+			tmpl, err = report.NewTemplate("events").Parse(eventFormat)
 			if err != nil {
 				return err
 			}

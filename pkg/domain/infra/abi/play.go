@@ -7,17 +7,20 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"strconv"
 	"strings"
 
+	"github.com/containers/common/libimage"
+	"github.com/containers/common/pkg/config"
 	"github.com/containers/image/v5/types"
 	"github.com/containers/podman/v3/libpod"
 	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/libpod/image"
+	"github.com/containers/podman/v3/pkg/autoupdate"
 	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v3/pkg/specgen"
 	"github.com/containers/podman/v3/pkg/specgen/generate"
 	"github.com/containers/podman/v3/pkg/specgen/generate/kube"
 	"github.com/containers/podman/v3/pkg/util"
-	"github.com/docker/distribution/reference"
 	"github.com/ghodss/yaml"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -42,6 +45,14 @@ func (ic *ContainerEngine) PlayKube(ctx context.Context, path string, options en
 		return nil, err
 	}
 
+	// sort kube kinds
+	documentList, err = sortKubeKinds(documentList)
+	if err != nil {
+		return nil, errors.Wrapf(err, "unable to sort kube kinds in %q", path)
+	}
+
+	ipIndex := 0
+
 	// create pod on each document if it is a pod or deployment
 	// any other kube kind will be skipped
 	for _, document := range documentList {
@@ -62,7 +73,7 @@ func (ic *ContainerEngine) PlayKube(ctx context.Context, path string, options en
 			podTemplateSpec.ObjectMeta = podYAML.ObjectMeta
 			podTemplateSpec.Spec = podYAML.Spec
 
-			r, err := ic.playKubePod(ctx, podTemplateSpec.ObjectMeta.Name, &podTemplateSpec, options)
+			r, err := ic.playKubePod(ctx, podTemplateSpec.ObjectMeta.Name, &podTemplateSpec, options, &ipIndex, podYAML.Annotations)
 			if err != nil {
 				return nil, err
 			}
@@ -76,12 +87,26 @@ func (ic *ContainerEngine) PlayKube(ctx context.Context, path string, options en
 				return nil, errors.Wrapf(err, "unable to read YAML %q as Kube Deployment", path)
 			}
 
-			r, err := ic.playKubeDeployment(ctx, &deploymentYAML, options)
+			r, err := ic.playKubeDeployment(ctx, &deploymentYAML, options, &ipIndex)
 			if err != nil {
 				return nil, err
 			}
 
 			report.Pods = append(report.Pods, r.Pods...)
+			validKinds++
+		case "PersistentVolumeClaim":
+			var pvcYAML v1.PersistentVolumeClaim
+
+			if err := yaml.Unmarshal(document, &pvcYAML); err != nil {
+				return nil, errors.Wrapf(err, "unable to read YAML %q as Kube PersistentVolumeClaim", path)
+			}
+
+			r, err := ic.playKubePVC(ctx, &pvcYAML, options)
+			if err != nil {
+				return nil, err
+			}
+
+			report.Volumes = append(report.Volumes, r.Volumes...)
 			validKinds++
 		default:
 			logrus.Infof("kube kind %s not supported", kind)
@@ -96,7 +121,7 @@ func (ic *ContainerEngine) PlayKube(ctx context.Context, path string, options en
 	return report, nil
 }
 
-func (ic *ContainerEngine) playKubeDeployment(ctx context.Context, deploymentYAML *v1apps.Deployment, options entities.PlayKubeOptions) (*entities.PlayKubeReport, error) {
+func (ic *ContainerEngine) playKubeDeployment(ctx context.Context, deploymentYAML *v1apps.Deployment, options entities.PlayKubeOptions, ipIndex *int) (*entities.PlayKubeReport, error) {
 	var (
 		deploymentName string
 		podSpec        v1.PodTemplateSpec
@@ -118,7 +143,7 @@ func (ic *ContainerEngine) playKubeDeployment(ctx context.Context, deploymentYAM
 	// create "replicas" number of pods
 	for i = 0; i < numReplicas; i++ {
 		podName := fmt.Sprintf("%s-pod-%d", deploymentName, i)
-		podReport, err := ic.playKubePod(ctx, podName, &podSpec, options)
+		podReport, err := ic.playKubePod(ctx, podName, &podSpec, options, ipIndex, deploymentYAML.Annotations)
 		if err != nil {
 			return nil, errors.Wrapf(err, "error encountered while bringing up pod %s", podName)
 		}
@@ -127,13 +152,18 @@ func (ic *ContainerEngine) playKubeDeployment(ctx context.Context, deploymentYAM
 	return &report, nil
 }
 
-func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podYAML *v1.PodTemplateSpec, options entities.PlayKubeOptions) (*entities.PlayKubeReport, error) {
+func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podYAML *v1.PodTemplateSpec, options entities.PlayKubeOptions, ipIndex *int, annotations map[string]string) (*entities.PlayKubeReport, error) {
 	var (
-		registryCreds *types.DockerAuthConfig
-		writer        io.Writer
-		playKubePod   entities.PlayKubePod
-		report        entities.PlayKubeReport
+		writer      io.Writer
+		playKubePod entities.PlayKubePod
+		report      entities.PlayKubeReport
 	)
+
+	// Create the secret manager before hand
+	secretsManager, err := ic.Libpod.SecretsManager()
+	if err != nil {
+		return nil, err
+	}
 
 	// check for name collision between pod and container
 	if podName == "" {
@@ -162,9 +192,23 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 			// networks.
 			networks := strings.Split(options.Network, ",")
 			logrus.Debugf("Pod joining CNI networks: %v", networks)
+			p.NetNS.NSMode = specgen.Bridge
 			p.CNINetworks = append(p.CNINetworks, networks...)
 		}
 	}
+	if len(options.StaticIPs) > *ipIndex {
+		p.StaticIP = &options.StaticIPs[*ipIndex]
+	} else if len(options.StaticIPs) > 0 {
+		// only warn if the user has set at least one ip
+		logrus.Warn("No more static ips left using a random one")
+	}
+	if len(options.StaticMACs) > *ipIndex {
+		p.StaticMAC = &options.StaticMACs[*ipIndex]
+	} else if len(options.StaticIPs) > 0 {
+		// only warn if the user has set at least one mac
+		logrus.Warn("No more static macs left using a random one")
+	}
+	*ipIndex++
 
 	// Create the Pod
 	pod, err := generate.MakePod(p, ic.Libpod)
@@ -179,19 +223,6 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 
 	if !options.Quiet {
 		writer = os.Stderr
-	}
-
-	if len(options.Username) > 0 && len(options.Password) > 0 {
-		registryCreds = &types.DockerAuthConfig{
-			Username: options.Username,
-			Password: options.Password,
-		}
-	}
-
-	dockerRegistryOptions := image.DockerRegistryOptions{
-		DockerRegistryCreds:         registryCreds,
-		DockerCertPath:              options.CertDir,
-		DockerInsecureSkipTLSVerify: options.SkipTLSVerify,
 	}
 
 	volumes, err := kube.InitializeVolumes(podYAML.Spec.Volumes)
@@ -234,43 +265,66 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 
 	containers := make([]*libpod.Container, 0, len(podYAML.Spec.Containers))
 	for _, container := range podYAML.Spec.Containers {
-		pullPolicy := util.PullImageMissing
+		// Contains all labels obtained from kube
+		labels := make(map[string]string)
+
+		// NOTE: set the pull policy to "newer".  This will cover cases
+		// where the "latest" tag requires a pull and will also
+		// transparently handle "localhost/" prefixed files which *may*
+		// refer to a locally built image OR an image running a
+		// registry on localhost.
+		pullPolicy := config.PullPolicyNewer
 		if len(container.ImagePullPolicy) > 0 {
-			pullPolicy, err = util.ValidatePullType(string(container.ImagePullPolicy))
+			pullPolicy, err = config.ParsePullPolicy(string(container.ImagePullPolicy))
 			if err != nil {
 				return nil, err
 			}
 		}
-		named, err := reference.ParseNormalizedNamed(container.Image)
-		if err != nil {
-			return nil, errors.Wrapf(err, "Failed to parse image %q", container.Image)
-		}
-		// In kube, if the image is tagged with latest, it should always pull
-		// but if the domain is localhost, that means the image was built locally
-		// so do not attempt a pull.
-		if tagged, isTagged := named.(reference.NamedTagged); isTagged {
-			if tagged.Tag() == image.LatestTag && reference.Domain(named) != image.DefaultLocalRegistry {
-				pullPolicy = util.PullImageAlways
-			}
-		}
-
 		// This ensures the image is the image store
-		newImage, err := ic.Libpod.ImageRuntime().New(ctx, container.Image, options.SignaturePolicy, options.Authfile, writer, &dockerRegistryOptions, image.SigningOptions{}, nil, pullPolicy, nil)
+		pullOptions := &libimage.PullOptions{}
+		pullOptions.AuthFilePath = options.Authfile
+		pullOptions.CertDirPath = options.CertDir
+		pullOptions.SignaturePolicyPath = options.SignaturePolicy
+		pullOptions.Writer = writer
+		pullOptions.Username = options.Username
+		pullOptions.Password = options.Password
+		pullOptions.InsecureSkipTLSVerify = options.SkipTLSVerify
+
+		pulledImages, err := ic.Libpod.LibimageRuntime().Pull(ctx, container.Image, pullPolicy, pullOptions)
 		if err != nil {
 			return nil, err
 		}
 
+		// Handle kube annotations
+		for k, v := range annotations {
+			switch k {
+			// Auto update annotation without container name will apply to
+			// all containers within the pod
+			case autoupdate.Label, autoupdate.AuthfileLabel:
+				labels[k] = v
+			// Auto update annotation with container name will apply only
+			// to the specified container
+			case fmt.Sprintf("%s/%s", autoupdate.Label, container.Name),
+				fmt.Sprintf("%s/%s", autoupdate.AuthfileLabel, container.Name):
+				prefixAndCtr := strings.Split(k, "/")
+				labels[prefixAndCtr[0]] = v
+			}
+		}
+
 		specgenOpts := kube.CtrSpecGenOptions{
-			Container:     container,
-			Image:         newImage,
-			Volumes:       volumes,
-			PodID:         pod.ID(),
-			PodName:       podName,
-			PodInfraID:    podInfraID,
-			ConfigMaps:    configMaps,
-			SeccompPaths:  seccompPaths,
-			RestartPolicy: ctrRestartPolicy,
-			NetNSIsHost:   p.NetNS.IsHost(),
+			Container:      container,
+			Image:          pulledImages[0],
+			Volumes:        volumes,
+			PodID:          pod.ID(),
+			PodName:        podName,
+			PodInfraID:     podInfraID,
+			ConfigMaps:     configMaps,
+			SeccompPaths:   seccompPaths,
+			RestartPolicy:  ctrRestartPolicy,
+			NetNSIsHost:    p.NetNS.IsHost(),
+			SecretsManager: secretsManager,
+			LogDriver:      options.LogDriver,
+			Labels:         labels,
 		}
 		specGen, err := kube.ToSpecGen(ctx, &specgenOpts)
 		if err != nil {
@@ -305,6 +359,68 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 	return &report, nil
 }
 
+// playKubePVC creates a podman volume from a kube persistent volume claim.
+func (ic *ContainerEngine) playKubePVC(ctx context.Context, pvcYAML *v1.PersistentVolumeClaim, options entities.PlayKubeOptions) (*entities.PlayKubeReport, error) {
+	var report entities.PlayKubeReport
+	opts := make(map[string]string)
+
+	// Get pvc name.
+	// This is the only required pvc attribute to create a podman volume.
+	name := pvcYAML.GetName()
+	if strings.TrimSpace(name) == "" {
+		return nil, fmt.Errorf("persistent volume claim name can not be empty")
+	}
+
+	// Create podman volume options.
+	volOptions := []libpod.VolumeCreateOption{
+		libpod.WithVolumeName(name),
+		libpod.WithVolumeLabels(pvcYAML.GetLabels()),
+	}
+
+	// Get pvc annotations and create remaining podman volume options if available.
+	// These are podman volume options that do not match any of the persistent volume claim
+	// attributes, so they can be configured using annotations since they will not affect k8s.
+	for k, v := range pvcYAML.GetAnnotations() {
+		switch k {
+		case util.VolumeDriverAnnotation:
+			volOptions = append(volOptions, libpod.WithVolumeDriver(v))
+		case util.VolumeDeviceAnnotation:
+			opts["device"] = v
+		case util.VolumeTypeAnnotation:
+			opts["type"] = v
+		case util.VolumeUIDAnnotation:
+			uid, err := strconv.Atoi(v)
+			if err != nil {
+				return nil, errors.Wrapf(err, "cannot convert uid %s to integer", v)
+			}
+			volOptions = append(volOptions, libpod.WithVolumeUID(uid))
+			opts["UID"] = v
+		case util.VolumeGIDAnnotation:
+			gid, err := strconv.Atoi(v)
+			if err != nil {
+				return nil, errors.Wrapf(err, "cannot convert gid %s to integer", v)
+			}
+			volOptions = append(volOptions, libpod.WithVolumeGID(gid))
+			opts["GID"] = v
+		case util.VolumeMountOptsAnnotation:
+			opts["o"] = v
+		}
+	}
+	volOptions = append(volOptions, libpod.WithVolumeOptions(opts))
+
+	// Create volume.
+	vol, err := ic.Libpod.NewVolume(ctx, volOptions...)
+	if err != nil {
+		return nil, err
+	}
+
+	report.Volumes = append(report.Volumes, entities.PlayKubeVolume{
+		Name: vol.Name(),
+	})
+
+	return &report, nil
+}
+
 // readConfigMapFromFile returns a kubernetes configMap obtained from --configmap flag
 func readConfigMapFromFile(r io.Reader) (v1.ConfigMap, error) {
 	var cm v1.ConfigMap
@@ -325,7 +441,7 @@ func readConfigMapFromFile(r io.Reader) (v1.ConfigMap, error) {
 	return cm, nil
 }
 
-// splitMultiDocYAML reads mutiple documents in a YAML file and
+// splitMultiDocYAML reads multiple documents in a YAML file and
 // returns them as a list.
 func splitMultiDocYAML(yamlContent []byte) ([][]byte, error) {
 	var documentList [][]byte
@@ -365,4 +481,26 @@ func getKubeKind(obj []byte) (string, error) {
 	}
 
 	return kubeObject.Kind, nil
+}
+
+// sortKubeKinds adds the correct creation order for the kube kinds.
+// Any pod dependency will be created first like volumes, secrets, etc.
+func sortKubeKinds(documentList [][]byte) ([][]byte, error) {
+	var sortedDocumentList [][]byte
+
+	for _, document := range documentList {
+		kind, err := getKubeKind(document)
+		if err != nil {
+			return nil, err
+		}
+
+		switch kind {
+		case "Pod", "Deployment":
+			sortedDocumentList = append(sortedDocumentList, document)
+		default:
+			sortedDocumentList = append([][]byte{document}, sortedDocumentList...)
+		}
+	}
+
+	return sortedDocumentList, nil
 }

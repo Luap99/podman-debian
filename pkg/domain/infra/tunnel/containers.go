@@ -21,6 +21,7 @@ import (
 	"github.com/containers/podman/v3/pkg/errorhandling"
 	"github.com/containers/podman/v3/pkg/specgen"
 	"github.com/containers/podman/v3/pkg/util"
+	"github.com/containers/storage/types"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -506,7 +507,30 @@ func startAndAttach(ic *ContainerEngine, name string, detachKeys *string, input,
 func (ic *ContainerEngine) ContainerStart(ctx context.Context, namesOrIds []string, options entities.ContainerStartOptions) ([]*entities.ContainerStartReport, error) {
 	reports := []*entities.ContainerStartReport{}
 	var exitCode = define.ExecErrorCodeGeneric
-	ctrs, err := getContainersByContext(ic.ClientCtx, false, false, namesOrIds)
+	containersNamesOrIds := namesOrIds
+	if len(options.Filters) > 0 {
+		containersNamesOrIds = []string{}
+		opts := new(containers.ListOptions).WithFilters(options.Filters).WithAll(true)
+		candidates, listErr := containers.List(ic.ClientCtx, opts)
+		if listErr != nil {
+			return nil, listErr
+		}
+		for _, candidate := range candidates {
+			for _, nameOrID := range namesOrIds {
+				if nameOrID == candidate.ID {
+					containersNamesOrIds = append(containersNamesOrIds, nameOrID)
+					continue
+				}
+				for _, containerName := range candidate.Names {
+					if containerName == nameOrID {
+						containersNamesOrIds = append(containersNamesOrIds, nameOrID)
+						continue
+					}
+				}
+			}
+		}
+	}
+	ctrs, err := getContainersByContext(ic.ClientCtx, options.All, false, containersNamesOrIds)
 	if err != nil {
 		return nil, err
 	}
@@ -514,9 +538,13 @@ func (ic *ContainerEngine) ContainerStart(ctx context.Context, namesOrIds []stri
 	// There can only be one container if attach was used
 	for i, ctr := range ctrs {
 		name := ctr.ID
+		rawInput := ctr.ID
+		if !options.All {
+			rawInput = namesOrIds[i]
+		}
 		report := entities.ContainerStartReport{
 			Id:       name,
-			RawInput: namesOrIds[i],
+			RawInput: rawInput,
 			ExitCode: exitCode,
 		}
 		ctrRunning := ctr.State == define.ContainerStateRunning.String()
@@ -553,7 +581,7 @@ func (ic *ContainerEngine) ContainerStart(ctx context.Context, namesOrIds []stri
 						if err := containers.Remove(ic.ClientCtx, ctr.ID, removeOptions); err != nil {
 							if errorhandling.Contains(err, define.ErrNoSuchCtr) ||
 								errorhandling.Contains(err, define.ErrCtrRemoved) {
-								logrus.Warnf("Container %s does not exist: %v", ctr.ID, err)
+								logrus.Debugf("Container %s does not exist: %v", ctr.ID, err)
 							} else {
 								logrus.Errorf("Error removing container %s: %v", ctr.ID, err)
 							}
@@ -586,8 +614,9 @@ func (ic *ContainerEngine) ContainerStart(ctx context.Context, namesOrIds []stri
 					rmOptions := new(containers.RemoveOptions).WithForce(false).WithVolumes(true)
 					if err := containers.Remove(ic.ClientCtx, ctr.ID, rmOptions); err != nil {
 						if errorhandling.Contains(err, define.ErrNoSuchCtr) ||
-							errorhandling.Contains(err, define.ErrCtrRemoved) {
-							logrus.Warnf("Container %s does not exist: %v", ctr.ID, err)
+							errorhandling.Contains(err, define.ErrCtrRemoved) ||
+							errorhandling.Contains(err, types.ErrLayerUnknown) {
+							logrus.Debugf("Container %s does not exist: %v", ctr.ID, err)
 						} else {
 							logrus.Errorf("Error removing container %s: %v", ctr.ID, err)
 						}
@@ -598,9 +627,9 @@ func (ic *ContainerEngine) ContainerStart(ctx context.Context, namesOrIds []stri
 				reports = append(reports, &report)
 				continue
 			}
+			report.ExitCode = 0
+			reports = append(reports, &report)
 		}
-		report.ExitCode = 0
-		reports = append(reports, &report)
 	}
 	return reports, nil
 }
@@ -629,7 +658,7 @@ func (ic *ContainerEngine) ContainerRun(ctx context.Context, opts entities.Conta
 
 	if opts.Detach {
 		// Detach and return early
-		err := containers.Start(ic.ClientCtx, con.ID, nil)
+		err := containers.Start(ic.ClientCtx, con.ID, new(containers.StartOptions).WithRecursive(true))
 		if err != nil {
 			report.ExitCode = define.ExitCode(err)
 		}
@@ -664,8 +693,9 @@ func (ic *ContainerEngine) ContainerRun(ctx context.Context, opts entities.Conta
 			if !shouldRestart {
 				if err := containers.Remove(ic.ClientCtx, con.ID, new(containers.RemoveOptions).WithForce(false).WithVolumes(true)); err != nil {
 					if errorhandling.Contains(err, define.ErrNoSuchCtr) ||
-						errorhandling.Contains(err, define.ErrCtrRemoved) {
-						logrus.Warnf("Container %s does not exist: %v", con.ID, err)
+						errorhandling.Contains(err, define.ErrCtrRemoved) ||
+						errorhandling.Contains(err, types.ErrLayerUnknown) {
+						logrus.Debugf("Container %s does not exist: %v", con.ID, err)
 					} else {
 						logrus.Errorf("Error removing container %s: %v", con.ID, err)
 					}

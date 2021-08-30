@@ -69,6 +69,13 @@ func (r *Runtime) RestoreContainer(ctx context.Context, rSpec *spec.Spec, config
 		ctr.config.ConmonPidFile = ""
 	}
 
+	// If the path to PidFile starts with the default value (RunRoot), then
+	// the user has not specified '--pidfile' during run or create (probably).
+	// In that case reset PidFile to be set to the default value later.
+	if strings.HasPrefix(ctr.config.PidFile, r.storageConfig.RunRoot) {
+		ctr.config.PidFile = ""
+	}
+
 	return r.setupContainer(ctx, ctr)
 }
 
@@ -288,8 +295,11 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 					if podCgroup == "" {
 						return nil, errors.Wrapf(define.ErrInternal, "pod %s cgroup is not set", pod.ID())
 					}
-					ctr.config.CgroupParent = podCgroup
-				} else {
+					canUseCgroup := !rootless.IsRootless() || isRootlessCgroupSet(podCgroup)
+					if canUseCgroup {
+						ctr.config.CgroupParent = podCgroup
+					}
+				} else if !rootless.IsRootless() {
 					ctr.config.CgroupParent = CgroupfsDefaultCgroupParent
 				}
 			} else if strings.HasSuffix(path.Base(ctr.config.CgroupParent), ".slice") {
@@ -356,7 +366,7 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 		return nil, err
 	}
 	for _, secr := range ctr.config.Secrets {
-		err = ctr.extractSecretToCtrStorage(secr.Name)
+		err = ctr.extractSecretToCtrStorage(secr)
 		if err != nil {
 			return nil, err
 		}
@@ -364,6 +374,10 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 
 	if ctr.config.ConmonPidFile == "" {
 		ctr.config.ConmonPidFile = filepath.Join(ctr.state.RunDir, "conmon.pid")
+	}
+
+	if ctr.config.PidFile == "" {
+		ctr.config.PidFile = filepath.Join(ctr.state.RunDir, "pidfile")
 	}
 
 	// Go through named volumes and add them.
@@ -613,20 +627,6 @@ func (r *Runtime) removeContainer(ctx context.Context, c *Container, force, remo
 			cleanupErr = err
 		} else {
 			logrus.Errorf("cleanup storage: %v", err)
-		}
-	}
-
-	// Delete the container.
-	// Not needed in Configured and Exited states, where the container
-	// doesn't exist in the runtime
-	if c.state.State != define.ContainerStateConfigured &&
-		c.state.State != define.ContainerStateExited {
-		if err := c.delete(ctx); err != nil {
-			if cleanupErr == nil {
-				cleanupErr = err
-			} else {
-				logrus.Errorf("delete container: %v", err)
-			}
 		}
 	}
 

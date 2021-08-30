@@ -1,5 +1,199 @@
 # Release Notes
 
+## 3.2.3
+### Security
+- This release addresses CVE-2021-3602, an issue with the `podman build` command with the `--isolation chroot` flag that results in environment variables from the host leaking into build containers.
+
+### Bugfixes
+- Fixed a bug where events related to images could occur before the relevant operation had completed (e.g. an image pull event could be written before the pull was finished) ([#10812](https://github.com/containers/podman/issues/10812)).
+- Fixed a bug where `podman save` would refuse to save images with an architecture different from that of the host ([#10835](https://github.com/containers/podman/issues/10835)).
+- Fixed a bug where the `podman import` command did not correctly handle images without tags ([#10854](https://github.com/containers/podman/issues/10854)).
+- Fixed a bug where Podman's journald events backend would fail and prevent Podman from running when run on a host with systemd as PID1 but in an environment (e.g. a container) without systemd ([#10863](https://github.com/containers/podman/issues/10863)).
+- Fixed a bug where containers using rootless CNI networking would fail to start when the `dnsname` CNI plugin was in use and the host system's `/etc/resolv.conf` was a symlink ([#10855](https://github.com/containers/podman/issues/10855) and [#10929](https://github.com/containers/podman/issues/10929)).
+- Fixed a bug where containers using rootless CNI networking could fail to start due to a race in rootless CNI initialization ([#10930](https://github.com/containers/podman/issues/10930)).
+
+### Misc
+- Updated Buildah to v1.21.3
+- Updated the containers/common library to v0.38.16
+
+## 3.2.2
+### Changes
+- Podman's handling of the Architecture field of images has been relaxed. Since 3.2.0, Podman required that the architecture of the image match the architecture of the system to run containers based on an image, but images often incorrectly report architecture, causing Podman to reject valid images ([#10648](https://github.com/containers/podman/issues/10648) and [#10682](https://github.com/containers/podman/issues/10682)).
+- Podman no longer uses inotify to monitor for changes to CNI configurations. This removes potential issues where Podman cannot be run because a user has exhausted their available inotify sessions ([#10686](https://github.com/containers/podman/issues/10686)).
+
+### Bugfixes
+- Fixed a bug where the `podman cp` would, when given a directory as its source and a target that existed and was a file, copy the contents of the directory into the parent directory of the file; this now results in an error.
+- Fixed a bug where the `podman logs` command would, when following a running container's logs, not include the last line of output from the container when it exited when the `k8s-file` driver was in use ([#10675](https://github.com/containers/podman/issues/10675)).
+- Fixed a bug where Podman would fail to run containers if `systemd-resolved` was incorrectly detected as the system's DNS server ([#10733](https://github.com/containers/podman/issues/10733)).
+- Fixed a bug where the `podman exec -t` command would only resize the exec session's TTY after the session started, leading to a race condition where the terminal would initially not have a size set ([#10560](https://github.com/containers/podman/issues/10560)).
+- Fixed a bug where Podman containers using the `slirp4netns` network mode would add an incorrect entry to `/etc/hosts` pointing the container's hostname to the wrong IP address.
+- Fixed a bug where Podman would create volumes specified by images with incorrect permissions ([#10188](https://github.com/containers/podman/issues/10188) and [#10606](https://github.com/containers/podman/issues/10606)).
+- Fixed a bug where Podman would not respect the `uid` and `gid` options to `podman volume create -o` ([#10620](https://github.com/containers/podman/issues/10620)).
+- Fixed a bug where the `podman run` command could panic when parsing the system's cgroup configuration ([#10666](https://github.com/containers/podman/issues/10666)).
+- Fixed a bug where the remote Podman client's `podman build -f - ...` command did not read a Containerfile from STDIN ([#10621](https://github.com/containers/podman/issues/10621)).
+- Fixed a bug where the `podman container restore --import` command would fail to restore checkpoints created from privileged containers ([#10615](https://github.com/containers/podman/issues/10615)).
+- Fixed a bug where Podman was not respecting the `TMPDIR` environment variable when pulling images ([#10698](https://github.com/containers/podman/issues/10698)).
+- Fixed a bug where a number of Podman commands did not properly support using Go templates as an argument to the `--format` option.
+
+### API
+- Fixed a bug where the Compat Inspect endpoint for Containers did not include information on container healthchecks ([#10457](https://github.com/containers/podman/issues/10457)).
+- Fixed a bug where the Libpod and Compat Build endpoints for Images did not properly handle the `devices` query parameter ([#10614](https://github.com/containers/podman/issues/10614)).
+
+### Misc
+- Fixed a bug where the Makefile's `make podman-remote-static` target to build a statically-linked `podman-remote` binary was instead producing dynamic binaries ([#10656](https://github.com/containers/podman/issues/10656)).
+- Updated the containers/common library to v0.38.11
+
+## 3.2.1
+### Changes
+- Podman now allows corrupt images (e.g. from restarting the system during an image pull) to be replaced by a `podman pull` of the same image (instead of requiring they be removed first, then re-pulled).
+
+### Bugfixes
+- Fixed a bug where Podman would fail to start containers if a Seccomp profile was not available at `/usr/share/containers/seccomp.json` ([#10556](https://github.com/containers/podman/issues/10556)).
+- Fixed a bug where the `podman machine start` command failed on OS X machines with the AMD64 architecture and certain QEMU versions ([#10555](https://github.com/containers/podman/issues/10555)).
+- Fixed a bug where Podman would always use the slow path for joining the rootless user namespace.
+- Fixed a bug where the `podman stats` command would fail on Cgroups v1 systems when run on a container running systemd ([#10602](https://github.com/containers/podman/issues/10602)).
+- Fixed a bug where pre-checkpoint support for `podman container checkpoint` did not function correctly.
+- Fixed a bug where the remote Podman client's `podman build` command did not properly handle the `-f` option ([#9871](https://github.com/containers/podman/issues/9871)).
+- Fixed a bug where the remote Podman client's `podman run` command would sometimes not resize the container's terminal before execution began ([#9859](https://github.com/containers/podman/issues/9859)).
+- Fixed a bug where the `--filter` option to the `podman image prune` command was nonfunctional.
+- Fixed a bug where the `podman logs -f` command would exit before all output for a container was printed when the `k8s-file` log driver was in use ([#10596](https://github.com/containers/podman/issues/10596)).
+- Fixed a bug where Podman would not correctly detect that systemd-resolved was in use on the host and adjust DNS servers in the container appropriately under some circumstances ([#10570](https://github.com/containers/podman/issues/10570)).
+- Fixed a bug where the `podman network connect` and `podman network disconnect` commands acted improperly when containers were in the Created state, marking the changes as done but not actually performing them.
+
+### API
+- Fixed a bug where the Compat and Libpod Prune endpoints for Networks returned null, instead of an empty array, when nothing was pruned.
+- Fixed a bug where the Create API for Images would continue to pull images even if a client closed the connection mid-pull ([#7558](https://github.com/containers/podman/issues/7558)).
+- Fixed a bug where the Events API did not include some information (including labels) when sending events.
+- Fixed a bug where the Events API would, when streaming was not requested, send at most one event ([#10529](https://github.com/containers/podman/issues/10529)).
+
+### Misc
+- Updated the containers/common library to v0.38.9
+
+## 3.2.0
+### Features
+- Docker Compose is now supported with rootless Podman ([#9169](https://github.com/containers/podman/issues/9169)).
+- The `podman network connect`, `podman network disconnect`, and `podman network reload` commands have been enabled for rootless Podman.
+- An experimental new set of commands, `podman machine`, was added to assist in managing virtual machines containing a Podman server. These are intended for easing the use of Podman on OS X by handling the creation of a Linux VM for running Podman.
+- The `podman generate kube` command can now be run on Podman named volumes (generating `PersistentVolumeClaim` YAML), in addition to pods and containers.
+- The `podman play kube` command now supports two new options, `--ip` and `--mac`, to set static IPs and MAC addresses for created pods ([#8442](https://github.com/containers/podman/issues/8442) and [#9731](https://github.com/containers/podman/issues/9731)).
+- The `podman play kube` command's support for `PersistentVolumeClaim` YAML has been greatly improved.
+- The `podman generate kube` command now preserves the label used by `podman auto-update` to identify containers to update as a Kubernetes annotation, and the `podman play kube` command will convert this annotation back into a label. This allows `podman auto-update` to be used with containers created by `podman play kube`.
+- The `podman play kube` command now supports Kubernetes `secretRef` YAML (using the secrets support from `podman secret`) for environment variables.
+- Secrets can now be added to containers as environment variables using the `type=env` option to the `--secret` flag to `podman create` and `podman run`.
+- The `podman start` command now supports the `--all` option, allowing all containers to be started simultaneously with a single command. The `--filter` option has also been added to filter which containers to start when `--all` is used.
+- Filtering containers with the `--filter` option to `podman ps` and `podman start` now supports a new filter, `restart-policy`, to filter containers based on their restart policy.
+- The `--group-add` option to rootless `podman run` and `podman create` now accepts a new value, `keep-groups`, which instructs Podman to retain the supplemental groups of the user running Podman in the created container. This is only supported with the `crun` OCI runtime.
+- The `podman run` and `podman create` commands now support a new option, `--timeout`. This sets a maximum time the container is allowed to run, after which it is killed ([#6412](https://github.com/containers/podman/issues/6412)).
+- The `podman run` and `podman create` commands now support a new option, `--pidfile`. This will create a file when the container is started containing the PID of the first process in the container.
+- The `podman run` and `podman create` commands now support a new option, `--requires`. The `--requires` option adds dependency containers - containers that must be running before the current container. Commands like `podman start` will automatically start the requirements of a container before starting the container itself.
+- Auto-updating containers can now be done with locally-built images, not just images hosted on a registry, by creating containers with the `io.containers.autoupdate` label set to `local`.
+- Podman now supports the [Container Device Interface](https://github.com/container-orchestrated-devices/container-device-interface) (CDI) standard.
+- Podman now adds an entry to `/etc/hosts`, `host.containers.internal`, pointing to the current gateway (which, for root containers, is usually a bridge interface on the host system) ([#5651](https://github.com/containers/podman/issues/5651)).
+- The `podman ps`, `podman pod ps`, `podman network list`, `podman secret list`, and `podman volume list` commands now support a `--noheading` option, which will cause Podman to omit the heading line including column names.
+- The `podman unshare` command now supports a new flag, `--rootless-cni`, to join the rootless network namespace. This allows commands to be run in the same network environment as rootless containers with CNI networking.
+- The `--security-opt unmask=` option to `podman run` and `podman create` now supports glob operations to unmask a group of paths at once (e.g. `podman run --security-opt unmask=/proc/* ...` will unmask all paths in `/proc` in the container).
+- The `podman network prune` command now supports a `--filter` option to filter which networks will be pruned.
+
+### Changes
+- The change in Podman 3.1.2 where the `:z` and `:Z` mount options for volumes were ignored for privileged containers has been reverted after discussion in [#10209](https://github.com/containers/podman/issues/10209).
+- Podman's rootless CNI functionality no longer requires a sidecar container! The removal of the requirement for the `rootless-cni-infra` container means that rootless CNI is now usable on all architectures, not just AMD64, and no longer requires pulling an image ([#8709](https://github.com/containers/podman/issues/8709)).
+- The Image handling code used by Podman has seen a major rewrite to improve code sharing with our other projects, Buildah and CRI-O. This should result in fewer bugs and performance gains in the long term. Work on this is still ongoing.
+- The `podman auto-update` command now prunes previous versions of images after updating if they are unused, to prevent disk exhaustion after repeated updates ([#10190](https://github.com/containers/podman/issues/10190)).
+- The `podman play kube` now treats environment variables configured as references to a `ConfigMap` as mandatory unless the `optional` parameter was set; this better matches the behavior of Kubernetes.
+- Podman now supports the `--context=default` flag from Docker as a no-op for compatibility purposes.
+- When Podman is run as root, but without `CAP_SYS_ADMIN` being available, it will run in a user namespace using the same code as rootless Podman (instead of failing outright).
+- The `podman info` command now includes the path of the Seccomp profile Podman is using, available cgroup controllers, and whether Podman is connected to a remote service or running containers locally.
+- Containers created with the `--rm` option now automatically use the `volatile` storage flag when available for their root filesystems, causing them not to write changes to disk as often as they will be removed at completion anyways. This should result in improved performance.
+- The `podman generate systemd --new` command will now include environment variables referenced by the container in generated unit files if the value would be looked up from the system environment.
+- Podman now requires that Conmon v2.0.24 be available.
+
+### Bugfixes
+- Fixed a bug where the remote Podman client's `podman build` command did not support the `--arch`, `--platform`, and `--os`, options.
+- Fixed a bug where the remote Podman client's `podman build` command ignored the `--rm=false` option ([#9869](https://github.com/containers/podman/issues/9869)).
+- Fixed a bug where the remote Podman client's `podman build --iidfile` command could include extra output (in addition to just the image ID) in the image ID file written ([#10233](https://github.com/containers/podman/issues/10233)).
+- Fixed a bug where the remote Podman client's `podman build` command did not preserve hardlinks when moving files into the container via `COPY` instructions ([#9893](https://github.com/containers/podman/issues/9893)).
+- Fixed a bug where the `podman generate systemd --new` command could generate extra `--iidfile` arguments if the container was already created with one.
+- Fixed a bug where the `podman generate systemd --new` command would generate unit files that did not include `RequiresMountsFor` lines ([#10493](https://github.com/containers/podman/issues/10493)).
+- Fixed a bug where the `podman generate kube` command produced incorrect YAML for containers which bind-mounted both `/` and `/root` from the host system into the container ([#9764](https://github.com/containers/podman/issues/9764)).
+- Fixed a bug where pods created by `podman play kube` from YAML that specified `ShareProcessNamespace` would only share the PID namespace (and not also the UTS, Network, and IPC namespaces) ([#9128](https://github.com/containers/podman/issues/9128)).
+- Fixed a bug where the `podman network reload` command could generate spurious error messages when `iptables-nft` was in use.
+- Fixed a bug where rootless Podman could fail to attach to containers when the user running Podman had a large UID.
+- Fixed a bug where the `podman ps` command could fail with a `no such container` error due to a race condition with container removal ([#10120](https://github.com/containers/podman/issues/10120)).
+- Fixed a bug where containers using the `slirp4netns` network mode and setting a custom `slirp4netns` subnet while using the `rootlesskit` port forwarder would not be able to forward ports ([#9828](https://github.com/containers/podman/issues/9828)).
+- Fixed a bug where the `--filter ancestor=` option to `podman ps` did not require an exact match of the image name/ID to include a container in its results.
+- Fixed a bug where the `--filter until=` option to `podman image prune` would prune images created after the specified time (instead of before).
+- Fixed a bug where setting a custom Seccomp profile via the `seccomp_profile` option in `containers.conf` had no effect, and the default profile was used instead.
+- Fixed a bug where the `--cgroup-parent` option to `podman create` and `podman run` was ignored in rootless Podman on cgroups v2 systems with the `cgroupfs` cgroup manager ([#10173](https://github.com/containers/podman/issues/10173)).
+- Fixed a bug where the `IMAGE` and `NAME` variables in `podman container runlabel` were not being correctly substituted ([#10192](https://github.com/containers/podman/issues/10192)).
+- Fixed a bug where Podman could freeze when creating containers with a specific combination of volumes and working directory ([#10216](https://github.com/containers/podman/issues/10216)).
+- Fixed a bug where rootless Podman containers restarted by restart policy (e.g. containers created with `--restart=always`) would lose networking after being restarted ([#8047](https://github.com/containers/podman/issues/8047)).
+- Fixed a bug where the `podman cp` command could not copy files into containers created with the `--pid=host` flag ([#9985](https://github.com/containers/podman/issues/9985)).
+- Fixed a bug where filters to the `podman events` command could not be specified twice (if a filter is specified more than once, it will match if any of the given values match - logical or) ([#10507](https://github.com/containers/podman/issues/10507)).
+- Fixed a bug where Podman would include IPv6 nameservers in `resolv.conf` in containers without IPv6 connectivity ([#10158](https://github.com/containers/podman/issues/10158)).
+- Fixed a bug where containers could not be created with static IP addresses when connecting to a network using the `macvlan` driver ([#10283](https://github.com/containers/podman/issues/10283)).
+
+### API
+- Fixed a bug where the Compat Create endpoint for Containers did not allow advanced network options to be set ([#10110](https://github.com/containers/podman/issues/10110)).
+- Fixed a bug where the Compat Create endpoint for Containers ignored static IP information provided in the `IPAMConfig` block ([#10245](https://github.com/containers/podman/issues/10245)).
+- Fixed a bug where the Compat Inspect endpoint for Containers returned null (instead of an empty list) for Networks when the container was not joined to a CNI network ([#9837](https://github.com/containers/podman/issues/9837)).
+- Fixed a bug where the Compat Wait endpoint for Containers could miss containers exiting if they were immediately restarted.
+- Fixed a bug where the Compat Create endpoint for Volumes required that the user provide a name for the new volume ([#9803](https://github.com/containers/podman/issues/9803)).
+- Fixed a bug where the Libpod Info handler would sometimes not return the correct path to the Podman API socket.
+- Fixed a bug where the Compat Events handler used the wrong name for container exited events (`died` instead of `die`) ([#10168](https://github.com/containers/podman/issues/10168)).
+- Fixed a bug where the Compat Push endpoint for Images could leak goroutines if the remote end closed the connection prematurely.
+
+### Misc
+- Updated Buildah to v1.21.0
+- Updated the containers/common library to v0.38.5
+- Updated the containers/storage library to v1.31.3
+
+## 3.1.2
+### Bugfixes
+- The Compat Export endpoint for Images now supports exporting multiple images at the same time to a single archive.
+- Fixed a bug where images with empty layers were stored incorrectly, causing them to be unable to be pushed or saved.
+- Fixed a bug where the `podman rmi` command could fail to remove corrupt images from storage.
+- Fixed a bug where the remote Podman client's `podman save` command did not support the `oci-dir` and `docker-dir` formats ([#9742](https://github.com/containers/podman/issues/9742)).
+- Fixed a bug where volume mounts from `podman play kube` created with a trailing `/` in the container path were were not properly superceding named volumes from the image ([#9618](https://github.com/containers/podman/issues/9618)).
+- Fixed a bug where Podman could fail to build on 32-bit architectures.
+
+### Misc
+- Updated the containers/image library to v5.11.1
+
+## 3.1.1
+### Changes
+- Podman now recognizes `trace` as a valid argument to the `--log-level` command. Trace logging is now the most verbose level of logging available.
+- The `:z` and `:Z` options for volume mounts are now ignored when the container is privileged or is run with SELinux isolation disabled (`--security-opt label=disable`). This matches better matches Docker's behavior in this case.
+
+### Bugfixes
+- Fixed a bug where pruning images with the `podman image prune` or `podman system prune` commands could cause Podman to panic.
+- Fixed a bug where the `podman save` command did not properly error when the `--compress` flag was used with incompatible format types.
+- Fixed a bug where the `--security-opt` and `--ulimit` options to the remote Podman client's `podman build` command were nonfunctional.
+- Fixed a bug where the `--log-rusage` option to the remote Podman client's `podman build` command was nonfunctional ([#9489](https://github.com/containers/podman/issues/9889)).
+- Fixed a bug where the `podman build` command could, in some circumstances, use the wrong OCI runtime ([#9459](https://github.com/containers/podman/issues/9459)).
+- Fixed a bug where the remote Podman client's `podman build` command could return 0 despite failing ([#10029](https://github.com/containers/podman/issues/10029)).
+- Fixed a bug where the `podman container runlabel` command did not properly expand the `IMAGE` and `NAME` variables in the label ([#9405](https://github.com/containers/podman/issues/9405)).
+- Fixed a bug where poststop OCI hooks would be executed twice on containers started with the `--rm` argument ([#9983](https://github.com/containers/podman/issues/9983)).
+- Fixed a bug where rootless Podman could fail to launch containers on cgroups v2 systems when the `cgroupfs` cgroup manager was in use.
+- Fixed a bug where the `podman stats` command could error when statistics tracked exceeded the maximum size of a 32-bit signed integer ([#9979](https://github.com/containers/podman/issues/9979)).
+- Fixed a bug where rootless Podman containers run with `--userns=keepid` (without a `--user` flag in addition) would grant exec sessions run in them too many capabilities ([#9919](https://github.com/containers/podman/issues/9919)).
+- Fixed a bug where the `--authfile` option to `podman build` did not validate that the path given existed ([#9572](https://github.com/containers/podman/issues/9572)).
+- Fixed a bug where the `--storage-opt` option to Podman was appending to, instead of overriding (as is documented), the default storage options.
+- Fixed a bug where the `podman system service` connection did not function properly when run in a socket-activated systemd unit file as a non-root user.
+- Fixed a bug where the `--network` option to the `podman play kube` command of the remote Podman client was being ignored ([#9698](https://github.com/containers/podman/issues/9698)).
+- Fixed a bug where the `--log-driver` option to the `podman play kube` command was nonfunctional ([#10015](https://github.com/containers/podman/issues/10015)).
+
+### API
+- Fixed a bug where the Libpod Create endpoint for Manifests did not properly validate the image the manifest was being created with.
+- Fixed a bug where the Libpod DF endpoint could, in error cases, append an extra null to the JSON response, causing decode errors.
+- Fixed a bug where the Libpod and Compat Top endpoint for Containers would return process names that included extra whitespace.
+- Fixed a bug where the Compat Prune endpoint for Containers accepted too many types of filter.
+
+### Misc
+- Updated Buildah to v1.20.1
+- Updated the containers/storage library to v1.29.0
+- Updated the containers/image library to v5.11.0
+- Updated the containers/common library to v0.36.0
+
 ## 3.1.0
 ### Features
 - A set of new commands has been added to manage secrets! The `podman secret create`, `podman secret inspect`, `podman secret ls` and `podman secret rm` commands have been added to handle secrets, along with the `--secret` option to `podman run` and `podman create` to add secrets to containers. The initial driver for secrets does not support encryption - this will be added in a future release.
@@ -16,6 +210,9 @@
 - The `podman generate systemd` command now supports a `--no-header` option, which disables creation of the header comment automatically added by Podman to generated unit files.
 - The `podman generate kube` command can now generate `PersistentVolumeClaim` YAML for Podman named volumes ([#5788](https://github.com/containers/podman/issues/5788)).
 - The `podman generate kube` command can now generate YAML files containing multiple resources (pods or deployments) ([#9129](https://github.com/containers/podman/issues/9129)).
+
+### Security
+- This release resolves CVE-2021-20291, a deadlock vulnerability in the storage library caused by pulling a specially-crafted container image.
 
 ### Changes
 - The Podman remote client's `podman build` command no longer allows the `-v` flag to be used. Volumes are not yet supported with remote Podman when the client and service are on different machines.

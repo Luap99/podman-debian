@@ -75,7 +75,7 @@ func GetEvents(w http.ResponseWriter, r *http.Request) {
 	coder := json.NewEncoder(w)
 	coder.SetEscapeHTML(true)
 
-	for stream := true; stream; stream = query.Stream {
+	for {
 		select {
 		case err := <-errorChannel:
 			if err != nil {
@@ -89,6 +89,10 @@ func GetEvents(w http.ResponseWriter, r *http.Request) {
 			}
 
 			e := entities.ConvertToEntitiesEvent(*evt)
+			if !utils.IsLibpodRequest(r) && e.Status == "died" {
+				e.Status = "die"
+			}
+
 			if err := coder.Encode(e); err != nil {
 				logrus.Errorf("unable to write json: %q", err)
 			}

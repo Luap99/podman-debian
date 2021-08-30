@@ -19,20 +19,21 @@ load helpers
 
 @test "podman images - custom formats" {
     tests="
---format {{.ID}}                  |        [0-9a-f]\\\{12\\\}
---format {{.ID}} --no-trunc       | sha256:[0-9a-f]\\\{64\\\}
---format {{.Repository}}:{{.Tag}} | $PODMAN_TEST_IMAGE_FQN
---format {{.Labels.created_by}}   | test/system/build-testimage
---format {{.Labels.created_at}}   | 20[0-9-]\\\+T[0-9:]\\\+Z
+{{.ID}}                  |        [0-9a-f]\\\{12\\\}
+{{.ID| upper}}           |        [0-9A-F]\\\{12\\\}
+{{.Repository}}:{{.Tag}} | $PODMAN_TEST_IMAGE_FQN
+{{.Labels.created_by}}   | test/system/build-testimage
+{{.Labels.created_at}}   | 20[0-9-]\\\+T[0-9:]\\\+Z
 "
 
     parse_table "$tests" | while read fmt expect; do
-        run_podman images $fmt
+        run_podman images --format "$fmt"
         is "$output" "$expect\$" "podman images $fmt"
     done
 
+    run_podman images --format "{{.ID}}" --no-trunc
+    is "$output" "sha256:[0-9a-f]\\{64\\}\$" "podman images --no-trunc"
 }
-
 
 @test "podman images - json" {
     # 'created': podman includes fractional seconds, podman-remote does not
@@ -64,7 +65,7 @@ Labels.created_at | 20[0-9-]\\\+T[0-9:]\\\+Z
     run_podman commit my-container my-test-image
 
     run_podman images my-test-image --format '{{ .History }}'
-    is "$output" "" "Image has empty history to begin with"
+    is "$output" "localhost/my-test-image:latest" "image history with initial name"
 
     # Generate two randomish tags; 'tr' because they must be all lower-case
     rand_name1="test-image-history-$(random_string 10 | tr A-Z a-z)"
@@ -74,13 +75,13 @@ Labels.created_at | 20[0-9-]\\\+T[0-9:]\\\+Z
     run_podman tag my-test-image $rand_name1
     run_podman rmi $rand_name1
     run_podman images my-test-image --format '{{ .History }}'
-    is "$output" "localhost/${rand_name1}:latest" "image history after one tag"
+    is "$output" "localhost/my-test-image:latest, localhost/${rand_name1}:latest" "image history after one tag"
 
     # Repeat with second tag. Now both tags should be in history
     run_podman tag my-test-image $rand_name2
     run_podman rmi $rand_name2
     run_podman images my-test-image --format '{{ .History }}'
-    is "$output" "localhost/${rand_name2}:latest, localhost/${rand_name1}:latest" \
+    is "$output" "localhost/my-test-image:latest, localhost/${rand_name2}:latest, localhost/${rand_name1}:latest" \
        "image history after two tags"
 
     run_podman rmi my-test-image

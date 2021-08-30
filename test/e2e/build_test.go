@@ -549,4 +549,93 @@ RUN echo hello`, ALPINE)
 		inspect.WaitWithDefaultTimeout()
 		Expect(inspect.OutputToString()).To(Equal("1970-01-01 00:00:00 +0000 UTC"))
 	})
+
+	It("podman build --log-rusage", func() {
+		targetPath, err := CreateTempDirInTempDir()
+		Expect(err).To(BeNil())
+
+		containerFile := filepath.Join(targetPath, "Containerfile")
+		content := `FROM scratch`
+
+		Expect(ioutil.WriteFile(containerFile, []byte(content), 0755)).To(BeNil())
+
+		session := podmanTest.Podman([]string{"build", "--log-rusage", "--pull-never", targetPath})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+		Expect(session.OutputToString()).To(ContainSubstring("(system)"))
+		Expect(session.OutputToString()).To(ContainSubstring("(user)"))
+		Expect(session.OutputToString()).To(ContainSubstring("(elapsed)"))
+	})
+
+	It("podman build --arch --os flag", func() {
+		containerfile := `FROM scratch`
+		containerfilePath := filepath.Join(podmanTest.TempDir, "Containerfile")
+		err := ioutil.WriteFile(containerfilePath, []byte(containerfile), 0755)
+		Expect(err).To(BeNil())
+		session := podmanTest.Podman([]string{"build", "--pull-never", "-t", "test", "--arch", "foo", "--os", "bar", "--file", containerfilePath, podmanTest.TempDir})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+
+		inspect := podmanTest.Podman([]string{"image", "inspect", "--format", "{{ .Architecture }}", "test"})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect.OutputToString()).To(Equal("foo"))
+
+		inspect = podmanTest.Podman([]string{"image", "inspect", "--format", "{{ .Os }}", "test"})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect.OutputToString()).To(Equal("bar"))
+
+	})
+
+	It("podman build --os windows flag", func() {
+		containerfile := `FROM scratch`
+		containerfilePath := filepath.Join(podmanTest.TempDir, "Containerfile")
+		err := ioutil.WriteFile(containerfilePath, []byte(containerfile), 0755)
+		Expect(err).To(BeNil())
+		session := podmanTest.Podman([]string{"build", "--pull-never", "-t", "test", "--os", "windows", "--file", containerfilePath, podmanTest.TempDir})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+
+		inspect := podmanTest.Podman([]string{"image", "inspect", "--format", "{{ .Architecture }}", "test"})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect.OutputToString()).To(Equal(runtime.GOARCH))
+
+		inspect = podmanTest.Podman([]string{"image", "inspect", "--format", "{{ .Os }}", "test"})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect.OutputToString()).To(Equal("windows"))
+
+	})
+
+	It("podman build device test", func() {
+		if _, err := os.Lstat("/dev/fuse"); err != nil {
+			Skip(fmt.Sprintf("test requires stat /dev/fuse to work: %v", err))
+		}
+		containerfile := fmt.Sprintf(`FROM %s
+RUN ls /dev/fuse`, ALPINE)
+		containerfilePath := filepath.Join(podmanTest.TempDir, "Containerfile")
+		err := ioutil.WriteFile(containerfilePath, []byte(containerfile), 0755)
+		Expect(err).To(BeNil())
+		session := podmanTest.Podman([]string{"build", "--pull-never", "-t", "test", "--file", containerfilePath, podmanTest.TempDir})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(125))
+
+		session = podmanTest.Podman([]string{"build", "--pull-never", "--device", "/dev/fuse", "-t", "test", "--file", containerfilePath, podmanTest.TempDir})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+	})
+
+	It("podman build device rename test", func() {
+		SkipIfRootless("rootless builds do not currently support renaming devices")
+		containerfile := fmt.Sprintf(`FROM %s
+RUN ls /dev/test1`, ALPINE)
+		containerfilePath := filepath.Join(podmanTest.TempDir, "Containerfile")
+		err := ioutil.WriteFile(containerfilePath, []byte(containerfile), 0755)
+		Expect(err).To(BeNil())
+		session := podmanTest.Podman([]string{"build", "--pull-never", "-t", "test", "--file", containerfilePath, podmanTest.TempDir})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(125))
+
+		session = podmanTest.Podman([]string{"build", "--pull-never", "--device", "/dev/zero:/dev/test1", "-t", "test", "--file", containerfilePath, podmanTest.TempDir})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+	})
 })

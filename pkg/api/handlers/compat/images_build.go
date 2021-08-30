@@ -10,11 +10,12 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/containers/buildah"
-	"github.com/containers/buildah/define"
-	"github.com/containers/buildah/imagebuildah"
+	buildahDefine "github.com/containers/buildah/define"
+	"github.com/containers/buildah/pkg/parse"
 	"github.com/containers/buildah/util"
 	"github.com/containers/image/v5/types"
 	"github.com/containers/podman/v3/libpod"
@@ -23,7 +24,7 @@ import (
 	"github.com/containers/podman/v3/pkg/channel"
 	"github.com/containers/storage/pkg/archive"
 	"github.com/gorilla/schema"
-	specs "github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -64,52 +65,55 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	query := struct {
-		AddHosts               string `schema:"extrahosts"`
-		AdditionalCapabilities string `schema:"addcaps"`
-		Annotations            string `schema:"annotations"`
-		BuildArgs              string `schema:"buildargs"`
-		CacheFrom              string `schema:"cachefrom"`
-		Compression            uint64 `schema:"compression"`
-		ConfigureNetwork       string `schema:"networkmode"`
-		CpuPeriod              uint64 `schema:"cpuperiod"`  // nolint
-		CpuQuota               int64  `schema:"cpuquota"`   // nolint
-		CpuSetCpus             string `schema:"cpusetcpus"` // nolint
-		CpuShares              uint64 `schema:"cpushares"`  // nolint
-		Devices                string `schema:"devices"`
-		Dockerfile             string `schema:"dockerfile"`
-		DropCapabilities       string `schema:"dropcaps"`
-		DNSServers             string `schema:"dnsservers"`
-		DNSOptions             string `schema:"dnsoptions"`
-		DNSSearch              string `schema:"dnssearch"`
-		Excludes               string `schema:"excludes"`
-		ForceRm                bool   `schema:"forcerm"`
-		From                   string `schema:"from"`
-		HTTPProxy              bool   `schema:"httpproxy"`
-		Isolation              string `schema:"isolation"`
-		Ignore                 bool   `schema:"ignore"`
-		Jobs                   int    `schema:"jobs"` // nolint
-		Labels                 string `schema:"labels"`
-		Layers                 bool   `schema:"layers"`
-		LogRusage              bool   `schema:"rusage"`
-		Manifest               string `schema:"manifest"`
-		MemSwap                int64  `schema:"memswap"`
-		Memory                 int64  `schema:"memory"`
-		NamespaceOptions       string `schema:"nsoptions"`
-		NoCache                bool   `schema:"nocache"`
-		OutputFormat           string `schema:"outputformat"`
-		Platform               string `schema:"platform"`
-		Pull                   bool   `schema:"pull"`
-		PullPolicy             string `schema:"pullpolicy"`
-		Quiet                  bool   `schema:"q"`
-		Registry               string `schema:"registry"`
-		Rm                     bool   `schema:"rm"`
-		//FIXME SecurityOpt in remote API is not handled
-		SecurityOpt string   `schema:"securityopt"`
-		ShmSize     int      `schema:"shmsize"`
-		Squash      bool     `schema:"squash"`
-		Tag         []string `schema:"t"`
-		Target      string   `schema:"target"`
-		Timestamp   int64    `schema:"timestamp"`
+		AddHosts               string   `schema:"extrahosts"`
+		AdditionalCapabilities string   `schema:"addcaps"`
+		Annotations            string   `schema:"annotations"`
+		AppArmor               string   `schema:"apparmor"`
+		BuildArgs              string   `schema:"buildargs"`
+		CacheFrom              string   `schema:"cachefrom"`
+		Compression            uint64   `schema:"compression"`
+		ConfigureNetwork       string   `schema:"networkmode"`
+		CpuPeriod              uint64   `schema:"cpuperiod"`  // nolint
+		CpuQuota               int64    `schema:"cpuquota"`   // nolint
+		CpuSetCpus             string   `schema:"cpusetcpus"` // nolint
+		CpuShares              uint64   `schema:"cpushares"`  // nolint
+		DNSOptions             string   `schema:"dnsoptions"`
+		DNSSearch              string   `schema:"dnssearch"`
+		DNSServers             string   `schema:"dnsservers"`
+		Devices                string   `schema:"devices"`
+		Dockerfile             string   `schema:"dockerfile"`
+		DropCapabilities       string   `schema:"dropcaps"`
+		Excludes               string   `schema:"excludes"`
+		ForceRm                bool     `schema:"forcerm"`
+		From                   string   `schema:"from"`
+		HTTPProxy              bool     `schema:"httpproxy"`
+		Ignore                 bool     `schema:"ignore"`
+		Isolation              string   `schema:"isolation"`
+		Jobs                   int      `schema:"jobs"` // nolint
+		LabelOpts              string   `schema:"labelopts"`
+		Labels                 string   `schema:"labels"`
+		Layers                 bool     `schema:"layers"`
+		LogRusage              bool     `schema:"rusage"`
+		Manifest               string   `schema:"manifest"`
+		MemSwap                int64    `schema:"memswap"`
+		Memory                 int64    `schema:"memory"`
+		NamespaceOptions       string   `schema:"nsoptions"`
+		NoCache                bool     `schema:"nocache"`
+		OutputFormat           string   `schema:"outputformat"`
+		Platform               string   `schema:"platform"`
+		Pull                   bool     `schema:"pull"`
+		PullPolicy             string   `schema:"pullpolicy"`
+		Quiet                  bool     `schema:"q"`
+		Registry               string   `schema:"registry"`
+		Rm                     bool     `schema:"rm"`
+		Seccomp                string   `schema:"seccomp"`
+		SecurityOpt            string   `schema:"securityopt"`
+		ShmSize                int      `schema:"shmsize"`
+		Squash                 bool     `schema:"squash"`
+		Tag                    []string `schema:"t"`
+		Target                 string   `schema:"target"`
+		Timestamp              int64    `schema:"timestamp"`
+		Ulimits                string   `schema:"ulimits"`
 	}{
 		Dockerfile: "Dockerfile",
 		Registry:   "docker.io",
@@ -124,7 +128,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// convert label formats
+	// convert addcaps formats
 	var addCaps = []string{}
 	if _, found := r.URL.Query()["addcaps"]; found {
 		var m = []string{}
@@ -134,6 +138,32 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		}
 		addCaps = m
 	}
+
+	// convert addcaps formats
+	containerFiles := []string{}
+	if _, found := r.URL.Query()["dockerfile"]; found {
+		var m = []string{}
+		if err := json.Unmarshal([]byte(query.Dockerfile), &m); err != nil {
+			// it's not json, assume just a string
+			m = append(m, query.Dockerfile)
+		}
+		containerFiles = m
+	} else {
+		containerFiles = []string{"Dockerfile"}
+		if utils.IsLibpodRequest(r) {
+			containerFiles = []string{"Containerfile"}
+			if _, err = os.Stat(filepath.Join(contextDirectory, "Containerfile")); err != nil {
+				if _, err1 := os.Stat(filepath.Join(contextDirectory, "Dockerfile")); err1 == nil {
+					containerFiles = []string{"Dockerfile"}
+				} else {
+					utils.BadRequest(w, "dockerfile", query.Dockerfile, err)
+				}
+			}
+		} else {
+			containerFiles = []string{"Dockerfile"}
+		}
+	}
+
 	addhosts := []string{}
 	if _, found := r.URL.Query()["extrahosts"]; found {
 		if err := json.Unmarshal([]byte(query.AddHosts), &addhosts); err != nil {
@@ -143,7 +173,8 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	compression := archive.Compression(query.Compression)
-	// convert label formats
+
+	// convert dropcaps formats
 	var dropCaps = []string{}
 	if _, found := r.URL.Query()["dropcaps"]; found {
 		var m = []string{}
@@ -154,12 +185,12 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		dropCaps = m
 	}
 
-	// convert label formats
+	// convert devices formats
 	var devices = []string{}
 	if _, found := r.URL.Query()["devices"]; found {
 		var m = []string{}
-		if err := json.Unmarshal([]byte(query.DropCapabilities), &m); err != nil {
-			utils.BadRequest(w, "devices", query.DropCapabilities, err)
+		if err := json.Unmarshal([]byte(query.Devices), &m); err != nil {
+			utils.BadRequest(w, "devices", query.Devices, err)
 			return
 		}
 		devices = m
@@ -234,7 +265,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// convert label formats
+	// convert annotations formats
 	var annotations = []string{}
 	if _, found := r.URL.Query()["annotations"]; found {
 		if err := json.Unmarshal([]byte(query.Annotations), &annotations); err != nil {
@@ -243,7 +274,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// convert label formats
+	// convert nsoptions formats
 	nsoptions := buildah.NamespaceOptions{}
 	if _, found := r.URL.Query()["nsoptions"]; found {
 		if err := json.Unmarshal([]byte(query.NamespaceOptions), &nsoptions); err != nil {
@@ -272,18 +303,82 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+
 	jobs := 1
 	if _, found := r.URL.Query()["jobs"]; found {
 		jobs = query.Jobs
 	}
 
-	pullPolicy := define.PullIfMissing
+	var (
+		labelOpts = []string{}
+		seccomp   string
+		apparmor  string
+	)
+
 	if utils.IsLibpodRequest(r) {
-		pullPolicy = define.PolicyMap[query.PullPolicy]
+		seccomp = query.Seccomp
+		apparmor = query.AppArmor
+		// convert labelopts formats
+		if _, found := r.URL.Query()["labelopts"]; found {
+			var m = []string{}
+			if err := json.Unmarshal([]byte(query.LabelOpts), &m); err != nil {
+				utils.BadRequest(w, "labelopts", query.LabelOpts, err)
+				return
+			}
+			labelOpts = m
+		}
+	} else {
+		// handle security-opt
+		if _, found := r.URL.Query()["securityopt"]; found {
+			var securityOpts = []string{}
+			if err := json.Unmarshal([]byte(query.SecurityOpt), &securityOpts); err != nil {
+				utils.BadRequest(w, "securityopt", query.SecurityOpt, err)
+				return
+			}
+			for _, opt := range securityOpts {
+				if opt == "no-new-privileges" {
+					utils.BadRequest(w, "securityopt", query.SecurityOpt, errors.New("no-new-privileges is not supported"))
+					return
+				}
+				con := strings.SplitN(opt, "=", 2)
+				if len(con) != 2 {
+					utils.BadRequest(w, "securityopt", query.SecurityOpt, errors.Errorf("Invalid --security-opt name=value pair: %q", opt))
+					return
+				}
+
+				switch con[0] {
+				case "label":
+					labelOpts = append(labelOpts, con[1])
+				case "apparmor":
+					apparmor = con[1]
+				case "seccomp":
+					seccomp = con[1]
+				default:
+					utils.BadRequest(w, "securityopt", query.SecurityOpt, errors.Errorf("Invalid --security-opt 2: %q", opt))
+					return
+				}
+			}
+		}
+	}
+
+	// convert ulimits formats
+	var ulimits = []string{}
+	if _, found := r.URL.Query()["ulimits"]; found {
+		var m = []string{}
+		if err := json.Unmarshal([]byte(query.Ulimits), &m); err != nil {
+			utils.BadRequest(w, "ulimits", query.Ulimits, err)
+			return
+		}
+		ulimits = m
+	}
+
+	pullPolicy := buildahDefine.PullIfMissing
+	if utils.IsLibpodRequest(r) {
+		pullPolicy = buildahDefine.PolicyMap[query.PullPolicy]
 	} else {
 		if _, found := r.URL.Query()["pull"]; found {
 			if query.Pull {
-				pullPolicy = define.PullAlways
+				pullPolicy = buildahDefine.PullAlways
 			}
 		}
 	}
@@ -315,24 +410,28 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrap(err, "Decode()"))
 		return
 	}
-	buildOptions := imagebuildah.BuildOptions{
+	buildOptions := buildahDefine.BuildOptions{
 		AddCapabilities: addCaps,
 		AdditionalTags:  additionalTags,
 		Annotations:     annotations,
 		Args:            buildArgs,
 		CommonBuildOpts: &buildah.CommonBuildOptions{
-			AddHost:    addhosts,
-			CPUPeriod:  query.CpuPeriod,
-			CPUQuota:   query.CpuQuota,
-			CPUShares:  query.CpuShares,
-			CPUSetCPUs: query.CpuSetCpus,
-			DNSServers: dnsservers,
-			DNSOptions: dnsoptions,
-			DNSSearch:  dnssearch,
-			HTTPProxy:  query.HTTPProxy,
-			Memory:     query.Memory,
-			MemorySwap: query.MemSwap,
-			ShmSize:    strconv.Itoa(query.ShmSize),
+			AddHost:            addhosts,
+			ApparmorProfile:    apparmor,
+			CPUPeriod:          query.CpuPeriod,
+			CPUQuota:           query.CpuQuota,
+			CPUSetCPUs:         query.CpuSetCpus,
+			CPUShares:          query.CpuShares,
+			DNSOptions:         dnsoptions,
+			DNSSearch:          dnssearch,
+			DNSServers:         dnsservers,
+			HTTPProxy:          query.HTTPProxy,
+			LabelOpts:          labelOpts,
+			Memory:             query.Memory,
+			MemorySwap:         query.MemSwap,
+			SeccompProfilePath: seccomp,
+			ShmSize:            strconv.Itoa(query.ShmSize),
+			Ulimit:             ulimits,
 		},
 		CNIConfigDir:                   rtc.Network.CNIPluginDirs[0],
 		CNIPluginPath:                  util.DefaultCNIPluginPath,
@@ -350,6 +449,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		Jobs:                           &jobs,
 		Labels:                         labels,
 		Layers:                         query.Layers,
+		LogRusage:                      query.LogRusage,
 		Manifest:                       query.Manifest,
 		MaxPullPushRetries:             3,
 		NamespaceOptions:               nsoptions,
@@ -364,24 +464,41 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		RemoveIntermediateCtrs:         query.Rm,
 		ReportWriter:                   reporter,
 		Squash:                         query.Squash,
+		Target:                         query.Target,
 		SystemContext: &types.SystemContext{
 			AuthFilePath:     authfile,
 			DockerAuthConfig: creds,
 		},
-		Target: query.Target,
 	}
 
+	if len(query.Platform) > 0 {
+		variant := ""
+		buildOptions.OS, buildOptions.Architecture, variant, err = parse.Platform(query.Platform)
+		if err != nil {
+			utils.BadRequest(w, "platform", query.Platform, err)
+			return
+		}
+		buildOptions.SystemContext.OSChoice = buildOptions.OS
+		buildOptions.SystemContext.ArchitectureChoice = buildOptions.Architecture
+		buildOptions.SystemContext.VariantChoice = variant
+	}
 	if _, found := r.URL.Query()["timestamp"]; found {
 		ts := time.Unix(query.Timestamp, 0)
 		buildOptions.Timestamp = &ts
 	}
 
+	var (
+		imageID string
+		success bool
+	)
+
 	runCtx, cancel := context.WithCancel(context.Background())
-	var imageID string
 	go func() {
 		defer cancel()
-		imageID, _, err = runtime.Build(r.Context(), buildOptions, query.Dockerfile)
-		if err != nil {
+		imageID, _, err = runtime.Build(r.Context(), buildOptions, containerFiles...)
+		if err == nil {
+			success = true
+		} else {
 			stderr.Write([]byte(err.Error() + "\n"))
 		}
 	}()
@@ -396,8 +513,6 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Header().Add("Content-Type", "application/json")
 	flush()
-
-	var failed bool
 
 	body := w.(io.Writer)
 	if logrus.IsLevelEnabled(logrus.DebugLevel) {
@@ -439,14 +554,14 @@ loop:
 			}
 			flush()
 		case e := <-stderr.Chan():
-			failed = true
 			m.Error = string(e)
 			if err := enc.Encode(m); err != nil {
 				logrus.Warnf("Failed to json encode error %v", err)
 			}
 			flush()
 		case <-runCtx.Done():
-			if !failed {
+			flush()
+			if success {
 				if !utils.IsLibpodRequest(r) {
 					m.Stream = fmt.Sprintf("Successfully built %12.12s\n", imageID)
 					if err := enc.Encode(m); err != nil {
@@ -463,6 +578,10 @@ loop:
 				}
 			}
 			break loop
+		case <-r.Context().Done():
+			cancel()
+			logrus.Infof("Client disconnect reported for build %q / %q.", registry, query.Dockerfile)
+			return
 		}
 	}
 }

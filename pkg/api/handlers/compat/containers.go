@@ -22,10 +22,12 @@ import (
 	"github.com/containers/podman/v3/pkg/util"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
 	"github.com/docker/go-units"
 	"github.com/gorilla/schema"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 )
 
 func RemoveContainer(w http.ResponseWriter, r *http.Request) {
@@ -148,14 +150,19 @@ func ListContainers(w http.ResponseWriter, r *http.Request) {
 			containers = containers[:query.Limit]
 		}
 	}
-	var list = make([]*handlers.Container, len(containers))
-	for i, ctnr := range containers {
+	list := make([]*handlers.Container, 0, len(containers))
+	for _, ctnr := range containers {
 		api, err := LibpodToContainer(ctnr, query.Size)
 		if err != nil {
+			if errors.Cause(err) == define.ErrNoSuchCtr {
+				// container was removed between the initial fetch of the list and conversion
+				logrus.Debugf("Container %s removed between initial fetch and conversion, ignoring in output", ctnr.ID())
+				continue
+			}
 			utils.InternalServerError(w, err)
 			return
 		}
-		list[i] = api
+		list = append(list, api)
 	}
 	utils.WriteResponse(w, http.StatusOK, list)
 }
@@ -372,6 +379,11 @@ func LibpodToContainerJSON(l *libpod.Container, sz bool) (*types.ContainerJSON, 
 	if err != nil {
 		return nil, err
 	}
+	// Docker uses UTC
+	if inspect != nil && inspect.State != nil {
+		inspect.State.StartedAt = inspect.State.StartedAt.UTC()
+		inspect.State.FinishedAt = inspect.State.FinishedAt.UTC()
+	}
 	i, err := json.Marshal(inspect.State)
 	if err != nil {
 		return nil, err
@@ -389,6 +401,24 @@ func LibpodToContainerJSON(l *libpod.Container, sz bool) (*types.ContainerJSON, 
 	// docker calls the configured state "created"
 	if state.Status == define.ContainerStateConfigured.String() {
 		state.Status = define.ContainerStateCreated.String()
+	}
+
+	state.Health = &types.Health{
+		Status:        inspect.State.Healthcheck.Status,
+		FailingStreak: inspect.State.Healthcheck.FailingStreak,
+	}
+
+	log := inspect.State.Healthcheck.Log
+
+	for _, item := range log {
+		res := &types.HealthcheckResult{}
+		s, _ := time.Parse(time.RFC3339Nano, item.Start)
+		e, _ := time.Parse(time.RFC3339Nano, item.End)
+		res.Start = s
+		res.End = e
+		res.ExitCode = item.ExitCode
+		res.Output = item.Output
+		state.Health.Log = append(state.Health.Log, res)
 	}
 
 	formatCapabilities(inspect.HostConfig.CapDrop)
@@ -418,7 +448,7 @@ func LibpodToContainerJSON(l *libpod.Container, sz bool) (*types.ContainerJSON, 
 
 	cb := types.ContainerJSONBase{
 		ID:              l.ID(),
-		Created:         l.CreatedTime().Format(time.RFC3339Nano),
+		Created:         l.CreatedTime().UTC().Format(time.RFC3339Nano), // Docker uses UTC
 		Path:            inspect.Path,
 		Args:            inspect.Args,
 		State:           &state,
@@ -519,6 +549,10 @@ func LibpodToContainerJSON(l *libpod.Container, sz bool) (*types.ContainerJSON, 
 	networkSettings := types.NetworkSettings{}
 	if err := json.Unmarshal(n, &networkSettings); err != nil {
 		return nil, err
+	}
+	// do not report null instead use an empty map
+	if networkSettings.Networks == nil {
+		networkSettings.Networks = map[string]*network.EndpointSettings{}
 	}
 
 	c := types.ContainerJSON{

@@ -6,7 +6,7 @@ env:
     #### Global variables used for all tasks
     ####
     # Name of the ultimate destination branch for this CI run, PR or post-merge.
-    DEST_BRANCH: "v3.1"
+    DEST_BRANCH: "v3.2"
     # Overrides default location (/tmp/cirrus) for repo clone
     GOPATH: &gopath "/var/tmp/go"
     GOBIN: "${GOPATH}/bin"
@@ -24,13 +24,13 @@ env:
     ####
     #### Cache-image names to test with (double-quotes around names are critical)
     ####
-    FEDORA_NAME: "fedora-33"
-    PRIOR_FEDORA_NAME: "fedora-32"
-    UBUNTU_NAME: "ubuntu-2010"
-    PRIOR_UBUNTU_NAME: "ubuntu-2004"
+    FEDORA_NAME: "fedora-34"
+    PRIOR_FEDORA_NAME: "fedora-33"
+    UBUNTU_NAME: "ubuntu-2104"
+    PRIOR_UBUNTU_NAME: "ubuntu-2010"
 
     # Google-cloud VM Images
-    IMAGE_SUFFIX: "c5961289315909632"
+    IMAGE_SUFFIX: "c5348179051806720"
     FEDORA_CACHE_IMAGE_NAME: "fedora-${IMAGE_SUFFIX}"
     PRIOR_FEDORA_CACHE_IMAGE_NAME: "prior-fedora-${IMAGE_SUFFIX}"
     UBUNTU_CACHE_IMAGE_NAME: "ubuntu-${IMAGE_SUFFIX}"
@@ -151,11 +151,11 @@ build_task:
               CTR_FQIN: ${FEDORA_CONTAINER_FQIN}
               # ID for re-use of build output
               _BUILD_CACHE_HANDLE: ${FEDORA_NAME}-build-${CIRRUS_BUILD_ID}
-        # - env:
-        #       DISTRO_NV: ${PRIOR_FEDORA_NAME}
-        #       VM_IMAGE_NAME: ${PRIOR_FEDORA_CACHE_IMAGE_NAME}
-        #       CTR_FQIN: ${PRIOR_FEDORA_CONTAINER_FQIN}
-        #       _BUILD_CACHE_HANDLE: ${PRIOR_FEDORA_NAME}-build-${CIRRUS_BUILD_ID}
+        - env:
+              DISTRO_NV: ${PRIOR_FEDORA_NAME}
+              VM_IMAGE_NAME: ${PRIOR_FEDORA_CACHE_IMAGE_NAME}
+              CTR_FQIN: ${PRIOR_FEDORA_CONTAINER_FQIN}
+              _BUILD_CACHE_HANDLE: ${PRIOR_FEDORA_NAME}-build-${CIRRUS_BUILD_ID}
         - env:
               DISTRO_NV: ${UBUNTU_NAME}
               VM_IMAGE_NAME: ${UBUNTU_CACHE_IMAGE_NAME}
@@ -366,8 +366,7 @@ osx_alt_build_task:
     script:
         - brew install go
         - brew install go-md2man
-        - make podman-remote-darwin
-        - make install-podman-remote-darwin-docs
+        - make podman-remote-release-darwin.zip
     always: *binary_artifacts
 
 
@@ -440,7 +439,7 @@ apiv2_test_task:
         time_script: '$SCRIPT_BASE/logcollector.sh time'
 
 compose_test_task:
-    name: "compose test on $DISTRO_NV"
+    name: "compose test on $DISTRO_NV ($PRIV_NAME)"
     alias: compose_test
     only_if: *not_docs
     skip: *tags
@@ -450,6 +449,11 @@ compose_test_task:
     env:
         <<: *stdenvars
         TEST_FLAVOR: compose
+    matrix:
+      - env:
+            PRIV_NAME: root
+      - env:
+            PRIV_NAME: rootless
     clone_script: *noop  # Comes from cache
     gopath_cache: *ro_gopath_cache
     setup_script: *setup
@@ -510,11 +514,11 @@ container_integration_test_task:
               _BUILD_CACHE_HANDLE: ${FEDORA_NAME}-build-${CIRRUS_BUILD_ID}
               VM_IMAGE_NAME: ${FEDORA_CACHE_IMAGE_NAME}
               CTR_FQIN: ${FEDORA_CONTAINER_FQIN}
-        # - env:
-        #       DISTRO_NV: ${PRIOR_FEDORA_NAME}
-        #       _BUILD_CACHE_HANDLE: ${PRIOR_FEDORA_NAME}-build-${CIRRUS_BUILD_ID}
-        #       VM_IMAGE_NAME: ${PRIOR_FEDORA_CACHE_IMAGE_NAME}
-        #       CTR_FQIN: ${PRIOR_FEDORA_CONTAINER_FQIN}
+        - env:
+              DISTRO_NV: ${PRIOR_FEDORA_NAME}
+              _BUILD_CACHE_HANDLE: ${PRIOR_FEDORA_NAME}-build-${CIRRUS_BUILD_ID}
+              VM_IMAGE_NAME: ${PRIOR_FEDORA_CACHE_IMAGE_NAME}
+              CTR_FQIN: ${PRIOR_FEDORA_CONTAINER_FQIN}
     gce_instance: *standardvm
     timeout_in: 90m
     env:
@@ -535,7 +539,7 @@ rootless_integration_test_task:
     skip: *branches_and_tags
     depends_on:
         - unit_test
-    matrix: *fedora_vm_axis
+    matrix: *platform_axis
     gce_instance: *standardvm
     timeout_in: 90m
     env:
@@ -579,6 +583,29 @@ remote_system_test_task:
         TEST_FLAVOR: sys
         PODBIN_NAME: remote
 
+buildah_bud_test_task:
+    name: *std_name_fmt
+    alias: buildah_bud_test
+    skip: *tags
+    only_if: *not_docs
+    depends_on:
+      - local_integration_test
+    env:
+        TEST_FLAVOR: bud
+        DISTRO_NV: ${FEDORA_NAME}
+        # Not used here, is used in other tasks
+        VM_IMAGE_NAME: ${FEDORA_CACHE_IMAGE_NAME}
+        CTR_FQIN: ${FEDORA_CONTAINER_FQIN}
+        # ID for re-use of build output
+        _BUILD_CACHE_HANDLE: ${FEDORA_NAME}-build-${CIRRUS_BUILD_ID}
+        PODBIN_NAME: podman
+    gce_instance: *standardvm
+    timeout_in: 45m
+    clone_script: *noop
+    gopath_cache: *ro_gopath_cache
+    setup_script: *setup
+    main_script: *main
+    always: *int_logs_artifacts
 
 rootless_system_test_task:
     name: *std_name_fmt
@@ -587,7 +614,7 @@ rootless_system_test_task:
     only_if: *not_docs
     depends_on:
       - rootless_integration_test
-    matrix: *fedora_vm_axis
+    matrix: *platform_axis
     gce_instance: *standardvm
     env:
         TEST_FLAVOR: sys
@@ -687,6 +714,7 @@ success_task:
         - remote_system_test
         - rootless_system_test
         - upgrade_test
+        - buildah_bud_test
         - meta
     container: *smallcontainer
     env:

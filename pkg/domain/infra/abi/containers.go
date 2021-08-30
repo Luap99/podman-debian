@@ -15,7 +15,6 @@ import (
 	"github.com/containers/podman/v3/libpod"
 	"github.com/containers/podman/v3/libpod/define"
 	"github.com/containers/podman/v3/libpod/events"
-	"github.com/containers/podman/v3/libpod/image"
 	"github.com/containers/podman/v3/libpod/logs"
 	"github.com/containers/podman/v3/pkg/cgroups"
 	"github.com/containers/podman/v3/pkg/checkpoint"
@@ -23,6 +22,7 @@ import (
 	"github.com/containers/podman/v3/pkg/domain/entities/reports"
 	dfilters "github.com/containers/podman/v3/pkg/domain/filters"
 	"github.com/containers/podman/v3/pkg/domain/infra/abi/terminal"
+	"github.com/containers/podman/v3/pkg/errorhandling"
 	parallelctr "github.com/containers/podman/v3/pkg/parallel/ctr"
 	"github.com/containers/podman/v3/pkg/ps"
 	"github.com/containers/podman/v3/pkg/rootless"
@@ -194,7 +194,7 @@ func (ic *ContainerEngine) ContainerStop(ctx context.Context, namesOrIds []strin
 func (ic *ContainerEngine) ContainerPrune(ctx context.Context, options entities.ContainerPruneOptions) ([]*reports.PruneReport, error) {
 	filterFuncs := make([]libpod.ContainerFilter, 0, len(options.Filters))
 	for k, v := range options.Filters {
-		generatedFunc, err := dfilters.GenerateContainerFilterFuncs(k, v, ic.Libpod)
+		generatedFunc, err := dfilters.GeneratePruneContainerFilterFuncs(k, v, ic.Libpod)
 		if err != nil {
 			return nil, err
 		}
@@ -275,7 +275,7 @@ func (ic *ContainerEngine) ContainerRm(ctx context.Context, namesOrIds []string,
 		case nil:
 			// remove container names that we successfully deleted
 			reports = append(reports, &report)
-		case define.ErrNoSuchCtr:
+		case define.ErrNoSuchCtr, define.ErrCtrExists:
 			// There is still a potential this is a libpod container
 			tmpNames = append(tmpNames, ctr)
 		default:
@@ -438,7 +438,8 @@ func (ic *ContainerEngine) ContainerCommit(ctx context.Context, nameOrID string,
 	default:
 		return nil, errors.Errorf("unrecognized image format %q", options.Format)
 	}
-	sc := image.GetSystemContext(rtc.Engine.SignaturePolicyPath, "", false)
+
+	sc := ic.Libpod.SystemContext()
 	coptions := buildah.CommitOptions{
 		SignaturePolicyPath:   rtc.Engine.SignaturePolicyPath,
 		ReportWriter:          options.Writer,
@@ -585,7 +586,7 @@ func (ic *ContainerEngine) ContainerAttach(ctx context.Context, nameOrID string,
 	}
 
 	// If the container is in a pod, also set to recursively start dependencies
-	err = terminal.StartAttachCtr(ctx, ctr, options.Stdout, options.Stderr, options.Stdin, options.DetachKeys, options.SigProxy, false, ctr.PodID() != "")
+	err = terminal.StartAttachCtr(ctx, ctr, options.Stdout, options.Stderr, options.Stdin, options.DetachKeys, options.SigProxy, false)
 	if err != nil && errors.Cause(err) != define.ErrDetach {
 		return errors.Wrapf(err, "error attaching to container %s", ctr.ID())
 	}
@@ -693,14 +694,43 @@ func (ic *ContainerEngine) ContainerExecDetached(ctx context.Context, nameOrID s
 func (ic *ContainerEngine) ContainerStart(ctx context.Context, namesOrIds []string, options entities.ContainerStartOptions) ([]*entities.ContainerStartReport, error) {
 	reports := []*entities.ContainerStartReport{}
 	var exitCode = define.ExecErrorCodeGeneric
-	ctrs, rawInputs, err := getContainersAndInputByContext(false, options.Latest, namesOrIds, ic.Libpod)
+	containersNamesOrIds := namesOrIds
+	if len(options.Filters) > 0 {
+		filterFuncs := make([]libpod.ContainerFilter, 0, len(options.Filters))
+		if len(options.Filters) > 0 {
+			for k, v := range options.Filters {
+				generatedFunc, err := dfilters.GenerateContainerFilterFuncs(k, v, ic.Libpod)
+				if err != nil {
+					return nil, err
+				}
+				filterFuncs = append(filterFuncs, generatedFunc)
+			}
+		}
+		candidates, err := ic.Libpod.GetContainers(filterFuncs...)
+		if err != nil {
+			return nil, err
+		}
+		containersNamesOrIds = []string{}
+		for _, candidate := range candidates {
+			for _, nameOrID := range namesOrIds {
+				if nameOrID == candidate.ID() || nameOrID == candidate.Name() {
+					containersNamesOrIds = append(containersNamesOrIds, nameOrID)
+				}
+			}
+		}
+	}
+
+	ctrs, rawInputs, err := getContainersAndInputByContext(options.All, options.Latest, containersNamesOrIds, ic.Libpod)
 	if err != nil {
 		return nil, err
 	}
 	// There can only be one container if attach was used
 	for i := range ctrs {
 		ctr := ctrs[i]
-		rawInput := rawInputs[i]
+		rawInput := ctr.ID()
+		if !options.All {
+			rawInput = rawInputs[i]
+		}
 		ctrState, err := ctr.State()
 		if err != nil {
 			return nil, err
@@ -708,7 +738,7 @@ func (ic *ContainerEngine) ContainerStart(ctx context.Context, namesOrIds []stri
 		ctrRunning := ctrState == define.ContainerStateRunning
 
 		if options.Attach {
-			err = terminal.StartAttachCtr(ctx, ctr, options.Stdout, options.Stderr, options.Stdin, options.DetachKeys, options.SigProxy, !ctrRunning, ctr.PodID() != "")
+			err = terminal.StartAttachCtr(ctx, ctr, options.Stdout, options.Stderr, options.Stdin, options.DetachKeys, options.SigProxy, !ctrRunning)
 			if errors.Cause(err) == define.ErrDetach {
 				// User manually detached
 				// Exit cleanly immediately
@@ -784,7 +814,7 @@ func (ic *ContainerEngine) ContainerStart(ctx context.Context, namesOrIds []stri
 				RawInput: rawInput,
 				ExitCode: 125,
 			}
-			if err := ctr.Start(ctx, ctr.PodID() != ""); err != nil {
+			if err := ctr.Start(ctx, true); err != nil {
 				// if lastError != nil {
 				//	fmt.Fprintln(os.Stderr, lastError)
 				// }
@@ -845,10 +875,6 @@ func (ic *ContainerEngine) ContainerRun(ctx context.Context, opts entities.Conta
 		}
 	}
 
-	var joinPod bool
-	if len(ctr.PodID()) > 0 {
-		joinPod = true
-	}
 	report := entities.ContainerRunReport{Id: ctr.ID()}
 
 	if logrus.GetLevel() == logrus.DebugLevel {
@@ -859,7 +885,7 @@ func (ic *ContainerEngine) ContainerRun(ctx context.Context, opts entities.Conta
 	}
 	if opts.Detach {
 		// if the container was created as part of a pod, also start its dependencies, if any.
-		if err := ctr.Start(ctx, joinPod); err != nil {
+		if err := ctr.Start(ctx, true); err != nil {
 			// This means the command did not exist
 			report.ExitCode = define.ExitCode(err)
 			return &report, err
@@ -869,7 +895,7 @@ func (ic *ContainerEngine) ContainerRun(ctx context.Context, opts entities.Conta
 	}
 
 	// if the container was created as part of a pod, also start its dependencies, if any.
-	if err := terminal.StartAttachCtr(ctx, ctr, opts.OutputStream, opts.ErrorStream, opts.InputStream, opts.DetachKeys, opts.SigProxy, true, joinPod); err != nil {
+	if err := terminal.StartAttachCtr(ctx, ctr, opts.OutputStream, opts.ErrorStream, opts.InputStream, opts.DetachKeys, opts.SigProxy, true); err != nil {
 		// We've manually detached from the container
 		// Do not perform cleanup, or wait for container exit code
 		// Just exit immediately
@@ -1000,14 +1026,9 @@ func (ic *ContainerEngine) ContainerCleanup(ctx context.Context, namesOrIds []st
 
 		if options.RemoveImage {
 			_, imageName := ctr.Image()
-			ctrImage, err := ic.Libpod.ImageRuntime().NewFromLocal(imageName)
-			if err != nil {
-				report.RmiErr = err
-				reports = append(reports, &report)
-				continue
-			}
-			_, err = ic.Libpod.RemoveImage(ctx, ctrImage, false)
-			report.RmiErr = err
+			imageEngine := ImageEngine{Libpod: ic.Libpod}
+			_, rmErrors := imageEngine.Remove(ctx, []string{imageName}, entities.ImageRemoveOptions{})
+			report.RmiErr = errorhandling.JoinErrors(rmErrors)
 		}
 
 		reports = append(reports, &report)

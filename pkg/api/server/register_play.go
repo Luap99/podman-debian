@@ -8,7 +8,7 @@ import (
 )
 
 func (s *APIServer) registerPlayHandlers(r *mux.Router) error {
-	// swagger:operation POST /libpod/play/kube libpod libpodPlayKube
+	// swagger:operation POST /libpod/play/kube libpod PlayKubeLibpod
 	// ---
 	// tags:
 	//  - containers
@@ -34,6 +34,18 @@ func (s *APIServer) registerPlayHandlers(r *mux.Router) error {
 	//    type: boolean
 	//    default: true
 	//    description: Start the pod after creating it.
+	//  - in: query
+	//    name: staticIPs
+	//    type: array
+	//    description: Static IPs used for the pods.
+	//    items:
+	//      type: string
+	//  - in: query
+	//    name: staticMACs
+	//    type: array
+	//    description: Static MACs used for the pods.
+	//    items:
+	//      type: string
 	//  - in: body
 	//    name: request
 	//    description: Kubernetes YAML file.

@@ -1,6 +1,7 @@
 package filters
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -83,7 +84,19 @@ func GenerateContainerFilterFuncs(filter string, filterValues []string, r *libpo
 		return func(c *libpod.Container) bool {
 			for _, filterValue := range filterValues {
 				containerConfig := c.Config()
-				if strings.Contains(containerConfig.RootfsImageID, filterValue) || strings.Contains(containerConfig.RootfsImageName, filterValue) {
+				var imageTag string
+				var imageNameWithoutTag string
+				// Compare with ImageID, ImageName
+				// Will match ImageName if running image has tag latest for other tags exact complete filter must be given
+				imageNameSlice := strings.SplitN(containerConfig.RootfsImageName, ":", 2)
+				if len(imageNameSlice) == 2 {
+					imageNameWithoutTag = imageNameSlice[0]
+					imageTag = imageNameSlice[1]
+				}
+
+				if (containerConfig.RootfsImageID == filterValue) ||
+					(containerConfig.RootfsImageName == filterValue) ||
+					(imageNameWithoutTag == filterValue && imageTag == "latest") {
 					return true
 				}
 			}
@@ -165,16 +178,7 @@ func GenerateContainerFilterFuncs(filter string, filterValues []string, r *libpo
 			return false
 		}, nil
 	case "until":
-		until, err := util.ComputeUntilTimestamp(filterValues)
-		if err != nil {
-			return nil, err
-		}
-		return func(c *libpod.Container) bool {
-			if !until.IsZero() && c.CreatedTime().After((until)) {
-				return true
-			}
-			return false
-		}, nil
+		return prepareUntilFilterFunc(filterValues)
 	case "pod":
 		var pods []*libpod.Pod
 		for _, podNameOrID := range filterValues {
@@ -223,6 +227,58 @@ func GenerateContainerFilterFuncs(filter string, filterValues []string, r *libpo
 			}
 			return false
 		}, nil
+	case "restart-policy":
+		invalidPolicyNames := []string{}
+		for _, policy := range filterValues {
+			if _, ok := define.RestartPolicyMap[policy]; !ok {
+				invalidPolicyNames = append(invalidPolicyNames, policy)
+			}
+		}
+		var filterValueError error = nil
+		if len(invalidPolicyNames) > 0 {
+			errPrefix := "invalid restart policy"
+			if len(invalidPolicyNames) > 1 {
+				errPrefix = "invalid restart policies"
+			}
+			filterValueError = fmt.Errorf("%s %s", strings.Join(invalidPolicyNames, ", "), errPrefix)
+		}
+		return func(c *libpod.Container) bool {
+			for _, policy := range filterValues {
+				if policy == "none" && c.RestartPolicy() == define.RestartPolicyNone {
+					return true
+				}
+				if c.RestartPolicy() == policy {
+					return true
+				}
+			}
+			return false
+		}, filterValueError
 	}
 	return nil, errors.Errorf("%s is an invalid filter", filter)
+}
+
+// GeneratePruneContainerFilterFuncs return ContainerFilter functions based of filter for prune operation
+func GeneratePruneContainerFilterFuncs(filter string, filterValues []string, r *libpod.Runtime) (func(container *libpod.Container) bool, error) {
+	switch filter {
+	case "label":
+		return func(c *libpod.Container) bool {
+			return util.MatchLabelFilters(filterValues, c.Labels())
+		}, nil
+	case "until":
+		return prepareUntilFilterFunc(filterValues)
+	}
+	return nil, errors.Errorf("%s is an invalid filter", filter)
+}
+
+func prepareUntilFilterFunc(filterValues []string) (func(container *libpod.Container) bool, error) {
+	until, err := util.ComputeUntilTimestamp(filterValues)
+	if err != nil {
+		return nil, err
+	}
+	return func(c *libpod.Container) bool {
+		if !until.IsZero() && c.CreatedTime().Before(until) {
+			return true
+		}
+		return false
+	}, nil
 }

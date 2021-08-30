@@ -6,14 +6,11 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"text/tabwriter"
-	"text/template"
 	"time"
 
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/report"
 	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/parse"
 	"github.com/containers/podman/v3/cmd/podman/registry"
 	"github.com/containers/podman/v3/cmd/podman/validate"
 	"github.com/containers/podman/v3/pkg/domain/entities"
@@ -61,8 +58,9 @@ func init() {
 
 	formatFlagName := "format"
 	flags.StringVar(&psInput.Format, formatFlagName, "", "Pretty-print pods to JSON or using a Go template")
-	_ = psCmd.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteJSONFormat)
+	_ = psCmd.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteFormat(ListPodReporter{}))
 
+	flags.Bool("noheading", false, "Do not print headers")
 	flags.BoolVar(&psInput.Namespace, "namespace", false, "Display namespace information of the pod")
 	flags.BoolVar(&psInput.Namespace, "ns", false, "Display namespace information of the pod")
 	flags.BoolVar(&noTrunc, "no-trunc", false, "Do not truncate pod and container IDs")
@@ -131,16 +129,24 @@ func pods(cmd *cobra.Command, _ []string) error {
 	renderHeaders := true
 	row := podPsFormat()
 	if cmd.Flags().Changed("format") {
-		renderHeaders = parse.HasTable(psInput.Format)
+		renderHeaders = report.HasTable(psInput.Format)
 		row = report.NormalizeFormat(psInput.Format)
 	}
-	format := parse.EnforceRange(row)
+	noHeading, _ := cmd.Flags().GetBool("noheading")
+	if noHeading {
+		renderHeaders = false
+	}
+	format := report.EnforceRange(row)
 
-	tmpl, err := template.New("listPods").Parse(format)
+	tmpl, err := report.NewTemplate("list").Parse(format)
 	if err != nil {
 		return err
 	}
-	w := tabwriter.NewWriter(os.Stdout, 8, 2, 2, ' ', 0)
+
+	w, err := report.NewWriterDefault(os.Stdout)
+	if err != nil {
+		return err
+	}
 	defer w.Flush()
 
 	if renderHeaders {

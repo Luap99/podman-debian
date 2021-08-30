@@ -5,11 +5,14 @@
 
 include /usr/share/dpkg/pkg-info.mk
 
+# cf. https://wiki.debian.org/ToolChain/LTO and https://github.com/golang/go/issues/45275
+export DEB_BUILD_MAINT_OPTIONS=optimize=-lto
+
 export GO111MODULE=off
 
 export DH_GOLANG_GO_GENERATE := 1
 
-export DH_GOLANG_INSTALL_EXTRA := $(wildcard libpod/*/testdata/*) $(wildcard hack/*)
+export DH_GOLANG_INSTALL_EXTRA := $(wildcard libpod/*/testdata/*)
 export DH_GOLANG_EXCLUDES := dependencies test/e2e contrib/perftest test/utils test/endpoint hack/podman-registry-go pkg/bindings/test
 
 export HOME=$(CURDIR)/debian/tmp
@@ -21,14 +24,8 @@ BUILDTAGS := apparmor,ostree,seccomp,selinux,systemd
 %:
 	dh $@ --buildsystem=golang --with=golang,bash-completion --builddirectory=_output
 
-override_dh_clean:
-	dh_clean $(PB_GO_FILES)
-	## Remove Files-Excluded (when built from checkout or non-DFSG tarball):
-	$(RM) -rv `perl -0nE 'say $$1 if m{^Files\-Excluded\:\s*(.*?)(?:\n\n|Files:|Comment:)}sm;' debian/copyright`
-	-find vendor -mindepth 1 -type d -empty -delete -printf 'removed %p\n'
-
 override_dh_auto_build:
-	$(MAKE) docs
+	$(MAKE) docs docker-docs
 
 #	LDFLAGS_PODMAN="-X main.gitCommit=$(GIT_COMMIT)"
 	dh_auto_build -v  --builddirectory=_output -- -tags "$(BUILDTAGS)" \
@@ -49,7 +46,7 @@ ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	  XDG_DATA_HOME=$(CURDIR)/debian/tmp-home/.local/share \
 	  XDG_RUNTIME_DIR=$(CURDIR)/debian/tmp-home/run \
 	  PATH="$(CURDIR)/_output/bin:$$PATH" \
-	  DH_GOLANG_EXCLUDES="$${DH_GOLANG_EXCLUDES} libpod/lock/file libpod/hack/podman-registry-go libpod/pkg/bindings/test" \
+	  DH_GOLANG_EXCLUDES="$${DH_GOLANG_EXCLUDES} libpod/lock/file libpod/hack/podman-registry-go libpod/pkg/bindings/test podman/cmd/podman/common" \
 	dh_auto_test -v --max-parallel=2 -- -tags "$(BUILDTAGS)"
 	rm -rf $(CURDIR)/debian/tmp-home
 endif
@@ -58,6 +55,9 @@ override_dh_auto_install:
 	dh_auto_install --destdir=debian/tmp --buildsystem=golang --builddirectory=_output
 	# avoid exposing unnecessary vendor libraries
 	rm -rfv debian/tmp/usr/share/gocode/src/github.com/containers/libpod/vendor
+
+# Disable dh_missing
+override_dh_missing:
 
 override_dh_installsystemd:
 	dh_installsystemd

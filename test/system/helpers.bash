@@ -7,13 +7,14 @@ PODMAN=${PODMAN:-podman}
 PODMAN_TEST_IMAGE_REGISTRY=${PODMAN_TEST_IMAGE_REGISTRY:-"quay.io"}
 PODMAN_TEST_IMAGE_USER=${PODMAN_TEST_IMAGE_USER:-"libpod"}
 PODMAN_TEST_IMAGE_NAME=${PODMAN_TEST_IMAGE_NAME:-"testimage"}
-PODMAN_TEST_IMAGE_TAG=${PODMAN_TEST_IMAGE_TAG:-"20210223"}
+PODMAN_TEST_IMAGE_TAG=${PODMAN_TEST_IMAGE_TAG:-"20210427"}
 PODMAN_TEST_IMAGE_FQN="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/$PODMAN_TEST_IMAGE_NAME:$PODMAN_TEST_IMAGE_TAG"
+PODMAN_TEST_IMAGE_ID=
 
 # Remote image that we *DO NOT* fetch or keep by default; used for testing pull
 # This changed from 0 to 1 on 2021-02-24 due to multiarch considerations; it
 # should change only very rarely.
-PODMAN_NONLOCAL_IMAGE_FQN="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/$PODMAN_TEST_IMAGE_NAME:00000001"
+PODMAN_NONLOCAL_IMAGE_FQN="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/$PODMAN_TEST_IMAGE_NAME:00000002"
 
 # Because who wants to spell that out each time?
 IMAGE=$PODMAN_TEST_IMAGE_FQN
@@ -34,6 +35,23 @@ fi
 # That way individual tests can override with their own setup/teardown,
 # while retaining the ability to include these if they so desire.
 
+# Some CI systems set this to runc, overriding the default crun.
+# Although it would be more elegant to override options in run_podman(),
+# we instead override $PODMAN itself because some tests (170-run-userns)
+# have to invoke $PODMAN directly.
+if [[ -n $OCI_RUNTIME ]]; then
+    if [[ -z $CONTAINERS_CONF ]]; then
+        # FIXME: BATS provides no mechanism for end-of-run cleanup[1]; how
+        # can we avoid leaving this file behind when we finish?
+        #   [1] https://github.com/bats-core/bats-core/issues/39
+        export CONTAINERS_CONF=$(mktemp --tmpdir=${BATS_TMPDIR:-/tmp} podman-bats-XXXXXXX.containers.conf)
+        cat >$CONTAINERS_CONF <<EOF
+[engine]
+runtime="$OCI_RUNTIME"
+EOF
+    fi
+fi
+
 # Setup helper: establish a test environment with exactly the images needed
 function basic_setup() {
     # Clean up all containers
@@ -53,11 +71,21 @@ function basic_setup() {
     for line in "${lines[@]}"; do
         set $line
         if [ "$1" == "$PODMAN_TEST_IMAGE_FQN" ]; then
+            if [[ -z "$PODMAN_TEST_IMAGE_ID" ]]; then
+                # This will probably only trigger the 2nd time through setup
+                PODMAN_TEST_IMAGE_ID=$2
+            fi
             found_needed_image=1
         else
-            echo "# setup(): removing stray images $1 $2" >&3
+            # Always remove image that doesn't match by name
+            echo "# setup(): removing stray image $1" >&3
             run_podman rmi --force "$1" >/dev/null 2>&1 || true
-            run_podman rmi --force "$2" >/dev/null 2>&1 || true
+
+            # Tagged image will have same IID as our test image; don't rmi it.
+            if [[ $2 != "$PODMAN_TEST_IMAGE_ID" ]]; then
+                echo "# setup(): removing stray image $2" >&3
+                run_podman rmi --force "$2" >/dev/null 2>&1 || true
+            fi
         fi
     done
 
@@ -72,6 +100,9 @@ function basic_setup() {
     # on cleanup.
     # TODO: do this outside of setup, so it carries across tests?
     PODMAN_TMPDIR=$(mktemp -d --tmpdir=${BATS_TMPDIR:-/tmp} podman_bats.XXXXXX)
+
+    # In the unlikely event that a test runs is() before a run_podman()
+    MOST_RECENT_PODMAN_COMMAND=
 }
 
 # Basic teardown: remove all pods and containers
@@ -149,6 +180,9 @@ function run_podman() {
         [12][0-9][0-9])  expected_rc=$1; shift;;
         '?')             expected_rc=  ; shift;;  # ignore exit code
     esac
+
+    # Remember command args, for possible use in later diagnostic messages
+    MOST_RECENT_PODMAN_COMMAND="podman $*"
 
     # stdout is only emitted upon error; this echo is to help a debugger
     echo "$_LOG_PROMPT $PODMAN $*"
@@ -265,6 +299,16 @@ function is_cgroupsv1() {
 function is_cgroupsv2() {
     cgroup_type=$(stat -f -c %T /sys/fs/cgroup)
     test "$cgroup_type" = "cgroup2fs"
+}
+
+# Returns the OCI runtime *basename* (typically crun or runc). Much as we'd
+# love to cache this result, we probably shouldn't.
+function podman_runtime() {
+    # This function is intended to be used as '$(podman_runtime)', i.e.
+    # our caller wants our output. run_podman() messes with output because
+    # it emits the command invocation to stdout, hence the redirection.
+    run_podman info --format '{{ .Host.OCIRuntime.Name }}' >/dev/null
+    basename "${output:-[null]}"
 }
 
 # rhbz#1895105: rootless journald is unavailable except to users in
@@ -384,7 +428,7 @@ function die() {
 function is() {
     local actual="$1"
     local expect="$2"
-    local testname="${3:-FIXME}"
+    local testname="${3:-${MOST_RECENT_PODMAN_COMMAND:-[no test name given]}}"
 
     if [ -z "$expect" ]; then
         if [ -z "$actual" ]; then

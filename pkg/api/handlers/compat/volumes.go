@@ -96,11 +96,17 @@ func CreateVolume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// See if the volume exists already
-	existingVolume, err := runtime.GetVolume(input.Name)
-	if err != nil && errors.Cause(err) != define.ErrNoSuchVolume {
-		utils.InternalServerError(w, err)
-		return
+	var (
+		existingVolume *libpod.Volume
+		err            error
+	)
+	if len(input.Name) != 0 {
+		// See if the volume exists already
+		existingVolume, err = runtime.GetVolume(input.Name)
+		if err != nil && errors.Cause(err) != define.ErrNoSuchVolume {
+			utils.InternalServerError(w, err)
+			return
+		}
 	}
 
 	// if using the compat layer and the volume already exists, we
@@ -266,7 +272,7 @@ func PruneVolumes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	f := (url.Values)(*filterMap)
-	filterFuncs, err := filters.GenerateVolumeFilters(f)
+	filterFuncs, err := filters.GeneratePruneVolumeFilters(f)
 	if err != nil {
 		utils.Error(w, "Something when wrong.", http.StatusInternalServerError, errors.Wrapf(err, "failed to parse filters for %s", f.Encode()))
 		return

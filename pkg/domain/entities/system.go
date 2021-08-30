@@ -5,7 +5,7 @@ import (
 
 	"github.com/containers/podman/v3/libpod/define"
 	"github.com/containers/podman/v3/pkg/domain/entities/reports"
-	"github.com/docker/docker/api/types"
+	"github.com/containers/podman/v3/pkg/domain/entities/types"
 	"github.com/spf13/cobra"
 )
 
@@ -96,6 +96,11 @@ type SystemVersionReport struct {
 	Client *define.Version `json:",omitempty"`
 	// May be populated, when in tunnel mode
 	Server *define.Version `json:",omitempty"`
+}
+
+// SystemUnshareOptions describes the options for the unshare command
+type SystemUnshareOptions struct {
+	RootlessCNI bool
 }
 
 type ComponentVersion struct {

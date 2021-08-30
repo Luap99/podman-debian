@@ -13,13 +13,8 @@ podman\-pull - Pull an image from a registry
 **podman image pull** [*options*] [*transport*]*name*[:*tag*|@*digest*]
 
 ## DESCRIPTION
-Copies an image from a registry onto the local machine. **podman pull** pulls an
-image from Docker Hub if a registry is not specified in the command line argument.
-If an image tag is not specified, **podman pull** defaults to the image with the
-**latest** tag (if it exists) and pulls it. After the image is pulled, podman will
-print the full image ID.  **podman pull** can also pull an image
-using its digest **podman pull** *image*@*digest*. **podman pull** can be used to pull
-images from archives and local storage using different transports.
+Copies an image from a registry onto the local machine. The **podman pull** command pulls an
+image.  If the image reference in the command line argument does not contain a registry, it is referred to as a`short-name` reference. If the image is a 'short-name' reference, Podman will prompt the user for the specific container registry to pull the image from, if an alias for the short-name has not been specified in the short-name-aliases.conf.  If an image tag is not specified, **podman pull** defaults to the image with the **latest** tag (if it exists) and pulls it. After the image is pulled, podman will print the full image ID.  **podman pull** can also pull an image using its digest **podman pull** *image*@*digest*. **podman pull** can be used to pull images from archives and local storage using different transports.
 
 ## Image storage
 Images are stored in local image storage.
@@ -65,16 +60,16 @@ Images are stored in local image storage.
 
 ## OPTIONS
 
-#### **\-\-all-tags**, **a**
+#### **--all-tags**, **a**
 
 All tagged images in the repository will be pulled.
 
 Note: When using the all-tags flag, Podman will not iterate over the search registries in the containers-registries.conf(5) but will always use docker.io for unqualified image names.
 
-#### **\-\-arch**=*ARCH*
+#### **--arch**=*ARCH*
 Override the architecture, defaults to hosts, of the image to be pulled. For example, `arm`.
 
-#### **\-\-authfile**=*path*
+#### **--authfile**=*path*
 
 Path of the authentication file. Default is ${XDG\_RUNTIME\_DIR}/containers/auth.json, which is set using `podman login`.
 If the authorization state is not found there, $HOME/.docker/config.json is checked, which is set using `docker login`.
@@ -82,46 +77,46 @@ If the authorization state is not found there, $HOME/.docker/config.json is chec
 Note: You can also override the default path of the authentication file by setting the REGISTRY\_AUTH\_FILE
 environment variable. `export REGISTRY_AUTH_FILE=path`
 
-#### **\-\-cert-dir**=*path*
+#### **--cert-dir**=*path*
 
 Use certificates at *path* (\*.crt, \*.cert, \*.key) to connect to the registry.
-Default certificates directory is _/etc/containers/certs.d_. (This option is not available with the remote Podman client)
+Please refer to containers-certs.d(5) for details. (This option is not available with the remote Podman client)
 
-#### **\-\-creds**=*[username[:password]]*
+#### **--creds**=*[username[:password]]*
 
 The [username[:password]] to use to authenticate with the registry if required.
 If one or both values are not supplied, a command line prompt will appear and the
 value can be entered.  The password is entered without echo.
 
-#### **\-\-disable-content-trust**
+#### **--disable-content-trust**
 
 This is a Docker specific option to disable image verification to a Docker
 registry and is not supported by Podman.  This flag is a NOOP and provided
 solely for scripting compatibility.
 
-#### **\-\-help**, **-h**
+#### **--help**, **-h**
 
 Print usage statement
 
-#### **\-\-os**=*OS*
+#### **--os**=*OS*
 Override the OS, defaults to hosts, of the image to be pulled. For example, `windows`.
 
-#### **\-\-platform**=*OS/ARCH*
+#### **--platform**=*OS/ARCH*
 
 Specify the platform for selecting the image.  (Conflicts with --arch and --os)
 The `--platform` option can be used to override the current architecture and operating system.
 
-#### **\-\-quiet**, **-q**
+#### **--quiet**, **-q**
 
 Suppress output information when pulling images
 
-#### **\-\-tls-verify**=*true|false*
+#### **--tls-verify**=*true|false*
 
 Require HTTPS and verify certificates when contacting registries (default: true). If explicitly set to true,
 then TLS verification will be used. If set to false, then TLS verification will not be used. If not specified,
 TLS verification will be used unless the target registry is listed as an insecure registry in registries.conf.
 
-#### **\-\-variant**=*VARIANT*
+#### **--variant**=*VARIANT*
 
 Use _VARIANT_ instead of the default architecture variant of the container image.  Some images can use multiple variants of the arm architectures, such as arm/v5 and arm/v7.
 
@@ -201,14 +196,28 @@ Storing signatures
 
 ## FILES
 
+**short-name-aliases.conf** (`/var/cache/containers/short-name-aliases.conf`, `$HOME/.cache/containers/short-name-aliases.conf`)
+
+When users specify images that do not include the container registry where the
+image is stored, this is called a short name. The use of unqualified-search registries entails an ambiguity as it is unclear from which registry a given image, referenced by a short name, may be pulled from.
+
+Using short names is subject to the risk of hitting squatted registry namespaces. If the unqualified-search registries are set to ["public-registry.com",  "my-private-registry.com"] an attacker may take over a namespace of `public-registry.com` such that an image may be pulled from `public-registry.com` instead of the intended source `my-private-registry.com`.
+
+While it is highly recommended to always use fully-qualified image references, existing deployments using short names may not be easily changed. To circumvent the aforementioned ambiguity, so called short-name aliases can be configured that point to a fully-qualified image reference. Distributions often ship a default shortnames.conf expansion file in /etc/containers/registries.conf.d/ directory. Administrators can use this directory to add their own local short-name expansion files.
+
+When pulling an image, if the user does not specify the complete registry, container engines attempt to expand the short-name into a full name. If the command is executed with a tty, the user will be prompted to select a registry from the
+default list unqualified registries defined in registries.conf. The user's selection is then stored in a cache file to be used in all future short-name expansions. Rootfull short-names are stored in /var/cache/containers/short-name-aliases.conf. Rootless short-names are stored in the $HOME/.cache/containers/short-name-aliases.conf file.
+
+For more information on short-names, see `containers-registries.conf(5)`
+
 **registries.conf** (`/etc/containers/registries.conf`)
 
-	registries.conf is the configuration file which specifies which container registries should be consulted when completing image names which do not include a registry or domain portion.
+registries.conf is the configuration file which specifies which container registries should be consulted when completing image names which do not include a registry or domain portion.
 
 NOTE: Use the environment variable `TMPDIR` to change the temporary storage location of downloaded container images. Podman defaults to use `/var/tmp`.
 
 ## SEE ALSO
-podman(1), podman-push(1), podman-login(1), containers-registries.conf(5)
+podman(1), podman-push(1), podman-login(1), containers-certs.d(5), containers-registries.conf(5)
 
 ## HISTORY
 July 2017, Originally compiled by Urvashi Mohnani <umohnani@redhat.com>

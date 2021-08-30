@@ -320,7 +320,7 @@ func (p *PodmanTestIntegration) createArtifact(image string) {
 	fmt.Printf("Caching %s at %s...", image, destName)
 	if _, err := os.Stat(destName); os.IsNotExist(err) {
 		pull := p.PodmanNoCache([]string{"pull", image})
-		pull.Wait(240)
+		pull.Wait(440)
 		Expect(pull.ExitCode()).To(Equal(0))
 
 		save := p.PodmanNoCache([]string{"save", "-o", destName, image})
@@ -408,7 +408,14 @@ func (p *PodmanTestIntegration) RunLsContainer(name string) (*PodmanSessionInteg
 	podmanArgs = append(podmanArgs, "-d", ALPINE, "ls")
 	session := p.Podman(podmanArgs)
 	session.WaitWithDefaultTimeout()
-	return session, session.ExitCode(), session.OutputToString()
+	if session.ExitCode() != 0 {
+		return session, session.ExitCode(), session.OutputToString()
+	}
+	cid := session.OutputToString()
+
+	wsession := p.Podman([]string{"wait", cid})
+	wsession.WaitWithDefaultTimeout()
+	return session, wsession.ExitCode(), cid
 }
 
 // RunNginxWithHealthCheck runs the alpine nginx container with an optional name and adds a healthcheck into it
@@ -431,25 +438,26 @@ func (p *PodmanTestIntegration) RunLsContainerInPod(name, pod string) (*PodmanSe
 	podmanArgs = append(podmanArgs, "-d", ALPINE, "ls")
 	session := p.Podman(podmanArgs)
 	session.WaitWithDefaultTimeout()
-	return session, session.ExitCode(), session.OutputToString()
+	if session.ExitCode() != 0 {
+		return session, session.ExitCode(), session.OutputToString()
+	}
+	cid := session.OutputToString()
+
+	wsession := p.Podman([]string{"wait", cid})
+	wsession.WaitWithDefaultTimeout()
+	return session, wsession.ExitCode(), cid
 }
 
 // BuildImage uses podman build and buildah to build an image
 // called imageName based on a string dockerfile
 func (p *PodmanTestIntegration) BuildImage(dockerfile, imageName string, layers string) string {
-	dockerfilePath := filepath.Join(p.TempDir, "Dockerfile")
-	err := ioutil.WriteFile(dockerfilePath, []byte(dockerfile), 0755)
-	Expect(err).To(BeNil())
-	cmd := []string{"build", "--pull-never", "--layers=" + layers, "--file", dockerfilePath}
-	if len(imageName) > 0 {
-		cmd = append(cmd, []string{"-t", imageName}...)
-	}
-	cmd = append(cmd, p.TempDir)
-	session := p.Podman(cmd)
-	session.Wait(240)
-	Expect(session).Should(Exit(0), fmt.Sprintf("BuildImage session output: %q", session.OutputToString()))
-	output := session.OutputToStringArray()
-	return output[len(output)-1]
+	return p.buildImage(dockerfile, imageName, layers, "")
+}
+
+// BuildImageWithLabel uses podman build and buildah to build an image
+// called imageName based on a string dockerfile, adds desired label to paramset
+func (p *PodmanTestIntegration) BuildImageWithLabel(dockerfile, imageName string, layers string, label string) string {
+	return p.buildImage(dockerfile, imageName, layers, label)
 }
 
 // PodmanPID execs podman and returns its PID
@@ -602,13 +610,6 @@ func SkipIfRootlessCgroupsV1(reason string) {
 	checkReason(reason)
 	if os.Geteuid() != 0 && !CGROUPSV2 {
 		Skip("[rootless]: " + reason)
-	}
-}
-
-func SkipIfUnprivilegedCPULimits() {
-	info := GetHostDistributionInfo()
-	if isRootless() && info.Distribution == "fedora" {
-		ginkgo.Skip("Rootless Fedora doesn't have permission to set CPU limits")
 	}
 }
 
@@ -820,4 +821,23 @@ func (p *PodmanSessionIntegration) jq(jqCommand string) (string, error) {
 	cmd.Stdout = &out
 	err := cmd.Run()
 	return strings.TrimRight(out.String(), "\n"), err
+}
+
+func (p *PodmanTestIntegration) buildImage(dockerfile, imageName string, layers string, label string) string {
+	dockerfilePath := filepath.Join(p.TempDir, "Dockerfile")
+	err := ioutil.WriteFile(dockerfilePath, []byte(dockerfile), 0755)
+	Expect(err).To(BeNil())
+	cmd := []string{"build", "--pull-never", "--layers=" + layers, "--file", dockerfilePath}
+	if label != "" {
+		cmd = append(cmd, "--label="+label)
+	}
+	if len(imageName) > 0 {
+		cmd = append(cmd, []string{"-t", imageName}...)
+	}
+	cmd = append(cmd, p.TempDir)
+	session := p.Podman(cmd)
+	session.Wait(240)
+	Expect(session).Should(Exit(0), fmt.Sprintf("BuildImage session output: %q", session.OutputToString()))
+	output := session.OutputToStringArray()
+	return output[len(output)-1]
 }

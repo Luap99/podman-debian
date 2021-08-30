@@ -3,13 +3,12 @@ package pods
 import (
 	"context"
 	"os"
-	"text/tabwriter"
-	"text/template"
 
 	"github.com/containers/common/pkg/report"
 	"github.com/containers/podman/v3/cmd/podman/common"
 	"github.com/containers/podman/v3/cmd/podman/registry"
 	"github.com/containers/podman/v3/cmd/podman/validate"
+	"github.com/containers/podman/v3/libpod/define"
 	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
@@ -44,7 +43,7 @@ func init() {
 
 	formatFlagName := "format"
 	flags.StringVarP(&inspectOptions.Format, formatFlagName, "f", "json", "Format the output to a Go template or json")
-	_ = inspectCmd.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteJSONFormat)
+	_ = inspectCmd.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteFormat(define.InspectPodData{}))
 
 	validate.AddLatestFlag(inspectCmd, &inspectOptions.Latest)
 }
@@ -73,11 +72,14 @@ func inspect(cmd *cobra.Command, args []string) error {
 
 	row := report.NormalizeFormat(inspectOptions.Format)
 
-	t, err := template.New("pod inspect").Parse(row)
+	t, err := report.NewTemplate("inspect").Parse(row)
 	if err != nil {
 		return err
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 8, 2, 2, ' ', 0)
+	w, err := report.NewWriterDefault(os.Stdout)
+	if err != nil {
+		return err
+	}
 	return t.Execute(w, *responses)
 }
