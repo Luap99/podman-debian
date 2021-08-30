@@ -1,7 +1,6 @@
 package compat
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -13,12 +12,12 @@ import (
 	"github.com/containers/common/libimage"
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/image/v5/manifest"
+	"github.com/containers/image/v5/pkg/shortnames"
 	"github.com/containers/image/v5/types"
 	"github.com/containers/podman/v3/libpod"
 	"github.com/containers/podman/v3/pkg/api/handlers"
 	"github.com/containers/podman/v3/pkg/api/handlers/utils"
 	"github.com/containers/podman/v3/pkg/auth"
-	"github.com/containers/podman/v3/pkg/channel"
 	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/containers/podman/v3/pkg/domain/infra/abi"
 	"github.com/containers/storage"
@@ -167,8 +166,11 @@ func CreateImageFromSrc(w http.ResponseWriter, r *http.Request) {
 	runtime := r.Context().Value("runtime").(*libpod.Runtime)
 
 	query := struct {
-		FromSrc string   `schema:"fromSrc"`
-		Changes []string `schema:"changes"`
+		Changes  []string `schema:"changes"`
+		FromSrc  string   `schema:"fromSrc"`
+		Message  string   `schema:"message"`
+		Platform string   `schema:"platform"`
+		Repo     string   `shchema:"repo"`
 	}{
 		// This is where you can override the golang default value for one of fields
 	}
@@ -185,14 +187,27 @@ func CreateImageFromSrc(w http.ResponseWriter, r *http.Request) {
 			utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrap(err, "failed to create tempfile"))
 			return
 		}
+
 		source = f.Name()
 		if err := SaveFromBody(f, r); err != nil {
 			utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrap(err, "failed to write temporary file"))
 		}
 	}
 
+	platformSpecs := strings.Split(query.Platform, "/")
+	opts := entities.ImageImportOptions{
+		Source:    source,
+		Changes:   query.Changes,
+		Message:   query.Message,
+		Reference: query.Repo,
+		OS:        platformSpecs[0],
+	}
+	if len(platformSpecs) > 1 {
+		opts.Architecture = platformSpecs[1]
+	}
+
 	imageEngine := abi.ImageEngine{Libpod: runtime}
-	report, err := imageEngine.Import(r.Context(), entities.ImageImportOptions{Source: source, Changes: query.Changes})
+	report, err := imageEngine.Import(r.Context(), opts)
 	if err != nil {
 		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrap(err, "unable to import tarball"))
 		return
@@ -210,6 +225,11 @@ func CreateImageFromSrc(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type pullResult struct {
+	images []*libimage.Image
+	err    error
+}
+
 func CreateImageFromImage(w http.ResponseWriter, r *http.Request) {
 	// 200 no error
 	// 404 repo does not exist or no read access
@@ -220,16 +240,24 @@ func CreateImageFromImage(w http.ResponseWriter, r *http.Request) {
 	query := struct {
 		FromImage string `schema:"fromImage"`
 		Tag       string `schema:"tag"`
+		Platform  string `schema:"platform"`
 	}{
 		// This is where you can override the golang default value for one of fields
 	}
-
 	if err := decoder.Decode(&query, r.URL.Query()); err != nil {
 		utils.Error(w, "Something went wrong.", http.StatusBadRequest, errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
 		return
 	}
 
 	fromImage := mergeNameAndTagOrDigest(query.FromImage, query.Tag)
+
+	// without this early check this function would return 200 but reported error via body stream soon after
+	// it's better to let caller know early via HTTP status code that request cannot be processed
+	_, err := shortnames.Resolve(runtime.SystemContext(), fromImage)
+	if err != nil {
+		utils.Error(w, "Something went wrong.", http.StatusBadRequest, errors.Wrap(err, "failed to resolve image name"))
+		return
+	}
 
 	authConf, authfile, key, err := auth.GetCredentials(r)
 	if err != nil {
@@ -247,26 +275,23 @@ func CreateImageFromImage(w http.ResponseWriter, r *http.Request) {
 	}
 	pullOptions.Writer = os.Stderr // allows for debugging on the server
 
-	stderr := channel.NewWriter(make(chan []byte))
-	defer stderr.Close()
+	// Handle the platform.
+	platformSpecs := strings.Split(query.Platform, "/")
+	pullOptions.OS = platformSpecs[0] // may be empty
+	if len(platformSpecs) > 1 {
+		pullOptions.Architecture = platformSpecs[1]
+		if len(platformSpecs) > 2 {
+			pullOptions.Variant = platformSpecs[2]
+		}
+	}
 
 	progress := make(chan types.ProgressProperties)
 	pullOptions.Progress = progress
 
-	var img string
-	runCtx, cancel := context.WithCancel(context.Background())
+	pullResChan := make(chan pullResult)
 	go func() {
-		defer cancel()
-		pulledImages, err := runtime.LibimageRuntime().Pull(runCtx, fromImage, config.PullPolicyAlways, pullOptions)
-		if err != nil {
-			stderr.Write([]byte(err.Error() + "\n"))
-		} else {
-			if len(pulledImages) == 0 {
-				utils.Error(w, "Something went wrong.", http.StatusBadRequest, errors.New("internal error: no images pulled"))
-				return
-			}
-			img = pulledImages[0].ID()
-		}
+		pulledImages, err := runtime.LibimageRuntime().Pull(r.Context(), fromImage, config.PullPolicyAlways, pullOptions)
+		pullResChan <- pullResult{images: pulledImages, err: err}
 	}()
 
 	flush := func() {
@@ -281,7 +306,6 @@ func CreateImageFromImage(w http.ResponseWriter, r *http.Request) {
 
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(true)
-	var failed bool
 
 loop: // break out of for/select infinite loop
 	for {
@@ -295,7 +319,6 @@ loop: // break out of for/select infinite loop
 			Error string `json:"error,omitempty"`
 			Id    string `json:"id,omitempty"` // nolint
 		}
-
 		select {
 		case e := <-progress:
 			switch e.Event {
@@ -312,32 +335,31 @@ loop: // break out of for/select infinite loop
 			}
 			report.Id = e.Artifact.Digest.Encoded()[0:12]
 			if err := enc.Encode(report); err != nil {
-				stderr.Write([]byte(err.Error()))
+				logrus.Warnf("Failed to json encode error %q", err.Error())
 			}
 			flush()
-		case e := <-stderr.Chan():
-			failed = true
-			report.Error = string(e)
+		case pullRes := <-pullResChan:
+			err := pullRes.err
+			pulledImages := pullRes.images
+			if err != nil {
+				report.Error = err.Error()
+			} else {
+				if len(pulledImages) > 0 {
+					img := pulledImages[0].ID()
+					if utils.IsLibpodRequest(r) {
+						report.Status = "Pull complete"
+					} else {
+						report.Status = "Download complete"
+					}
+					report.Id = img[0:12]
+				} else {
+					report.Error = "internal error: no images pulled"
+				}
+			}
 			if err := enc.Encode(report); err != nil {
 				logrus.Warnf("Failed to json encode error %q", err.Error())
 			}
 			flush()
-		case <-runCtx.Done():
-			if !failed {
-				if utils.IsLibpodRequest(r) {
-					report.Status = "Pull complete"
-				} else {
-					report.Status = "Download complete"
-				}
-				report.Id = img[0:12]
-				if err := enc.Encode(report); err != nil {
-					logrus.Warnf("Failed to json encode error %q", err.Error())
-				}
-				flush()
-			}
-			break loop // break out of for/select infinite loop
-		case <-r.Context().Done():
-			// Client has closed connection
 			break loop // break out of for/select infinite loop
 		}
 	}

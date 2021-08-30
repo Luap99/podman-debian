@@ -36,7 +36,7 @@ var (
 	}
 
 	containerCreateCommand = &cobra.Command{
-		Args:              cobra.MinimumNArgs(1),
+		Args:              createCommand.Args,
 		Use:               createCommand.Use,
 		Short:             createCommand.Short,
 		Long:              createCommand.Long,
@@ -69,13 +69,11 @@ func createFlags(cmd *cobra.Command) {
 
 func init() {
 	registry.Commands = append(registry.Commands, registry.CliCommand{
-		Mode:    []entities.EngineMode{entities.ABIMode, entities.TunnelMode},
 		Command: createCommand,
 	})
 	createFlags(createCommand)
 
 	registry.Commands = append(registry.Commands, registry.CliCommand{
-		Mode:    []entities.EngineMode{entities.ABIMode, entities.TunnelMode},
 		Command: containerCreateCommand,
 		Parent:  containerCmd,
 	})
@@ -86,7 +84,7 @@ func create(cmd *cobra.Command, args []string) error {
 	var (
 		err error
 	)
-	cliVals.Net, err = common.NetFlagsToNetOptions(cmd)
+	cliVals.Net, err = common.NetFlagsToNetOptions(cmd, cliVals.Pod == "")
 	if err != nil {
 		return err
 	}
@@ -148,6 +146,8 @@ func replaceContainer(name string) error {
 }
 
 func createInit(c *cobra.Command) error {
+	cliVals.StorageOpt = registry.PodmanConfig().StorageOpts
+
 	if c.Flag("shm-size").Changed {
 		cliVals.ShmSize = c.Flag("shm-size").Value.String()
 	}
@@ -294,6 +294,7 @@ func createPodIfNecessary(s *specgen.SpecGenerator, netOpts *entities.NetOptions
 		Net:           netOpts,
 		CreateCommand: os.Args,
 		Hostname:      s.ContainerBasicConfig.Hostname,
+		Pid:           cliVals.PID,
 	}
 	// Unset config values we passed to the pod to prevent them being used twice for the container and pod.
 	s.ContainerBasicConfig.Hostname = ""

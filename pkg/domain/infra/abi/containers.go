@@ -119,6 +119,10 @@ func (ic *ContainerEngine) ContainerPause(ctx context.Context, namesOrIds []stri
 	report := make([]*entities.PauseUnpauseReport, 0, len(ctrs))
 	for _, c := range ctrs {
 		err := c.Pause()
+		if err != nil && options.All && errors.Cause(err) == define.ErrCtrStateInvalid {
+			logrus.Debugf("Container %s is not running", c.ID())
+			continue
+		}
 		report = append(report, &entities.PauseUnpauseReport{Id: c.ID(), Err: err})
 	}
 	return report, nil
@@ -132,6 +136,10 @@ func (ic *ContainerEngine) ContainerUnpause(ctx context.Context, namesOrIds []st
 	report := make([]*entities.PauseUnpauseReport, 0, len(ctrs))
 	for _, c := range ctrs {
 		err := c.Unpause()
+		if err != nil && options.All && errors.Cause(err) == define.ErrCtrStateInvalid {
+			logrus.Debugf("Container %s is not paused", c.ID())
+			continue
+		}
 		report = append(report, &entities.PauseUnpauseReport{Id: c.ID(), Err: err})
 	}
 	return report, nil
@@ -220,9 +228,14 @@ func (ic *ContainerEngine) ContainerKill(ctx context.Context, namesOrIds []strin
 	}
 	reports := make([]*entities.KillReport, 0, len(ctrs))
 	for _, con := range ctrs {
+		err := con.Kill(uint(sig))
+		if options.All && errors.Cause(err) == define.ErrCtrStateInvalid {
+			logrus.Debugf("Container %s is not running", con.ID())
+			continue
+		}
 		reports = append(reports, &entities.KillReport{
 			Id:       con.ID(),
-			Err:      con.Kill(uint(sig)),
+			Err:      err,
 			RawInput: ctrMap[con.ID()],
 		})
 	}
@@ -259,6 +272,24 @@ func (ic *ContainerEngine) ContainerRestart(ctx context.Context, namesOrIds []st
 		})
 	}
 	return reports, nil
+}
+
+func (ic *ContainerEngine) removeContainer(ctx context.Context, ctr *libpod.Container, options entities.RmOptions) error {
+	err := ic.Libpod.RemoveContainer(ctx, ctr, options.Force, options.Volumes)
+	if err == nil {
+		return nil
+	}
+	logrus.Debugf("Failed to remove container %s: %s", ctr.ID(), err.Error())
+	switch errors.Cause(err) {
+	case define.ErrNoSuchCtr:
+		if options.Ignore {
+			logrus.Debugf("Ignoring error (--allow-missing): %v", err)
+			return nil
+		}
+	case define.ErrCtrRemoved:
+		return nil
+	}
+	return err
 }
 
 func (ic *ContainerEngine) ContainerRm(ctx context.Context, namesOrIds []string, options entities.RmOptions) ([]*entities.RmReport, error) {
@@ -318,21 +349,7 @@ func (ic *ContainerEngine) ContainerRm(ctx context.Context, namesOrIds []string,
 	}
 
 	errMap, err := parallelctr.ContainerOp(ctx, ctrs, func(c *libpod.Container) error {
-		err := ic.Libpod.RemoveContainer(ctx, c, options.Force, options.Volumes)
-		if err == nil {
-			return nil
-		}
-		logrus.Debugf("Failed to remove container %s: %s", c.ID(), err.Error())
-		switch errors.Cause(err) {
-		case define.ErrNoSuchCtr:
-			if options.Ignore {
-				logrus.Debugf("Ignoring error (--allow-missing): %v", err)
-				return nil
-			}
-		case define.ErrCtrRemoved:
-			return nil
-		}
-		return err
+		return ic.removeContainer(ctx, c, options)
 	})
 	if err != nil {
 		return nil, err
@@ -483,6 +500,7 @@ func (ic *ContainerEngine) ContainerCheckpoint(ctx context.Context, namesOrIds [
 		KeepRunning:    options.LeaveRunning,
 		PreCheckPoint:  options.PreCheckPoint,
 		WithPrevious:   options.WithPrevious,
+		Compression:    options.Compression,
 	}
 
 	if options.All {
@@ -524,6 +542,7 @@ func (ic *ContainerEngine) ContainerRestore(ctx context.Context, namesOrIds []st
 		IgnoreStaticIP:  options.IgnoreStaticIP,
 		IgnoreStaticMAC: options.IgnoreStaticMAC,
 		ImportPrevious:  options.ImportPrevious,
+		Pod:             options.Pod,
 	}
 
 	filterFuncs := []libpod.ContainerFilter{
@@ -594,7 +613,7 @@ func (ic *ContainerEngine) ContainerAttach(ctx context.Context, nameOrID string,
 	return nil
 }
 
-func makeExecConfig(options entities.ExecOptions) *libpod.ExecConfig {
+func makeExecConfig(options entities.ExecOptions, rt *libpod.Runtime) (*libpod.ExecConfig, error) {
 	execConfig := new(libpod.ExecConfig)
 	execConfig.Command = options.Cmd
 	execConfig.Terminal = options.Tty
@@ -606,7 +625,20 @@ func makeExecConfig(options entities.ExecOptions) *libpod.ExecConfig {
 	execConfig.PreserveFDs = options.PreserveFDs
 	execConfig.AttachStdin = options.Interactive
 
-	return execConfig
+	// Make an exit command
+	storageConfig := rt.StorageConfig()
+	runtimeConfig, err := rt.GetConfig()
+	if err != nil {
+		return nil, errors.Wrapf(err, "error retrieving Libpod configuration to build exec exit command")
+	}
+	// TODO: Add some ability to toggle syslog
+	exitCommandArgs, err := generate.CreateExitCommandArgs(storageConfig, runtimeConfig, false, false, true)
+	if err != nil {
+		return nil, errors.Wrapf(err, "error constructing exit command for exec session")
+	}
+	execConfig.ExitCommand = exitCommandArgs
+
+	return execConfig, nil
 }
 
 func checkExecPreserveFDs(options entities.ExecOptions) error {
@@ -646,7 +678,10 @@ func (ic *ContainerEngine) ContainerExec(ctx context.Context, nameOrID string, o
 	}
 	ctr := ctrs[0]
 
-	execConfig := makeExecConfig(options)
+	execConfig, err := makeExecConfig(options, ic.Libpod)
+	if err != nil {
+		return ec, err
+	}
 
 	ec, err = terminal.ExecAttachCtr(ctx, ctr, execConfig, &streams)
 	return define.TranslateExecErrorToExitCode(ec, err), err
@@ -663,20 +698,10 @@ func (ic *ContainerEngine) ContainerExecDetached(ctx context.Context, nameOrID s
 	}
 	ctr := ctrs[0]
 
-	execConfig := makeExecConfig(options)
-
-	// Make an exit command
-	storageConfig := ic.Libpod.StorageConfig()
-	runtimeConfig, err := ic.Libpod.GetConfig()
+	execConfig, err := makeExecConfig(options, ic.Libpod)
 	if err != nil {
-		return "", errors.Wrapf(err, "error retrieving Libpod configuration to build exec exit command")
+		return "", err
 	}
-	// TODO: Add some ability to toggle syslog
-	exitCommandArgs, err := generate.CreateExitCommandArgs(storageConfig, runtimeConfig, false, true, true)
-	if err != nil {
-		return "", errors.Wrapf(err, "error constructing exit command for exec session")
-	}
-	execConfig.ExitCommand = exitCommandArgs
 
 	// Create and start the exec session
 	id, err := ctr.ExecCreate(execConfig)
@@ -695,7 +720,9 @@ func (ic *ContainerEngine) ContainerStart(ctx context.Context, namesOrIds []stri
 	reports := []*entities.ContainerStartReport{}
 	var exitCode = define.ExecErrorCodeGeneric
 	containersNamesOrIds := namesOrIds
+	all := options.All
 	if len(options.Filters) > 0 {
+		all = false
 		filterFuncs := make([]libpod.ContainerFilter, 0, len(options.Filters))
 		if len(options.Filters) > 0 {
 			for k, v := range options.Filters {
@@ -712,6 +739,10 @@ func (ic *ContainerEngine) ContainerStart(ctx context.Context, namesOrIds []stri
 		}
 		containersNamesOrIds = []string{}
 		for _, candidate := range candidates {
+			if options.All {
+				containersNamesOrIds = append(containersNamesOrIds, candidate.ID())
+				continue
+			}
 			for _, nameOrID := range namesOrIds {
 				if nameOrID == candidate.ID() || nameOrID == candidate.Name() {
 					containersNamesOrIds = append(containersNamesOrIds, nameOrID)
@@ -719,8 +750,7 @@ func (ic *ContainerEngine) ContainerStart(ctx context.Context, namesOrIds []stri
 			}
 		}
 	}
-
-	ctrs, rawInputs, err := getContainersAndInputByContext(options.All, options.Latest, containersNamesOrIds, ic.Libpod)
+	ctrs, rawInputs, err := getContainersAndInputByContext(all, options.Latest, containersNamesOrIds, ic.Libpod)
 	if err != nil {
 		return nil, err
 	}
@@ -779,6 +809,11 @@ func (ic *ContainerEngine) ContainerStart(ctx context.Context, namesOrIds []stri
 					Err:      err,
 					ExitCode: exitCode,
 				})
+				if ctr.AutoRemove() {
+					if err := ic.removeContainer(ctx, ctr, entities.RmOptions{}); err != nil {
+						logrus.Errorf("Error removing container %s: %v", ctr.ID(), err)
+					}
+				}
 				return reports, errors.Wrapf(err, "unable to start container %s", ctr.ID())
 			}
 
@@ -815,9 +850,6 @@ func (ic *ContainerEngine) ContainerStart(ctx context.Context, namesOrIds []stri
 				ExitCode: 125,
 			}
 			if err := ctr.Start(ctx, true); err != nil {
-				// if lastError != nil {
-				//	fmt.Fprintln(os.Stderr, lastError)
-				// }
 				report.Err = err
 				if errors.Cause(err) == define.ErrWillDeadlock {
 					report.Err = errors.Wrapf(err, "please run 'podman system renumber' to resolve deadlocks")
@@ -826,6 +858,11 @@ func (ic *ContainerEngine) ContainerStart(ctx context.Context, namesOrIds []stri
 				}
 				report.Err = errors.Wrapf(err, "unable to start container %q", ctr.ID())
 				reports = append(reports, report)
+				if ctr.AutoRemove() {
+					if err := ic.removeContainer(ctx, ctr, entities.RmOptions{}); err != nil {
+						logrus.Errorf("Error removing container %s: %v", ctr.ID(), err)
+					}
+				}
 				continue
 			}
 			report.ExitCode = 0
@@ -842,16 +879,30 @@ func (ic *ContainerEngine) ContainerList(ctx context.Context, options entities.C
 	return ps.GetContainerLists(ic.Libpod, options)
 }
 
-// ContainerDiff provides changes to given container
-func (ic *ContainerEngine) ContainerDiff(ctx context.Context, nameOrID string, opts entities.DiffOptions) (*entities.DiffReport, error) {
+func (ic *ContainerEngine) ContainerListExternal(ctx context.Context) ([]entities.ListContainer, error) {
+	return ps.GetExternalContainerLists(ic.Libpod)
+}
+
+// Diff provides changes to given container
+func (ic *ContainerEngine) Diff(ctx context.Context, namesOrIDs []string, opts entities.DiffOptions) (*entities.DiffReport, error) {
+	var (
+		base   string
+		parent string
+	)
 	if opts.Latest {
 		ctnr, err := ic.Libpod.GetLatestContainer()
 		if err != nil {
 			return nil, errors.Wrap(err, "unable to get latest container")
 		}
-		nameOrID = ctnr.ID()
+		base = ctnr.ID()
 	}
-	changes, err := ic.Libpod.GetDiff("", nameOrID)
+	if len(namesOrIDs) > 0 {
+		base = namesOrIDs[0]
+		if len(namesOrIDs) > 1 {
+			parent = namesOrIDs[1]
+		}
+	}
+	changes, err := ic.Libpod.GetDiff(parent, base, opts.Type)
 	return &entities.DiffReport{Changes: changes}, err
 }
 
@@ -961,6 +1012,7 @@ func (ic *ContainerEngine) ContainerLogs(ctx context.Context, containers []strin
 		Details:    options.Details,
 		Follow:     options.Follow,
 		Since:      options.Since,
+		Until:      options.Until,
 		Tail:       options.Tail,
 		Timestamps: options.Timestamps,
 		UseName:    options.Names,

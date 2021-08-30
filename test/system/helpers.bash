@@ -7,14 +7,15 @@ PODMAN=${PODMAN:-podman}
 PODMAN_TEST_IMAGE_REGISTRY=${PODMAN_TEST_IMAGE_REGISTRY:-"quay.io"}
 PODMAN_TEST_IMAGE_USER=${PODMAN_TEST_IMAGE_USER:-"libpod"}
 PODMAN_TEST_IMAGE_NAME=${PODMAN_TEST_IMAGE_NAME:-"testimage"}
-PODMAN_TEST_IMAGE_TAG=${PODMAN_TEST_IMAGE_TAG:-"20210427"}
+PODMAN_TEST_IMAGE_TAG=${PODMAN_TEST_IMAGE_TAG:-"20210610"}
 PODMAN_TEST_IMAGE_FQN="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/$PODMAN_TEST_IMAGE_NAME:$PODMAN_TEST_IMAGE_TAG"
 PODMAN_TEST_IMAGE_ID=
 
 # Remote image that we *DO NOT* fetch or keep by default; used for testing pull
-# This changed from 0 to 1 on 2021-02-24 due to multiarch considerations; it
-# should change only very rarely.
-PODMAN_NONLOCAL_IMAGE_FQN="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/$PODMAN_TEST_IMAGE_NAME:00000002"
+# This has changed in 2021, from 0 through 3, various iterations of getting
+# multiarch to work. It should change only very rarely.
+PODMAN_NONLOCAL_IMAGE_TAG=${PODMAN_NONLOCAL_IMAGE_TAG:-"00000003"}
+PODMAN_NONLOCAL_IMAGE_FQN="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/$PODMAN_TEST_IMAGE_NAME:$PODMAN_NONLOCAL_IMAGE_TAG"
 
 # Because who wants to spell that out each time?
 IMAGE=$PODMAN_TEST_IMAGE_FQN
@@ -275,6 +276,24 @@ function wait_for_output {
 # Shortcut for the lazy
 function wait_for_ready {
     wait_for_output 'READY' "$@"
+}
+
+###################
+#  wait_for_port  #  Returns once port is available on host
+###################
+function wait_for_port() {
+    local host=$1                      # Probably "localhost"
+    local port=$2                      # Numeric port
+    local _timeout=${3:-5}              # Optional; default to 5 seconds
+
+    # Wait
+    while [ $_timeout -gt 0 ]; do
+        { exec 5<> /dev/tcp/$host/$port; } &>/dev/null && return
+        sleep 1
+        _timeout=$(( $_timeout - 1 ))
+    done
+
+    die "Timed out waiting for $host:$port"
 }
 
 # END   podman helpers

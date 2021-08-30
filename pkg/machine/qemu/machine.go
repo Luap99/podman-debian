@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/containers/podman/v3/pkg/machine"
+	"github.com/containers/podman/v3/pkg/rootless"
 	"github.com/containers/podman/v3/utils"
 	"github.com/containers/storage/pkg/homedir"
 	"github.com/digitalocean/go-qemu/qmp"
@@ -84,9 +85,10 @@ func NewMachine(opts machine.InitOptions) (machine.VM, error) {
 	cmd = append(cmd, []string{"-qmp", monitor.Network + ":/" + monitor.Address + ",server=on,wait=off"}...)
 
 	// Add network
-	cmd = append(cmd, "-nic", "user,model=virtio,hostfwd=tcp::"+strconv.Itoa(vm.Port)+"-:22")
-
-	socketPath, err := getSocketDir()
+	// Right now the mac address is hardcoded so that the host networking gives it a specific IP address.  This is
+	// why we can only run one vm at a time right now
+	cmd = append(cmd, []string{"-netdev", "socket,id=vlan,fd=3", "-device", "virtio-net-pci,netdev=vlan,mac=5a:94:ef:e4:0c:ee"}...)
+	socketPath, err := getRuntimeDir()
 	if err != nil {
 		return nil, err
 	}
@@ -237,12 +239,48 @@ func (v *MachineVM) Init(opts machine.InitOptions) error {
 // Start executes the qemu command line and forks it
 func (v *MachineVM) Start(name string, _ machine.StartOptions) error {
 	var (
-		conn net.Conn
-		err  error
-		wait time.Duration = time.Millisecond * 500
+		conn           net.Conn
+		err            error
+		qemuSocketConn net.Conn
+		wait           time.Duration = time.Millisecond * 500
 	)
+	if err := v.startHostNetworking(); err != nil {
+		return errors.Errorf("unable to start host networking: %q", err)
+	}
+
+	rtPath, err := getRuntimeDir()
+	if err != nil {
+		return err
+	}
+
+	// If the temporary podman dir is not created, create it
+	podmanTempDir := filepath.Join(rtPath, "podman")
+	if _, err := os.Stat(podmanTempDir); os.IsNotExist(err) {
+		if mkdirErr := os.MkdirAll(podmanTempDir, 0755); mkdirErr != nil {
+			return err
+		}
+	}
+	qemuSocketPath, _, err := v.getSocketandPid()
+	if err != nil {
+		return err
+	}
+
+	for i := 0; i < 6; i++ {
+		qemuSocketConn, err = net.Dial("unix", qemuSocketPath)
+		if err == nil {
+			break
+		}
+		time.Sleep(wait)
+		wait++
+	}
+
+	fd, err := qemuSocketConn.(*net.UnixConn).File()
+	if err != nil {
+		return err
+	}
+
 	attr := new(os.ProcAttr)
-	files := []*os.File{os.Stdin, os.Stdout, os.Stderr}
+	files := []*os.File{os.Stdin, os.Stdout, os.Stderr, fd}
 	attr.Files = files
 	logrus.Debug(v.CmdLine)
 	cmd := v.CmdLine
@@ -258,7 +296,7 @@ func (v *MachineVM) Start(name string, _ machine.StartOptions) error {
 		return err
 	}
 	fmt.Println("Waiting for VM ...")
-	socketPath, err := getSocketDir()
+	socketPath, err := getRuntimeDir()
 	if err != nil {
 		return err
 	}
@@ -311,15 +349,41 @@ func (v *MachineVM) Stop(name string, _ machine.StopOptions) error {
 			logrus.Error(err)
 		}
 	}()
-	_, err = qmpMonitor.Run(input)
-	return err
+	if _, err = qmpMonitor.Run(input); err != nil {
+		return err
+	}
+	_, pidFile, err := v.getSocketandPid()
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(pidFile); os.IsNotExist(err) {
+		logrus.Infof("pid file %s does not exist", pidFile)
+		return nil
+	}
+	pidString, err := ioutil.ReadFile(pidFile)
+	if err != nil {
+		return err
+	}
+	pidNum, err := strconv.Atoi(string(pidString))
+	if err != nil {
+		return err
+	}
+
+	p, err := os.FindProcess(pidNum)
+	if p == nil && err != nil {
+		return err
+	}
+	return p.Kill()
 }
 
 // NewQMPMonitor creates the monitor subsection of our vm
 func NewQMPMonitor(network, name string, timeout time.Duration) (Monitor, error) {
-	rtDir, err := getSocketDir()
+	rtDir, err := getRuntimeDir()
 	if err != nil {
 		return Monitor{}, err
+	}
+	if !rootless.IsRootless() {
+		rtDir = "/run"
 	}
 	rtDir = filepath.Join(rtDir, "podman")
 	if _, err := os.Stat(filepath.Join(rtDir)); os.IsNotExist(err) {
@@ -410,7 +474,7 @@ func (v *MachineVM) SSH(name string, opts machine.SSHOptions) error {
 	sshDestination := v.RemoteUsername + "@localhost"
 	port := strconv.Itoa(v.Port)
 
-	args := []string{"-i", v.IdentityPath, "-p", port, sshDestination}
+	args := []string{"-i", v.IdentityPath, "-p", port, sshDestination, "-o", "UserKnownHostsFile /dev/null", "-o", "StrictHostKeyChecking no"}
 	if len(opts.Args) > 0 {
 		args = append(args, opts.Args...)
 	} else {
@@ -418,6 +482,8 @@ func (v *MachineVM) SSH(name string, opts machine.SSHOptions) error {
 	}
 
 	cmd := exec.Command("ssh", args...)
+	logrus.Debugf("Executing: ssh %v\n", args)
+
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -534,4 +600,55 @@ func CheckActiveVM() (bool, string, error) {
 		}
 	}
 	return false, "", nil
+}
+
+// startHostNetworking runs a binary on the host system that allows users
+// to setup port forwarding to the podman virtual machine
+func (v *MachineVM) startHostNetworking() error {
+	// MacOS does not have /usr/libexec so we look in the executable
+	// paths.
+	binary, err := exec.LookPath(machine.ForwarderBinaryName)
+	if errors.Cause(err) == exec.ErrNotFound {
+		// Nothing was found, so now check /usr/libexec, else error out
+		binary = filepath.Join("/usr/libexec/podman/", machine.ForwarderBinaryName)
+		if _, err := os.Stat(binary); err != nil {
+			return err
+		}
+	}
+
+	// Listen on all at port 7777 for setting up and tearing
+	// down forwarding
+	listenSocket := "tcp://0.0.0.0:7777"
+	qemuSocket, pidFile, err := v.getSocketandPid()
+	if err != nil {
+		return err
+	}
+	attr := new(os.ProcAttr)
+	// Pass on stdin, stdout, stderr
+	files := []*os.File{os.Stdin, os.Stdout, os.Stderr}
+	attr.Files = files
+	cmd := []string{binary}
+	cmd = append(cmd, []string{"-listen", listenSocket, "-listen-qemu", fmt.Sprintf("unix://%s", qemuSocket), "-pid-file", pidFile}...)
+	// Add the ssh port
+	cmd = append(cmd, []string{"-ssh-port", fmt.Sprintf("%d", v.Port)}...)
+	if logrus.GetLevel() == logrus.DebugLevel {
+		cmd = append(cmd, "--debug")
+		fmt.Println(cmd)
+	}
+	_, err = os.StartProcess(cmd[0], cmd, attr)
+	return err
+}
+
+func (v *MachineVM) getSocketandPid() (string, string, error) {
+	rtPath, err := getRuntimeDir()
+	if err != nil {
+		return "", "", err
+	}
+	if !rootless.IsRootless() {
+		rtPath = "/run"
+	}
+	socketDir := filepath.Join(rtPath, "podman")
+	pidFile := filepath.Join(socketDir, fmt.Sprintf("%s.pid", v.Name))
+	qemuSocket := filepath.Join(socketDir, fmt.Sprintf("qemu_%s.sock", v.Name))
+	return qemuSocket, pidFile, nil
 }

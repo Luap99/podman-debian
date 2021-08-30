@@ -47,7 +47,7 @@ func (ir *ImageEngine) ManifestCreate(ctx context.Context, names []string, image
 
 // ManifestExists checks if a manifest list with the given name exists in local storage
 func (ir *ImageEngine) ManifestExists(ctx context.Context, name string) (*entities.BoolReport, error) {
-	image, _, err := ir.Libpod.LibimageRuntime().LookupImage(name, &libimage.LookupImageOptions{IgnorePlatform: true})
+	_, err := ir.Libpod.LibimageRuntime().LookupManifestList(name)
 	if err != nil {
 		if errors.Cause(err) == storage.ErrImageUnknown {
 			return &entities.BoolReport{Value: false}, nil
@@ -55,11 +55,7 @@ func (ir *ImageEngine) ManifestExists(ctx context.Context, name string) (*entiti
 		return nil, err
 	}
 
-	isManifestList, err := image.IsManifestList(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &entities.BoolReport{Value: isManifestList}, nil
+	return &entities.BoolReport{Value: true}, nil
 }
 
 // ManifestInspect returns the content of a manifest list or image
@@ -308,6 +304,11 @@ func (ir *ImageEngine) ManifestRemove(ctx context.Context, names []string) (stri
 	return manifestList.ID(), nil
 }
 
+// ManifestRm removes the specified manifest list from storage
+func (ir *ImageEngine) ManifestRm(ctx context.Context, names []string) (report *entities.ImageRemoveReport, rmErrors []error) {
+	return ir.Remove(ctx, names, entities.ImageRemoveOptions{})
+}
+
 // ManifestPush pushes a manifest list or image index to the destination
 func (ir *ImageEngine) ManifestPush(ctx context.Context, name, destination string, opts entities.ImagePushOptions) (string, error) {
 	manifestList, err := ir.Libpod.LibimageRuntime().LookupManifestList(name)
@@ -336,6 +337,7 @@ func (ir *ImageEngine) ManifestPush(ctx context.Context, name, destination strin
 	pushOptions.ManifestMIMEType = manifestType
 	pushOptions.RemoveSignatures = opts.RemoveSignatures
 	pushOptions.SignBy = opts.SignBy
+	pushOptions.InsecureSkipTLSVerify = opts.SkipTLSVerify
 
 	if opts.All {
 		pushOptions.ImageListSelection = cp.CopyAllImages
@@ -350,8 +352,8 @@ func (ir *ImageEngine) ManifestPush(ctx context.Context, name, destination strin
 	}
 
 	if opts.Rm {
-		if _, err := ir.Libpod.GetStore().DeleteImage(manifestList.ID(), true); err != nil {
-			return "", errors.Wrap(err, "error removing manifest after push")
+		if _, rmErrors := ir.Libpod.LibimageRuntime().RemoveImages(ctx, []string{manifestList.ID()}, nil); len(rmErrors) > 0 {
+			return "", errors.Wrap(rmErrors[0], "error removing manifest after push")
 		}
 	}
 

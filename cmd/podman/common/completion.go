@@ -8,11 +8,11 @@ import (
 	"strings"
 
 	"github.com/containers/common/pkg/config"
+	"github.com/containers/image/v5/pkg/sysregistriesv2"
 	"github.com/containers/podman/v3/cmd/podman/registry"
 	"github.com/containers/podman/v3/libpod/define"
 	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/containers/podman/v3/pkg/network"
-	"github.com/containers/podman/v3/pkg/registries"
 	"github.com/containers/podman/v3/pkg/rootless"
 	systemdDefine "github.com/containers/podman/v3/pkg/systemd/define"
 	"github.com/containers/podman/v3/pkg/util"
@@ -46,7 +46,9 @@ func setupContainerEngine(cmd *cobra.Command) (entities.ContainerEngine, error) 
 		return nil, err
 	}
 	if !registry.IsRemote() && rootless.IsRootless() {
-		err := containerEngine.SetupRootless(registry.Context(), cmd)
+		_, noMoveProcess := cmd.Annotations[registry.NoMoveProcess]
+
+		err := containerEngine.SetupRootless(registry.Context(), noMoveProcess)
 		if err != nil {
 			return nil, err
 		}
@@ -236,7 +238,7 @@ func getSecrets(cmd *cobra.Command, toComplete string) ([]string, cobra.ShellCom
 }
 
 func getRegistries() ([]string, cobra.ShellCompDirective) {
-	regs, err := registries.GetRegistries()
+	regs, err := sysregistriesv2.UnqualifiedSearchRegistries(nil)
 	if err != nil {
 		cobra.CompErrorln(err.Error())
 		return nil, cobra.ShellCompDirectiveNoFileComp
@@ -1210,4 +1212,11 @@ func AutocompleteVolumeFilters(cmd *cobra.Command, args []string, toComplete str
 		"dangling=": getBoolCompletion,
 	}
 	return completeKeyValues(toComplete, kv)
+}
+
+// AutocompleteCheckpointCompressType - Autocomplete checkpoint compress type options.
+// -> "gzip", "none", "zstd"
+func AutocompleteCheckpointCompressType(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	types := []string{"gzip", "none", "zstd"}
+	return types, cobra.ShellCompDirectiveNoFileComp
 }

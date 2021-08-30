@@ -12,6 +12,7 @@ import (
 	api "github.com/containers/podman/v3/pkg/api/server"
 	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/containers/podman/v3/pkg/domain/infra"
+	"github.com/containers/podman/v3/pkg/servicereaper"
 	"github.com/containers/podman/v3/pkg/util"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -71,8 +72,10 @@ func restService(opts entities.ServiceOptions, flags *pflag.FlagSet, cfg *entiti
 		return err
 	}
 
+	servicereaper.Start()
+
 	infra.StartWatcher(rt)
-	server, err := api.NewServerWithSettings(rt, opts.Timeout, listener)
+	server, err := api.NewServerWithSettings(rt, listener, api.Options{Timeout: opts.Timeout, CorsHeaders: opts.CorsHeaders})
 	if err != nil {
 		return err
 	}

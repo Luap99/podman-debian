@@ -3,6 +3,9 @@ package images
 import (
 	"context"
 	"fmt"
+	"io"
+	"io/ioutil"
+	"os"
 	"strings"
 
 	"github.com/containers/common/pkg/completion"
@@ -51,13 +54,11 @@ var (
 
 func init() {
 	registry.Commands = append(registry.Commands, registry.CliCommand{
-		Mode:    []entities.EngineMode{entities.ABIMode, entities.TunnelMode},
 		Command: importCommand,
 	})
 	importFlags(importCommand)
 
 	registry.Commands = append(registry.Commands, registry.CliCommand{
-		Mode:    []entities.EngineMode{entities.ABIMode, entities.TunnelMode},
 		Command: imageImportCommand,
 		Parent:  imageCmd,
 	})
@@ -99,6 +100,22 @@ func importCon(cmd *cobra.Command, args []string) error {
 	default:
 		return errors.Errorf("too many arguments. Usage TARBALL [REFERENCE]")
 	}
+
+	if source == "-" {
+		outFile, err := ioutil.TempFile("", "podman")
+		if err != nil {
+			return errors.Errorf("error creating file %v", err)
+		}
+		defer os.Remove(outFile.Name())
+		defer outFile.Close()
+
+		_, err = io.Copy(outFile, os.Stdin)
+		if err != nil {
+			return errors.Errorf("error copying file %v", err)
+		}
+		source = outFile.Name()
+	}
+
 	errFileName := parse.ValidateFileName(source)
 	errURL := parse.ValidURL(source)
 	if errURL == nil {

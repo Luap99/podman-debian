@@ -13,21 +13,21 @@ import (
 var (
 	manifestCreateOpts = entities.ManifestCreateOptions{}
 	createCmd          = &cobra.Command{
-		Use:               "create [options] LIST [IMAGE]",
+		Use:               "create [options] LIST [IMAGE...]",
 		Short:             "Create manifest list or image index",
 		Long:              "Creates manifest lists or image indexes.",
 		RunE:              create,
 		ValidArgsFunction: common.AutocompleteImages,
 		Example: `podman manifest create mylist:v1.11
   podman manifest create mylist:v1.11 arch-specific-image-to-add
+  podman manifest create mylist:v1.11 arch-specific-image-to-add another-arch-specific-image-to-add
   podman manifest create --all mylist:v1.11 transport:tagged-image-to-add`,
-		Args: cobra.RangeArgs(1, 2),
+		Args: cobra.MinimumNArgs(1),
 	}
 )
 
 func init() {
 	registry.Commands = append(registry.Commands, registry.CliCommand{
-		Mode:    []entities.EngineMode{entities.ABIMode, entities.TunnelMode},
 		Command: createCmd,
 		Parent:  manifestCmd,
 	})

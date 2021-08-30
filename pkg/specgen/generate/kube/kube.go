@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"time"
 
 	"github.com/containers/common/libimage"
 	"github.com/containers/common/pkg/parse"
 	"github.com/containers/common/pkg/secrets"
+	"github.com/containers/image/v5/manifest"
 	ann "github.com/containers/podman/v3/pkg/annotations"
 	"github.com/containers/podman/v3/pkg/specgen"
+	"github.com/containers/podman/v3/pkg/specgen/generate"
 	"github.com/containers/podman/v3/pkg/util"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
@@ -128,6 +131,10 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 	}
 
 	setupSecurityContext(s, opts.Container)
+	err := setupLivenessProbe(s, opts.Container, opts.RestartPolicy)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to configure livenessProbe")
+	}
 
 	// Since we prefix the container name with pod name to work-around the uniqueness requirement,
 	// the seccomp profile should reference the actual container name from the YAML
@@ -182,6 +189,19 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 		if imageData.Config.WorkingDir != "" {
 			s.WorkDir = imageData.Config.WorkingDir
 		}
+		if s.User == "" {
+			s.User = imageData.Config.User
+		}
+
+		exposed, err := generate.GenExposedPorts(imageData.Config.ExposedPorts)
+		if err != nil {
+			return nil, err
+		}
+
+		for k, v := range s.Expose {
+			exposed[k] = v
+		}
+		s.Expose = exposed
 		// Pull entrypoint and cmd from image
 		s.Entrypoint = imageData.Config.Entrypoint
 		s.Command = imageData.Config.Cmd
@@ -250,27 +270,27 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 		if !exists {
 			return nil, errors.Errorf("Volume mount %s specified for container but not configured in volumes", volume.Name)
 		}
+
+		dest, options, err := parseMountPath(volume.MountPath, volume.ReadOnly)
+		if err != nil {
+			return nil, err
+		}
+
+		volume.MountPath = dest
 		switch volumeSource.Type {
 		case KubeVolumeTypeBindMount:
-			if err := parse.ValidateVolumeCtrDir(volume.MountPath); err != nil {
-				return nil, errors.Wrapf(err, "error in parsing MountPath")
-			}
 			mount := spec.Mount{
 				Destination: volume.MountPath,
 				Source:      volumeSource.Source,
 				Type:        "bind",
-			}
-			if volume.ReadOnly {
-				mount.Options = []string{"ro"}
+				Options:     options,
 			}
 			s.Mounts = append(s.Mounts, mount)
 		case KubeVolumeTypeNamed:
 			namedVolume := specgen.NamedVolume{
-				Dest: volume.MountPath,
-				Name: volumeSource.Source,
-			}
-			if volume.ReadOnly {
-				namedVolume.Options = []string{"ro"}
+				Dest:    volume.MountPath,
+				Name:    volumeSource.Source,
+				Options: options,
 			}
 			s.Volumes = append(s.Volumes, &namedVolume)
 		default:
@@ -298,6 +318,118 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 	}
 
 	return s, nil
+}
+
+func parseMountPath(mountPath string, readOnly bool) (string, []string, error) {
+	options := []string{}
+	splitVol := strings.Split(mountPath, ":")
+	if len(splitVol) > 2 {
+		return "", options, errors.Errorf("%q incorrect volume format, should be ctr-dir[:option]", mountPath)
+	}
+	dest := splitVol[0]
+	if len(splitVol) > 1 {
+		options = strings.Split(splitVol[1], ",")
+	}
+	if err := parse.ValidateVolumeCtrDir(dest); err != nil {
+		return "", options, errors.Wrapf(err, "parsing MountPath")
+	}
+	if readOnly {
+		options = append(options, "ro")
+	}
+	opts, err := parse.ValidateVolumeOpts(options)
+	if err != nil {
+		return "", opts, errors.Wrapf(err, "parsing MountOptions")
+	}
+	return dest, opts, nil
+}
+
+func setupLivenessProbe(s *specgen.SpecGenerator, containerYAML v1.Container, restartPolicy string) error {
+	var err error
+	if containerYAML.LivenessProbe == nil {
+		return nil
+	}
+	emptyHandler := v1.Handler{}
+	if containerYAML.LivenessProbe.Handler != emptyHandler {
+		var commandString string
+		failureCmd := "exit 1"
+		probe := containerYAML.LivenessProbe
+		probeHandler := probe.Handler
+
+		// append `exit 1` to `cmd` so healthcheck can be marked as `unhealthy`.
+		// append `kill 1` to `cmd` if appropriate restart policy is configured.
+		if restartPolicy == "always" || restartPolicy == "onfailure" {
+			// container will be restarted so we can kill init.
+			failureCmd = "kill 1"
+		}
+
+		// configure healthcheck on the basis of Handler Actions.
+		if probeHandler.Exec != nil {
+			execString := strings.Join(probeHandler.Exec.Command, " ")
+			commandString = fmt.Sprintf("%s || %s", execString, failureCmd)
+		} else if probeHandler.HTTPGet != nil {
+			commandString = fmt.Sprintf("curl %s://%s:%d/%s  || %s", probeHandler.HTTPGet.Scheme, probeHandler.HTTPGet.Host, probeHandler.HTTPGet.Port.IntValue(), probeHandler.HTTPGet.Path, failureCmd)
+		} else if probeHandler.TCPSocket != nil {
+			commandString = fmt.Sprintf("nc -z -v %s %d || %s", probeHandler.TCPSocket.Host, probeHandler.TCPSocket.Port.IntValue(), failureCmd)
+		}
+		s.HealthConfig, err = makeHealthCheck(commandString, probe.PeriodSeconds, probe.FailureThreshold, probe.TimeoutSeconds, probe.InitialDelaySeconds)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+	return nil
+}
+
+func makeHealthCheck(inCmd string, interval int32, retries int32, timeout int32, startPeriod int32) (*manifest.Schema2HealthConfig, error) {
+	// Every healthcheck requires a command
+	if len(inCmd) == 0 {
+		return nil, errors.New("Must define a healthcheck command for all healthchecks")
+	}
+
+	// first try to parse option value as JSON array of strings...
+	cmd := []string{}
+
+	if inCmd == "none" {
+		cmd = []string{"NONE"}
+	} else {
+		err := json.Unmarshal([]byte(inCmd), &cmd)
+		if err != nil {
+			// ...otherwise pass it to "/bin/sh -c" inside the container
+			cmd = []string{"CMD-SHELL"}
+			cmd = append(cmd, strings.Split(inCmd, " ")...)
+		}
+	}
+	hc := manifest.Schema2HealthConfig{
+		Test: cmd,
+	}
+
+	if interval < 1 {
+		//kubernetes interval defaults to 10 sec and cannot be less than 1
+		interval = 10
+	}
+	hc.Interval = (time.Duration(interval) * time.Second)
+	if retries < 1 {
+		//kubernetes retries defaults to 3
+		retries = 3
+	}
+	hc.Retries = int(retries)
+	if timeout < 1 {
+		//kubernetes timeout defaults to 1
+		timeout = 1
+	}
+	timeoutDuration := (time.Duration(timeout) * time.Second)
+	if timeoutDuration < time.Duration(1) {
+		return nil, errors.New("healthcheck-timeout must be at least 1 second")
+	}
+	hc.Timeout = timeoutDuration
+
+	startPeriodDuration := (time.Duration(startPeriod) * time.Second)
+	if startPeriodDuration < time.Duration(0) {
+		return nil, errors.New("healthcheck-start-period must be 0 seconds or greater")
+	}
+	hc.StartPeriod = startPeriodDuration
+
+	return &hc, nil
 }
 
 func setupSecurityContext(s *specgen.SpecGenerator, containerYAML v1.Container) {

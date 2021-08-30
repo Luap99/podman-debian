@@ -25,12 +25,12 @@ export GOPROXY=https://proxy.golang.org
 GO ?= go
 COVERAGE_PATH ?= .coverage
 DESTDIR ?=
-EPOCH_TEST_COMMIT ?= $(shell git merge-base $${DEST_BRANCH:-master} HEAD)
+EPOCH_TEST_COMMIT ?= $(shell git merge-base $${DEST_BRANCH:-main} HEAD)
 HEAD ?= HEAD
 CHANGELOG_BASE ?= HEAD~
 CHANGELOG_TARGET ?= HEAD
 PROJECT := github.com/containers/podman
-GIT_BASE_BRANCH ?= origin/master
+GIT_BASE_BRANCH ?= origin/main
 GIT_BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null)
 GIT_BRANCH_CLEAN ?= $(shell echo $(GIT_BRANCH) | sed -e "s/[^[:alnum:]]/-/g")
 LIBPOD_INSTANCE := libpod_dev
@@ -39,7 +39,7 @@ BINDIR ?= ${PREFIX}/bin
 LIBEXECDIR ?= ${PREFIX}/libexec
 MANDIR ?= ${PREFIX}/share/man
 SHAREDIR_CONTAINERS ?= ${PREFIX}/share/containers
-ETCDIR ?= /etc
+ETCDIR ?= ${PREFIX}/etc
 TMPFILESDIR ?= ${PREFIX}/lib/tmpfiles.d
 SYSTEMDDIR ?= ${PREFIX}/lib/systemd/system
 USERSYSTEMDDIR ?= ${PREFIX}/lib/systemd/user
@@ -214,7 +214,7 @@ endif
 .PHONY: .gitvalidation
 .gitvalidation: .gopathok
 	@echo "Validating vs commit '$(call err_if_empty,EPOCH_TEST_COMMIT)'"
-	GIT_CHECK_EXCLUDE="./vendor:docs/make.bat" $(GOBIN)/git-validation -run DCO,short-subject,dangling-whitespace -range $(EPOCH_TEST_COMMIT)..$(HEAD)
+	GIT_CHECK_EXCLUDE="./vendor:docs/make.bat:test/buildah-bud/buildah-tests.diff" $(GOBIN)/git-validation -run DCO,short-subject,dangling-whitespace -range $(EPOCH_TEST_COMMIT)..$(HEAD)
 
 .PHONY: lint
 lint: golangci-lint
@@ -261,7 +261,7 @@ codespell:
 	codespell -S bin,vendor,.git,go.sum,changelog.txt,.cirrus.yml,"RELEASE_NOTES.md,*.xz,*.gz,*.tar,*.tgz,bin2img,*ico,*.png,*.1,*.5,copyimg,*.orig,apidoc.go" -L uint,iff,od,seeked,splitted,marge,ERRO,hist,ether -w
 
 .PHONY: validate
-validate: gofmt lint .gitvalidation validate.completions man-page-check swagger-check tests-included
+validate: gofmt lint .gitvalidation validate.completions man-page-check swagger-check tests-included tests-expect-exit
 
 .PHONY: build-all-new-commits
 build-all-new-commits:
@@ -392,10 +392,10 @@ cross: local-cross
 .PHONY: nixpkgs
 nixpkgs:
 	@nix run \
-		-f channel:nixos-20.09 nix-prefetch-git \
+		-f channel:nixos-21.05 nix-prefetch-git \
 		-c nix-prefetch-git \
 		--no-deepClone \
-		https://github.com/nixos/nixpkgs refs/heads/nixos-20.09 > nix/nixpkgs.json
+		https://github.com/nixos/nixpkgs refs/heads/nixos-21.05 > nix/nixpkgs.json
 
 # Build statically linked binary
 .PHONY: static
@@ -431,8 +431,16 @@ pkg/api/swagger.yaml: .gopathok
 	make -C pkg/api
 
 $(MANPAGES): %: %.md .install.md2man docdir
-	@sed -e 's/\((podman[^)]*\.md)\)//g' -e 's/\[\(podman[^]]*\)\]/\1/g' \
-		-e 's;<\(/\)\?\(a\|a\s\+[^>]*\|sup\)>;;g' $<  | \
+
+### sed is used to filter http/s links as well as relative links
+### replaces "\" at the end of a line with two spaces
+### this ensures that manpages are renderd correctly
+
+	@sed -e 's/\((podman[^)]*\.md\(#.*\)\?)\)//g' \
+         -e 's/\[\(podman[^]]*\)\]/\1/g' \
+		 -e 's/\[\([^]]*\)](http[^)]\+)/\1/g' \
+         -e 's;<\(/\)\?\(a\|a\s\+[^>]*\|sup\)>;;g' \
+         -e 's/\\$$/  /g' $<  | \
 	$(GOMD2MAN) -in /dev/stdin -out $(subst source/markdown,build/man,$@)
 
 .PHONY: docdir
@@ -579,7 +587,7 @@ remotesystem:
 .PHONY: localapiv2
 localapiv2:
 	env PODMAN=./bin/podman ./test/apiv2/test-apiv2
-	env PODMAN=./bin/podman ${PYTHON} -m unittest discover -v ./test/apiv2/rest_api/
+	env PODMAN=./bin/podman ${PYTHON} -m unittest discover -v ./test/apiv2/python
 	env PODMAN=./bin/podman ${PYTHON} -m unittest discover -v ./test/python/docker
 
 .PHONY: remoteapiv2
@@ -597,6 +605,16 @@ test-binaries: test/checkseccomp/checkseccomp test/goecho/goecho install.cataton
 tests-included:
 	contrib/cirrus/pr-should-include-tests
 
+.PHONY: tests-expect-exit
+tests-expect-exit:
+	@if egrep 'Expect.*ExitCode' test/e2e/*.go | egrep -v ', ".*"\)'; then \
+		echo "^^^ Unhelpful use of Expect(ExitCode())"; \
+		echo "   Please use '.Should(Exit(...))' pattern instead."; \
+		echo "   If that's not possible, please add an annotation (description) to your assertion:"; \
+		echo "        Expect(...).To(..., \"Friendly explanation of this check\")"; \
+		exit 1; \
+	fi
+
 ###
 ### Release/Packaging targets
 ###
@@ -605,7 +623,7 @@ podman-release.tar.gz: binaries docs  ## Build all binaries, docs., and installa
 	$(eval TMPDIR := $(shell mktemp -d podman_tmp_XXXX))
 	$(eval SUBDIR := podman-v$(RELEASE_NUMBER))
 	mkdir -p "$(TMPDIR)/$(SUBDIR)"
-	$(MAKE) install.bin install.man install.cni \
+	$(MAKE) install.bin install.man \
 		install.systemd "DESTDIR=$(TMPDIR)/$(SUBDIR)" "PREFIX=/usr"
 	tar -czvf $@ --xattrs -C "$(TMPDIR)" "./$(SUBDIR)"
 	-rm -rf "$(TMPDIR)"
@@ -658,7 +676,7 @@ package-install: package  ## Install rpm packages
 	/usr/bin/podman info  # will catch a broken conmon
 
 .PHONY: install
-install: .gopathok install.bin install.remote install.man install.cni install.systemd  ## Install binaries to system locations
+install: .gopathok install.bin install.remote install.man install.systemd  ## Install binaries to system locations
 
 .PHONY: install.catatonit
 install.catatonit:
@@ -711,11 +729,6 @@ install.completions:
 	install ${SELINUXOPT} -m 644 completions/fish/podman-remote.fish ${DESTDIR}${FISHINSTALLDIR}
 	# There is no common location for powershell files so do not install them. Users have to source the file from their powershell profile.
 
-.PHONY: install.cni
-install.cni:
-	install ${SELINUXOPT} -d -m 755 ${DESTDIR}${ETCDIR}/cni/net.d/
-	install ${SELINUXOPT} -m 644 cni/87-podman-bridge.conflist ${DESTDIR}${ETCDIR}/cni/net.d/87-podman-bridge.conflist
-
 .PHONY: install.docker
 install.docker:
 	install ${SELINUXOPT} -d -m 755 $(DESTDIR)$(BINDIR)
@@ -743,11 +756,13 @@ install.systemd:
 	install ${SELINUXOPT} -m 644 contrib/systemd/auto-update/podman-auto-update.timer ${DESTDIR}${USERSYSTEMDDIR}/podman-auto-update.timer
 	install ${SELINUXOPT} -m 644 contrib/systemd/user/podman.socket ${DESTDIR}${USERSYSTEMDDIR}/podman.socket
 	install ${SELINUXOPT} -m 644 contrib/systemd/user/podman.service ${DESTDIR}${USERSYSTEMDDIR}/podman.service
+	install ${SELINUXOPT} -m 644 contrib/systemd/user/podman-restart.service ${DESTDIR}${USERSYSTEMDDIR}/podman-restart.service
 	# System services
 	install ${SELINUXOPT} -m 644 contrib/systemd/auto-update/podman-auto-update.service ${DESTDIR}${SYSTEMDDIR}/podman-auto-update.service
 	install ${SELINUXOPT} -m 644 contrib/systemd/auto-update/podman-auto-update.timer ${DESTDIR}${SYSTEMDDIR}/podman-auto-update.timer
 	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman.socket ${DESTDIR}${SYSTEMDDIR}/podman.socket
 	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman.service ${DESTDIR}${SYSTEMDDIR}/podman.service
+	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman-restart.service ${DESTDIR}${SYSTEMDDIR}/podman-restart.service
 else
 install.systemd:
 endif

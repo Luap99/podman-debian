@@ -145,9 +145,9 @@ function _run_swagger() {
     elif [[ -n "$CIRRUS_TAG" ]]; then
         upload_bucket="libpod-master-releases"
         upload_filename="swagger-$CIRRUS_TAG.yaml"
-    elif [[ "$CIRRUS_BRANCH" == "master" ]]; then
+    elif [[ "$CIRRUS_BRANCH" == "main" ]]; then
         upload_bucket="libpod-master-releases"
-        # readthedocs versioning uses "latest" for "master" (default) branch
+        # readthedocs versioning uses "latest" for "main" (default) branch
         upload_filename="swagger-latest.yaml"
     elif [[ -n "$CIRRUS_BRANCH" ]]; then
         upload_bucket="libpod-master-releases"
@@ -196,6 +196,8 @@ function _run_consistency() {
     SUGGESTION="run 'make vendor' and commit all changes" ./hack/tree_status.sh
     make generate-bindings
     SUGGESTION="run 'make generate-bindings' and commit all changes" ./hack/tree_status.sh
+    make completions
+    SUGGESTION="run 'make completions' and commit all changes" ./hack/tree_status.sh
 }
 
 function _run_build() {

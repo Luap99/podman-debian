@@ -8,7 +8,6 @@ import (
 
 	commonComp "github.com/containers/common/pkg/completion"
 	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/spf13/cobra"
 )
 
@@ -39,7 +38,6 @@ var (
 
 func init() {
 	registry.Commands = append(registry.Commands, registry.CliCommand{
-		Mode:    []entities.EngineMode{entities.ABIMode, entities.TunnelMode},
 		Command: completionCmd,
 	})
 	flags := completionCmd.Flags()
@@ -67,7 +65,7 @@ func completion(cmd *cobra.Command, args []string) error {
 	var err error
 	switch args[0] {
 	case "bash":
-		err = cmd.Root().GenBashCompletion(w)
+		err = cmd.Root().GenBashCompletionV2(w, !noDesc)
 	case "zsh":
 		if noDesc {
 			err = cmd.Root().GenZshCompletionNoDesc(w)

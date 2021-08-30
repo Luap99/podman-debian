@@ -42,7 +42,6 @@ var (
 
 func init() {
 	registry.Commands = append(registry.Commands, registry.CliCommand{
-		Mode:    []entities.EngineMode{entities.ABIMode, entities.TunnelMode},
 		Command: psCmd,
 		Parent:  podCmd,
 	})
@@ -125,6 +124,11 @@ func pods(cmd *cobra.Command, _ []string) error {
 		"NumberOfContainers": "# OF CONTAINERS",
 		"Created":            "CREATED",
 		"InfraID":            "INFRA ID",
+		"ContainerIds":       "IDS",
+		"ContainerNames":     "NAMES",
+		"ContainerStatuses":  "STATUS",
+		"Cgroup":             "CGROUP",
+		"Namespace":          "NAMESPACES",
 	})
 	renderHeaders := true
 	row := podPsFormat()

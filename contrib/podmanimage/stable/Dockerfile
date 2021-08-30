@@ -11,7 +11,7 @@ FROM registry.fedoraproject.org/fedora:latest
 # Don't include container-selinux and remove
 # directories used by yum that are just taking
 # up space.
-RUN dnf -y update; yum -y reinstall shadow-utils; \
+RUN dnf -y update; rpm --restore shadow-utils 2>/dev/null; \
 yum -y install podman fuse-overlayfs --exclude container-selinux; \
 rm -rf /var/cache /var/log/dnf* /var/log/yum.*
 
@@ -21,6 +21,7 @@ echo podman:10000:5000 > /etc/subgid;
 
 VOLUME /var/lib/containers
 VOLUME /home/podman/.local/share/containers
+RUN mkdir -p /home/podman/.local/share/containers
 
 ADD https://raw.githubusercontent.com/containers/libpod/master/contrib/podmanimage/stable/containers.conf /etc/containers/containers.conf
 ADD https://raw.githubusercontent.com/containers/libpod/master/contrib/podmanimage/stable/podman-containers.conf /home/podman/.config/containers/containers.conf

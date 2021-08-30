@@ -36,13 +36,10 @@ var (
 	}
 )
 
-var (
-	restoreOptions entities.RestoreOptions
-)
+var restoreOptions entities.RestoreOptions
 
 func init() {
 	registry.Commands = append(registry.Commands, registry.CliCommand{
-		Mode:    []entities.EngineMode{entities.ABIMode, entities.TunnelMode},
 		Command: restoreCommand,
 		Parent:  containerCmd,
 	})
@@ -67,10 +64,20 @@ func init() {
 	flags.BoolVar(&restoreOptions.IgnoreStaticIP, "ignore-static-ip", false, "Ignore IP address set via --static-ip")
 	flags.BoolVar(&restoreOptions.IgnoreStaticMAC, "ignore-static-mac", false, "Ignore MAC address set via --mac-address")
 	flags.BoolVar(&restoreOptions.IgnoreVolumes, "ignore-volumes", false, "Do not export volumes associated with container")
+
+	flags.StringSliceP(
+		"publish", "p", []string{},
+		"Publish a container's port, or a range of ports, to the host (default [])",
+	)
+	_ = restoreCommand.RegisterFlagCompletionFunc("publish", completion.AutocompleteNone)
+
+	flags.StringVar(&restoreOptions.Pod, "pod", "", "Restore container into existing Pod (only works with --import)")
+	_ = restoreCommand.RegisterFlagCompletionFunc("pod", common.AutocompletePodsRunning)
+
 	validate.AddLatestFlag(restoreCommand, &restoreOptions.Latest)
 }
 
-func restore(_ *cobra.Command, args []string) error {
+func restore(cmd *cobra.Command, args []string) error {
 	var errs utils.OutputErrors
 	if rootless.IsRootless() {
 		return errors.New("restoring a container requires root")
@@ -87,8 +94,22 @@ func restore(_ *cobra.Command, args []string) error {
 	if restoreOptions.Import == "" && restoreOptions.Name != "" {
 		return errors.Errorf("--name can only be used with --import")
 	}
+	if restoreOptions.Import == "" && restoreOptions.Pod != "" {
+		return errors.Errorf("--pod can only be used with --import")
+	}
 	if restoreOptions.Name != "" && restoreOptions.TCPEstablished {
 		return errors.Errorf("--tcp-established cannot be used with --name")
+	}
+
+	inputPorts, err := cmd.Flags().GetStringSlice("publish")
+	if err != nil {
+		return err
+	}
+	if len(inputPorts) > 0 {
+		restoreOptions.PublishPorts, err = common.CreatePortBindings(inputPorts)
+		if err != nil {
+			return err
+		}
 	}
 
 	argLen := len(args)

@@ -82,14 +82,11 @@ func useLayers() string {
 
 func init() {
 	registry.Commands = append(registry.Commands, registry.CliCommand{
-		Mode: []entities.EngineMode{entities.ABIMode, entities.TunnelMode},
-
 		Command: buildCmd,
 	})
 	buildFlags(buildCmd)
 
 	registry.Commands = append(registry.Commands, registry.CliCommand{
-		Mode:    []entities.EngineMode{entities.ABIMode, entities.TunnelMode},
 		Command: imageBuildCmd,
 		Parent:  imageCmd,
 	})
@@ -506,6 +503,7 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 		ReportWriter:            reporter,
 		Runtime:                 containerConfig.RuntimePath,
 		RuntimeArgs:             runtimeFlags,
+		RusageLogFile:           flags.RusageLogFile,
 		SignBy:                  flags.SignBy,
 		SignaturePolicyPath:     flags.SignaturePolicy,
 		Squash:                  flags.Squash,

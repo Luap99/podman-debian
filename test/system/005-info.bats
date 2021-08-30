@@ -33,16 +33,21 @@ cgroupVersion: v[12]
     expr_nvr="[a-z0-9-]\\\+-[a-z0-9.]\\\+-[a-z0-9]\\\+\."
     expr_path="/[a-z0-9\\\/.-]\\\+\\\$"
 
+    # FIXME: if we're ever able to get package versions on Debian,
+    #        add '-[0-9]' to all '*.package' queries below.
     tests="
 host.buildahVersion       | [0-9.]
 host.conmon.path          | $expr_path
+host.conmon.package       | .*conmon.*
 host.cgroupManager        | \\\(systemd\\\|cgroupfs\\\)
 host.cgroupVersion        | v[12]
 host.ociRuntime.path      | $expr_path
+host.ociRuntime.package   | .*\\\(crun\\\|runc\\\).*
 store.configFile          | $expr_path
 store.graphDriverName     | [a-z0-9]\\\+\\\$
 store.graphRoot           | $expr_path
 store.imageStore.number   | 1
+host.slirp4netns.executable | $expr_path
 "
 
     parse_table "$tests" | while read field expect; do
@@ -82,4 +87,12 @@ store.imageStore.number   | 1
     # mounts.
     is "$output" ".*graphOptions: {}" "output includes graphOptions: {}"
 }
+
+@test "podman --root PATH info - basic output" {
+    if ! is_remote; then
+        run_podman --storage-driver=vfs --root ${PODMAN_TMPDIR}/nothing-here-move-along info --format '{{ .Store.GraphOptions }}'
+        is "$output" "map\[\]" "'podman --root should reset Graphoptions to []"
+    fi
+}
+
 # vim: filetype=sh

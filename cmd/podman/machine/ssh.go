@@ -4,7 +4,6 @@ package machine
 
 import (
 	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/containers/podman/v3/pkg/machine"
 	"github.com/containers/podman/v3/pkg/machine/qemu"
 	"github.com/pkg/errors"
@@ -20,6 +19,7 @@ var (
 		Example: `podman machine ssh myvm
   podman machine ssh myvm echo hello`,
 		ValidArgsFunction: autocompleteMachineSSH,
+		PreRunE:           noAarch64,
 	}
 )
 
@@ -30,7 +30,6 @@ var (
 func init() {
 	sshCmd.Flags().SetInterspersed(false)
 	registry.Commands = append(registry.Commands, registry.CliCommand{
-		Mode:    []entities.EngineMode{entities.ABIMode, entities.TunnelMode},
 		Command: sshCmd,
 		Parent:  machineCmd,
 	})

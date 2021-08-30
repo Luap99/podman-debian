@@ -28,15 +28,28 @@ func (s *APIServer) registerImagesHandlers(r *mux.Router) error {
 	//  - in: query
 	//    name: fromImage
 	//    type: string
-	//    description: needs description
+	//    description: Name of the image to pull. The name may include a tag or digest. This parameter may only be used when pulling an image. The pull is cancelled if the HTTP connection is closed.
 	//  - in: query
 	//    name: fromSrc
 	//    type: string
-	//    description: needs description
+	//    description: Source to import. The value may be a URL from which the image can be retrieved or - to read the image from the request body. This parameter may only be used when importing an image
+	//  - in: query
+	//    name: repo
+	//    type: string
+	//    description: Repository name given to an image when it is imported. The repo may include a tag. This parameter may only be used when importing an image.
 	//  - in: query
 	//    name: tag
 	//    type: string
-	//    description: needs description
+	//    description: Tag or digest. If empty when pulling an image, this causes all tags for the given image to be pulled.
+	//  - in: query
+	//    name: message
+	//    type: string
+	//    description: Set commit message for imported image.
+	//  - in: query
+	//    name: platform
+	//    type: string
+	//    description: Platform in the format os[/arch[/variant]]
+	//    default: ""
 	//  - in: header
 	//    name: X-Registry-Auth
 	//    type: string
@@ -45,6 +58,7 @@ func (s *APIServer) registerImagesHandlers(r *mux.Router) error {
 	//    name: request
 	//    schema:
 	//      type: string
+	//      format: binary
 	//    description: Image content if fromSrc parameter was used
 	// responses:
 	//   200:
@@ -747,7 +761,7 @@ func (s *APIServer) registerImagesHandlers(r *mux.Router) error {
 	// - application/json
 	// responses:
 	//   200:
-	//     $ref: '#/responses/LibpodImageTreeResponse'
+	//     $ref: "#/responses/TreeResponse"
 	//   404:
 	//     $ref: '#/responses/NoSuchImage'
 	//   500:
@@ -948,10 +962,6 @@ func (s *APIServer) registerImagesHandlers(r *mux.Router) error {
 	//     description: "Mandatory reference to the image (e.g., quay.io/image/name:tag)"
 	//     type: string
 	//   - in: query
-	//     name: credentials
-	//     description: "username:password for the registry"
-	//     type: string
-	//   - in: query
 	//     name: Arch
 	//     description: Pull image for the specified architecture.
 	//     type: string
@@ -976,6 +986,10 @@ func (s *APIServer) registerImagesHandlers(r *mux.Router) error {
 	//     name: allTags
 	//     description: Pull all tagged images in the repository.
 	//     type: boolean
+	//   - in: header
+	//     name: X-Registry-Auth
+	//     description: "base-64 encoded auth config. Must include the following four values: username, password, email and server address OR simply just an identity token."
+	//     type: string
 	// produces:
 	// - application/json
 	// responses:
@@ -1272,7 +1286,16 @@ func (s *APIServer) registerImagesHandlers(r *mux.Router) error {
 	//    name: name
 	//    type: string
 	//    required: true
-	//    description: the name or id of the container
+	//    description: the name or id of the image
+	//  - in: query
+	//    name: parent
+	//    type: string
+	//    description: specify a second layer which is used to compare against it instead of the parent layer
+	//  - in: query
+	//    name: diffType
+	//    type: string
+	//    enum: [all, container, image]
+	//    description: select what you want to match, default is all
 	// responses:
 	//   200:
 	//     description: Array of Changes

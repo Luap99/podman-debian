@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/containers/common/pkg/config"
 	"github.com/containers/podman/v3/cmd/podman/registry"
 	"github.com/containers/podman/v3/pkg/api/handlers"
 	"github.com/containers/podman/v3/pkg/cgroups"
@@ -140,7 +141,7 @@ func stringMaptoArray(m map[string]string) []string {
 
 // ContainerCreateToContainerCLIOpts converts a compat input struct to cliopts so it can be converted to
 // a specgen spec.
-func ContainerCreateToContainerCLIOpts(cc handlers.CreateContainerConfig, cgroupsManager string) (*ContainerCLIOpts, []string, error) {
+func ContainerCreateToContainerCLIOpts(cc handlers.CreateContainerConfig, rtc *config.Config) (*ContainerCLIOpts, []string, error) {
 	var (
 		capAdd     []string
 		cappDrop   []string
@@ -248,7 +249,7 @@ func ContainerCreateToContainerCLIOpts(cc handlers.CreateContainerConfig, cgroup
 	}
 
 	// netMode
-	nsmode, _, err := specgen.ParseNetworkNamespace(string(cc.HostConfig.NetworkMode))
+	nsmode, networks, err := specgen.ParseNetworkNamespace(string(cc.HostConfig.NetworkMode), true)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -321,7 +322,7 @@ func ContainerCreateToContainerCLIOpts(cc handlers.CreateContainerConfig, cgroup
 		netInfo.Aliases = aliases
 		netInfo.CNINetworks = cniNetworks
 	case len(cc.HostConfig.NetworkMode) > 0:
-		netInfo.CNINetworks = []string{string(cc.HostConfig.NetworkMode)}
+		netInfo.CNINetworks = networks
 	}
 
 	parsedTmp := make([]string, 0, len(cc.HostConfig.Tmpfs))
@@ -507,7 +508,7 @@ func ContainerCreateToContainerCLIOpts(cc handlers.CreateContainerConfig, cgroup
 		cliOpts.Restart = policy
 	}
 
-	if cc.HostConfig.MemorySwappiness != nil && (!rootless.IsRootless() || rootless.IsRootless() && cgroupsv2 && cgroupsManager == "systemd") {
+	if cc.HostConfig.MemorySwappiness != nil && (!rootless.IsRootless() || rootless.IsRootless() && cgroupsv2 && rtc.Engine.CgroupManager == "systemd") {
 		cliOpts.MemorySwappiness = *cc.HostConfig.MemorySwappiness
 	} else {
 		cliOpts.MemorySwappiness = -1
@@ -516,7 +517,14 @@ func ContainerCreateToContainerCLIOpts(cc handlers.CreateContainerConfig, cgroup
 		cliOpts.OOMKillDisable = *cc.HostConfig.OomKillDisable
 	}
 	if cc.Config.Healthcheck != nil {
-		cliOpts.HealthCmd = strings.Join(cc.Config.Healthcheck.Test, " ")
+		finCmd := ""
+		for _, str := range cc.Config.Healthcheck.Test {
+			finCmd = finCmd + str + " "
+		}
+		if len(finCmd) > 1 {
+			finCmd = finCmd[:len(finCmd)-1]
+		}
+		cliOpts.HealthCmd = finCmd
 		cliOpts.HealthInterval = cc.Config.Healthcheck.Interval.String()
 		cliOpts.HealthRetries = uint(cc.Config.Healthcheck.Retries)
 		cliOpts.HealthStartPeriod = cc.Config.Healthcheck.StartPeriod.String()

@@ -5,7 +5,6 @@ package machine
 import (
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/containers/podman/v3/pkg/machine"
 	"github.com/containers/podman/v3/pkg/machine/qemu"
 	"github.com/pkg/errors"
@@ -21,17 +20,17 @@ var (
 		Args:              cobra.MaximumNArgs(1),
 		Example:           `podman machine init myvm`,
 		ValidArgsFunction: completion.AutocompleteNone,
+		PreRunE:           noAarch64,
 	}
 )
 
 var (
-	initOpts                  = machine.InitOptions{}
-	defaultMachineName string = "podman-machine-default"
+	initOpts           = machine.InitOptions{}
+	defaultMachineName = "podman-machine-default"
 )
 
 func init() {
 	registry.Commands = append(registry.Commands, registry.CliCommand{
-		Mode:    []entities.EngineMode{entities.ABIMode, entities.TunnelMode},
 		Command: initCmd,
 		Parent:  machineCmd,
 	})

@@ -77,6 +77,11 @@ func runFlags(cmd *cobra.Command) {
 	flags.StringVar(&runOpts.DetachKeys, detachKeysFlagName, containerConfig.DetachKeys(), "Override the key sequence for detaching a container. Format is a single character `[a-Z]` or a comma separated sequence of `ctrl-<value>`, where `<value>` is one of: `a-cf`, `@`, `^`, `[`, `\\`, `]`, `^` or `_`")
 	_ = cmd.RegisterFlagCompletionFunc(detachKeysFlagName, common.AutocompleteDetachKeys)
 
+	gpuFlagName := "gpus"
+	flags.String(gpuFlagName, "", "This is a Docker specific option and is a NOOP")
+	_ = cmd.RegisterFlagCompletionFunc(gpuFlagName, completion.AutocompleteNone)
+	_ = flags.MarkHidden("gpus")
+
 	if registry.IsRemote() {
 		_ = flags.MarkHidden("preserve-fds")
 		_ = flags.MarkHidden("conmon-pidfile")
@@ -86,14 +91,12 @@ func runFlags(cmd *cobra.Command) {
 
 func init() {
 	registry.Commands = append(registry.Commands, registry.CliCommand{
-		Mode:    []entities.EngineMode{entities.ABIMode, entities.TunnelMode},
 		Command: runCommand,
 	})
 
 	runFlags(runCommand)
 
 	registry.Commands = append(registry.Commands, registry.CliCommand{
-		Mode:    []entities.EngineMode{entities.ABIMode, entities.TunnelMode},
 		Command: containerRunCommand,
 		Parent:  containerCmd,
 	})
@@ -103,7 +106,7 @@ func init() {
 
 func run(cmd *cobra.Command, args []string) error {
 	var err error
-	cliVals.Net, err = common.NetFlagsToNetOptions(cmd)
+	cliVals.Net, err = common.NetFlagsToNetOptions(cmd, cliVals.Pod == "")
 	if err != nil {
 		return err
 	}
@@ -203,6 +206,9 @@ func run(cmd *cobra.Command, args []string) error {
 		if len(rmErrors) > 0 {
 			logrus.Errorf("%s", errorhandling.JoinErrors(rmErrors))
 		}
+	}
+	if cmd.Flag("gpus").Changed {
+		logrus.Info("--gpus is a Docker specific option and is a NOOP")
 	}
 	return nil
 }

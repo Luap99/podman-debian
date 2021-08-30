@@ -44,6 +44,16 @@ func (s *APIServer) registerNetworkHandlers(r *mux.Router) error {
 	//    type: string
 	//    required: true
 	//    description: the name of the network
+	//  - in: query
+	//    name: verbose
+	//    type: boolean
+	//    required: false
+	//    description: Detailed inspect output for troubleshooting
+	//  - in: query
+	//    name: scope
+	//    type: string
+	//    required: false
+	//    description: Filter the network by scope (swarm, global, or local)
 	// produces:
 	// - application/json
 	// responses:
@@ -66,11 +76,11 @@ func (s *APIServer) registerNetworkHandlers(r *mux.Router) error {
 	//    name: filters
 	//    type: string
 	//    description: |
-	//      JSON encoded value of the filters (a map[string][]string) to process on the network list. Currently available filters:
-	//        - name=[name] Matches network name (accepts regex).
-	//        - id=[id] Matches for full or partial ID.
-	//        - driver=[driver] Only bridge is supported.
-	//        - label=[key] or label=[key=value] Matches networks based on the presence of a label alone or a label and a value.
+	//      JSON encoded value of the filters (a `map[string][]string`) to process on the network list. Currently available filters:
+	//        - `name=[name]` Matches network name (accepts regex).
+	//        - `id=[id]` Matches for full or partial ID.
+	//        - `driver=[driver]` Only bridge is supported.
+	//        - `label=[key]` or `label=[key=value]` Matches networks based on the presence of a label alone or a label and a value.
 	// produces:
 	// - application/json
 	// responses:
@@ -174,8 +184,8 @@ func (s *APIServer) registerNetworkHandlers(r *mux.Router) error {
 	//    description: |
 	//      Filters to process on the prune list, encoded as JSON (a map[string][]string).
 	//      Available filters:
-	//        - until=<timestamp> Prune networks created before this timestamp. The <timestamp> can be Unix timestamps, date formatted timestamps, or Go duration strings (e.g. 10m, 1h30m) computed relative to the daemon machine’s time.
-	//	      - label (label=<key>, label=<key>=<value>, label!=<key>, or label!=<key>=<value>) Prune networks with (or without, in case label!=... is used) the specified labels.
+	//        - `until=<timestamp>` Prune networks created before this timestamp. The <timestamp> can be Unix timestamps, date formatted timestamps, or Go duration strings (e.g. `10m`, `1h30m`) computed relative to the daemon machine’s time.
+	//        - `label` (`label=<key>`, `label=<key>=<value>`, `label!=<key>`, or `label!=<key>=<value>`) Prune networks with (or without, in case `label!=...` is used) the specified labels.
 	// responses:
 	//   200:
 	//     description: OK
@@ -244,18 +254,20 @@ func (s *APIServer) registerNetworkHandlers(r *mux.Router) error {
 	// tags:
 	//  - networks
 	// summary: List networks
-	// description: Display summary of network configurations
+	// description: |
+	//   Display summary of network configurations.
+	//     - In a 200 response, all of the fields named Bytes are returned as a Base64 encoded string.
 	// parameters:
 	//  - in: query
 	//    name: filters
 	//    type: string
 	//    description: |
-	//      JSON encoded value of the filters (a map[string][]string) to process on the network list. Available filters:
-	//        - name=[name] Matches network name (accepts regex).
-	//        - id=[id] Matches for full or partial ID.
-	//        - driver=[driver] Only bridge is supported.
-	//        - label=[key] or label=[key=value] Matches networks based on the presence of a label alone or a label and a value.
-	//        - plugin=[plugin] Matches CNI plugins included in a network (e.g `bridge`,`portmap`,`firewall`,`tuning`,`dnsname`,`macvlan`)
+	//      JSON encoded value of the filters (a `map[string][]string`) to process on the network list. Available filters:
+	//        - `name=[name]` Matches network name (accepts regex).
+	//        - `id=[id]` Matches for full or partial ID.
+	//        - `driver=[driver]` Only bridge is supported.
+	//        - `label=[key]` or `label=[key=value]` Matches networks based on the presence of a label alone or a label and a value.
+	//        - `plugin=[plugin]` Matches CNI plugins included in a network (e.g `bridge`,`portmap`,`firewall`,`tuning`,`dnsname`,`macvlan`)
 	// produces:
 	// - application/json
 	// responses:
@@ -269,7 +281,9 @@ func (s *APIServer) registerNetworkHandlers(r *mux.Router) error {
 	// tags:
 	//  - networks
 	// summary: Inspect a network
-	// description: Display low level configuration for a CNI network
+	// description: |
+	//   Display low level configuration for a CNI network.
+	//     - In a 200 response, all of the fields named Bytes are returned as a Base64 encoded string.
 	// parameters:
 	//  - in: path
 	//    name: name
@@ -380,10 +394,10 @@ func (s *APIServer) registerNetworkHandlers(r *mux.Router) error {
 	//    name: filters
 	//    type: string
 	//    description: |
-	//      Filters to process on the prune list, encoded as JSON (a map[string][]string).
+	//      Filters to process on the prune list, encoded as JSON (a `map[string][]string`).
 	//      Available filters:
-	//        - until=<timestamp> Prune networks created before this timestamp. The <timestamp> can be Unix timestamps, date formatted timestamps, or Go duration strings (e.g. 10m, 1h30m) computed relative to the daemon machine’s time.
-	//	      - label (label=<key>, label=<key>=<value>, label!=<key>, or label!=<key>=<value>) Prune networks with (or without, in case label!=... is used) the specified labels.
+	//        - `until=<timestamp>` Prune networks created before this timestamp. The `<timestamp>` can be Unix timestamps, date formatted timestamps, or Go duration strings (e.g. `10m`, `1h30m`) computed relative to the daemon machine’s time.
+	//        - `label` (`label=<key>`, `label=<key>=<value>`, `label!=<key>`, or `label!=<key>=<value>`) Prune networks with (or without, in case `label!=...` is used) the specified labels.
 	// responses:
 	//   200:
 	//     $ref: "#/responses/NetworkPruneResponse"

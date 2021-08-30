@@ -17,7 +17,7 @@ ENV GOPATH=/root/podman
 # to the container.
 # Finally remove the podman directory and a few other packages
 # that are needed for building but not running Podman
-RUN yum -y update; yum -y reinstall shadow-utils; yum -y install --exclude container-selinux \
+RUN yum -y update; rpm --restore shadow-utils 2>/dev/null;  yum -y install --exclude container-selinux \
      --enablerepo=updates-testing \
      btrfs-progs-devel \
      containernetworking-cni \
@@ -69,6 +69,7 @@ echo podman:10000:5000 > /etc/subgid;
 
 VOLUME /var/lib/containers
 VOLUME /home/podman/.local/share/containers
+RUN mkdir -p /home/podman/.local/share/containers
 
 ADD https://raw.githubusercontent.com/containers/libpod/master/contrib/podmanimage/stable/containers.conf /etc/containers/containers.conf
 ADD https://raw.githubusercontent.com/containers/libpod/master/contrib/podmanimage/stable/podman-containers.conf /home/podman/.config/containers/containers.conf

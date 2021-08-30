@@ -1,163 +1,52 @@
-- Changelog for v3.2.3 (2021-07-16):
-  * Update release notes for v3.2.3
-  * vendor containers/common@v0.38.16
-  * vendor containers/buildah@v1.21.3
-  * Fix race conditions in rootless cni setup
-  * CNI-in-slirp4netns: fix bind-mount for /run/systemd/resolve/stub-resolv.conf
-  * Make rootless-cni setup more robust
-  * Support uid,gid,mode options for secrets
-  * vendor containers/common@v0.38.15
-  * [CI:DOCS] podman search: clarify that results depend on implementation
-  * vendor containers/common@v0.38.14
-  * vendor containers/common@v0.38.13
-  * [3.2] vendor containers/common@v0.38.12
+- Changelog for HEAD (2021-08-20):
+  * Final release notes for v3.3.0
+  * Fix network aliases with network id
+  * machine: compute sha256 as we read the image file
+  * machine: check for file exists instead of listing directory
+  * pkg/bindings/images.nTar(): slashify hdr.Name values
+  * Volumes: Only remove from DB if plugin removal succeeds
+  * For compatibility, ignore Content-Type
+  * [v3.3] Bump c/image 5.15.2, buildah v1.22.3
+  * Implement SD-NOTIFY proxy in conmon
+  * Fix rootless cni dns without systemd stub resolver
+  * fix rootlessport flake
+  * Skip stats test in CGv1 container environments
+  * Fix AVC denials in tests of volume mounts
+  * Restore buildah-bud test requiring new images
+  * Revert ".cirrus.yml: use fresh images for all VMs"
+  * Fix device tests using ls test files
+  * Enhance priv. dev. check
+  * Workaround host availability of /dev/kvm
+  * Skip cgroup-parent test due to frequent flakes
+  * Cirrus: Fix not uploading logformatter html
 
-- Changelog for v3.2.2 (2021-06-25):
-  * fix systemcontext to use correct TMPDIR
-  * Scrub podman commands to use report package
-  * Fix volumes with uid and gid options
-  * Vendor in c/common v0.38.11
-  * Initial release notes for v3.2.2
-  * Fix restoring of privileged containers
-  * Fix handling of podman-remote build --device
-  * Add support for podman remote build -f - .
-  * Fix panic condition in cgroups.getAvailableControllers
-  * Fix permissions on initially created named volumes
-  * Fix building static podman-remote
-  * add correct slirp ip to /etc/hosts
-  * disable tty-size exec checks in system tests
-  * Fix resize race with podman exec -it
-  * Fix documentation of the --format option of podman push
-  * Fix systemd-resolved detection.
-  * Health Check is not handled in the compat LibpodToContainerJSON
-  * Do not use inotify for OCICNI
-  * getContainerNetworkInfo: lock netNsCtr before sync
-  * [NO TESTS NEEDED] Create /etc/mtab with the correct ownership
-  * Create the /etc/mtab file if does not exists
-  * [v3.2] cp: do not allow dir->file copying
-  * create: support images with invalid platform
-  * vendor containers/common@v0.38.10
-  * logs: k8s-file: restore poll sleep
-  * logs: k8s-file: fix spurious error logs
-  * utils: move message from warning to debug
-
-- Changelog for v3.2.1 (2021-06-11):
-  * Updated release notes for v3.2.1
-  * remote events: fix --stream=false
-  * [CI:DOCS] fix incorrect network remove api doc
-  * remote: always send resize before the container starts
-  * remote events: support labels
-  * remote pull: cancel pull when connection is closed
-  * Fix network prune api docs
-  * Improve systemd-resolved detection
-  * logs: k8s-file: fix race
-  * Fix image prune --filter cmd behavior
-  * podman-remote build should handle -f option properly
-  * System tests: deal with crun 0.20.1
-  * Fix build tags for pkg/machine...
-  * Fix pre-checkpointing
-  * container: ignore named hierarchies
-  * [v3.2] vendor containers/common@v0.38.9
-  * rootless: fix fast join userns path
-  * [v3.2] vendor containers/common@v0.38.7
-  * [v3.2] vendor containers/common@v0.38.6
-  * Correct qemu options for Intel macs
-
-- Changelog for v3.2.0 (2021-06-03):
-  * Final release notes updates for v3.2.0
-  * add ipv6 nameservers only when the container has ipv6 enabled
-  * Use request context instead of background
-  * [v.3.2] events: support disjunctive filters
-  * System tests: add :Z to volume mounts
-  * generate systemd: make mounts portable
-  * vendor containers/storage@v1.31.3
-  * vendor containers/common@v0.38.5
-
-- Changelog for v3.2.0-RC3 (2021-05-26):
-  * Update release notes for v3.2.0-RC3
-  * Fix race on podman start --all
-  * Fix race condition in running ls container in a pod
-  * docs: --cert-dir: point to containers-certs.d(5)
-  * Handle hard links in different directories
-  * Improve OCI Runtime error
-  * Handle hard links in remote builds
-  * Podman info add support for status of cgroup controllers
-  * Drop container does not exist on removal to debugf
-  * Downgrade API service routing table logging
-  * add libimage events
-  * docs: generate systemd: XDG_RUNTIME_DIR
-  * Fix problem copying files when container is in host pid namespace
-
-- Changelog for v3.2.0-RC2 (2021-05-20):
-  * update c/common
-  * Update Cirrus DEST_BRANCH to v3.2
-  * Updated vendors of c/image, c/storage, Buildah
-  * Initial release notes for v3.2.0-RC2
-  * Add script for identifying commits in release branches
-  * Add host.containers.internal entry into container's etc/hosts
-  * image prune: remove unused images only with `--all`
-  * podman network reload add rootless support
-  * Use more recent `stale` release...
-  * network tutorial: update with rootless cni changes
-  * [CI:DOCS] Update first line in intro page
-  * Use updated VM images + updated automation tooling
-  * auto-update service: prune images
-  * make vendor
-  * fix system upgrade tests
-  * Print "extracting" only on compressed file
-  * podman image tree: restore previous behavior
-  * fix network restart always test
-  * fix incorrect log driver in podman container image
-  * Add support for cli network prune --filter flag
-  * Move filter parsing to common utils
-  * Bump github.com/containers/storage from 1.30.2 to 1.30.3
-  * Update nix pin with `make nixpkgs`
-  * [CI:DOCS] hack/bats - new helper for running system tests
-  * fix restart always with slirp4netns
-  * Bump github.com/opencontainers/runc from 1.0.0-rc93 to 1.0.0-rc94
-  * Bump github.com/coreos/go-systemd/v22 from 22.3.1 to 22.3.2
-  * Add host.serviceIsRemote to podman info results
-  * Add client disconnect to build handler loop
-  * Remove obsolete skips
-  * Fix podman-remote build --rm=false ...
-  * fix: improved "containers/{name}/wait" endpoint
-  * Bump github.com/containers/storage from 1.30.1 to 1.30.2
-  * Add envars to the generated systemd unit
-  * fix: use UTC Time Stamps in response JSON
-  * fix container startup for empty pidfile
-  * Kube like pods should share ipc,net,uts by default
-  * fix: compat API "images/get" for multiple images
-  * Revert escaped double dash man page flag syntax
-  * Report Download complete in Compatibility mode
-  * Add documentation on short-names
-  * Bump github.com/docker/docker
-  * Adds support to preserve auto update labels in generate and play kube
-  * [CI:DOCS] Stop conversion of `--` into en dash
-  * Revert Patch to relabel if selinux not enabled
-  * fix per review request
-  * Add support for environment variable secrets
-  * fix pre review request
-  * Fix infinite loop in isPathOnVolume
-  * Add containers.conf information for changing defaults
-  * CI: run rootless tests under ubuntu
-  * Fix wrong macvlan PNG in networking doc.
-  * Add restart-policy to container filters & --filter to podman start
-  * Fixes docker-compose cannot set static ip when use ipam
-  * channel: simplify implementation
-  * build: improve regex for iidfile
-  * Bump github.com/onsi/gomega from 1.11.0 to 1.12.0
-  * cgroup: fix rootless --cgroup-parent with pods
-  * fix: docker APIv2 `images/get`
-  * codespell cleanup
-  * Minor podmanimage docs updates.
-  * Fix handling of runlabel IMAGE and NAME
-  * Bump to v3.2.0-dev
-  * Bump to v3.2.0-rc1
-  * podman: set volatile storage flag for --rm containers
-  * Bump github.com/onsi/ginkgo from 1.16.1 to 1.16.2
-  * Bump github.com/containers/image/v5 from 5.11.1 to 5.12.0
-  * Add filepath glob support to --security-opt unmask
-  * Force log_driver to k8s-file for containers in containers
+- Changelog for HEAD (2021-08-17):
+  * Release notes for v3.3.0-RC3
+  * [v3.3] Bump c/storage to v1.34.1 and c/image to v5.15.1
+  * fix gvproxy path search for macos
+  * Bump to v3.3.0-dev
+  * Bump to v3.3.0-rc2
+  * Set gvproxy path to /usr/libexec/podman/gvproxy
+  * Revert "Podman Pod Create --cpus and --cpuset-cpus flags"
+  * Address review comments
+  * Final release notes for v3.3.0-RC2
+  * Document source ip for the rootlesskit port handler
+  * podman info show correct slirp4netns path
+  * show podman machine ssh command line
+  * Fix TS parsing for fractional values
+  * Handle timezone on server containers.conf
+  * Fix podman unpause,pause,kill --all to work like podman stop --all
+  * Do not add an entry to /etc/hosts with `--net=host`
+  * Only support containers stats using cgroups v2
+  * Compat API: Fix healthcheck status and healthcheck config
+  * podman info: try qfile before equery
+  * test: move container process to a sub-cgroup
+  * Fix handling of user specified container labels
+  * Release notes for v3.3.0-RC2: Initial
+  * Bump github.com/rootless-containers/rootlesskit from 0.14.3 to 0.14.4
+  * fix rootless port forwarding with network dis-/connect
+  * [v3.3] Bump to Buildah v1.22.0 [NO TESTS NEEDED]
+  * Disable aarch64 support
 
 - Changelog for v3.2.0-rc1 (2021-05-05)
   * migrate Podman to containers/common/libimage

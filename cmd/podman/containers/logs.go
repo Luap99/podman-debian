@@ -19,6 +19,8 @@ type logsOptionsWrapper struct {
 	entities.ContainerLogsOptions
 
 	SinceRaw string
+
+	UntilRaw string
 }
 
 var (
@@ -77,7 +79,6 @@ func init() {
 
 	// logs
 	registry.Commands = append(registry.Commands, registry.CliCommand{
-		Mode:    []entities.EngineMode{entities.ABIMode, entities.TunnelMode},
 		Command: logsCommand,
 	})
 	logsFlags(logsCommand)
@@ -85,7 +86,6 @@ func init() {
 
 	// container logs
 	registry.Commands = append(registry.Commands, registry.CliCommand{
-		Mode:    []entities.EngineMode{entities.ABIMode, entities.TunnelMode},
 		Command: containerLogsCommand,
 		Parent:  containerCmd,
 	})
@@ -102,6 +102,10 @@ func logsFlags(cmd *cobra.Command) {
 	sinceFlagName := "since"
 	flags.StringVar(&logsOptions.SinceRaw, sinceFlagName, "", "Show logs since TIMESTAMP")
 	_ = cmd.RegisterFlagCompletionFunc(sinceFlagName, completion.AutocompleteNone)
+
+	untilFlagName := "until"
+	flags.StringVar(&logsOptions.UntilRaw, untilFlagName, "", "Show logs until TIMESTAMP")
+	_ = cmd.RegisterFlagCompletionFunc(untilFlagName, completion.AutocompleteNone)
 
 	tailFlagName := "tail"
 	flags.Int64Var(&logsOptions.Tail, tailFlagName, -1, "Output the specified number of LINES at the end of the logs.  Defaults to -1, which prints all lines")
@@ -121,6 +125,14 @@ func logs(_ *cobra.Command, args []string) error {
 			return errors.Wrapf(err, "error parsing --since %q", logsOptions.SinceRaw)
 		}
 		logsOptions.Since = since
+	}
+	if logsOptions.UntilRaw != "" {
+		// parse time, error out if something is wrong
+		until, err := util.ParseInputTime(logsOptions.UntilRaw)
+		if err != nil {
+			return errors.Wrapf(err, "error parsing --until %q", logsOptions.UntilRaw)
+		}
+		logsOptions.Until = until
 	}
 	logsOptions.StdoutWriter = os.Stdout
 	logsOptions.StderrWriter = os.Stderr

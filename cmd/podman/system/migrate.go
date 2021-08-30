@@ -22,6 +22,10 @@ var (
 `
 
 	migrateCommand = &cobra.Command{
+		Annotations: map[string]string{
+			registry.EngineMode:    registry.ABIMode,
+			registry.NoMoveProcess: registry.NoMoveProcess,
+		},
 		Use:               "migrate [options]",
 		Args:              validate.NoArgs,
 		Short:             "Migrate containers",
@@ -37,7 +41,6 @@ var (
 
 func init() {
 	registry.Commands = append(registry.Commands, registry.CliCommand{
-		Mode:    []entities.EngineMode{entities.ABIMode},
 		Command: migrateCommand,
 		Parent:  systemCmd,
 	})

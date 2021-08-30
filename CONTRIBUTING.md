@@ -126,6 +126,10 @@ Well, you can now create your own branch, apply changes on it, and then submitti
 
 For further reading about branching [you can read this document](https://herve.beraud.io/containers/linux/podman/isolate/environment/2019/02/06/how-to-hack-on-podman.html).
 
+## Documentation
+
+Make sure to update the documentation if needed. You can find the man pages under `docs/source/markdown`. The syntax for the formatting of all man pages can be found [here](docs/MANPAGE_SYNTAX.md).
+
 ## Submitting Pull Requests
 
 No Pull Request (PR) is too small! Typos, additional comments in the code,
@@ -393,7 +397,7 @@ if possible.](#communications)
 ## Communications
 
 For general questions and discussion, please use the
-IRC `#podman` channel on `irc.freenode.net`.
+IRC `#podman` channel on `irc.libera.chat`.
 
 For discussions around issues/bugs and features, you can use the GitHub
 [issues](https://github.com/containers/podman/issues)

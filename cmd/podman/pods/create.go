@@ -47,7 +47,6 @@ var (
 
 func init() {
 	registry.Commands = append(registry.Commands, registry.CliCommand{
-		Mode:    []entities.EngineMode{entities.ABIMode, entities.TunnelMode},
 		Command: createCommand,
 		Parent:  podCmd,
 	})
@@ -74,6 +73,10 @@ func init() {
 	flags.String(infraCommandFlagName, containerConfig.Engine.InfraCommand, "The command to run on the infra container when the pod is started")
 	_ = createCommand.RegisterFlagCompletionFunc(infraCommandFlagName, completion.AutocompleteNone)
 
+	infraNameFlagName := "infra-name"
+	flags.StringVarP(&createOptions.InfraName, infraNameFlagName, "", "", "The name used as infra container name")
+	_ = createCommand.RegisterFlagCompletionFunc(infraNameFlagName, completion.AutocompleteNone)
+
 	labelFileFlagName := "label-file"
 	flags.StringSliceVar(&labelFile, labelFileFlagName, []string{}, "Read in a line delimited file of labels")
 	_ = createCommand.RegisterFlagCompletionFunc(labelFileFlagName, completion.AutocompleteDefault)
@@ -89,6 +92,10 @@ func init() {
 	hostnameFlagName := "hostname"
 	flags.StringVarP(&createOptions.Hostname, hostnameFlagName, "", "", "Set a hostname to the pod")
 	_ = createCommand.RegisterFlagCompletionFunc(hostnameFlagName, completion.AutocompleteNone)
+
+	pidFlagName := "pid"
+	flags.StringVar(&createOptions.Pid, pidFlagName, "", "PID namespace to use")
+	_ = createCommand.RegisterFlagCompletionFunc(pidFlagName, common.AutocompleteNamespace)
 
 	podIDFileFlagName := "pod-id-file"
 	flags.StringVar(&podIDFile, podIDFileFlagName, "", "Write the pod ID to the file")
@@ -132,6 +139,9 @@ func create(cmd *cobra.Command, args []string) error {
 			return errors.New("cannot set infra-image without an infra container")
 		}
 		createOptions.InfraImage = ""
+		if createOptions.InfraName != "" {
+			return errors.New("cannot set infra-name without an infra container")
+		}
 
 		if cmd.Flag("share").Changed && share != "none" && share != "" {
 			return fmt.Errorf("cannot set share(%s) namespaces without an infra container", cmd.Flag("share").Value)
@@ -167,10 +177,13 @@ func create(cmd *cobra.Command, args []string) error {
 		defer errorhandling.SyncQuiet(podIDFD)
 	}
 
-	createOptions.Net, err = common.NetFlagsToNetOptions(cmd)
+	createOptions.Pid = cmd.Flag("pid").Value.String()
+
+	createOptions.Net, err = common.NetFlagsToNetOptions(cmd, createOptions.Infra)
 	if err != nil {
 		return err
 	}
+
 	if len(createOptions.Net.PublishPorts) > 0 {
 		if !createOptions.Infra {
 			return errors.Errorf("you must have an infra container to publish port bindings to the host")

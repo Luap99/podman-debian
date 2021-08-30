@@ -321,11 +321,11 @@ func (p *PodmanTestIntegration) createArtifact(image string) {
 	if _, err := os.Stat(destName); os.IsNotExist(err) {
 		pull := p.PodmanNoCache([]string{"pull", image})
 		pull.Wait(440)
-		Expect(pull.ExitCode()).To(Equal(0))
+		Expect(pull).Should(Exit(0))
 
 		save := p.PodmanNoCache([]string{"save", "-o", destName, image})
 		save.Wait(90)
-		Expect(save.ExitCode()).To(Equal(0))
+		Expect(save).Should(Exit(0))
 		fmt.Printf("\n")
 	} else {
 		fmt.Printf(" already exists.\n")
@@ -645,9 +645,13 @@ func isRootless() bool {
 	return os.Geteuid() != 0
 }
 
+func isCgroupsV1() bool {
+	return !CGROUPSV2
+}
+
 func SkipIfCgroupV1(reason string) {
 	checkReason(reason)
-	if !CGROUPSV2 {
+	if isCgroupsV1() {
 		Skip(reason)
 	}
 }
@@ -811,7 +815,7 @@ func generateNetworkConfig(p *PodmanTestIntegration) (string, string) {
 func (p *PodmanTestIntegration) removeCNINetwork(name string) {
 	session := p.Podman([]string{"network", "rm", "-f", name})
 	session.WaitWithDefaultTimeout()
-	Expect(session.ExitCode()).To(BeNumerically("<=", 1))
+	Expect(session.ExitCode()).To(BeNumerically("<=", 1), "Exit code must be 0 or 1")
 }
 
 func (p *PodmanSessionIntegration) jq(jqCommand string) (string, error) {
