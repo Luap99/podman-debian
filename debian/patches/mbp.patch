@@ -1,0 +1,19 @@
+From: Reinhard Tartler <siretart@tauware.de>
+Description: Allow compilation with newer vbauerster/mbp
+Forwarded: no
+
+diff --git a/pkg/machine/pull.go b/pkg/machine/pull.go
+index 662896de5..acece7a6a 100644
+--- a/pkg/machine/pull.go
++++ b/pkg/machine/pull.go
+@@ -17,8 +17,8 @@ import (
+ 	"github.com/containers/image/v5/pkg/compression"
+ 	"github.com/docker/docker/pkg/archive"
+ 	"github.com/sirupsen/logrus"
+-	"github.com/vbauerster/mpb/v6"
+-	"github.com/vbauerster/mpb/v6/decor"
++	"github.com/vbauerster/mpb/v7"
++	"github.com/vbauerster/mpb/v7/decor"
+ )
+ 
+ // GenericDownload is used when a user provides a URL
