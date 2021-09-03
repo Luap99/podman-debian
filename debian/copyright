@@ -66,6 +66,63 @@ Files: pkg/util/camelcase/*
 Copyright: 2015, Fatih Arslan
 License: Expat
 
+Files: vendor/github.com/coreos/*
+Copyright: 2015, 2016, 2018, CoreOS, Inc.
+License: Apache-2.0
+
+Files: vendor/github.com/coreos/go-iptables/NOTICE
+Copyright: 2018, CoreOS, Inc
+License: Apache-2.0
+
+Files: vendor/github.com/coreos/go-systemd/NOTICE
+Copyright: 2018, CoreOS, Inc
+License: Apache-2.0
+
+Files: vendor/github.com/coreos/go-systemd/v22/NOTICE
+Copyright: 2018, CoreOS, Inc
+License: Apache-2.0
+
+Files: vendor/github.com/coreos/go-systemd/v22/daemon/sdnotify.go
+Copyright: 2015-2018, CoreOS, Inc.
+  2014, Docker, Inc.
+License: Apache-2.0
+
+Files: vendor/github.com/coreos/go-systemd/v22/sdjournal/*
+Copyright: 2015, RedHat, Inc.
+  2015, CoreOS, Inc.
+License: Apache-2.0
+
+Files: vendor/github.com/coreos/stream-metadata-go/*
+Copyright:
+    2016-2019 Red Hat, Inc.
+License: Apache-2.0
+
+Files: vendor/github.com/digitalocean/go-libvirt/const.gen.go
+  vendor/github.com/digitalocean/go-libvirt/doc.go
+  vendor/github.com/digitalocean/go-libvirt/libvirt.go
+  vendor/github.com/digitalocean/go-libvirt/qemu_protocol.gen.go
+  vendor/github.com/digitalocean/go-libvirt/remote_protocol.gen.go
+  vendor/github.com/digitalocean/go-libvirt/rpc.go
+  vendor/github.com/digitalocean/go-libvirt/units.go
+Copyright: 2016, 2018, 2020, The go-libvirt Authors.
+License: Apache-2.0
+
+Files: vendor/github.com/digitalocean/go-libvirt/internal/*
+Copyright: 2016, 2018, 2020, The go-libvirt Authors.
+License: Apache-2.0
+
+Files: vendor/github.com/digitalocean/go-libvirt/internal/go-xdr/*
+Copyright: 2012-2014, Dave Collins <dave@davec.name>
+License: ISC-DAVE-COLLINS
+
+Files: vendor/github.com/digitalocean/go-qemu/qmp/qmp.go
+  vendor/github.com/digitalocean/go-qemu/qmp/rpc.go
+  vendor/github.com/digitalocean/go-qemu/qmp/socket.go
+  vendor/github.com/digitalocean/go-qemu/qmp/socket_unix.go
+  vendor/github.com/digitalocean/go-qemu/qmp/socket_windows.go
+Copyright: 2016, The go-qemu Authors.
+License: Apache-2.0
+
 Files: vendor/github.com/docker/go-plugins-helpers/NOTICE
 Copyright: 2012-2015, Docker, Inc.
 License: Expat
@@ -273,3 +330,16 @@ License: Expat
  COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
  IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+License: ISC-DAVE-COLLINS
+ Permission to use, copy, modify, and distribute this software for any
+ purpose with or without fee is hereby granted, provided that the above
+ copyright notice and this permission notice appear in all copies.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
