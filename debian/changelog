@@ -76,6 +76,20 @@ libpod (3.1.0+ds1-1) experimental; urgency=medium
 
  -- Reinhard Tartler <siretart@tauware.de>  Sat, 03 Apr 2021 16:28:54 -0400
 
+libpod (3.0.1+dfsg1-3) unstable; urgency=medium
+
+  * Add networking-lookup-child-IP-in-networks.patch, fixes rootless
+    connection issue "Connection reset by peer", Closes: #989803
+
+ -- Reinhard Tartler <siretart@tauware.de>  Sun, 13 Jun 2021 18:28:49 -0400
+
+libpod (3.0.1+dfsg1-2) unstable; urgency=medium
+
+  * Prefer crun over runc, Closes: #985379
+  * Add depends in iptables, Closes: #987207
+
+ -- Reinhard Tartler <siretart@tauware.de>  Wed, 21 Apr 2021 17:36:07 -0400
+
 libpod (3.0.1+dfsg1-1) unstable; urgency=medium
 
   * New upstream release
