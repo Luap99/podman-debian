@@ -1,3 +1,9 @@
+libpod (3.3.0+ds2-3) unstable; urgency=medium
+
+  * Drop unneeded dependency on golang-github-openshift-api-dev
+
+ -- Reinhard Tartler <siretart@tauware.de>  Sat, 04 Sep 2021 19:30:38 +0200
+
 libpod (3.3.0+ds2-2) unstable; urgency=medium
 
   * Apply missing patches that were forgotten in the last merge
