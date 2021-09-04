@@ -1,3 +1,14 @@
+libpod (3.3.0+ds2-2) unstable; urgency=medium
+
+  * Apply missing patches that were forgotten in the last merge
+    from experimental:
+    - Prefer crun over runc
+    - Add depends in iptables
+  * Upstream improved documentation on requirements for rootless,
+    Closes: #983395
+
+ -- Reinhard Tartler <siretart@tauware.de>  Sat, 04 Sep 2021 18:57:31 +0200
+
 libpod (3.3.0+ds2-1) unstable; urgency=medium
 
   * New upstream release, Closes: #992138, #992142
