@@ -217,6 +217,7 @@ Description: engine to run OCI-based containers in Pods (library)
 
 Package: podman-docker
 Architecture: any
+Built-Using: ${misc:Built-Using}
 Depends: ${misc:Depends}, ${shlibs:Depends}, podman
 Conflicts: docker.io
 Recommends: docker-compose
