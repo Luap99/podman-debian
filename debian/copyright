@@ -13,7 +13,7 @@ Files-Included:
     vendor/github.com/checkpoint-restore/checkpointctl
     vendor/github.com/container-orchestrated-devices
     vendor/github.com/containers/conmon
-    vendor/github.com/coreos
+    vendor/github.com/coreos/stream-metadata-go
     vendor/github.com/cri-o/ocicni
     vendor/github.com/digitalocean
     vendor/github.com/docker/go-plugins-helpers
