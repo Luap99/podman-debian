@@ -10,7 +10,7 @@ Comment:
 Files-Excluded:
     vendor
 Files-Included:
-    vendor/github.com/checkpoint-restore
+    vendor/github.com/checkpoint-restore/checkpointctl
     vendor/github.com/container-orchestrated-devices
     vendor/github.com/containers/conmon
     vendor/github.com/coreos
