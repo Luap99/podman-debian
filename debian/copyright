@@ -113,7 +113,7 @@ License: Apache-2.0
 
 Files: vendor/github.com/digitalocean/go-libvirt/internal/go-xdr/*
 Copyright: 2012-2014, Dave Collins <dave@davec.name>
-License: ISC-DAVE-COLLINS
+License: ISC
 
 Files: vendor/github.com/digitalocean/go-qemu/qmp/qmp.go
   vendor/github.com/digitalocean/go-qemu/qmp/rpc.go
@@ -331,7 +331,7 @@ License: Expat
  IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-License: ISC-DAVE-COLLINS
+License: ISC
  Permission to use, copy, modify, and distribute this software for any
  purpose with or without fee is hereby granted, provided that the above
  copyright notice and this permission notice appear in all copies.
