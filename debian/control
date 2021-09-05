@@ -98,7 +98,6 @@ Depends: ${misc:Depends}, ${shlibs:Depends}
     ,containernetworking-plugins (>= 0.8.7)
     ,golang-github-containers-common
     ,crun | runc (>= 1.0.0~rc92~)
-    ,iptables
 Breaks: buildah (<< 1.10.1-6), slirp4netns (<< 0.4.1), fuse-overlayfs (<< 0.7.1)
 Recommends: ${misc:Recommends}
     ,buildah (>= 1.21.0)
@@ -110,6 +109,7 @@ Recommends: ${misc:Recommends}
 Suggests: ${misc:Suggests}
     ,containers-storage
     ,docker-compose
+    ,iptables
 Description: engine to run OCI-based containers in Pods
  Podman is an engine for running OCI-based containers in Pods.
  Podman provides a CLI interface for managing Pods, Containers, and
