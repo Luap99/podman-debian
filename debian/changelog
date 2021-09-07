@@ -1,9 +1,11 @@
-libpod (3.3.1+ds1-1) unstable; urgency=medium
+libpod (3.3.1+ds2-1) unstable; urgency=medium
 
   * New upstream release
+    - drop coreos/{go-iptables,go-systemd}
   * Drop unneeded dependency on golang-github-openshift-api-dev
+  * Bump Standards-Version, no changes needed
 
- -- Reinhard Tartler <siretart@tauware.de>  Sat, 04 Sep 2021 19:30:38 +0200
+ -- Reinhard Tartler <siretart@tauware.de>  Tue, 07 Sep 2021 11:53:40 +0200
 
 libpod (3.3.0+ds2-2) unstable; urgency=medium
 
