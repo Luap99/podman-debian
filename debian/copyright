@@ -22,7 +22,6 @@ Files-Included:
     vendor/github.com/uber/jaeger-client-go
     vendor/k8s.io/api
     vendor/k8s.io/apimachinery
-    vendor/k8s.io/klog
 
 Files: *
 Copyright:

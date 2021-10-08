@@ -74,6 +74,7 @@ Build-Depends: debhelper-compat (= 13)
     ,golang-gopkg-inf.v0-dev
     ,golang-gopkg-square-go-jose.v2-dev
     ,golang-gopkg-yaml.v3-dev
+    ,golang-k8s-klog-dev
     ,golang-k8s-sigs-structured-merge-diff-dev (>> 4)
     ,golang-k8s-sigs-yaml-dev
     ,golang-toml-dev
