@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
+	buildahDefine "github.com/containers/buildah/define"
 	"github.com/containers/common/libimage"
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/image/v5/types"
@@ -20,6 +23,7 @@ import (
 	"github.com/containers/podman/v3/pkg/specgen"
 	"github.com/containers/podman/v3/pkg/specgen/generate"
 	"github.com/containers/podman/v3/pkg/specgen/generate/kube"
+	"github.com/containers/podman/v3/pkg/specgenutil"
 	"github.com/containers/podman/v3/pkg/util"
 	"github.com/ghodss/yaml"
 	"github.com/pkg/errors"
@@ -177,10 +181,12 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 		}
 	}
 
-	p, err := kube.ToPodGen(ctx, podName, podYAML)
+	podOpt := entities.PodCreateOptions{Infra: true, Net: &entities.NetOptions{StaticIP: &net.IP{}, StaticMAC: &net.HardwareAddr{}}}
+	podOpt, err = kube.ToPodOpt(ctx, podName, podOpt, podYAML)
 	if err != nil {
 		return nil, err
 	}
+
 	if options.Network != "" {
 		ns, cniNets, netOpts, err := specgen.ParseNetworkString(options.Network)
 		if err != nil {
@@ -190,43 +196,40 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 		if (ns.IsBridge() && len(cniNets) == 0) || ns.IsHost() {
 			return nil, errors.Errorf("invalid value passed to --network: bridge or host networking must be configured in YAML")
 		}
-		logrus.Debugf("Pod %q joining CNI networks: %v", podName, cniNets)
-		p.NetNS.NSMode = specgen.Bridge
-		p.CNINetworks = append(p.CNINetworks, cniNets...)
+
+		podOpt.Net.Network = ns
+		if len(cniNets) > 0 {
+			podOpt.Net.CNINetworks = append(podOpt.Net.CNINetworks, cniNets...)
+		}
 		if len(netOpts) > 0 {
-			p.NetworkOptions = netOpts
+			podOpt.Net.NetworkOptions = netOpts
 		}
 	}
 
 	if len(options.StaticIPs) > *ipIndex {
-		p.StaticIP = &options.StaticIPs[*ipIndex]
+		podOpt.Net.StaticIP = &options.StaticIPs[*ipIndex]
 	} else if len(options.StaticIPs) > 0 {
 		// only warn if the user has set at least one ip
 		logrus.Warn("No more static ips left using a random one")
 	}
 	if len(options.StaticMACs) > *ipIndex {
-		p.StaticMAC = &options.StaticMACs[*ipIndex]
+		podOpt.Net.StaticMAC = &options.StaticMACs[*ipIndex]
 	} else if len(options.StaticIPs) > 0 {
 		// only warn if the user has set at least one mac
 		logrus.Warn("No more static macs left using a random one")
 	}
 	*ipIndex++
 
-	// Create the Pod
-	pod, err := generate.MakePod(p, ic.Libpod)
+	p := specgen.NewPodSpecGenerator()
 	if err != nil {
 		return nil, err
 	}
 
-	podInfraID, err := pod.InfraContainerID()
+	p, err = entities.ToPodSpecGen(*p, &podOpt)
 	if err != nil {
 		return nil, err
 	}
-
-	if !options.Quiet {
-		writer = os.Stderr
-	}
-
+	podSpec := entities.PodSpec{PodSpecGen: *p}
 	volumes, err := kube.InitializeVolumes(podYAML.Spec.Volumes)
 	if err != nil {
 		return nil, err
@@ -265,11 +268,183 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 		configMaps = append(configMaps, cm)
 	}
 
-	containers := make([]*libpod.Container, 0, len(podYAML.Spec.Containers))
-	for _, container := range podYAML.Spec.Containers {
-		// Contains all labels obtained from kube
-		labels := make(map[string]string)
+	if podOpt.Infra {
+		containerConfig := util.DefaultContainerConfig()
 
+		pulledImages, err := pullImage(ic, writer, containerConfig.Engine.InfraImage, options, config.PullPolicyNewer)
+		if err != nil {
+			return nil, err
+		}
+		infraOptions := entities.ContainerCreateOptions{ImageVolume: "bind"}
+
+		podSpec.PodSpecGen.InfraImage = pulledImages[0].Names()[0]
+		podSpec.PodSpecGen.NoInfra = false
+		podSpec.PodSpecGen.InfraContainerSpec = specgen.NewSpecGenerator(pulledImages[0].Names()[0], false)
+		podSpec.PodSpecGen.InfraContainerSpec.NetworkOptions = p.NetworkOptions
+
+		err = specgenutil.FillOutSpecGen(podSpec.PodSpecGen.InfraContainerSpec, &infraOptions, []string{})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Create the Pod
+	pod, err := generate.MakePod(&podSpec, ic.Libpod)
+	if err != nil {
+		return nil, err
+	}
+
+	podInfraID, err := pod.InfraContainerID()
+	if err != nil {
+		return nil, err
+	}
+
+	if !options.Quiet {
+		writer = os.Stderr
+	}
+
+	containers := make([]*libpod.Container, 0, len(podYAML.Spec.Containers))
+	initContainers := make([]*libpod.Container, 0, len(podYAML.Spec.InitContainers))
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, initCtr := range podYAML.Spec.InitContainers {
+		// Init containers cannot have either of lifecycle, livenessProbe, readinessProbe, or startupProbe set
+		if initCtr.Lifecycle != nil || initCtr.LivenessProbe != nil || initCtr.ReadinessProbe != nil || initCtr.StartupProbe != nil {
+			return nil, errors.Errorf("cannot create an init container that has either of lifecycle, livenessProbe, readinessProbe, or startupProbe set")
+		}
+		pulledImage, labels, err := ic.getImageAndLabelInfo(ctx, cwd, annotations, writer, initCtr, options)
+		if err != nil {
+			return nil, err
+		}
+		specgenOpts := kube.CtrSpecGenOptions{
+			Annotations:       annotations,
+			Container:         initCtr,
+			Image:             pulledImage,
+			Volumes:           volumes,
+			PodID:             pod.ID(),
+			PodName:           podName,
+			PodInfraID:        podInfraID,
+			ConfigMaps:        configMaps,
+			SeccompPaths:      seccompPaths,
+			RestartPolicy:     ctrRestartPolicy,
+			NetNSIsHost:       p.NetNS.IsHost(),
+			SecretsManager:    secretsManager,
+			LogDriver:         options.LogDriver,
+			Labels:            labels,
+			InitContainerType: define.AlwaysInitContainer,
+		}
+		specGen, err := kube.ToSpecGen(ctx, &specgenOpts)
+		if err != nil {
+			return nil, err
+		}
+		rtSpec, spec, opts, err := generate.MakeContainer(ctx, ic.Libpod, specGen)
+		if err != nil {
+			return nil, err
+		}
+		ctr, err := generate.ExecuteCreate(ctx, ic.Libpod, rtSpec, spec, false, opts...)
+		if err != nil {
+			return nil, err
+		}
+
+		initContainers = append(initContainers, ctr)
+	}
+	for _, container := range podYAML.Spec.Containers {
+		if !strings.Contains("infra", container.Name) {
+			pulledImage, labels, err := ic.getImageAndLabelInfo(ctx, cwd, annotations, writer, container, options)
+			if err != nil {
+				return nil, err
+			}
+
+			specgenOpts := kube.CtrSpecGenOptions{
+				Container:      container,
+				Image:          pulledImage,
+				Volumes:        volumes,
+				PodID:          pod.ID(),
+				PodName:        podName,
+				PodInfraID:     podInfraID,
+				ConfigMaps:     configMaps,
+				SeccompPaths:   seccompPaths,
+				RestartPolicy:  ctrRestartPolicy,
+				NetNSIsHost:    p.NetNS.IsHost(),
+				SecretsManager: secretsManager,
+				LogDriver:      options.LogDriver,
+				Labels:         labels,
+			}
+			specGen, err := kube.ToSpecGen(ctx, &specgenOpts)
+			if err != nil {
+				return nil, err
+			}
+			rtSpec, spec, opts, err := generate.MakeContainer(ctx, ic.Libpod, specGen)
+			if err != nil {
+				return nil, err
+			}
+			ctr, err := generate.ExecuteCreate(ctx, ic.Libpod, rtSpec, spec, false, opts...)
+			if err != nil {
+				return nil, err
+			}
+			containers = append(containers, ctr)
+		}
+	}
+
+	if options.Start != types.OptionalBoolFalse {
+		// Start the containers
+		podStartErrors, err := pod.Start(ctx)
+		if err != nil && errors.Cause(err) != define.ErrPodPartialFail {
+			return nil, err
+		}
+		for id, err := range podStartErrors {
+			playKubePod.ContainerErrors = append(playKubePod.ContainerErrors, errors.Wrapf(err, "error starting container %s", id).Error())
+			fmt.Println(playKubePod.ContainerErrors)
+		}
+	}
+
+	playKubePod.ID = pod.ID()
+	for _, ctr := range containers {
+		playKubePod.Containers = append(playKubePod.Containers, ctr.ID())
+	}
+	for _, initCtr := range initContainers {
+		playKubePod.InitContainers = append(playKubePod.InitContainers, initCtr.ID())
+	}
+
+	report.Pods = append(report.Pods, playKubePod)
+
+	return &report, nil
+}
+
+// getImageAndLabelInfo returns the image information and how the image should be pulled plus as well as labels to be used for the container in the pod.
+// Moved this to a separate function so that it can be used for both init and regular containers when playing a kube yaml.
+func (ic *ContainerEngine) getImageAndLabelInfo(ctx context.Context, cwd string, annotations map[string]string, writer io.Writer, container v1.Container, options entities.PlayKubeOptions) (*libimage.Image, map[string]string, error) {
+	// Contains all labels obtained from kube
+	labels := make(map[string]string)
+	var pulledImage *libimage.Image
+	buildFile, err := getBuildFile(container.Image, cwd)
+	if err != nil {
+		return nil, nil, err
+	}
+	existsLocally, err := ic.Libpod.LibimageRuntime().Exists(container.Image)
+	if err != nil {
+		return nil, nil, err
+	}
+	if (len(buildFile) > 0 && !existsLocally) || (len(buildFile) > 0 && options.Build) {
+		buildOpts := new(buildahDefine.BuildOptions)
+		commonOpts := new(buildahDefine.CommonBuildOptions)
+		buildOpts.ConfigureNetwork = buildahDefine.NetworkDefault
+		buildOpts.Isolation = buildahDefine.IsolationChroot
+		buildOpts.CommonBuildOpts = commonOpts
+		buildOpts.Output = container.Image
+		buildOpts.ContextDirectory = filepath.Dir(buildFile)
+		if _, _, err := ic.Libpod.Build(ctx, *buildOpts, []string{buildFile}...); err != nil {
+			return nil, nil, err
+		}
+		i, _, err := ic.Libpod.LibimageRuntime().LookupImage(container.Image, new(libimage.LookupImageOptions))
+		if err != nil {
+			return nil, nil, err
+		}
+		pulledImage = i
+	} else {
 		// NOTE: set the pull policy to "newer".  This will cover cases
 		// where the "latest" tag requires a pull and will also
 		// transparently handle "localhost/" prefixed files which *may*
@@ -282,7 +457,7 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 			rawPolicy := string(container.ImagePullPolicy)
 			pullPolicy, err = config.ParsePullPolicy(strings.ToLower(rawPolicy))
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 		// This ensures the image is the image store
@@ -297,71 +472,28 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 
 		pulledImages, err := ic.Libpod.LibimageRuntime().Pull(ctx, container.Image, pullPolicy, pullOptions)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-
-		// Handle kube annotations
-		for k, v := range annotations {
-			switch k {
-			// Auto update annotation without container name will apply to
-			// all containers within the pod
-			case autoupdate.Label, autoupdate.AuthfileLabel:
-				labels[k] = v
-			// Auto update annotation with container name will apply only
-			// to the specified container
-			case fmt.Sprintf("%s/%s", autoupdate.Label, container.Name),
-				fmt.Sprintf("%s/%s", autoupdate.AuthfileLabel, container.Name):
-				prefixAndCtr := strings.Split(k, "/")
-				labels[prefixAndCtr[0]] = v
-			}
-		}
-
-		specgenOpts := kube.CtrSpecGenOptions{
-			Container:      container,
-			Image:          pulledImages[0],
-			Volumes:        volumes,
-			PodID:          pod.ID(),
-			PodName:        podName,
-			PodInfraID:     podInfraID,
-			ConfigMaps:     configMaps,
-			SeccompPaths:   seccompPaths,
-			RestartPolicy:  ctrRestartPolicy,
-			NetNSIsHost:    p.NetNS.IsHost(),
-			SecretsManager: secretsManager,
-			LogDriver:      options.LogDriver,
-			Labels:         labels,
-		}
-		specGen, err := kube.ToSpecGen(ctx, &specgenOpts)
-		if err != nil {
-			return nil, err
-		}
-
-		ctr, err := generate.MakeContainer(ctx, ic.Libpod, specGen)
-		if err != nil {
-			return nil, err
-		}
-		containers = append(containers, ctr)
+		pulledImage = pulledImages[0]
 	}
 
-	if options.Start != types.OptionalBoolFalse {
-		// Start the containers
-		podStartErrors, err := pod.Start(ctx)
-		if err != nil && errors.Cause(err) != define.ErrPodPartialFail {
-			return nil, err
-		}
-		for id, err := range podStartErrors {
-			playKubePod.ContainerErrors = append(playKubePod.ContainerErrors, errors.Wrapf(err, "error starting container %s", id).Error())
+	// Handle kube annotations
+	for k, v := range annotations {
+		switch k {
+		// Auto update annotation without container name will apply to
+		// all containers within the pod
+		case autoupdate.Label, autoupdate.AuthfileLabel:
+			labels[k] = v
+		// Auto update annotation with container name will apply only
+		// to the specified container
+		case fmt.Sprintf("%s/%s", autoupdate.Label, container.Name),
+			fmt.Sprintf("%s/%s", autoupdate.AuthfileLabel, container.Name):
+			prefixAndCtr := strings.Split(k, "/")
+			labels[prefixAndCtr[0]] = v
 		}
 	}
 
-	playKubePod.ID = pod.ID()
-	for _, ctr := range containers {
-		playKubePod.Containers = append(playKubePod.Containers, ctr.ID())
-	}
-
-	report.Pods = append(report.Pods, playKubePod)
-
-	return &report, nil
+	return pulledImage, labels, nil
 }
 
 // playKubePVC creates a podman volume from a kube persistent volume claim.
@@ -508,4 +640,137 @@ func sortKubeKinds(documentList [][]byte) ([][]byte, error) {
 	}
 
 	return sortedDocumentList, nil
+}
+func imageNamePrefix(imageName string) string {
+	prefix := imageName
+	s := strings.Split(prefix, ":")
+	if len(s) > 0 {
+		prefix = s[0]
+	}
+	s = strings.Split(prefix, "/")
+	if len(s) > 0 {
+		prefix = s[len(s)-1]
+	}
+	s = strings.Split(prefix, "@")
+	if len(s) > 0 {
+		prefix = s[0]
+	}
+	return prefix
+}
+
+func getBuildFile(imageName string, cwd string) (string, error) {
+	buildDirName := imageNamePrefix(imageName)
+	containerfilePath := filepath.Join(cwd, buildDirName, "Containerfile")
+	dockerfilePath := filepath.Join(cwd, buildDirName, "Dockerfile")
+
+	_, err := os.Stat(filepath.Join(containerfilePath))
+	if err == nil {
+		logrus.Debugf("building %s with %s", imageName, containerfilePath)
+		return containerfilePath, nil
+	}
+	// If the error is not because the file does not exist, take
+	// a mulligan and try Dockerfile.  If that also fails, return that
+	// error
+	if err != nil && !os.IsNotExist(err) {
+		logrus.Errorf("%v: unable to check for %s", err, containerfilePath)
+	}
+
+	_, err = os.Stat(filepath.Join(dockerfilePath))
+	if err == nil {
+		logrus.Debugf("building %s with %s", imageName, dockerfilePath)
+		return dockerfilePath, nil
+	}
+	// Strike two
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	return "", err
+}
+
+func (ic *ContainerEngine) PlayKubeDown(ctx context.Context, path string, _ entities.PlayKubeDownOptions) (*entities.PlayKubeReport, error) {
+	var (
+		podNames []string
+	)
+	reports := new(entities.PlayKubeReport)
+
+	// read yaml document
+	content, err := ioutil.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	// split yaml document
+	documentList, err := splitMultiDocYAML(content)
+	if err != nil {
+		return nil, err
+	}
+
+	// sort kube kinds
+	documentList, err = sortKubeKinds(documentList)
+	if err != nil {
+		return nil, errors.Wrapf(err, "unable to sort kube kinds in %q", path)
+	}
+
+	for _, document := range documentList {
+		kind, err := getKubeKind(document)
+		if err != nil {
+			return nil, errors.Wrapf(err, "unable to read %q as kube YAML", path)
+		}
+
+		switch kind {
+		case "Pod":
+			var podYAML v1.Pod
+			if err := yaml.Unmarshal(document, &podYAML); err != nil {
+				return nil, errors.Wrapf(err, "unable to read YAML %q as Kube Pod", path)
+			}
+			podNames = append(podNames, podYAML.ObjectMeta.Name)
+		case "Deployment":
+			var deploymentYAML v1apps.Deployment
+
+			if err := yaml.Unmarshal(document, &deploymentYAML); err != nil {
+				return nil, errors.Wrapf(err, "unable to read YAML %q as Kube Deployment", path)
+			}
+			var numReplicas int32 = 1
+			deploymentName := deploymentYAML.ObjectMeta.Name
+			if deploymentYAML.Spec.Replicas != nil {
+				numReplicas = *deploymentYAML.Spec.Replicas
+			}
+			for i := 0; i < int(numReplicas); i++ {
+				podName := fmt.Sprintf("%s-pod-%d", deploymentName, i)
+				podNames = append(podNames, podName)
+			}
+		default:
+			continue
+		}
+	}
+
+	// Add the reports
+	reports.StopReport, err = ic.PodStop(ctx, podNames, entities.PodStopOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	reports.RmReport, err = ic.PodRm(ctx, podNames, entities.PodRmOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return reports, nil
+}
+
+// pullImage is a helper function to set up the proper pull options and pull the image for certain containers
+func pullImage(ic *ContainerEngine, writer io.Writer, imagePull string, options entities.PlayKubeOptions, pullPolicy config.PullPolicy) ([]*libimage.Image, error) {
+	// This ensures the image is the image store
+	pullOptions := &libimage.PullOptions{}
+	pullOptions.AuthFilePath = options.Authfile
+	pullOptions.CertDirPath = options.CertDir
+	pullOptions.SignaturePolicyPath = options.SignaturePolicy
+	pullOptions.Writer = writer
+	pullOptions.Username = options.Username
+	pullOptions.Password = options.Password
+	pullOptions.InsecureSkipTLSVerify = options.SkipTLSVerify
+	pulledImages, err := ic.Libpod.LibimageRuntime().Pull(context.Background(), imagePull, pullPolicy, pullOptions)
+	if err != nil {
+		return nil, err
+	}
+	return pulledImages, nil
 }

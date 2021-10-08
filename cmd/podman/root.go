@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/pprof"
+	"strconv"
 	"strings"
 
 	"github.com/containers/common/pkg/completion"
@@ -88,14 +89,15 @@ func init() {
 
 func Execute() {
 	if err := rootCmd.ExecuteContext(registry.GetContextWithOptions()); err != nil {
+		if registry.GetExitCode() == 0 {
+			registry.SetExitCode(define.ExecErrorCodeGeneric)
+		}
+		if registry.IsRemote() {
+			if strings.Contains(err.Error(), "unable to connect to Podman") {
+				fmt.Fprintln(os.Stderr, "Cannot connect to Podman. Please verify your connection to the Linux system using `podman system connection list`, or try `podman machine init` and `podman machine start` to manage a new Linux VM")
+			}
+		}
 		fmt.Fprintln(os.Stderr, formatError(err))
-	} else if registry.GetExitCode() == registry.ExecErrorCodeGeneric {
-		// The exitCode modified from registry.ExecErrorCodeGeneric,
-		// indicates an application
-		// running inside of a container failed, as opposed to the
-		// podman command failed.  Must exit with that exit code
-		// otherwise command exited correctly.
-		registry.SetExitCode(0)
 	}
 	os.Exit(registry.GetExitCode())
 }
@@ -194,6 +196,17 @@ func persistentPreRunE(cmd *cobra.Command, args []string) error {
 				return err
 			}
 		}
+		if cmd.Flag("memory-profile").Changed {
+			// Same value as the default in github.com/pkg/profile.
+			runtime.MemProfileRate = 4096
+			if rate := os.Getenv("MemProfileRate"); rate != "" {
+				r, err := strconv.Atoi(rate)
+				if err != nil {
+					return err
+				}
+				runtime.MemProfileRate = r
+			}
+		}
 
 		if cfg.MaxWorks <= 0 {
 			return errors.Errorf("maximum workers must be set to a positive number (got %d)", cfg.MaxWorks)
@@ -224,14 +237,29 @@ func persistentPostRunE(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if !registry.IsRemote() {
-		if cmd.Flag("cpu-profile").Changed {
-			pprof.StopCPUProfile()
+	registry.ImageEngine().Shutdown(registry.Context())
+	registry.ContainerEngine().Shutdown(registry.Context())
+
+	if registry.IsRemote() {
+		return nil
+	}
+
+	// CPU and memory profiling.
+	if cmd.Flag("cpu-profile").Changed {
+		pprof.StopCPUProfile()
+	}
+	if cmd.Flag("memory-profile").Changed {
+		f, err := os.Create(registry.PodmanConfig().MemoryProfile)
+		if err != nil {
+			return errors.Wrap(err, "creating memory profile")
+		}
+		defer f.Close()
+		runtime.GC() // get up-to-date GC statistics
+		if err := pprof.WriteHeapProfile(f); err != nil {
+			return errors.Wrap(err, "writing memory profile")
 		}
 	}
 
-	registry.ImageEngine().Shutdown(registry.Context())
-	registry.ContainerEngine().Shutdown(registry.Context())
 	return nil
 }
 
@@ -294,7 +322,8 @@ func rootFlags(cmd *cobra.Command, opts *entities.PodmanConfig) {
 		pFlags.StringVar(&cfg.Engine.CgroupManager, cgroupManagerFlagName, cfg.Engine.CgroupManager, "Cgroup manager to use (\"cgroupfs\"|\"systemd\")")
 		_ = cmd.RegisterFlagCompletionFunc(cgroupManagerFlagName, common.AutocompleteCgroupManager)
 
-		pFlags.StringVar(&opts.CPUProfile, "cpu-profile", "", "Path for the cpu profiling results")
+		pFlags.StringVar(&opts.CPUProfile, "cpu-profile", "", "Path for the cpu-profiling results")
+		pFlags.StringVar(&opts.MemoryProfile, "memory-profile", "", "Path for the memory-profiling results")
 
 		conmonFlagName := "conmon"
 		pFlags.StringVar(&opts.ConmonPath, conmonFlagName, "", "Path of the conmon binary")
@@ -354,6 +383,7 @@ func rootFlags(cmd *cobra.Command, opts *entities.PodmanConfig) {
 			"cpu-profile",
 			"default-mounts-file",
 			"max-workers",
+			"memory-profile",
 			"registries-conf",
 			"trace",
 		} {

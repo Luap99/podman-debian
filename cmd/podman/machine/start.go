@@ -1,8 +1,10 @@
-// +build amd64,linux arm64,linux amd64,darwin arm64,darwin
+// +build amd64,!windows arm64,!windows
 
 package machine
 
 import (
+	"fmt"
+
 	"github.com/containers/podman/v3/cmd/podman/registry"
 	"github.com/containers/podman/v3/pkg/machine"
 	"github.com/containers/podman/v3/pkg/machine/qemu"
@@ -59,5 +61,9 @@ func start(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return vm.Start(vmName, machine.StartOptions{})
+	if err := vm.Start(vmName, machine.StartOptions{}); err != nil {
+		return err
+	}
+	fmt.Printf("Machine %q started successfully\n", vmName)
+	return nil
 }

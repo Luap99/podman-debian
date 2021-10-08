@@ -21,8 +21,6 @@ function teardown() {
 
 # Simple volume tests: share files between host and container
 @test "podman run --volumes : basic" {
-    skip_if_remote "volumes cannot be shared across hosts"
-
     run_podman volume list --noheading
     is "$output" "" "baseline: empty results from list --noheading"
 
@@ -183,6 +181,25 @@ EOF
                touch /myvol/myfile
 
     run_podman volume rm $myvol
+}
+
+
+# Podman volume import test
+@test "podman volume import test" {
+    skip_if_remote "volumes import is not applicable on podman-remote"
+    run_podman volume create my_vol
+    run_podman run --rm -v my_vol:/data $IMAGE sh -c "echo hello >> /data/test"
+    run_podman volume create my_vol2
+
+    tarfile=${PODMAN_TMPDIR}/hello$(random_string | tr A-Z a-z).tar
+    run_podman volume export my_vol --output=$tarfile
+    # we want to use `run_podman volume export my_vol` but run_podman is wrapping EOF
+    run_podman volume import my_vol2 - < $tarfile
+    rm -f $tarfile
+    run_podman run --rm -v my_vol2:/data $IMAGE sh -c "cat /data/test"
+    is "$output" "hello" "output from second container"
+    run_podman volume rm my_vol
+    run_podman volume rm my_vol2
 }
 
 

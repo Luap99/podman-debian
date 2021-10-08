@@ -447,6 +447,20 @@ content that disappears when the container is stopped.
 
 Run an init inside the container that forwards signals and reaps processes.
 
+#### **--init-ctr**=*type* (pods only)
+
+When using pods, create an init style container, which is run after the infra container is started
+but before regular pod containers are started.  Init containers are useful for running
+setup operations for the pod's applications.
+
+Valid values for `init-ctr` type are *always* or *once*.  The *always* value
+means the container will run with each and every `pod start`, whereas the *once*
+value means the container will only run once when the pod is started and then the container is removed.
+
+Init containers are only run on pod `start`.  Restarting a pod will not execute any init
+containers should they be present.  Furthermore, init containers can only be created in a
+pod when that pod is not running.
+
 #### **--init-path**=*path*
 
 Path to the container-init binary.
@@ -668,7 +682,7 @@ Valid _mode_ values are:
 
 #### **--network-alias**=*alias*
 
-Add network-scoped alias for the container
+Add network-scoped alias for the container.  NOTE: A container will only have access to aliases on the first network that it joins. This is a limitation that will be removed in a later release.
 
 #### **--no-healthcheck**=*true|false*
 
@@ -691,6 +705,10 @@ Tune the host's OOM preferences for containers (accepts -1000 to 1000)
 
 #### **--os**=*OS*
 Override the OS, defaults to hosts, of the image to be pulled. For example, `windows`.
+
+#### **--personality**=*persona*
+
+Personality sets the execution domain via Linux personality(2).
 
 #### **--pid**=*pid*
 
@@ -973,6 +991,10 @@ Maximum time a container is allowed to run before conmon sends it the kill
 signal.  By default containers will run until they exit or are stopped by
 `podman stop`.
 
+#### **--tls-verify**=**true**|**false**
+
+Require HTTPS and verify certificates when contacting registries (default: true). If explicitly set to true, then TLS verification will be used. If set to false, then TLS verification will not be used. If not specified, TLS verification will be used unless the target registry is listed as an insecure registry in registries.conf.
+
 #### **--tmpfs**=*fs*
 
 Create a tmpfs mount
@@ -1103,21 +1125,21 @@ Example: `containers:2147483647:2147483648`.
 
 Podman allocates unique ranges of UIDs and GIDs from the `containers` subpordinate user ids. The size of the ranges is based on the number of UIDs required in the image. The number of UIDs and GIDs can be overridden with the `size` option. The `auto` options currently does not work in rootless mode
 
-  Valid `auto`options:
+  Valid `auto` options:
 
-  - *gidmapping*=_HOST_GID:CONTAINER_GID:SIZE_: to force a GID mapping to be present in the user namespace.
+  - *gidmapping*=_CONTAINER_GID:HOST_GID:SIZE_: to force a GID mapping to be present in the user namespace.
   - *size*=_SIZE_: to specify an explicit size for the automatic user namespace. e.g. `--userns=auto:size=8192`. If `size` is not specified, `auto` will estimate a size for the user namespace.
-  - *uidmapping*=_HOST_UID:CONTAINER_UID:SIZE_: to force a UID mapping to be present in the user namespace.
+  - *uidmapping*=_CONTAINER_UID:HOST_UID:SIZE_: to force a UID mapping to be present in the user namespace.
 
 **container:**_id_: join the user namespace of the specified container.
 
 **host**: run in the user namespace of the caller. The processes running in the container will have the same privileges on the host as any other process launched by the calling user (default).
 
-- **keep-id**: creates a user namespace where the current rootless user's UID:GID are mapped to the same values in the container. This option is ignored for containers created by the root user.
+**keep-id**: creates a user namespace where the current rootless user's UID:GID are mapped to the same values in the container. This option is ignored for containers created by the root user.
 
-- **ns:**_namespace_: run the container in the given existing user namespace.
+**ns:**_namespace_: run the container in the given existing user namespace.
 
-- **private**: create a new namespace for the container.
+**private**: create a new namespace for the container.
 
 This option is incompatible with **--gidmap**, **--uidmap**, **--subuidname** and **--subgidname**.
 
@@ -1415,6 +1437,12 @@ $ podman start --attach container3
 $ podman create -v /var/lib/design:/var/lib/design --group-add keep-groups ubi8
 ```
 
+### Configure execution domain for containers using personality flag
+
+```
+$ podman create --name container1 --personaity=LINUX32 fedora bash
+```
+
 ### Rootless Containers
 
 Podman runs as a non root user on most systems. This feature requires that a new enough version of shadow-utils
@@ -1477,7 +1505,7 @@ NOTE: Use the environment variable `TMPDIR` to change the temporary storage loca
 
 ## SEE ALSO
 **podman**(1), **podman-secret**(1), **podman-save**(1), **podman-ps**(1), **podman-attach**(1), **podman-pod-create**(1), **podman-port**(1), **podman-start*(1), **podman-kill**(1), **podman-stop**(1),
-**podman-generate-systemd**(1) **podman-rm**(1), **subgid**(5), **subuid**(5), **containers.conf**(5), **systemd.unit**(5), **setsebool**(8), **slirp4netns**(1), **fuse-overlayfs**(1), **proc**(5), **conmon**(8).
+**podman-generate-systemd**(1) **podman-rm**(1), **subgid**(5), **subuid**(5), **containers.conf**(5), **systemd.unit**(5), **setsebool**(8), **slirp4netns**(1), **fuse-overlayfs**(1), **proc**(5), **conmon**(8), **personality**(2).
 
 ## HISTORY
 October 2017, converted from Docker documentation to Podman by Dan Walsh for Podman `<dwalsh@redhat.com>`

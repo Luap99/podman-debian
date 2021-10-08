@@ -22,6 +22,10 @@ podman run $IMAGE true
 
 t GET libpod/containers/json 200 length=0
 
+# bad all input
+t GET libpod/containers/json?all='garb1age' 500 \
+    .cause="schema: error converting value for \"all\""
+
 t GET libpod/containers/json?all=true 200 \
   length=1 \
   .[0].Id~[0-9a-f]\\{64\\} \
@@ -354,5 +358,24 @@ t POST containers/create Image=$IMAGE HostConfig='{"NetworkMode":"default"}' 201
 cid=$(jq -r '.Id' <<<"$output")
 t GET containers/$cid/json 200 \
   .HostConfig.NetworkMode="bridge"
+
+t DELETE containers/$cid?v=true 204
+
+# Test Compat Create with healthcheck, check default values
+t POST containers/create Image=$IMAGE Cmd='["top"]' Healthcheck='{"Test":["true"]}' 201 \
+  .Id~[0-9a-f]\\{64\\}
+cid=$(jq -r '.Id' <<<"$output")
+t GET containers/$cid/json 200 \
+  .Config.Healthcheck.Interval=30000000000 \
+  .Config.Healthcheck.Timeout=30000000000 \
+  .Config.Healthcheck.Retries=3
+
+# compat api: Test for mount options support
+payload='{"Mounts":[{"Type":"tmpfs","Target":"/mnt/scratch","TmpfsOptions":{"SizeBytes":1024,"Mode":755}}]}'
+t POST containers/create Image=$IMAGE HostConfig="$payload" 201 .Id~[0-9a-f]\\{64\\}
+cid=$(jq -r '.Id' <<<"$output")
+t GET containers/$cid/json 200 \
+    .HostConfig.Tmpfs['"/mnt/scratch"']~.*size=1024.* \
+    .HostConfig.Tmpfs['"/mnt/scratch"']~.*mode=755.*
 
 t DELETE containers/$cid?v=true 204

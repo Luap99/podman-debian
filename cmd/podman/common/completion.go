@@ -193,20 +193,13 @@ func getImages(cmd *cobra.Command, toComplete string) ([]string, cobra.ShellComp
 			} else {
 				// suggested "registry.fedoraproject.org/f29/httpd:latest" as
 				// - "registry.fedoraproject.org/f29/httpd:latest"
-				// - "registry.fedoraproject.org/f29/httpd"
 				// - "f29/httpd:latest"
-				// - "f29/httpd"
 				// - "httpd:latest"
-				// - "httpd"
 				paths := strings.Split(repo, "/")
 				for i := range paths {
 					suggestionWithTag := strings.Join(paths[i:], "/")
 					if strings.HasPrefix(suggestionWithTag, toComplete) {
 						suggestions = append(suggestions, suggestionWithTag)
-					}
-					suggestionWithoutTag := strings.SplitN(strings.SplitN(suggestionWithTag, ":", 2)[0], "@", 2)[0]
-					if strings.HasPrefix(suggestionWithoutTag, toComplete) {
-						suggestions = append(suggestions, suggestionWithoutTag)
 					}
 				}
 			}
@@ -223,7 +216,7 @@ func getSecrets(cmd *cobra.Command, toComplete string) ([]string, cobra.ShellCom
 		cobra.CompErrorln(err.Error())
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	secrets, err := engine.SecretList(registry.GetContext())
+	secrets, err := engine.SecretList(registry.GetContext(), entities.SecretListRequest{})
 	if err != nil {
 		cobra.CompErrorln(err.Error())
 		return nil, cobra.ShellCompDirectiveNoFileComp
@@ -319,6 +312,18 @@ func validCurrentCmdLine(cmd *cobra.Command, args []string, toComplete string) b
 func prefixSlice(pre string, slice []string) []string {
 	for i := range slice {
 		slice[i] = pre + slice[i]
+	}
+	return slice
+}
+
+func suffixCompSlice(suf string, slice []string) []string {
+	for i := range slice {
+		split := strings.SplitN(slice[i], "\t", 2)
+		if len(split) > 1 {
+			slice[i] = split[0] + suf + "\t" + split[1]
+		} else {
+			slice[i] = slice[i] + suf
+		}
 	}
 	return slice
 }
@@ -664,6 +669,42 @@ func AutocompleteSystemConnections(cmd *cobra.Command, args []string, toComplete
 	return suggestions, cobra.ShellCompDirectiveNoFileComp
 }
 
+// AutocompleteScp returns a list of connections, images, or both, depending on the amount of arguments
+func AutocompleteScp(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if !validCurrentCmdLine(cmd, args, toComplete) {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	switch len(args) {
+	case 0:
+		split := strings.SplitN(toComplete, "::", 2)
+		if len(split) > 1 {
+			imageSuggestions, _ := getImages(cmd, split[1])
+			return prefixSlice(split[0]+"::", imageSuggestions), cobra.ShellCompDirectiveNoFileComp
+		}
+		connectionSuggestions, _ := AutocompleteSystemConnections(cmd, args, toComplete)
+		imageSuggestions, _ := getImages(cmd, toComplete)
+		totalSuggestions := append(suffixCompSlice("::", connectionSuggestions), imageSuggestions...)
+		directive := cobra.ShellCompDirectiveNoFileComp
+		// if we have connections do not add a space after the completion
+		if len(connectionSuggestions) > 0 {
+			directive = cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveNoSpace
+		}
+		return totalSuggestions, directive
+	case 1:
+		split := strings.SplitN(args[0], "::", 2)
+		if len(split) > 1 {
+			if len(split[1]) > 0 {
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			}
+			imageSuggestions, _ := getImages(cmd, toComplete)
+			return imageSuggestions, cobra.ShellCompDirectiveNoFileComp
+		}
+		connectionSuggestions, _ := AutocompleteSystemConnections(cmd, args, toComplete)
+		return suffixCompSlice("::", connectionSuggestions), cobra.ShellCompDirectiveNoFileComp
+	}
+	return nil, cobra.ShellCompDirectiveNoFileComp
+}
+
 /* -------------- Flags ----------------- */
 
 // AutocompleteDetachKeys - Autocomplete detach-keys options.
@@ -937,40 +978,14 @@ func AutocompleteFormat(o interface{}) func(cmd *cobra.Command, args []string, t
 				f = f.Elem()
 			}
 
-			// // the only supported type is struct
+			// the only supported type is struct
 			if f.Kind() != reflect.Struct {
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			}
 
 			// last field get all names to suggest
 			if i == len(fields)-1 {
-				suggestions := []string{}
-				for j := 0; j < f.NumField(); j++ {
-					fname := f.Type().Field(j).Name
-					suffix := "}}"
-					kind := f.Type().Field(j).Type.Kind()
-					if kind == reflect.Ptr {
-						// make sure to read the actual type when it is a pointer
-						kind = f.Type().Field(j).Type.Elem().Kind()
-					}
-					// when we have a nested struct do not append braces instead append a dot
-					if kind == reflect.Struct {
-						suffix = "."
-					}
-					if strings.HasPrefix(fname, fields[i]) {
-						// add field name with closing braces
-						suggestions = append(suggestions, fname+suffix)
-					}
-				}
-
-				for j := 0; j < f.NumMethod(); j++ {
-					fname := f.Type().Method(j).Name
-					if strings.HasPrefix(fname, fields[i]) {
-						// add method name with closing braces
-						suggestions = append(suggestions, fname+"}}")
-					}
-				}
-
+				suggestions := getStructFields(f, fields[i])
 				// add the current toComplete value in front so that the shell can complete this correctly
 				toCompArr := strings.Split(toComplete, ".")
 				toCompArr[len(toCompArr)-1] = ""
@@ -982,6 +997,52 @@ func AutocompleteFormat(o interface{}) func(cmd *cobra.Command, args []string, t
 		}
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
+}
+
+// getStructFields reads all struct field names and method names and returns them.
+func getStructFields(f reflect.Value, prefix string) []string {
+	suggestions := []string{}
+	// follow the pointer first
+	if f.Kind() == reflect.Ptr {
+		f = f.Elem()
+	}
+	// we only support structs
+	if f.Kind() != reflect.Struct {
+		return nil
+	}
+	// loop over all field names
+	for j := 0; j < f.NumField(); j++ {
+		field := f.Type().Field(j)
+		fname := field.Name
+		suffix := "}}"
+		kind := field.Type.Kind()
+		if kind == reflect.Ptr {
+			// make sure to read the actual type when it is a pointer
+			kind = field.Type.Elem().Kind()
+		}
+		// when we have a nested struct do not append braces instead append a dot
+		if kind == reflect.Struct {
+			suffix = "."
+		}
+		if strings.HasPrefix(fname, prefix) {
+			// add field name with suffix
+			suggestions = append(suggestions, fname+suffix)
+		}
+		// if field is anonymous add the child fields as well
+		if field.Anonymous {
+			suggestions = append(suggestions, getStructFields(f.FieldByIndex([]int{j}), prefix)...)
+		}
+	}
+
+	for j := 0; j < f.NumMethod(); j++ {
+		fname := f.Type().Method(j).Name
+		if strings.HasPrefix(fname, prefix) {
+			// add method name with closing braces
+			suggestions = append(suggestions, fname+"}}")
+		}
+	}
+
+	return suggestions
 }
 
 // AutocompleteEventFilter - Autocomplete event filter flag options.

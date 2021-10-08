@@ -39,7 +39,9 @@ do these things manually or handle otherwise.
 
 #### **--image-path**
 
-Fully qualified path of the uncompressed image file
+Fully qualified path or URL to the VM image.
+Can also be set to `testing`, `next`, or `stable` to pull down default image.
+Defaults to `testing`.
 
 #### **--memory**, **-m**=*number*
 
@@ -52,13 +54,14 @@ Print usage statement.
 ## EXAMPLES
 
 ```
+$ podman machine init
 $ podman machine init myvm
-$ podman machine init --device=/dev/xvdc:rw myvm
+$ podman machine init --disk-size 50
 $ podman machine init --memory=1024 myvm
 ```
 
 ## SEE ALSO
-podman-machine (1)
+podman-machine(1)
 
 ## HISTORY
 March 2021, Originally compiled by Ashley Cui <acui@redhat.com>

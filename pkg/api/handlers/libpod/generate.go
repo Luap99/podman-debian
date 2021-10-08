@@ -5,6 +5,7 @@ import (
 
 	"github.com/containers/podman/v3/libpod"
 	"github.com/containers/podman/v3/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v3/pkg/api/types"
 	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/containers/podman/v3/pkg/domain/infra/abi"
 	"github.com/containers/podman/v3/pkg/util"
@@ -13,19 +14,18 @@ import (
 )
 
 func GenerateSystemd(w http.ResponseWriter, r *http.Request) {
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
-	decoder := r.Context().Value("decoder").(*schema.Decoder)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
+	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	query := struct {
-		Name            bool   `schema:"useName"`
-		New             bool   `schema:"new"`
-		NoHeader        bool   `schema:"noHeader"`
-		RestartPolicy   string `schema:"restartPolicy"`
-		StopTimeout     uint   `schema:"stopTimeout"`
-		ContainerPrefix string `schema:"containerPrefix"`
-		PodPrefix       string `schema:"podPrefix"`
-		Separator       string `schema:"separator"`
+		Name            bool    `schema:"useName"`
+		New             bool    `schema:"new"`
+		NoHeader        bool    `schema:"noHeader"`
+		RestartPolicy   *string `schema:"restartPolicy"`
+		StopTimeout     uint    `schema:"stopTimeout"`
+		ContainerPrefix string  `schema:"containerPrefix"`
+		PodPrefix       string  `schema:"podPrefix"`
+		Separator       string  `schema:"separator"`
 	}{
-		RestartPolicy:   "on-failure",
 		StopTimeout:     util.DefaultContainerConfig().Engine.StopTimeout,
 		ContainerPrefix: "container",
 		PodPrefix:       "pod",
@@ -49,6 +49,7 @@ func GenerateSystemd(w http.ResponseWriter, r *http.Request) {
 		PodPrefix:       query.PodPrefix,
 		Separator:       query.Separator,
 	}
+
 	report, err := containerEngine.GenerateSystemd(r.Context(), utils.GetName(r), options)
 	if err != nil {
 		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrap(err, "error generating systemd units"))
@@ -59,8 +60,8 @@ func GenerateSystemd(w http.ResponseWriter, r *http.Request) {
 }
 
 func GenerateKube(w http.ResponseWriter, r *http.Request) {
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
-	decoder := r.Context().Value("decoder").(*schema.Decoder)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
+	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	query := struct {
 		Names   []string `schema:"names"`
 		Service bool     `schema:"service"`

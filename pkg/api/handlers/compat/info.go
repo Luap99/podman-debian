@@ -15,6 +15,7 @@ import (
 	"github.com/containers/podman/v3/libpod/define"
 	"github.com/containers/podman/v3/pkg/api/handlers"
 	"github.com/containers/podman/v3/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v3/pkg/api/types"
 	"github.com/containers/podman/v3/pkg/rootless"
 	docker "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/registry"
@@ -27,7 +28,7 @@ import (
 func GetInfo(w http.ResponseWriter, r *http.Request) {
 	// 200 ok
 	// 500 internal
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 
 	infoData, err := runtime.Info()
 	if err != nil {
@@ -102,14 +103,18 @@ func GetInfo(w http.ResponseWriter, r *http.Request) {
 		OomKillDisable:     sysInfo.OomKillDisable,
 		OperatingSystem:    infoData.Host.Distribution.Distribution,
 		PidsLimit:          sysInfo.PidsLimit,
-		Plugins:            docker.PluginsInfo{},
-		ProductLicense:     "Apache-2.0",
-		RegistryConfig:     new(registry.ServiceConfig),
-		RuncCommit:         docker.Commit{},
-		Runtimes:           getRuntimes(configInfo),
-		SecurityOptions:    getSecOpts(sysInfo),
-		ServerVersion:      versionInfo.Version,
-		SwapLimit:          sysInfo.SwapLimit,
+		Plugins: docker.PluginsInfo{
+			Volume:  infoData.Plugins.Volume,
+			Network: infoData.Plugins.Network,
+			Log:     infoData.Plugins.Log,
+		},
+		ProductLicense:  "Apache-2.0",
+		RegistryConfig:  new(registry.ServiceConfig),
+		RuncCommit:      docker.Commit{},
+		Runtimes:        getRuntimes(configInfo),
+		SecurityOptions: getSecOpts(sysInfo),
+		ServerVersion:   versionInfo.Version,
+		SwapLimit:       sysInfo.SwapLimit,
 		Swarm: swarm.Info{
 			LocalNodeState: swarm.LocalNodeStateInactive,
 		},

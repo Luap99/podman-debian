@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/containers/podman/v3/pkg/cgroups"
 	. "github.com/containers/podman/v3/test/utils"
 	"github.com/containers/storage/pkg/stringid"
 	"github.com/mrunalp/fileutils"
@@ -166,9 +167,25 @@ var _ = Describe("Podman run", func() {
 	})
 
 	It("podman run a container based on remote image", func() {
-		session := podmanTest.Podman([]string{"run", "-dt", BB_GLIBC, "ls"})
+		// Changing session to rsession
+		rsession := podmanTest.Podman([]string{"run", "-dt", ALPINE, "ls"})
+		rsession.WaitWithDefaultTimeout()
+		Expect(rsession).Should(Exit(0))
+
+		lock := GetPortLock("5000")
+		defer lock.Unlock()
+		session := podmanTest.Podman([]string{"run", "-d", "--name", "registry", "-p", "5000:5000", registry, "/entrypoint.sh", "/etc/docker/registry/config.yml"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
+
+		if !WaitContainerReady(podmanTest, "registry", "listening on", 20, 1) {
+			Skip("Cannot start docker registry.")
+		}
+
+		run := podmanTest.Podman([]string{"run", "--tls-verify=false", ALPINE})
+		run.WaitWithDefaultTimeout()
+		Expect(run).Should(Exit(0))
+		Expect(podmanTest.NumberOfContainers()).To(Equal(3))
 	})
 
 	It("podman run a container with a --rootfs", func() {
@@ -1131,11 +1148,11 @@ USER mail`, BB)
 	})
 
 	It("podman run --pod automatically", func() {
-		session := podmanTest.Podman([]string{"run", "-d", "--pod", "new:foobar", ALPINE, "nc", "-l", "-p", "8080"})
+		session := podmanTest.Podman([]string{"run", "-d", "--pod", "new:foobar", ALPINE, "nc", "-l", "-p", "8686"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
-		session = podmanTest.Podman([]string{"run", "--pod", "foobar", ALPINE, "/bin/sh", "-c", "echo test | nc -w 1 127.0.0.1 8080"})
+		session = podmanTest.Podman([]string{"run", "--pod", "foobar", ALPINE, "/bin/sh", "-c", "echo test | nc -w 1 127.0.0.1 8686"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
@@ -1279,63 +1296,75 @@ USER mail`, BB)
 		SkipIfRootlessCgroupsV1("Disable cgroups not supported on cgroupv1 for rootless users")
 		SkipIfRemote("--cgroups=split cannot be used in remote mode")
 
+		checkLines := func(lines []string) {
+			cgroup := ""
+			for _, line := range lines {
+				parts := strings.SplitN(line, ":", 3)
+				if len(parts) < 2 {
+					continue
+				}
+				if !CGROUPSV2 {
+					// ignore unified on cgroup v1.
+					// both runc and crun do not set it.
+					// crun does not set named hierarchies.
+					if parts[1] == "" || strings.Contains(parts[1], "name=") {
+						continue
+					}
+				}
+				if parts[2] == "/" {
+					continue
+				}
+				if cgroup == "" {
+					cgroup = parts[2]
+					continue
+				}
+				Expect(cgroup).To(Equal(parts[2]))
+			}
+		}
+
 		container := podmanTest.Podman([]string{"run", "--rm", "--cgroups=split", ALPINE, "cat", "/proc/self/cgroup"})
 		container.WaitWithDefaultTimeout()
 		Expect(container).Should(Exit(0))
-		lines := container.OutputToStringArray()
+		checkLines(container.OutputToStringArray())
 
-		cgroup := ""
-		for _, line := range lines {
-			parts := strings.SplitN(line, ":", 3)
-			if !CGROUPSV2 {
-				// ignore unified on cgroup v1.
-				// both runc and crun do not set it.
-				// crun does not set named hierarchies.
-				if parts[1] == "" || strings.Contains(parts[1], "name=") {
-					continue
-				}
-			}
-			if parts[2] == "/" {
-				continue
-			}
-			if cgroup == "" {
-				cgroup = parts[2]
-				continue
-			}
-			Expect(cgroup).To(Equal(parts[2]))
-		}
+		// check that --cgroups=split is honored also when a container runs in a pod
+		container = podmanTest.Podman([]string{"run", "--rm", "--pod", "new:split-test-pod", "--cgroups=split", ALPINE, "cat", "/proc/self/cgroup"})
+		container.WaitWithDefaultTimeout()
+		Expect(container).Should(Exit(0))
+		checkLines(container.OutputToStringArray())
 	})
 
 	It("podman run with cgroups=disabled runs without cgroups", func() {
-		SkipIfRootless("FIXME:  I believe this should work but need to fix this test")
 		SkipIfRootlessCgroupsV1("Disable cgroups not supported on cgroupv1 for rootless users")
 		// Only works on crun
 		if !strings.Contains(podmanTest.OCIRuntime, "crun") {
 			Skip("Test only works on crun")
 		}
 
+		ownsCgroup, err := cgroups.UserOwnsCurrentSystemdCgroup()
+		Expect(err).ShouldNot(HaveOccurred())
+		if !ownsCgroup {
+			// Podman moves itself to a new cgroup if it doesn't own the current cgroup
+			Skip("Test only works when Podman owns the current cgroup")
+		}
+
+		trim := func(i string) string {
+			return strings.TrimSuffix(i, "\n")
+		}
+
 		curCgroupsBytes, err := ioutil.ReadFile("/proc/self/cgroup")
 		Expect(err).ShouldNot(HaveOccurred())
-		var curCgroups = string(curCgroupsBytes)
+		curCgroups := trim(string(curCgroupsBytes))
 		fmt.Printf("Output:\n%s\n", curCgroups)
 		Expect(curCgroups).ToNot(Equal(""))
 
-		ctrName := "testctr"
-		container := podmanTest.Podman([]string{"run", "--name", ctrName, "-d", "--cgroups=disabled", ALPINE, "top"})
+		container := podmanTest.Podman([]string{"run", "--cgroupns=host", "--cgroups=disabled", ALPINE, "cat", "/proc/self/cgroup"})
 		container.WaitWithDefaultTimeout()
 		Expect(container).Should(Exit(0))
 
-		// Get PID and get cgroups of that PID
-		inspectOut := podmanTest.InspectContainer(ctrName)
-		Expect(len(inspectOut)).To(Equal(1))
-		pid := inspectOut[0].State.Pid
-		Expect(pid).ToNot(Equal(0))
-		Expect(inspectOut[0].HostConfig.CgroupParent).To(Equal(""))
-
-		ctrCgroupsBytes, err := ioutil.ReadFile(fmt.Sprintf("/proc/%d/cgroup", pid))
-		Expect(err).ShouldNot(HaveOccurred())
-		var ctrCgroups = string(ctrCgroupsBytes)
+		ctrCgroups := trim(container.OutputToString())
 		fmt.Printf("Output\n:%s\n", ctrCgroups)
+
 		Expect(ctrCgroups).To(Equal(curCgroups))
 	})
 
@@ -1789,5 +1818,16 @@ WORKDIR /madethis`, BB)
 		containerPID := readFirstLine(pidfile)
 		_, err = strconv.Atoi(containerPID) // Make sure it's a proper integer
 		Expect(err).To(BeNil())
+	})
+
+	It("podman run check personality support", func() {
+		// TODO: Remove this as soon as this is merged and made available in our CI https://github.com/opencontainers/runc/pull/3126.
+		if !strings.Contains(podmanTest.OCIRuntime, "crun") {
+			Skip("Test only works on crun")
+		}
+		session := podmanTest.Podman([]string{"run", "--personality=LINUX32", "--name=testpersonality", ALPINE, "uname", "-a"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToString()).To(ContainSubstring("i686"))
 	})
 })

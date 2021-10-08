@@ -1,5 +1,6 @@
 import json
 import unittest
+import uuid
 
 import requests
 from .fixtures import APITestCase
@@ -28,6 +29,13 @@ class SystemTestCase(APITestCase):
             obj = json.loads(line)
             # Actor.ID is uppercase for compatibility
             self.assertIn("ID", obj["Actor"])
+            # Verify 1.22+ deprecated variants are present if current originals are
+            if obj["Actor"]["ID"]:
+                self.assertEqual(obj["Actor"]["ID"], obj["id"])
+            if obj["Action"]:
+                self.assertEqual(obj["Action"], obj["status"])
+            if obj["Actor"].get("Attributes") and obj["Actor"]["Attributes"].get("image"):
+                self.assertEqual(obj["Actor"]["Attributes"]["image"], obj["from"])
 
     def test_ping(self):
         required_headers = (
@@ -70,6 +78,15 @@ class SystemTestCase(APITestCase):
         r = requests.get(self.uri("/version"))
         self.assertEqual(r.status_code, 200, r.text)
 
+        body = r.json()
+        names = [d.get("Name", "") for d in body["Components"]]
+
+        self.assertIn("Conmon", names)
+        for n in names:
+            if n.startswith("OCI Runtime"):
+                oci_name = n
+        self.assertIsNotNone(oci_name, "OCI Runtime not found in version components.")
+
     def test_df(self):
         r = requests.get(self.podman_url + "/v1.40/system/df")
         self.assertEqual(r.status_code, 200, r.text)
@@ -82,6 +99,18 @@ class SystemTestCase(APITestCase):
 
         r = requests.get(self.uri("/system/df"))
         self.assertEqual(r.status_code, 200, r.text)
+
+    def test_reference_id(self):
+        rid = str(uuid.uuid4())
+        r = requests.get(self.uri("/info"), headers={"X-Reference-Id": rid})
+        self.assertEqual(r.status_code, 200, r.text)
+
+        self.assertIn("X-Reference-Id", r.headers)
+        self.assertEqual(r.headers["X-Reference-Id"], rid)
+
+        r = requests.get(self.uri("/info"))
+        self.assertIn("X-Reference-Id", r.headers)
+        self.assertNotEqual(r.headers["X-Reference-Id"], rid)
 
 
 if __name__ == "__main__":

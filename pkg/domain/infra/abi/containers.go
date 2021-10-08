@@ -169,17 +169,25 @@ func (ic *ContainerEngine) ContainerStop(ctx context.Context, namesOrIds []strin
 				logrus.Debugf("Container %s is already stopped", c.ID())
 			case options.All && errors.Cause(err) == define.ErrCtrStateInvalid:
 				logrus.Debugf("Container %s is not running, could not stop", c.ID())
+			// container never created in OCI runtime
+			// docker parity: do nothing just return container id
+			case errors.Cause(err) == define.ErrCtrStateInvalid:
+				logrus.Debugf("Container %s is either not created on runtime or is in a invalid state", c.ID())
 			default:
 				return err
 			}
 		}
-		if c.AutoRemove() {
-			// Issue #7384: if the container is configured for
-			// auto-removal, it might already have been removed at
-			// this point.
-			return nil
+		err = c.Cleanup(ctx)
+		if err != nil {
+			// Issue #7384 and #11384: If the container is configured for
+			// auto-removal, it might already have been removed at this point.
+			// We still need to to cleanup since we do not know if the other cleanup process is successful
+			if c.AutoRemove() && (errors.Is(err, define.ErrNoSuchCtr) || errors.Is(err, define.ErrCtrRemoved)) {
+				return nil
+			}
+			return err
 		}
-		return c.Cleanup(ctx)
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -367,7 +375,7 @@ func (ic *ContainerEngine) ContainerInspect(ctx context.Context, namesOrIds []st
 	if options.Latest {
 		ctr, err := ic.Libpod.GetLatestContainer()
 		if err != nil {
-			if errors.Cause(err) == define.ErrNoSuchCtr {
+			if errors.Is(err, define.ErrNoSuchCtr) {
 				return nil, []error{errors.Wrapf(err, "no containers to inspect")}, nil
 			}
 			return nil, nil, err
@@ -393,7 +401,7 @@ func (ic *ContainerEngine) ContainerInspect(ctx context.Context, namesOrIds []st
 		if err != nil {
 			// ErrNoSuchCtr is non-fatal, other errors will be
 			// treated as fatal.
-			if errors.Cause(err) == define.ErrNoSuchCtr {
+			if errors.Is(err, define.ErrNoSuchCtr) {
 				errs = append(errs, errors.Errorf("no such container %s", name))
 				continue
 			}
@@ -402,6 +410,12 @@ func (ic *ContainerEngine) ContainerInspect(ctx context.Context, namesOrIds []st
 
 		inspect, err := ctr.Inspect(options.Size)
 		if err != nil {
+			// ErrNoSuchCtr is non-fatal, other errors will be
+			// treated as fatal.
+			if errors.Is(err, define.ErrNoSuchCtr) {
+				errs = append(errs, errors.Errorf("no such container %s", name))
+				continue
+			}
 			return nil, nil, err
 		}
 
@@ -583,7 +597,11 @@ func (ic *ContainerEngine) ContainerCreate(ctx context.Context, s *specgen.SpecG
 	for _, w := range warn {
 		fmt.Fprintf(os.Stderr, "%s\n", w)
 	}
-	ctr, err := generate.MakeContainer(ctx, ic.Libpod, s)
+	rtSpec, spec, opts, err := generate.MakeContainer(context.Background(), ic.Libpod, s)
+	if err != nil {
+		return nil, err
+	}
+	ctr, err := generate.ExecuteCreate(ctx, ic.Libpod, rtSpec, spec, false, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -816,21 +834,7 @@ func (ic *ContainerEngine) ContainerStart(ctx context.Context, namesOrIds []stri
 				}
 				return reports, errors.Wrapf(err, "unable to start container %s", ctr.ID())
 			}
-
-			if ecode, err := ctr.Wait(ctx); err != nil {
-				if errors.Cause(err) == define.ErrNoSuchCtr {
-					// Check events
-					event, err := ic.Libpod.GetLastContainerEvent(ctx, ctr.ID(), events.Exited)
-					if err != nil {
-						logrus.Errorf("Cannot get exit code: %v", err)
-						exitCode = define.ExecErrorCodeNotFound
-					} else {
-						exitCode = event.ContainerExitCode
-					}
-				}
-			} else {
-				exitCode = int(ecode)
-			}
+			exitCode = ic.GetContainerExitCode(ctx, ctr)
 			reports = append(reports, &entities.ContainerStartReport{
 				Id:       ctr.ID(),
 				RawInput: rawInput,
@@ -915,7 +919,11 @@ func (ic *ContainerEngine) ContainerRun(ctx context.Context, opts entities.Conta
 	for _, w := range warn {
 		fmt.Fprintf(os.Stderr, "%s\n", w)
 	}
-	ctr, err := generate.MakeContainer(ctx, ic.Libpod, opts.Spec)
+	rtSpec, spec, optsN, err := generate.MakeContainer(ctx, ic.Libpod, opts.Spec)
+	if err != nil {
+		return nil, err
+	}
+	ctr, err := generate.ExecuteCreate(ctx, ic.Libpod, rtSpec, spec, false, optsN...)
 	if err != nil {
 		return nil, err
 	}
@@ -967,21 +975,7 @@ func (ic *ContainerEngine) ContainerRun(ctx context.Context, opts entities.Conta
 		report.ExitCode = define.ExitCode(err)
 		return &report, err
 	}
-
-	if ecode, err := ctr.Wait(ctx); err != nil {
-		if errors.Cause(err) == define.ErrNoSuchCtr {
-			// Check events
-			event, err := ic.Libpod.GetLastContainerEvent(ctx, ctr.ID(), events.Exited)
-			if err != nil {
-				logrus.Errorf("Cannot get exit code: %v", err)
-				report.ExitCode = define.ExecErrorCodeNotFound
-			} else {
-				report.ExitCode = event.ContainerExitCode
-			}
-		}
-	} else {
-		report.ExitCode = int(ecode)
-	}
+	report.ExitCode = ic.GetContainerExitCode(ctx, ctr)
 	if opts.Rm && !ctr.ShouldRestart(ctx) {
 		if err := ic.Libpod.RemoveContainer(ctx, ctr, false, true); err != nil {
 			if errors.Cause(err) == define.ErrNoSuchCtr ||
@@ -993,6 +987,29 @@ func (ic *ContainerEngine) ContainerRun(ctx context.Context, opts entities.Conta
 		}
 	}
 	return &report, nil
+}
+
+func (ic *ContainerEngine) GetContainerExitCode(ctx context.Context, ctr *libpod.Container) int {
+	exitCode, err := ctr.Wait(ctx)
+	if err == nil {
+		return int(exitCode)
+	}
+	if errors.Cause(err) != define.ErrNoSuchCtr {
+		logrus.Errorf("Could not retrieve exit code: %v", err)
+		return define.ExecErrorCodeNotFound
+	}
+	// Make 4 attempt with 0.25s backoff between each for 1 second total
+	var event *events.Event
+	for i := 0; i < 4; i++ {
+		event, err = ic.Libpod.GetLastContainerEvent(ctx, ctr.ID(), events.Exited)
+		if err != nil {
+			time.Sleep(250 * time.Millisecond)
+			continue
+		}
+		return int(event.ContainerExitCode)
+	}
+	logrus.Errorf("Could not retrieve exit code from event: %v", err)
+	return define.ExecErrorCodeNotFound
 }
 
 func (ic *ContainerEngine) ContainerLogs(ctx context.Context, containers []string, options entities.ContainerLogsOptions) error {
@@ -1296,6 +1313,9 @@ func (ic *ContainerEngine) Shutdown(_ context.Context) {
 }
 
 func (ic *ContainerEngine) ContainerStats(ctx context.Context, namesOrIds []string, options entities.ContainerStatsOptions) (statsChan chan entities.ContainerStatsReport, err error) {
+	if options.Interval < 1 {
+		return nil, errors.New("Invalid interval, must be a positive number greater zero")
+	}
 	statsChan = make(chan entities.ContainerStatsReport, 1)
 
 	containerFunc := ic.Libpod.GetRunningContainers
@@ -1376,7 +1396,7 @@ func (ic *ContainerEngine) ContainerStats(ctx context.Context, namesOrIds []stri
 			return
 		}
 
-		time.Sleep(time.Second)
+		time.Sleep(time.Second * time.Duration(options.Interval))
 		goto stream
 	}()
 

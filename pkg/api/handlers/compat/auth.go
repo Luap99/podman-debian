@@ -11,6 +11,7 @@ import (
 	"github.com/containers/image/v5/types"
 	"github.com/containers/podman/v3/libpod"
 	"github.com/containers/podman/v3/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v3/pkg/api/types"
 	"github.com/containers/podman/v3/pkg/domain/entities"
 	docker "github.com/docker/docker/api/types"
 	"github.com/pkg/errors"
@@ -37,7 +38,7 @@ func Auth(w http.ResponseWriter, r *http.Request) {
 		skipTLS = types.NewOptionalBool(true)
 	}
 
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	sysCtx := runtime.SystemContext()
 	sysCtx.DockerInsecureSkipTLSVerify = skipTLS
 
@@ -49,9 +50,19 @@ func Auth(w http.ResponseWriter, r *http.Request) {
 			Status:        "Login Succeeded",
 		})
 	} else {
-		utils.WriteResponse(w, http.StatusBadRequest, entities.AuthReport{
-			IdentityToken: "",
-			Status:        "login attempt to " + authConfig.ServerAddress + " failed with status: " + err.Error(),
+		var msg string
+
+		var unauthErr DockerClient.ErrUnauthorizedForCredentials
+		if errors.As(err, &unauthErr) {
+			msg = "401 Unauthorized"
+		} else {
+			msg = err.Error()
+		}
+
+		utils.WriteResponse(w, http.StatusInternalServerError, struct {
+			Message string `json:"message"`
+		}{
+			Message: "login attempt to " + authConfig.ServerAddress + " failed with status: " + msg,
 		})
 	}
 }

@@ -50,6 +50,7 @@ BUILDTAGS ?= \
 	$(shell hack/btrfs_tag.sh) \
 	$(shell hack/selinux_tag.sh) \
 	$(shell hack/systemd_tag.sh) \
+	$(shell hack/libsubid_tag.sh) \
 	exclude_graphdriver_devicemapper \
 	seccomp
 PYTHON ?= $(shell command -v python3 python|head -n1)
@@ -90,8 +91,7 @@ else
 	ISODATE ?= $(shell date --iso-8601)
 endif
 LIBPOD := ${PROJECT}/v3/libpod
-GCFLAGS ?= all=-trimpath=$(CURDIR)
-ASMFLAGS ?= all=-trimpath=$(CURDIR)
+GOFLAGS ?= -trimpath
 LDFLAGS_PODMAN ?= \
 	-X $(LIBPOD)/define.gitCommit=$(GIT_COMMIT) \
 	-X $(LIBPOD)/define.buildInfo=$(BUILD_INFO) \
@@ -258,7 +258,7 @@ test/goecho/goecho: .gopathok $(wildcard test/goecho/*.go)
 
 .PHONY: codespell
 codespell:
-	codespell -S bin,vendor,.git,go.sum,changelog.txt,.cirrus.yml,"RELEASE_NOTES.md,*.xz,*.gz,*.tar,*.tgz,bin2img,*ico,*.png,*.1,*.5,copyimg,*.orig,apidoc.go" -L uint,iff,od,seeked,splitted,marge,ERRO,hist,ether -w
+	codespell -S bin,vendor,.git,go.sum,.cirrus.yml,"RELEASE_NOTES.md,*.xz,*.gz,*.ps1,*.tar,*.tgz,bin2img,*ico,*.png,*.1,*.5,copyimg,*.orig,apidoc.go" -L uint,iff,od,seeked,splitted,marge,ERRO,hist,ether -w
 
 .PHONY: validate
 validate: gofmt lint .gitvalidation validate.completions man-page-check swagger-check tests-included tests-expect-exit
@@ -295,8 +295,6 @@ endif
 	CGO_ENABLED=$(CGO_ENABLED) \
 		$(GO) build \
 		$(BUILDFLAGS) \
-		-gcflags '$(GCFLAGS)' \
-		-asmflags '$(ASMFLAGS)' \
 		-ldflags '$(LDFLAGS_PODMAN)' \
 		-tags "$(BUILDTAGS)" \
 		-o $@ ./cmd/podman
@@ -310,8 +308,6 @@ $(SRCBINDIR)/podman$(BINSFX): $(SRCBINDIR) .gopathok $(SOURCES) go.mod go.sum
 		GOOS=$(GOOS) \
 		$(GO) build \
 		$(BUILDFLAGS) \
-		-gcflags '$(GCFLAGS)' \
-		-asmflags '$(ASMFLAGS)' \
 		-ldflags '$(LDFLAGS_PODMAN)' \
 		-tags "${REMOTETAGS}" \
 		-o $@ ./cmd/podman
@@ -321,8 +317,6 @@ $(SRCBINDIR)/podman-remote-static: $(SRCBINDIR) .gopathok $(SOURCES) go.mod go.s
 		GOOS=$(GOOS) \
 		$(GO) build \
 		$(BUILDFLAGS) \
-		-gcflags '$(GCFLAGS)' \
-		-asmflags '$(ASMFLAGS)' \
 		-ldflags '$(LDFLAGS_PODMAN_STATIC)' \
 		-tags "${REMOTETAGS}" \
 		-o $@ ./cmd/podman
@@ -376,8 +370,6 @@ bin/podman.cross.%: .gopathok
 	CGO_ENABLED=0 \
 		$(GO) build \
 		$(BUILDFLAGS) \
-		-gcflags '$(GCFLAGS)' \
-		-asmflags '$(ASMFLAGS)' \
 		-ldflags '$(LDFLAGS_PODMAN)' \
 		-tags '$(BUILDTAGS_CROSS)' \
 		-o "$@" ./cmd/podman
@@ -477,17 +469,6 @@ swagger: pkg/api/swagger.yaml
 docker-docs: docs
 	(cd docs; ./dckrman.sh ./build/man/*.1)
 
-.PHONY: changelog
-changelog: ## Generate updated changelog.txt from git logs
-	@echo "Creating changelog from $(CHANGELOG_BASE) to $(CHANGELOG_TARGET)"
-	$(eval TMPFILE := $(shell mktemp podman_tmp_XXXX))
-	$(shell cat changelog.txt > $(TMPFILE))
-	$(shell echo "- Changelog for $(CHANGELOG_TARGET) ($(ISODATE)):" > changelog.txt)
-	$(shell git log --no-merges --format="  * %s" $(CHANGELOG_BASE)..$(CHANGELOG_TARGET) >> changelog.txt)
-	$(shell echo "" >> changelog.txt)
-	$(shell cat $(TMPFILE) >> changelog.txt)
-	$(shell rm $(TMPFILE))
-
 # Workaround vim syntax highlighting bug: "
 
 ###
@@ -502,14 +483,15 @@ validate.completions:
 	if [ -x /bin/zsh ]; then /bin/zsh completions/zsh/_podman; fi
 	if [ -x /bin/fish ]; then /bin/fish completions/fish/podman.fish; fi
 
+# Note: Assumes test/python/requirements.txt is installed & available
 .PHONY: run-docker-py-tests
 run-docker-py-tests:
-	$(eval testLogs=$(shell mktemp podman_tmp_XXXX))
-	./bin/podman run --rm --security-opt label=disable --privileged -v $(testLogs):/testLogs --net=host -e DOCKER_HOST=tcp://localhost:8080 $(DOCKERPY_IMAGE) sh -c "pytest $(DOCKERPY_TEST) "
+	touch test/__init__.py
+	pytest test/python/docker/
+	-rm test/__init__.py
 
 .PHONY: localunit
 localunit: test/goecho/goecho
-	hack/check_root.sh make localunit
 	rm -rf ${COVERAGE_PATH} && mkdir -p ${COVERAGE_PATH}
 	$(GOBIN)/ginkgo \
 		-r \
@@ -607,7 +589,7 @@ tests-included:
 
 .PHONY: tests-expect-exit
 tests-expect-exit:
-	@if egrep 'Expect.*ExitCode' test/e2e/*.go | egrep -v ', ".*"\)'; then \
+	@if egrep --line-number 'Expect.*ExitCode' test/e2e/*.go | egrep -v ', ".*"\)'; then \
 		echo "^^^ Unhelpful use of Expect(ExitCode())"; \
 		echo "   Please use '.Should(Exit(...))' pattern instead."; \
 		echo "   If that's not possible, please add an annotation (description) to your assertion:"; \
@@ -850,11 +832,13 @@ clean: ## Clean all make artifacts
 		build \
 		test/checkseccomp/checkseccomp \
 		test/goecho/goecho \
+		test/__init__.py \
 		test/testdata/redis-image \
 		libpod/container_ffjson.go \
 		libpod/pod_ffjson.go \
 		libpod/container_easyjson.go \
 		libpod/pod_easyjson.go \
 		.install.goimports \
-		docs/build
+		docs/build \
+		venv
 	make -C docs clean

@@ -11,6 +11,8 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/containers/common/pkg/config"
+	"github.com/containers/podman/v3/libpod/define"
 	"github.com/containers/podman/v3/pkg/util"
 	. "github.com/containers/podman/v3/test/utils"
 	"github.com/containers/storage/pkg/stringid"
@@ -30,6 +32,22 @@ metadata:
 spec:
   hostname: unknown
 `
+var checkInfraImagePodYaml = `
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: check-infra-image
+  name: check-infra-image
+spec:
+  containers:
+    - name: alpine
+      image: quay.io/libpod/alpine:latest
+      command:
+        - sleep
+        - 24h
+status: {}
+`
 var sharedNamespacePodYaml = `
 apiVersion: v1
 kind: Pod
@@ -45,12 +63,6 @@ spec:
     - -d
     - "1.5"
     env:
-    - name: PATH
-      value: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-    - name: TERM
-      value: xterm
-    - name: container
-      value: podman
     - name: HOSTNAME
       value: label-pod
     image: quay.io/libpod/alpine:latest
@@ -153,12 +165,6 @@ spec:
     - -d
     - "1.5"
     env:
-    - name: PATH
-      value: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-    - name: TERM
-      value: xterm
-    - name: container
-      value: podman
     - name: HOSTNAME
       value: label-pod
     image: quay.io/libpod/alpine:latest
@@ -246,6 +252,17 @@ spec:
   {{ end }}
     ip: {{ .IP }}
 {{ end }}
+  initContainers:
+{{ with .InitCtrs }}
+  {{ range . }}
+  - command:
+    {{ range .Cmd }}
+    - {{.}}
+    {{ end }}
+    image: {{ .Image }}
+    name: {{ .Name }}
+  {{ end }}
+{{ end }}
   containers:
 {{ with .Ctrs }}
   {{ range . }}
@@ -258,13 +275,7 @@ spec:
     - {{.}}
     {{ end }}
     env:
-    - name: PATH
-      value: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-    - name: TERM
-      value: xterm
     - name: HOSTNAME
-    - name: container
-      value: podman
     {{ range .Env }}
     - name: {{ .Name }}
     {{ if (eq .ValueFrom "configmap") }}
@@ -424,13 +435,7 @@ spec:
         - {{.}}
         {{ end }}
         env:
-        - name: PATH
-          value: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-        - name: TERM
-          value: xterm
         - name: HOSTNAME
-        - name: container
-          value: podman
         image: {{ .Image }}
         name: {{ .Name }}
         imagePullPolicy: {{ .PullPolicy }}
@@ -511,21 +516,6 @@ var (
 	// Default secret in JSON. Note that the values ("foo" and "bar") are base64 encoded.
 	defaultSecret = []byte(`{"FOO":"Zm9v","BAR":"YmFy"}`)
 )
-
-func writeYaml(content string, fileName string) error {
-	f, err := os.Create(fileName)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	_, err = f.WriteString(content)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
 
 // getKubeYaml returns a kubernetes YAML document.
 func getKubeYaml(kind string, object interface{}) (string, error) {
@@ -663,6 +653,7 @@ type Pod struct {
 	HostNetwork   bool
 	HostAliases   []HostAlias
 	Ctrs          []*Ctr
+	InitCtrs      []*Ctr
 	Volumes       []*Volume
 	Labels        map[string]string
 	Annotations   map[string]string
@@ -684,6 +675,7 @@ func getPod(options ...podOption) *Pod {
 		HostNetwork:   false,
 		HostAliases:   nil,
 		Ctrs:          make([]*Ctr, 0),
+		InitCtrs:      make([]*Ctr, 0),
 		Volumes:       make([]*Volume, 0),
 		Labels:        make(map[string]string),
 		Annotations:   make(map[string]string),
@@ -723,6 +715,12 @@ func withHostAliases(ip string, host []string) podOption {
 func withCtr(c *Ctr) podOption {
 	return func(pod *Pod) {
 		pod.Ctrs = append(pod.Ctrs, c)
+	}
+}
+
+func withPodInitCtr(ic *Ctr) podOption {
+	return func(pod *Pod) {
+		pod.InitCtrs = append(pod.InitCtrs, ic)
 	}
 }
 
@@ -845,6 +843,7 @@ type Ctr struct {
 	VolumeReadOnly  bool
 	Env             []Env
 	EnvFrom         []EnvFrom
+	InitCtrType     string
 }
 
 // getCtr takes a list of ctrOptions and returns a Ctr with sane defaults
@@ -868,6 +867,7 @@ func getCtr(options ...ctrOption) *Ctr {
 		VolumeReadOnly:  false,
 		Env:             []Env{},
 		EnvFrom:         []EnvFrom{},
+		InitCtrType:     "",
 	}
 	for _, option := range options {
 		option(&c)
@@ -880,6 +880,12 @@ type ctrOption func(*Ctr)
 func withName(name string) ctrOption {
 	return func(c *Ctr) {
 		c.Name = name
+	}
+}
+
+func withInitCtr() ctrOption {
+	return func(c *Ctr) {
+		c.InitCtrType = define.AlwaysInitContainer
 	}
 }
 
@@ -1113,8 +1119,57 @@ var _ = Describe("Podman play kube", func() {
 		Expect(label).To(ContainSubstring("unconfined_u:system_r:spc_t:s0"))
 	})
 
+	It("podman play kube should use default infra_image", func() {
+		err := writeYaml(checkInfraImagePodYaml, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(Exit(0))
+
+		podInspect := podmanTest.Podman([]string{"inspect", "check-infra-image", "--format", "{{ .InfraContainerID }}"})
+		podInspect.WaitWithDefaultTimeout()
+		infraContainerID := podInspect.OutputToString()
+
+		conInspect := podmanTest.Podman([]string{"inspect", infraContainerID, "--format", "{{ .ImageName }}"})
+		conInspect.WaitWithDefaultTimeout()
+		infraContainerImage := conInspect.OutputToString()
+		Expect(infraContainerImage).To(Equal(config.DefaultInfraImage))
+	})
+
+	It("podman play kube should use customized infra_image", func() {
+		conffile := filepath.Join(podmanTest.TempDir, "container.conf")
+
+		infraImage := "k8s.gcr.io/pause:3.2"
+		err := ioutil.WriteFile(conffile, []byte(fmt.Sprintf("[engine]\ninfra_image=\"%s\"\n", infraImage)), 0644)
+		Expect(err).To(BeNil())
+
+		os.Setenv("CONTAINERS_CONF", conffile)
+		defer os.Unsetenv("CONTAINERS_CONF")
+
+		if IsRemote() {
+			podmanTest.RestartRemoteService()
+		}
+
+		err = writeYaml(checkInfraImagePodYaml, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(Exit(0))
+
+		podInspect := podmanTest.Podman([]string{"inspect", "check-infra-image", "--format", "{{ .InfraContainerID }}"})
+		podInspect.WaitWithDefaultTimeout()
+		infraContainerID := podInspect.OutputToString()
+
+		conInspect := podmanTest.Podman([]string{"inspect", infraContainerID, "--format", "{{ .ImageName }}"})
+		conInspect.WaitWithDefaultTimeout()
+		infraContainerImage := conInspect.OutputToString()
+		Expect(infraContainerImage).To(Equal(infraImage))
+	})
+
 	It("podman play kube should share ipc,net,uts when shareProcessNamespace is set", func() {
-		SkipIfRootless("Requires root priviledges for sharing few namespaces")
+		SkipIfRootless("Requires root privileges for sharing few namespaces")
 		err := writeYaml(sharedNamespacePodYaml, kubeYaml)
 		Expect(err).To(BeNil())
 
@@ -1158,7 +1213,7 @@ var _ = Describe("Podman play kube", func() {
 		hc := podmanTest.Podman([]string{"healthcheck", "run", "liveness-unhealthy-probe-pod-0-alpine"})
 		hc.WaitWithDefaultTimeout()
 		hcoutput := hc.OutputToString()
-		Expect(hcoutput).To(ContainSubstring("unhealthy"))
+		Expect(hcoutput).To(ContainSubstring(define.HealthCheckUnhealthy))
 	})
 
 	It("podman play kube fail with nonexistent authfile", func() {
@@ -1243,6 +1298,33 @@ var _ = Describe("Podman play kube", func() {
 		Expect(inspect.OutputToString()).To(ContainSubstring(`[]`))
 	})
 
+	// If you have an init container in the pod yaml, podman should create and run the init container with play kube
+	It("podman play kube test with init containers", func() {
+		pod := getPod(withPodInitCtr(getCtr(withImage(ALPINE), withCmd([]string{"echo", "hello"}), withInitCtr(), withName("init-test"))), withCtr(getCtr(withImage(ALPINE), withCmd([]string{"top"}))))
+		err := generateKubeYaml("pod", pod, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(Exit(0))
+
+		// Expect the number of containers created to be 3, one init, infra, and regular container
+		numOfCtrs := podmanTest.NumberOfContainers()
+		Expect(numOfCtrs).To(Equal(3))
+
+		// Init container should have exited after running
+		inspect := podmanTest.Podman([]string{"inspect", "--format", "{{.State.Status}}", "testPod-init-test"})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect).Should(Exit(0))
+		Expect(inspect.OutputToString()).To(ContainSubstring("exited"))
+
+		// Regular container should be in running state
+		inspect = podmanTest.Podman([]string{"inspect", "--format", "{{.State.Status}}", "testPod-" + defaultCtrName})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect).Should(Exit(0))
+		Expect(inspect.OutputToString()).To(ContainSubstring("running"))
+	})
+
 	// If you supply only args for a Container, the default Entrypoint defined in the Docker image is run with the args that you supplied.
 	It("podman play kube test correct command with only set args in yaml file", func() {
 		pod := getPod(withCtr(getCtr(withImage(registry), withCmd(nil), withArg([]string{"echo", "hello"}))))
@@ -1299,6 +1381,40 @@ var _ = Describe("Podman play kube", func() {
 		Expect(kube).Should(Exit(0))
 
 		logs := podmanTest.Podman([]string{"logs", getCtrNameInPod(p)})
+		logs.WaitWithDefaultTimeout()
+		Expect(logs).Should(Exit(0))
+		Expect(logs.OutputToString()).To(ContainSubstring("hello world"))
+	})
+
+	It("podman pod logs test", func() {
+		SkipIfRemote("podman-remote pod logs -c is mandatory for remote machine")
+		p := getPod(withCtr(getCtr(withCmd([]string{"echo", "hello"}), withArg([]string{"world"}))))
+
+		err := generateKubeYaml("pod", p, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(Exit(0))
+
+		logs := podmanTest.Podman([]string{"pod", "logs", p.Name})
+		logs.WaitWithDefaultTimeout()
+		Expect(logs).Should(Exit(0))
+		Expect(logs.OutputToString()).To(ContainSubstring("hello world"))
+	})
+
+	It("podman-remote pod logs test", func() {
+		// -c or --container is required in podman-remote due to api limitation.
+		p := getPod(withCtr(getCtr(withCmd([]string{"echo", "hello"}), withArg([]string{"world"}))))
+
+		err := generateKubeYaml("pod", p, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(Exit(0))
+
+		logs := podmanTest.Podman([]string{"pod", "logs", "-c", getCtrNameInPod(p), p.Name})
 		logs.WaitWithDefaultTimeout()
 		Expect(logs).Should(Exit(0))
 		Expect(logs.OutputToString()).To(ContainSubstring("hello world"))
@@ -2541,5 +2657,69 @@ invalid kube kind
 		inspect.WaitWithDefaultTimeout()
 		Expect(inspect).Should(Exit(0))
 		Expect(inspect.OutputToString()).To(ContainSubstring(`map[]`))
+	})
+
+	It("podman play kube teardown", func() {
+		pod := getPod()
+		err := generateKubeYaml("pod", pod, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(Exit(0))
+
+		ls := podmanTest.Podman([]string{"pod", "ps", "--format", "'{{.ID}}'"})
+		ls.WaitWithDefaultTimeout()
+		Expect(ls).Should(Exit(0))
+		Expect(len(ls.OutputToStringArray())).To(Equal(1))
+
+		//	 teardown
+		teardown := podmanTest.Podman([]string{"play", "kube", "--down", kubeYaml})
+		teardown.WaitWithDefaultTimeout()
+		Expect(teardown).Should(Exit(0))
+
+		checkls := podmanTest.Podman([]string{"pod", "ps", "--format", "'{{.ID}}'"})
+		checkls.WaitWithDefaultTimeout()
+		Expect(checkls).Should(Exit(0))
+		Expect(len(checkls.OutputToStringArray())).To(Equal(0))
+	})
+
+	It("podman play kube teardown pod does not exist", func() {
+		//	 teardown
+		teardown := podmanTest.Podman([]string{"play", "kube", "--down", kubeYaml})
+		teardown.WaitWithDefaultTimeout()
+		Expect(teardown).Should(Exit(125))
+	})
+
+	It("podman play kube teardown with volume", func() {
+
+		volName := RandomString(12)
+		volDevice := "tmpfs"
+		volType := "tmpfs"
+		volOpts := "nodev,noexec"
+
+		pvc := getPVC(withPVCName(volName),
+			withPVCAnnotations(util.VolumeDeviceAnnotation, volDevice),
+			withPVCAnnotations(util.VolumeTypeAnnotation, volType),
+			withPVCAnnotations(util.VolumeMountOptsAnnotation, volOpts))
+		err = generateKubeYaml("persistentVolumeClaim", pvc, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(Exit(0))
+
+		exists := podmanTest.Podman([]string{"volume", "exists", volName})
+		exists.WaitWithDefaultTimeout()
+		Expect(exists).To(Exit(0))
+
+		teardown := podmanTest.Podman([]string{"play", "kube", "--down", kubeYaml})
+		teardown.WaitWithDefaultTimeout()
+		Expect(teardown).To(Exit(0))
+
+		// volume should not be deleted on teardown
+		exists = podmanTest.Podman([]string{"volume", "exists", volName})
+		exists.WaitWithDefaultTimeout()
+		Expect(exists).To(Exit(0))
 	})
 })

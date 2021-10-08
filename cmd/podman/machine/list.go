@@ -1,4 +1,4 @@
-// +build amd64,linux arm64,linux amd64,darwin arm64,darwin
+// +build amd64,!windows arm64,!windows
 
 package machine
 
@@ -41,10 +41,13 @@ type listFlagType struct {
 }
 
 type machineReporter struct {
-	Name    string
-	Created string
-	LastUp  string
-	VMType  string
+	Name     string
+	Created  string
+	LastUp   string
+	VMType   string
+	CPUs     uint64
+	Memory   string
+	DiskSize string
 }
 
 func init() {
@@ -55,7 +58,7 @@ func init() {
 
 	flags := lsCmd.Flags()
 	formatFlagName := "format"
-	flags.StringVar(&listFlag.format, formatFlagName, "{{.Name}}\t{{.VMType}}\t{{.Created}}\t{{.LastUp}}\n", "Format volume output using Go template")
+	flags.StringVar(&listFlag.format, formatFlagName, "{{.Name}}\t{{.VMType}}\t{{.Created}}\t{{.LastUp}}\t{{.CPUs}}\t{{.Memory}}\t{{.DiskSize}}\n", "Format volume output using Go template")
 	_ = lsCmd.RegisterFlagCompletionFunc(formatFlagName, completion.AutocompleteNone)
 	flags.BoolVar(&listFlag.noHeading, "noheading", false, "Do not print headers")
 }
@@ -86,8 +89,11 @@ func list(cmd *cobra.Command, args []string) error {
 
 func outputTemplate(cmd *cobra.Command, responses []*machineReporter) error {
 	headers := report.Headers(machineReporter{}, map[string]string{
-		"LastUp": "LAST UP",
-		"VmType": "VM TYPE",
+		"LastUp":   "LAST UP",
+		"VmType":   "VM TYPE",
+		"CPUs":     "CPUS",
+		"Memory":   "MEMORY",
+		"DiskSize": "DISK SIZE",
 	})
 
 	row := report.NormalizeFormat(listFlag.format)
@@ -137,6 +143,9 @@ func toHumanFormat(vms []*machine.ListResponse) ([]*machineReporter, error) {
 		}
 		response.Created = units.HumanDuration(time.Since(vm.CreatedAt)) + " ago"
 		response.VMType = vm.VMType
+		response.CPUs = vm.CPUs
+		response.Memory = units.HumanSize(float64(vm.Memory) * units.MiB)
+		response.DiskSize = units.HumanSize(float64(vm.DiskSize) * units.GiB)
 
 		humanResponses = append(humanResponses, response)
 	}

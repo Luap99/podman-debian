@@ -1,4 +1,4 @@
-// +build amd64,linux arm64,linux amd64,darwin arm64,darwin
+// +build amd64,!windows arm64,!windows
 
 package machine
 
@@ -58,10 +58,14 @@ type ListResponse struct {
 	LastUp    time.Time
 	Running   bool
 	VMType    string
+	CPUs      uint64
+	Memory    uint64
+	DiskSize  uint64
 }
 
 type SSHOptions struct {
-	Args []string
+	Username string
+	Args     []string
 }
 type StartOptions struct{}
 

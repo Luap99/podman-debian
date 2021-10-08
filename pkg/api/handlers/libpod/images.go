@@ -18,6 +18,7 @@ import (
 	"github.com/containers/podman/v3/libpod/define"
 	"github.com/containers/podman/v3/pkg/api/handlers"
 	"github.com/containers/podman/v3/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v3/pkg/api/types"
 	"github.com/containers/podman/v3/pkg/auth"
 	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/containers/podman/v3/pkg/domain/infra/abi"
@@ -41,7 +42,7 @@ import (
 // create
 
 func ImageExists(w http.ResponseWriter, r *http.Request) {
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	name := utils.GetName(r)
 
 	ir := abi.ImageEngine{Libpod: runtime}
@@ -58,9 +59,9 @@ func ImageExists(w http.ResponseWriter, r *http.Request) {
 }
 
 func ImageTree(w http.ResponseWriter, r *http.Request) {
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	name := utils.GetName(r)
-	decoder := r.Context().Value("decoder").(*schema.Decoder)
+	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	query := struct {
 		WhatRequires bool `schema:"whatrequires"`
 	}{
@@ -101,8 +102,8 @@ func GetImage(w http.ResponseWriter, r *http.Request) {
 }
 
 func GetImages(w http.ResponseWriter, r *http.Request) {
-	decoder := r.Context().Value("decoder").(*schema.Decoder)
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
+	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	query := struct {
 		All     bool
 		Digests bool
@@ -146,8 +147,8 @@ func PruneImages(w http.ResponseWriter, r *http.Request) {
 	var (
 		err error
 	)
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
-	decoder := r.Context().Value("decoder").(*schema.Decoder)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
+	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	query := struct {
 		All bool `schema:"all"`
 	}{
@@ -155,8 +156,14 @@ func PruneImages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filterMap, err := util.PrepareFilters(r)
+	if err != nil {
+		utils.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError,
+			errors.
+				Wrapf(err, "failed to decode filter parameters for %s", r.URL.String()))
+		return
+	}
 
-	if dErr := decoder.Decode(&query, r.URL.Query()); dErr != nil || err != nil {
+	if err := decoder.Decode(&query, r.URL.Query()); err != nil {
 		utils.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError,
 			errors.
 				Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
@@ -198,8 +205,8 @@ func ExportImage(w http.ResponseWriter, r *http.Request) {
 	var (
 		output string
 	)
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
-	decoder := r.Context().Value("decoder").(*schema.Decoder)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
+	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	query := struct {
 		Compress bool   `schema:"compress"`
 		Format   string `schema:"format"`
@@ -279,8 +286,8 @@ func ExportImages(w http.ResponseWriter, r *http.Request) {
 	var (
 		output string
 	)
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
-	decoder := r.Context().Value("decoder").(*schema.Decoder)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
+	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	query := struct {
 		Compress   bool     `schema:"compress"`
 		Format     string   `schema:"format"`
@@ -350,7 +357,6 @@ func ExportImages(w http.ResponseWriter, r *http.Request) {
 		Format:            query.Format,
 		MultiImageArchive: len(query.References) > 1,
 		Output:            output,
-		RemoveSignatures:  true,
 	}
 
 	imageEngine := abi.ImageEngine{Libpod: runtime}
@@ -369,7 +375,7 @@ func ExportImages(w http.ResponseWriter, r *http.Request) {
 }
 
 func ImagesLoad(w http.ResponseWriter, r *http.Request) {
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 
 	tmpfile, err := ioutil.TempFile("", "libpod-images-load.tar")
 	if err != nil {
@@ -398,8 +404,8 @@ func ImagesLoad(w http.ResponseWriter, r *http.Request) {
 }
 
 func ImagesImport(w http.ResponseWriter, r *http.Request) {
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
-	decoder := r.Context().Value("decoder").(*schema.Decoder)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
+	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	query := struct {
 		Changes   []string `schema:"changes"`
 		Message   string   `schema:"message"`
@@ -453,8 +459,8 @@ func ImagesImport(w http.ResponseWriter, r *http.Request) {
 
 // PushImage is the handler for the compat http endpoint for pushing images.
 func PushImage(w http.ResponseWriter, r *http.Request) {
-	decoder := r.Context().Value("decoder").(*schema.Decoder)
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
+	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 
 	query := struct {
 		Destination string `schema:"destination"`
@@ -522,8 +528,8 @@ func CommitContainer(w http.ResponseWriter, r *http.Request) {
 		destImage string
 		mimeType  string
 	)
-	decoder := r.Context().Value("decoder").(*schema.Decoder)
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
+	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 
 	query := struct {
 		Author    string   `schema:"author"`
@@ -597,7 +603,7 @@ func CommitContainer(w http.ResponseWriter, r *http.Request) {
 }
 
 func UntagImage(w http.ResponseWriter, r *http.Request) {
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 
 	tags := []string{} // Note: if empty, all tags will be removed from the image.
 	repo := r.Form.Get("repo")
@@ -641,8 +647,8 @@ func UntagImage(w http.ResponseWriter, r *http.Request) {
 
 // ImagesBatchRemove is the endpoint for batch image removal.
 func ImagesBatchRemove(w http.ResponseWriter, r *http.Request) {
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
-	decoder := r.Context().Value("decoder").(*schema.Decoder)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
+	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	query := struct {
 		All    bool     `schema:"all"`
 		Force  bool     `schema:"force"`
@@ -665,8 +671,8 @@ func ImagesBatchRemove(w http.ResponseWriter, r *http.Request) {
 
 // ImagesRemove is the endpoint for removing one image.
 func ImagesRemove(w http.ResponseWriter, r *http.Request) {
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
-	decoder := r.Context().Value("decoder").(*schema.Decoder)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
+	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	query := struct {
 		Force bool `schema:"force"`
 	}{

@@ -11,6 +11,7 @@ import (
 	buildahDefine "github.com/containers/buildah/define"
 	buildahCLI "github.com/containers/buildah/pkg/cli"
 	"github.com/containers/buildah/pkg/parse"
+	buildahUtil "github.com/containers/buildah/pkg/util"
 	"github.com/containers/common/pkg/auth"
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/config"
@@ -67,6 +68,18 @@ var (
   podman image build --layers --force-rm --tag imageName .`,
 	}
 
+	buildxBuildCmd = &cobra.Command{
+		Args:              buildCmd.Args,
+		Use:               buildCmd.Use,
+		Short:             buildCmd.Short,
+		Long:              buildCmd.Long,
+		RunE:              buildCmd.RunE,
+		ValidArgsFunction: buildCmd.ValidArgsFunction,
+		Example: `podman buildx build .
+  podman buildx build --creds=username:password -t imageName -f Containerfile.simple .
+  podman buildx build --layers --force-rm --tag imageName .`,
+	}
+
 	buildOpts = buildFlagsWrapper{}
 )
 
@@ -91,10 +104,23 @@ func init() {
 		Parent:  imageCmd,
 	})
 	buildFlags(imageBuildCmd)
+	registry.Commands = append(registry.Commands, registry.CliCommand{
+		Command: buildxBuildCmd,
+		Parent:  buildxCmd,
+	})
+	buildFlags(buildxBuildCmd)
 }
 
 func buildFlags(cmd *cobra.Command) {
 	flags := cmd.Flags()
+
+	// buildx build --load ignored, but added for compliance
+	flags.Bool("load", false, "buildx --load")
+	_ = flags.MarkHidden("load")
+
+	// buildx build --progress ignored, but added for compliance
+	flags.String("progress", "auto", "buildx --progress")
+	_ = flags.MarkHidden("progress")
 
 	// Podman flags
 	flags.BoolVarP(&buildOpts.SquashAll, "squash-all", "", false, "Squash all layers into a single layer")
@@ -334,6 +360,12 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 		}
 	}
 
+	cleanTmpFile := false
+	flags.Authfile, cleanTmpFile = buildahUtil.MirrorToTempFileIfPathIsDescriptor(flags.Authfile)
+	if cleanTmpFile {
+		defer os.Remove(flags.Authfile)
+	}
+
 	args := make(map[string]string)
 	if c.Flag("build-arg").Changed {
 		for _, arg := range flags.BuildArg {
@@ -451,7 +483,7 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 		runtimeFlags = append(runtimeFlags, "--systemd-cgroup")
 	}
 
-	imageOS, arch, err := parse.PlatformFromOptions(c)
+	platforms, err := parse.PlatformsFromOptions(c)
 	if err != nil {
 		return nil, err
 	}
@@ -465,7 +497,6 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 		AddCapabilities:         flags.CapAdd,
 		AdditionalTags:          tags,
 		Annotations:             flags.Annotation,
-		Architecture:            arch,
 		Args:                    args,
 		BlobDirectory:           flags.BlobCache,
 		CNIConfigDir:            flags.CNIConfigDir,
@@ -491,11 +522,11 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 		MaxPullPushRetries:      3,
 		NamespaceOptions:        nsValues,
 		NoCache:                 flags.NoCache,
-		OS:                      imageOS,
 		OciDecryptConfig:        decConfig,
 		Out:                     stdout,
 		Output:                  output,
 		OutputFormat:            format,
+		Platforms:               platforms,
 		PullPolicy:              pullPolicy,
 		PullPushRetryDelay:      2 * time.Second,
 		Quiet:                   flags.Quiet,

@@ -12,6 +12,7 @@ import (
 	"github.com/containers/podman/v3/cmd/podman/utils"
 	"github.com/containers/podman/v3/cmd/podman/validate"
 	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v3/pkg/specgenutil"
 	"github.com/spf13/cobra"
 )
 
@@ -59,7 +60,7 @@ func prune(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 	}
-	filterMap, err := common.ParseFilters(filter)
+	filterMap, err := specgenutil.ParseFilters(filter)
 	if err != nil {
 		return err
 	}
@@ -79,7 +80,7 @@ func prune(cmd *cobra.Command, args []string) error {
 func createPruneWarningMessage(pruneOpts entities.ImagePruneOptions) string {
 	question := "Are you sure you want to continue? [y/N] "
 	if pruneOpts.All {
-		return "WARNING! This will remove all images without at least one container associated to them.\n" + question
+		return "WARNING! This command removes all images without at least one container associated with them.\n" + question
 	}
-	return "WARNING! This will remove all dangling images.\n" + question
+	return "WARNING! This command removes all dangling images.\n" + question
 }

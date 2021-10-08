@@ -20,6 +20,7 @@ import (
 	"github.com/containers/image/v5/types"
 	"github.com/containers/podman/v3/libpod"
 	"github.com/containers/podman/v3/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v3/pkg/api/types"
 	"github.com/containers/podman/v3/pkg/auth"
 	"github.com/containers/podman/v3/pkg/channel"
 	"github.com/containers/storage/pkg/archive"
@@ -105,7 +106,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		NamespaceOptions       string   `schema:"nsoptions"`
 		NoCache                bool     `schema:"nocache"`
 		OutputFormat           string   `schema:"outputformat"`
-		Platform               string   `schema:"platform"`
+		Platform               []string `schema:"platform"`
 		Pull                   bool     `schema:"pull"`
 		PullPolicy             string   `schema:"pullpolicy"`
 		Quiet                  bool     `schema:"q"`
@@ -125,10 +126,9 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		Registry:   "docker.io",
 		Rm:         true,
 		ShmSize:    64 * 1024 * 1024,
-		Tag:        []string{},
 	}
 
-	decoder := r.Context().Value("decoder").(*schema.Decoder)
+	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	if err := decoder.Decode(&query, r.URL.Query()); err != nil {
 		utils.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest, err)
 		return
@@ -410,7 +410,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	reporter := channel.NewWriter(make(chan []byte))
 	defer reporter.Close()
 
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	rtc, err := runtime.GetConfig()
 	if err != nil {
 		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrap(err, "Decode()"))
@@ -480,16 +480,17 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	if len(query.Platform) > 0 {
-		variant := ""
-		buildOptions.OS, buildOptions.Architecture, variant, err = parse.Platform(query.Platform)
+	for _, platformSpec := range query.Platform {
+		os, arch, variant, err := parse.Platform(platformSpec)
 		if err != nil {
-			utils.BadRequest(w, "platform", query.Platform, err)
+			utils.BadRequest(w, "platform", platformSpec, err)
 			return
 		}
-		buildOptions.SystemContext.OSChoice = buildOptions.OS
-		buildOptions.SystemContext.ArchitectureChoice = buildOptions.Architecture
-		buildOptions.SystemContext.VariantChoice = variant
+		buildOptions.Platforms = append(buildOptions.Platforms, struct{ OS, Arch, Variant string }{
+			OS:      os,
+			Arch:    arch,
+			Variant: variant,
+		})
 	}
 	if _, found := r.URL.Query()["timestamp"]; found {
 		ts := time.Unix(query.Timestamp, 0)
@@ -520,7 +521,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 
 	// Send headers and prime client for stream to come
 	w.WriteHeader(http.StatusOK)
-	w.Header().Add("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json")
 	flush()
 
 	body := w.(io.Writer)

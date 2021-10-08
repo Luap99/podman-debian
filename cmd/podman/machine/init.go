@@ -1,4 +1,4 @@
-// +build amd64,linux arm64,linux amd64,darwin arm64,darwin
+// +build amd64,!windows arm64,!windows
 
 package machine
 
@@ -35,19 +35,20 @@ func init() {
 		Parent:  machineCmd,
 	})
 	flags := initCmd.Flags()
+	cfg := registry.PodmanConfig()
 
 	cpusFlagName := "cpus"
 	flags.Uint64Var(
 		&initOpts.CPUS,
-		cpusFlagName, 1,
-		"Number of CPUs. The default is 1.",
+		cpusFlagName, cfg.Machine.CPUs,
+		"Number of CPUs",
 	)
 	_ = initCmd.RegisterFlagCompletionFunc(cpusFlagName, completion.AutocompleteNone)
 
 	diskSizeFlagName := "disk-size"
 	flags.Uint64Var(
 		&initOpts.DiskSize,
-		diskSizeFlagName, 10,
+		diskSizeFlagName, cfg.Machine.DiskSize,
 		"Disk size in GB",
 	)
 
@@ -56,13 +57,13 @@ func init() {
 	memoryFlagName := "memory"
 	flags.Uint64VarP(
 		&initOpts.Memory,
-		memoryFlagName, "m", 2048,
-		"Memory (in MB)",
+		memoryFlagName, "m", cfg.Machine.Memory,
+		"Memory in MB",
 	)
 	_ = initCmd.RegisterFlagCompletionFunc(memoryFlagName, completion.AutocompleteNone)
 
 	ImagePathFlagName := "image-path"
-	flags.StringVar(&initOpts.ImagePath, ImagePathFlagName, "", "Path to qcow image")
+	flags.StringVar(&initOpts.ImagePath, ImagePathFlagName, cfg.Machine.Image, "Path to qcow image")
 	_ = initCmd.RegisterFlagCompletionFunc(ImagePathFlagName, completion.AutocompleteDefault)
 
 	IgnitionPathFlagName := "ignition-path"

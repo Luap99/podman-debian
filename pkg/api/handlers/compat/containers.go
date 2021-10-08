@@ -14,6 +14,7 @@ import (
 	"github.com/containers/podman/v3/libpod/define"
 	"github.com/containers/podman/v3/pkg/api/handlers"
 	"github.com/containers/podman/v3/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v3/pkg/api/types"
 	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/containers/podman/v3/pkg/domain/filters"
 	"github.com/containers/podman/v3/pkg/domain/infra/abi"
@@ -31,7 +32,7 @@ import (
 )
 
 func RemoveContainer(w http.ResponseWriter, r *http.Request) {
-	decoder := r.Context().Value("decoder").(*schema.Decoder)
+	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	query := struct {
 		Force         bool `schema:"force"`
 		Ignore        bool `schema:"ignore"`
@@ -63,7 +64,7 @@ func RemoveContainer(w http.ResponseWriter, r *http.Request) {
 		options.Volumes = query.DockerVolumes
 	}
 
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	// Now use the ABI implementation to prevent us from having duplicate
 	// code.
 	containerEngine := abi.ContainerEngine{Libpod: runtime}
@@ -92,8 +93,8 @@ func RemoveContainer(w http.ResponseWriter, r *http.Request) {
 }
 
 func ListContainers(w http.ResponseWriter, r *http.Request) {
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
-	decoder := r.Context().Value("decoder").(*schema.Decoder)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
+	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	query := struct {
 		All   bool `schema:"all"`
 		Limit int  `schema:"limit"`
@@ -103,8 +104,12 @@ func ListContainers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filterMap, err := util.PrepareFilters(r)
+	if err != nil {
+		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrapf(err, "failed to decode filter parameters for %s", r.URL.String()))
+		return
+	}
 
-	if dErr := decoder.Decode(&query, r.URL.Query()); dErr != nil || err != nil {
+	if err := decoder.Decode(&query, r.URL.Query()); err != nil {
 		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
 		return
 	}
@@ -168,8 +173,8 @@ func ListContainers(w http.ResponseWriter, r *http.Request) {
 }
 
 func GetContainer(w http.ResponseWriter, r *http.Request) {
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
-	decoder := r.Context().Value("decoder").(*schema.Decoder)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
+	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	query := struct {
 		Size bool `schema:"size"`
 	}{
@@ -197,8 +202,8 @@ func GetContainer(w http.ResponseWriter, r *http.Request) {
 
 func KillContainer(w http.ResponseWriter, r *http.Request) {
 	// /{version}/containers/(name)/kill
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
-	decoder := r.Context().Value("decoder").(*schema.Decoder)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
+	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	query := struct {
 		Signal string `schema:"signal"`
 	}{
@@ -584,8 +589,8 @@ func formatCapabilities(slice []string) {
 }
 
 func RenameContainer(w http.ResponseWriter, r *http.Request) {
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
-	decoder := r.Context().Value("decoder").(*schema.Decoder)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
+	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 
 	name := utils.GetName(r)
 	query := struct {

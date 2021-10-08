@@ -135,31 +135,38 @@ function _log_test_until() {
     s_after="after_$(random_string)_${driver}"
 
     before=$(date --iso-8601=seconds)
-    sleep 5
+    sleep 1
     run_podman run --log-driver=$driver -d --name test $IMAGE sh -c \
         "echo $s_before; trap 'echo $s_after; exit' SIGTERM; while :; do sleep 1; done"
 
     # sleep a second to make sure the date is after the first echo
     sleep 1
     run_podman stop test
-    # sleep for 20 seconds to get the proper after time
-    sleep 20
+    run_podman wait test
 
-    run_podman logs test
-    is "$output" \
-        "$s_before
+    # Sigh. Stupid journald has a lag. Wait a few seconds for it to catch up.
+    retries=20
+    s_both="$s_before
 $s_after"
+    while [[ $retries -gt 0 ]]; do
+        run_podman logs test
+        if [[ "$output" = "$s_both" ]]; then
+            break
+        fi
+        retries=$((retries - 1))
+        sleep 0.1
+    done
+    if [[ $retries -eq 0 ]]; then
+        die "Timed out waiting for before&after in podman logs: $output"
+    fi
 
     run_podman logs --until $before test
-    is "$output" \
-        ""
+    is "$output" "" "podman logs --until before"
 
-    after=$(date --iso-8601=seconds)
+    after=$(date --date='+1 second' --iso-8601=seconds)
 
     run_podman logs --until $after test
-    is "$output" \
-        "$s_before
-$s_after"
+    is "$output" "$s_both" "podman logs --until after"
     run_podman rm -f test
 }
 
@@ -174,4 +181,31 @@ $s_after"
     _log_test_until journald
 }
 
+function _log_test_follow() {
+    local driver=$1
+    cname=$(random_string)
+    contentA=$(random_string)
+    contentB=$(random_string)
+    contentC=$(random_string)
+
+    # Note: it seems we need at least three log lines to hit #11461.
+    run_podman run --log-driver=$driver --name $cname $IMAGE sh -c "echo $contentA; echo $contentB; echo $contentC"
+    run_podman logs -f $cname
+    is "$output" "$contentA
+$contentB
+$contentC" "logs -f on exitted container works"
+
+    run_podman rm -f $cname
+}
+
+@test "podman logs - --follow k8s-file" {
+    _log_test_follow k8s-file
+}
+
+@test "podman logs - --follow journald" {
+    # We can't use journald on RHEL as rootless: rhbz#1895105
+    skip_if_journald_unavailable
+
+    _log_test_follow journald
+}
 # vim: filetype=sh

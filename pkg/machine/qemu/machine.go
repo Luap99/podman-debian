@@ -1,4 +1,4 @@
-// +build amd64,linux arm64,linux amd64,darwin arm64,darwin
+// +build amd64,!windows arm64,!windows
 
 package qemu
 
@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/containers/common/pkg/config"
 	"github.com/containers/podman/v3/pkg/machine"
 	"github.com/containers/podman/v3/pkg/rootless"
 	"github.com/containers/podman/v3/utils"
@@ -63,6 +64,7 @@ func NewMachine(opts machine.InitOptions) (machine.VM, error) {
 
 	vm.CPUs = opts.CPUS
 	vm.Memory = opts.Memory
+	vm.DiskSize = opts.DiskSize
 
 	// Look up the executable
 	execPath, err := exec.LookPath(QemuCommand)
@@ -138,9 +140,20 @@ func (v *MachineVM) Init(opts machine.InitOptions) error {
 	jsonFile := filepath.Join(vmConfigDir, v.Name) + ".json"
 	v.IdentityPath = filepath.Join(sshDir, v.Name)
 
-	// The user has provided an alternate image which can be a file path
-	// or URL.
-	if len(opts.ImagePath) > 0 {
+	switch opts.ImagePath {
+	case "testing", "next", "stable", "":
+		// Get image as usual
+		dd, err := machine.NewFcosDownloader(vmtype, v.Name, opts.ImagePath)
+		if err != nil {
+			return err
+		}
+		v.ImagePath = dd.Get().LocalUncompressedFile
+		if err := dd.DownloadImage(); err != nil {
+			return err
+		}
+	default:
+		// The user has provided an alternate image which can be a file path
+		// or URL.
 		g, err := machine.NewGenericDownloader(vmtype, v.Name, opts.ImagePath)
 		if err != nil {
 			return err
@@ -149,18 +162,7 @@ func (v *MachineVM) Init(opts machine.InitOptions) error {
 		if err := g.DownloadImage(); err != nil {
 			return err
 		}
-	} else {
-		// Get the image as usual
-		dd, err := machine.NewFcosDownloader(vmtype, v.Name)
-		if err != nil {
-			return err
-		}
-		v.ImagePath = dd.Get().LocalUncompressedFile
-		if err := dd.DownloadImage(); err != nil {
-			return err
-		}
 	}
-
 	// Add arch specific options including image location
 	v.CmdLine = append(v.CmdLine, v.addArchOptions()...)
 
@@ -277,6 +279,9 @@ func (v *MachineVM) Start(name string, _ machine.StartOptions) error {
 		}
 		time.Sleep(wait)
 		wait++
+	}
+	if err != nil {
+		return err
 	}
 
 	fd, err := qemuSocketConn.(*net.UnixConn).File()
@@ -485,7 +490,12 @@ func (v *MachineVM) SSH(name string, opts machine.SSHOptions) error {
 		return errors.Errorf("vm %q is not running.", v.Name)
 	}
 
-	sshDestination := v.RemoteUsername + "@localhost"
+	username := opts.Username
+	if username == "" {
+		username = v.RemoteUsername
+	}
+
+	sshDestination := username + "@localhost"
 	port := strconv.Itoa(v.Port)
 
 	args := []string{"-i", v.IdentityPath, "-p", port, sshDestination, "-o", "UserKnownHostsFile /dev/null", "-o", "StrictHostKeyChecking no"}
@@ -565,6 +575,9 @@ func GetVMInfos() ([]*machine.ListResponse, error) {
 
 			listEntry.Name = vm.Name
 			listEntry.VMType = "qemu"
+			listEntry.CPUs = vm.CPUs
+			listEntry.Memory = vm.Memory
+			listEntry.DiskSize = vm.DiskSize
 			fi, err := os.Stat(fullPath)
 			if err != nil {
 				return err
@@ -619,15 +632,13 @@ func CheckActiveVM() (bool, string, error) {
 // startHostNetworking runs a binary on the host system that allows users
 // to setup port forwarding to the podman virtual machine
 func (v *MachineVM) startHostNetworking() error {
-	// MacOS does not have /usr/libexec so we look in the executable
-	// paths.
-	binary, err := exec.LookPath(machine.ForwarderBinaryName)
-	if errors.Is(err, exec.ErrNotFound) {
-		// Nothing was found, so now check /usr/libexec, else error out
-		binary = filepath.Join("/usr/libexec/podman/", machine.ForwarderBinaryName)
-		if _, err := os.Stat(binary); err != nil {
-			return err
-		}
+	cfg, err := config.Default()
+	if err != nil {
+		return err
+	}
+	binary, err := cfg.FindHelperBinary(machine.ForwarderBinaryName, false)
+	if err != nil {
+		return err
 	}
 
 	// Listen on all at port 7777 for setting up and tearing

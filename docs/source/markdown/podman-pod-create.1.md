@@ -35,7 +35,26 @@ Set custom DNS options in the /etc/resolv.conf file that will be shared between 
 
 Set custom DNS search domains in the /etc/resolv.conf file that will be shared between all containers in the pod.
 
-#### **--help**
+#### **--gidmap**=*container_gid:host_gid:amount*
+
+GID map for the user namespace. Using this flag will run the container with user namespace enabled. It conflicts with the `--userns` and `--subgidname` flags.
+
+#### **--uidmap**=*container_uid*:*from_uid*:*amount*
+
+Run the container in a new user namespace using the supplied mapping. This
+option conflicts with the **--userns** and **--subuidname** options. This
+option provides a way to map host UIDs to container UIDs. It can be passed
+several times to map different ranges.
+
+#### **--subgidname**=*name*
+
+Name for GID map from the `/etc/subgid` file. Using this flag will run the container with user namespace enabled. This flag conflicts with `--userns` and `--gidmap`.
+
+#### **--subuidname**=*name*
+
+Name for UID map from the `/etc/subuid` file. Using this flag will run the container with user namespace enabled. This flag conflicts with `--userns` and `--uidmap`.
+
+#### **--help**, **-h**
 
 Print usage statement.
 
@@ -106,7 +125,7 @@ Set network mode for the pod. Supported values are:
 
 #### **--network-alias**=strings
 
-Add a DNS alias for the container. When the container is joined to a CNI network with support for the dnsname plugin, the container will be accessible through this name from other containers in the network.
+Add a DNS alias for the pod. When the pod is joined to a CNI network with support for the dnsname plugin, the containers inside the pod will be accessible through this name from other containers in the network.
 
 #### **--no-hosts**=**true**|**false**
 
@@ -151,6 +170,19 @@ Name (“jonah”)
 podman generates a UUID for each pod, and if a name is not assigned
 to the container with **--name** then a random string name will be generated
 for it. The name is useful any place you need to identify a pod.
+
+#### **--userns**=*mode*
+
+Set the user namespace mode for all the containers in a pod. It defaults to the **PODMAN_USERNS** environment variable. An empty value ("") means user namespaces are disabled.
+
+Valid _mode_ values are:
+
+- *auto[:*_OPTIONS,..._*]*: automatically create a namespace. It is possible to specify these options to `auto`:
+  - *gidmapping=*_CONTAINER_GID:HOST_GID:SIZE_ to force a GID mapping to be present in the user namespace.
+  - *size=*_SIZE_: to specify an explicit size for the automatic user namespace. e.g. `--userns=auto:size=8192`. If `size` is not specified, `auto` will estimate a size for the user namespace.
+  - *uidmapping=*_CONTAINER_UID:HOST_UID:SIZE_ to force a UID mapping to be present in the user namespace.
+- *host*: run in the user namespace of the caller. The processes running in the container will have the same privileges on the host as any other process launched by the calling user (default).
+- *keep-id*: creates a user namespace where the current rootless user's UID:GID are mapped to the same values in the container. This option is ignored for containers created by the root user.
 
 ## EXAMPLES
 

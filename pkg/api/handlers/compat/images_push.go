@@ -10,6 +10,7 @@ import (
 	"github.com/containers/image/v5/types"
 	"github.com/containers/podman/v3/libpod"
 	"github.com/containers/podman/v3/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v3/pkg/api/types"
 	"github.com/containers/podman/v3/pkg/auth"
 	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/containers/podman/v3/pkg/domain/infra/abi"
@@ -22,8 +23,8 @@ import (
 
 // PushImage is the handler for the compat http endpoint for pushing images.
 func PushImage(w http.ResponseWriter, r *http.Request) {
-	decoder := r.Context().Value("decoder").(*schema.Decoder)
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
+	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 
 	digestFile, err := ioutil.TempFile("", "digest.txt")
 	if err != nil {
@@ -105,7 +106,7 @@ func PushImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	w.Header().Add("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json")
 	flush()
 
 	var report jsonmessage.JSONMessage
@@ -151,7 +152,7 @@ loop: // break out of for/select infinite loop
 		case err := <-pushErrChan:
 			if err != nil {
 				var msg string
-				if errors.Cause(err) != storage.ErrImageUnknown {
+				if errors.Is(err, storage.ErrImageUnknown) {
 					msg = "An image does not exist locally with the tag: " + imageName
 				} else {
 					msg = err.Error()

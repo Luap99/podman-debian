@@ -152,13 +152,6 @@ type swagPodTopResponse struct {
 	}
 }
 
-// List processes in pod
-// swagger:response DocsPodStatsResponse
-type swagPodStatsResponse struct {
-	// in:body
-	Body []*entities.PodStatsReport
-}
-
 // Inspect container
 // swagger:response LibpodInspectContainerResponse
 type swagLibpodInspectContainerResponse struct {
@@ -184,11 +177,11 @@ type swagInspectPodResponse struct {
 	}
 }
 
-// Inspect volume
-// swagger:response InspectVolumeResponse
-type swagInspectVolumeResponse struct {
+// Get stats for one or more containers
+// swagger:response ContainerStats
+type swagContainerStatsResponse struct {
 	// in:body
 	Body struct {
-		define.InspectVolumeData
+		define.ContainerStats
 	}
 }

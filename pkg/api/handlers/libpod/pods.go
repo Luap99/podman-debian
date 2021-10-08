@@ -1,19 +1,25 @@
 package libpod
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/containers/common/libimage"
+	"github.com/containers/common/pkg/config"
+	"github.com/containers/image/v5/transports/alltransports"
 	"github.com/containers/podman/v3/libpod"
 	"github.com/containers/podman/v3/libpod/define"
 	"github.com/containers/podman/v3/pkg/api/handlers"
 	"github.com/containers/podman/v3/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v3/pkg/api/types"
 	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/containers/podman/v3/pkg/domain/infra/abi"
 	"github.com/containers/podman/v3/pkg/specgen"
 	"github.com/containers/podman/v3/pkg/specgen/generate"
+	"github.com/containers/podman/v3/pkg/specgenutil"
 	"github.com/containers/podman/v3/pkg/util"
 	"github.com/gorilla/schema"
 	"github.com/pkg/errors"
@@ -22,28 +28,80 @@ import (
 
 func PodCreate(w http.ResponseWriter, r *http.Request) {
 	var (
-		runtime = r.Context().Value("runtime").(*libpod.Runtime)
+		runtime = r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 		err     error
 	)
-	var psg specgen.PodSpecGenerator
+	psg := specgen.PodSpecGenerator{InfraContainerSpec: &specgen.SpecGenerator{}}
 	if err := json.NewDecoder(r.Body).Decode(&psg); err != nil {
-		utils.Error(w, "failed to decode specgen", http.StatusInternalServerError, errors.Wrap(err, "failed to decode specgen"))
+		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrap(err, "failed to decode specgen"))
 		return
 	}
-	pod, err := generate.MakePod(&psg, runtime)
+	if err != nil {
+		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrap(err, "failed to decode specgen"))
+		return
+	}
+	if !psg.NoInfra {
+		infraOptions := &entities.ContainerCreateOptions{ImageVolume: "bind", IsInfra: true, Net: &entities.NetOptions{}} // options for pulling the image and FillOutSpec
+		err = specgenutil.FillOutSpecGen(psg.InfraContainerSpec, infraOptions, []string{})                                // necessary for default values in many cases (userns, idmappings)
+		if err != nil {
+			utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrap(err, "error filling out specgen"))
+			return
+		}
+		out, err := json.Marshal(psg) // marshal our spec so the matching options can be unmarshaled into infra
+		if err != nil {
+			utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrap(err, "failed to decode specgen"))
+			return
+		}
+		tempSpec := &specgen.SpecGenerator{} // temporary spec since infra cannot be decoded into
+		err = json.Unmarshal(out, tempSpec)  // unmarhal matching options
+		if err != nil {
+			utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrap(err, "failed to decode specgen"))
+			return
+		}
+		psg.InfraContainerSpec = tempSpec // set infra spec equal to temp
+		// a few extra that do not have the same json tags
+		psg.InfraContainerSpec.Name = psg.InfraName
+		psg.InfraContainerSpec.ConmonPidFile = psg.InfraConmonPidFile
+		psg.InfraContainerSpec.ContainerCreateCommand = psg.InfraCommand
+		imageName := psg.InfraImage
+		rawImageName := psg.InfraImage
+		if imageName == "" {
+			imageName = config.DefaultInfraImage
+			rawImageName = config.DefaultInfraImage
+		}
+		curr := infraOptions.Quiet
+		infraOptions.Quiet = true
+		pullOptions := &libimage.PullOptions{}
+		pulledImages, err := runtime.LibimageRuntime().Pull(context.Background(), imageName, config.PullPolicyMissing, pullOptions)
+		if err != nil {
+			utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrap(err, "could not pull image"))
+			return
+		}
+		if _, err := alltransports.ParseImageName(imageName); err == nil {
+			if len(pulledImages) != 0 {
+				imageName = pulledImages[0].ID()
+			}
+		}
+		infraOptions.Quiet = curr
+		psg.InfraImage = imageName
+		psg.InfraContainerSpec.Image = imageName
+		psg.InfraContainerSpec.RawImageName = rawImageName
+	}
+	podSpecComplete := entities.PodSpec{PodSpecGen: psg}
+	pod, err := generate.MakePod(&podSpecComplete, runtime)
 	if err != nil {
 		httpCode := http.StatusInternalServerError
 		if errors.Cause(err) == define.ErrPodExists {
 			httpCode = http.StatusConflict
 		}
-		utils.Error(w, "Something went wrong.", httpCode, err)
+		utils.Error(w, "Something went wrong.", httpCode, errors.Wrap(err, "failed to make pod"))
 		return
 	}
 	utils.WriteResponse(w, http.StatusCreated, handlers.IDResponse{ID: pod.ID()})
 }
 
 func Pods(w http.ResponseWriter, r *http.Request) {
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 
 	filterMap, err := util.PrepareFilters(r)
 	if err != nil {
@@ -65,7 +123,7 @@ func Pods(w http.ResponseWriter, r *http.Request) {
 }
 
 func PodInspect(w http.ResponseWriter, r *http.Request) {
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	name := utils.GetName(r)
 	pod, err := runtime.LookupPod(name)
 	if err != nil {
@@ -87,8 +145,8 @@ func PodInspect(w http.ResponseWriter, r *http.Request) {
 func PodStop(w http.ResponseWriter, r *http.Request) {
 	var (
 		stopError error
-		runtime   = r.Context().Value("runtime").(*libpod.Runtime)
-		decoder   = r.Context().Value("decoder").(*schema.Decoder)
+		runtime   = r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
+		decoder   = r.Context().Value(api.DecoderKey).(*schema.Decoder)
 		responses map[string]error
 	)
 	query := struct {
@@ -149,7 +207,7 @@ func PodStop(w http.ResponseWriter, r *http.Request) {
 }
 
 func PodStart(w http.ResponseWriter, r *http.Request) {
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	name := utils.GetName(r)
 	pod, err := runtime.LookupPod(name)
 	if err != nil {
@@ -186,8 +244,8 @@ func PodStart(w http.ResponseWriter, r *http.Request) {
 
 func PodDelete(w http.ResponseWriter, r *http.Request) {
 	var (
-		runtime = r.Context().Value("runtime").(*libpod.Runtime)
-		decoder = r.Context().Value("decoder").(*schema.Decoder)
+		runtime = r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
+		decoder = r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	)
 	query := struct {
 		Force bool `schema:"force"`
@@ -215,7 +273,7 @@ func PodDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 func PodRestart(w http.ResponseWriter, r *http.Request) {
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	name := utils.GetName(r)
 	pod, err := runtime.LookupPod(name)
 	if err != nil {
@@ -251,7 +309,7 @@ func PodPrune(w http.ResponseWriter, r *http.Request) {
 
 func PodPruneHelper(r *http.Request) ([]*entities.PodPruneReport, error) {
 	var (
-		runtime = r.Context().Value("runtime").(*libpod.Runtime)
+		runtime = r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	)
 	responses, err := runtime.PrunePods(r.Context())
 	if err != nil {
@@ -268,7 +326,7 @@ func PodPruneHelper(r *http.Request) ([]*entities.PodPruneReport, error) {
 }
 
 func PodPause(w http.ResponseWriter, r *http.Request) {
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	name := utils.GetName(r)
 	pod, err := runtime.LookupPod(name)
 	if err != nil {
@@ -294,7 +352,7 @@ func PodPause(w http.ResponseWriter, r *http.Request) {
 }
 
 func PodUnpause(w http.ResponseWriter, r *http.Request) {
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	name := utils.GetName(r)
 	pod, err := runtime.LookupPod(name)
 	if err != nil {
@@ -320,8 +378,8 @@ func PodUnpause(w http.ResponseWriter, r *http.Request) {
 }
 
 func PodTop(w http.ResponseWriter, r *http.Request) {
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
-	decoder := r.Context().Value("decoder").(*schema.Decoder)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
+	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 
 	query := struct {
 		PsArgs string `schema:"ps_args"`
@@ -363,8 +421,8 @@ func PodTop(w http.ResponseWriter, r *http.Request) {
 
 func PodKill(w http.ResponseWriter, r *http.Request) {
 	var (
-		runtime = r.Context().Value("runtime").(*libpod.Runtime)
-		decoder = r.Context().Value("decoder").(*schema.Decoder)
+		runtime = r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
+		decoder = r.Context().Value(api.DecoderKey).(*schema.Decoder)
 		signal  = "SIGKILL"
 	)
 	query := struct {
@@ -432,7 +490,7 @@ func PodKill(w http.ResponseWriter, r *http.Request) {
 }
 
 func PodExists(w http.ResponseWriter, r *http.Request) {
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	name := utils.GetName(r)
 	_, err := runtime.LookupPod(name)
 	if err != nil {
@@ -443,8 +501,8 @@ func PodExists(w http.ResponseWriter, r *http.Request) {
 }
 
 func PodStats(w http.ResponseWriter, r *http.Request) {
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
-	decoder := r.Context().Value("decoder").(*schema.Decoder)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
+	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 
 	query := struct {
 		NamesOrIDs []string `schema:"namesOrIDs"`

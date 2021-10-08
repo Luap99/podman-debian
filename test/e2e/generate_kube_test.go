@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/containers/podman/v3/libpod/define"
+
 	"github.com/containers/podman/v3/pkg/util"
 	. "github.com/containers/podman/v3/test/utils"
 	"github.com/ghodss/yaml"
@@ -172,6 +174,78 @@ var _ = Describe("Podman generate kube", func() {
 
 		Expect(string(kube.Out.Contents())).To(ContainSubstring(`name: pod1`))
 		Expect(string(kube.Out.Contents())).To(ContainSubstring(`name: pod2`))
+	})
+
+	It("podman generate kube on pod with init containers", func() {
+		session := podmanTest.Podman([]string{"create", "--pod", "new:toppod", "--init-ctr", "always", ALPINE, "echo", "hello"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		session = podmanTest.Podman([]string{"create", "--pod", "toppod", "--init-ctr", "always", ALPINE, "echo", "world"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		session = podmanTest.Podman([]string{"create", "--pod", "toppod", ALPINE, "top"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		kube := podmanTest.Podman([]string{"generate", "kube", "toppod"})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(Exit(0))
+
+		pod := new(v1.Pod)
+		err := yaml.Unmarshal(kube.Out.Contents(), pod)
+		Expect(err).To(BeNil())
+		Expect(pod.Spec.HostNetwork).To(Equal(false))
+
+		numContainers := len(pod.Spec.Containers) + len(pod.Spec.InitContainers)
+		Expect(numContainers).To(Equal(3))
+
+		// Init container should be in the generated kube yaml if created with "once" type and the pod has not been started
+		session = podmanTest.Podman([]string{"create", "--pod", "new:toppod-2", "--init-ctr", "once", ALPINE, "echo", "using once type"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		session = podmanTest.Podman([]string{"create", "--pod", "toppod-2", ALPINE, "top"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		kube = podmanTest.Podman([]string{"generate", "kube", "toppod-2"})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(Exit(0))
+
+		pod = new(v1.Pod)
+		err = yaml.Unmarshal(kube.Out.Contents(), pod)
+		Expect(err).To(BeNil())
+		Expect(pod.Spec.HostNetwork).To(Equal(false))
+
+		numContainers = len(pod.Spec.Containers) + len(pod.Spec.InitContainers)
+		Expect(numContainers).To(Equal(2))
+
+		// Init container should not be in the generated kube yaml if created with "once" type and the pod has been started
+		session = podmanTest.Podman([]string{"create", "--pod", "new:toppod-3", "--init-ctr", "once", ALPINE, "echo", "using once type"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		session = podmanTest.Podman([]string{"create", "--pod", "toppod-3", ALPINE, "top"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		session = podmanTest.Podman([]string{"pod", "start", "toppod-3"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		kube = podmanTest.Podman([]string{"generate", "kube", "toppod-3"})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(Exit(0))
+
+		pod = new(v1.Pod)
+		err = yaml.Unmarshal(kube.Out.Contents(), pod)
+		Expect(err).To(BeNil())
+		Expect(pod.Spec.HostNetwork).To(Equal(false))
+
+		numContainers = len(pod.Spec.Containers) + len(pod.Spec.InitContainers)
+		Expect(numContainers).To(Equal(1))
 	})
 
 	It("podman generate kube on pod with host network", func() {
@@ -483,6 +557,15 @@ var _ = Describe("Podman generate kube", func() {
 		kube.WaitWithDefaultTimeout()
 		Expect(kube).Should(Exit(0))
 
+		b, err := ioutil.ReadFile(outputFile)
+		Expect(err).ShouldNot(HaveOccurred())
+		pod := new(v1.Pod)
+		err = yaml.Unmarshal(b, pod)
+		Expect(err).To(BeNil())
+		val, found := pod.Annotations[define.BindMountPrefix+vol1]
+		Expect(found).To(BeTrue())
+		Expect(val).To(HaveSuffix("z"))
+
 		rm := podmanTest.Podman([]string{"pod", "rm", "-f", "test1"})
 		rm.WaitWithDefaultTimeout()
 		Expect(rm).Should(Exit(0))
@@ -718,6 +801,45 @@ var _ = Describe("Podman generate kube", func() {
 
 		Expect(containers[0].Command).To(Equal([]string{"/bin/sleep"}))
 		Expect(containers[0].Args).To(Equal([]string{"10s"}))
+	})
+
+	It("podman generate kube - no command", func() {
+		session := podmanTest.Podman([]string{"create", "--name", "test", ALPINE})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		kube := podmanTest.Podman([]string{"generate", "kube", "test"})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(Exit(0))
+
+		// Now make sure that the container's command is not set to the
+		// entrypoint and it's arguments to "10s".
+		pod := new(v1.Pod)
+		err := yaml.Unmarshal(kube.Out.Contents(), pod)
+		Expect(err).To(BeNil())
+
+		containers := pod.Spec.Containers
+		Expect(len(containers)).To(Equal(1))
+		Expect(len(containers[0].Command)).To(Equal(0))
+
+		cmd := []string{"echo", "hi"}
+		session = podmanTest.Podman(append([]string{"create", "--name", "test1", ALPINE}, cmd...))
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		kube = podmanTest.Podman([]string{"generate", "kube", "test1"})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(Exit(0))
+
+		// Now make sure that the container's command is not set to the
+		// entrypoint and it's arguments to "10s".
+		pod = new(v1.Pod)
+		err = yaml.Unmarshal(kube.Out.Contents(), pod)
+		Expect(err).To(BeNil())
+
+		containers = pod.Spec.Containers
+		Expect(len(containers)).To(Equal(1))
+		Expect(containers[0].Command).To(Equal(cmd))
 	})
 
 	It("podman generate kube - use entrypoint from image", func() {

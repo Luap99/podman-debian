@@ -60,9 +60,7 @@ func (ic *ContainerEngine) GenerateKube(ctx context.Context, nameOrIDs []string,
 				return nil, err
 			}
 		} else {
-			if len(ctr.Dependencies()) > 0 {
-				return nil, errors.Wrapf(define.ErrNotImplemented, "containers with dependencies")
-			}
+			//  now that infra holds NS data, we need to support dependencies.
 			// we cannot deal with ctrs already in a pod.
 			if len(ctr.PodID()) > 0 {
 				return nil, errors.Errorf("container %s is associated with pod %s: use generate on the pod itself", ctr.ID(), ctr.PodID())
@@ -109,7 +107,7 @@ func (ic *ContainerEngine) GenerateKube(ctx context.Context, nameOrIDs []string,
 
 	// Generate kube pods and services from pods.
 	if len(pods) >= 1 {
-		pos, svcs, err := getKubePods(pods, options.Service)
+		pos, svcs, err := getKubePods(ctx, pods, options.Service)
 		if err != nil {
 			return nil, err
 		}
@@ -122,7 +120,7 @@ func (ic *ContainerEngine) GenerateKube(ctx context.Context, nameOrIDs []string,
 
 	// Generate the kube pods from containers.
 	if len(ctrs) >= 1 {
-		po, err := libpod.GenerateForKube(ctrs)
+		po, err := libpod.GenerateForKube(ctx, ctrs)
 		if err != nil {
 			return nil, err
 		}
@@ -155,12 +153,12 @@ func (ic *ContainerEngine) GenerateKube(ctx context.Context, nameOrIDs []string,
 }
 
 // getKubePods returns kube pod and service YAML files from podman pods.
-func getKubePods(pods []*libpod.Pod, getService bool) ([][]byte, [][]byte, error) {
+func getKubePods(ctx context.Context, pods []*libpod.Pod, getService bool) ([][]byte, [][]byte, error) {
 	pos := [][]byte{}
 	svcs := [][]byte{}
 
 	for _, p := range pods {
-		po, sp, err := p.GenerateForKube()
+		po, sp, err := p.GenerateForKube(ctx)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -212,9 +210,7 @@ func generateKubeYAML(kubeKind interface{}) ([]byte, error) {
 func generateKubeOutput(content [][]byte) ([]byte, error) {
 	output := make([]byte, 0)
 
-	header := `# Generation of Kubernetes YAML is still under development!
-#
-# Save the output of this file and use kubectl create -f to import
+	header := `# Save the output of this file and use kubectl create -f to import
 # it into Kubernetes.
 #
 # Created with podman-%s

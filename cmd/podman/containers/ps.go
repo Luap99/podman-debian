@@ -221,7 +221,10 @@ func ps(cmd *cobra.Command, _ []string) error {
 	}
 
 	hdrs, format := createPsOut()
+
+	noHeading, _ := cmd.Flags().GetBool("noheading")
 	if cmd.Flags().Changed("format") {
+		noHeading = noHeading || !report.HasTable(listOpts.Format)
 		format = report.NormalizeFormat(listOpts.Format)
 		format = report.EnforceRange(format)
 	}
@@ -240,8 +243,7 @@ func ps(cmd *cobra.Command, _ []string) error {
 	defer w.Flush()
 
 	headers := func() error { return nil }
-	noHeading, _ := cmd.Flags().GetBool("noheading")
-	if !(noHeading || listOpts.Quiet || cmd.Flags().Changed("format")) {
+	if !noHeading {
 		headers = func() error {
 			return tmpl.Execute(w, hdrs)
 		}
@@ -298,9 +300,11 @@ func createPsOut() ([]map[string]string, string) {
 		"IPC":          "ipc",
 		"MNT":          "mnt",
 		"NET":          "net",
+		"Networks":     "networks",
 		"PIDNS":        "pidns",
 		"Pod":          "pod id",
 		"PodName":      "podname", // undo camelcase space break
+		"RunningFor":   "running for",
 		"UTS":          "uts",
 		"User":         "userns",
 	})
@@ -371,6 +375,10 @@ func (l psReporter) State() string {
 
 // Status is a synonym for State()
 func (l psReporter) Status() string {
+	hc := l.ListContainer.Status
+	if hc != "" {
+		return l.State() + " (" + hc + ")"
+	}
 	return l.State()
 }
 

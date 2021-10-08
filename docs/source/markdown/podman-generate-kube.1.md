@@ -16,6 +16,9 @@ Volumes appear in the generated YAML according to two different volume types. Bi
 
 Potential name conflicts between volumes are avoided by using a standard naming scheme for each volume type. The *hostPath* volume types are named according to the path on the host machine, replacing forward slashes with hyphens less any leading and trailing forward slashes. The special case of the filesystem root, `/`, translates to the name `root`. Additionally, the name is suffixed with `-host` to avoid naming conflicts with *persistentVolumeClaim* volumes. Each *persistentVolumeClaim* volume type uses the name of its associated named volume suffixed with `-pvc`.
 
+Note that if an init container is created with type `once` and the pod has been started, the init container will not show up in the generated kube YAML as `once` type init containers are deleted after they are run. If the pod has only been created and not started, it will be in the generated kube YAML.
+Init containers created with type `always` will always be generated in the kube YAML as they are never deleted, even after running to completion.
+
 Note that the generated Kubernetes YAML file can be used to re-run the deployment via podman-play-kube(1).
 
 ## OPTIONS
@@ -34,8 +37,6 @@ random port is assigned by Podman in the specification.
 Create Kubernetes Pod YAML for a container called `some-mariadb`.
 ```
 $ sudo podman generate kube some-mariadb
-# Generation of Kubernetes YAML is still under development!
-#
 # Save the output of this file and use kubectl create -f to import
 # it into Kubernetes.
 #
@@ -90,8 +91,6 @@ status: {}
 Create Kubernetes Pod YAML for a container with the directory `/home/user/my-data` on the host bind-mounted in the container to `/volume`.
 ```
 $ podman generate kube my-container-with-bind-mounted-data
-# Generation of Kubernetes YAML is still under development!
-#
 # Save the output of this file and use kubectl create -f to import
 # it into Kubernetes.
 #
@@ -144,8 +143,6 @@ status: {}
 Create Kubernetes Pod YAML for a container with the named volume `priceless-data` mounted in the container at `/volume`.
 ```
 $ podman generate kube my-container-using-priceless-data
-# Generation of Kubernetes YAML is still under development!
-#
 # Save the output of this file and use kubectl create -f to import
 # it into Kubernetes.
 #
@@ -197,8 +194,6 @@ status: {}
 Create Kubernetes Pod YAML for a pod called `demoweb` and include a service.
 ```
 $ sudo podman generate kube -s demoweb
-# Generation of Kubernetes YAML is still under development!
-#
 # Save the output of this file and use kubectl create -f to import
 # it into Kubernetes.
 #

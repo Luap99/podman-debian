@@ -12,7 +12,10 @@ import (
 	"github.com/containers/common/pkg/parse"
 	"github.com/containers/common/pkg/secrets"
 	"github.com/containers/image/v5/manifest"
+	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v3/libpod/network/types"
 	ann "github.com/containers/podman/v3/pkg/annotations"
+	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/containers/podman/v3/pkg/specgen"
 	"github.com/containers/podman/v3/pkg/specgen/generate"
 	"github.com/containers/podman/v3/pkg/util"
@@ -22,25 +25,26 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 )
 
-func ToPodGen(ctx context.Context, podName string, podYAML *v1.PodTemplateSpec) (*specgen.PodSpecGenerator, error) {
-	p := specgen.NewPodSpecGenerator()
+func ToPodOpt(ctx context.Context, podName string, p entities.PodCreateOptions, podYAML *v1.PodTemplateSpec) (entities.PodCreateOptions, error) {
+	//	p := specgen.NewPodSpecGenerator()
+	p.Net = &entities.NetOptions{}
 	p.Name = podName
 	p.Labels = podYAML.ObjectMeta.Labels
 	// Kube pods must share {ipc, net, uts} by default
-	p.SharedNamespaces = append(p.SharedNamespaces, "ipc")
-	p.SharedNamespaces = append(p.SharedNamespaces, "net")
-	p.SharedNamespaces = append(p.SharedNamespaces, "uts")
+	p.Share = append(p.Share, "ipc")
+	p.Share = append(p.Share, "net")
+	p.Share = append(p.Share, "uts")
 	// TODO we only configure Process namespace. We also need to account for Host{IPC,Network,PID}
 	// which is not currently possible with pod create
 	if podYAML.Spec.ShareProcessNamespace != nil && *podYAML.Spec.ShareProcessNamespace {
-		p.SharedNamespaces = append(p.SharedNamespaces, "pid")
+		p.Share = append(p.Share, "pid")
 	}
 	p.Hostname = podYAML.Spec.Hostname
 	if p.Hostname == "" {
 		p.Hostname = podName
 	}
 	if podYAML.Spec.HostNetwork {
-		p.NetNS.NSMode = specgen.Host
+		p.Net.Network = specgen.Namespace{NSMode: "host"}
 	}
 	if podYAML.Spec.HostAliases != nil {
 		hosts := make([]string, 0, len(podYAML.Spec.HostAliases))
@@ -49,10 +53,10 @@ func ToPodGen(ctx context.Context, podName string, podYAML *v1.PodTemplateSpec) 
 				hosts = append(hosts, host+":"+hostAlias.IP)
 			}
 		}
-		p.HostAdd = hosts
+		p.Net.AddHosts = hosts
 	}
 	podPorts := getPodPorts(podYAML.Spec.Containers)
-	p.PortMappings = podPorts
+	p.Net.PublishPorts = podPorts
 
 	if dnsConfig := podYAML.Spec.DNSConfig; dnsConfig != nil {
 		// name servers
@@ -61,11 +65,11 @@ func ToPodGen(ctx context.Context, podName string, podYAML *v1.PodTemplateSpec) 
 			for _, server := range dnsServers {
 				servers = append(servers, net.ParseIP(server))
 			}
-			p.DNSServer = servers
+			p.Net.DNSServers = servers
 		}
 		// search domains
 		if domains := dnsConfig.Searches; len(domains) > 0 {
-			p.DNSSearch = domains
+			p.Net.DNSSearch = domains
 		}
 		// dns options
 		if options := dnsConfig.Options; len(options) > 0 {
@@ -83,6 +87,8 @@ func ToPodGen(ctx context.Context, podName string, podYAML *v1.PodTemplateSpec) 
 }
 
 type CtrSpecGenOptions struct {
+	// Annotations from the Pod
+	Annotations map[string]string
 	// Container as read from the pod yaml
 	Container v1.Container
 	// Image available to use (pulled or found local)
@@ -109,6 +115,11 @@ type CtrSpecGenOptions struct {
 	LogDriver string
 	// Labels define key-value pairs of metadata
 	Labels map[string]string
+	//
+	IsInfra bool
+	// InitContainerType sets what type the init container is
+	// Note: When playing a kube yaml, the inti container type will be set to "always" only
+	InitContainerType string
 }
 
 func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGenerator, error) {
@@ -129,6 +140,8 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 	s.LogConfiguration = &specgen.LogConfig{
 		Driver: opts.LogDriver,
 	}
+
+	s.InitContainerType = opts.InitContainerType
 
 	setupSecurityContext(s, opts.Container)
 	err := setupLivenessProbe(s, opts.Container, opts.RestartPolicy)
@@ -215,19 +228,19 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 		}
 	}
 	// If only the yaml.Command is specified, set it as the entrypoint and drop the image Cmd
-	if len(opts.Container.Command) != 0 {
+	if !opts.IsInfra && len(opts.Container.Command) != 0 {
 		s.Entrypoint = opts.Container.Command
 		s.Command = []string{}
 	}
 	// Only override the cmd field if yaml.Args is specified
 	// Keep the image entrypoint, or the yaml.command if specified
-	if len(opts.Container.Args) != 0 {
+	if !opts.IsInfra && len(opts.Container.Args) != 0 {
 		s.Command = opts.Container.Args
 	}
 
 	// FIXME,
 	// we are currently ignoring imageData.Config.ExposedPorts
-	if opts.Container.WorkingDir != "" {
+	if !opts.IsInfra && opts.Container.WorkingDir != "" {
 		s.WorkDir = opts.Container.WorkingDir
 	}
 
@@ -279,6 +292,14 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 		volume.MountPath = dest
 		switch volumeSource.Type {
 		case KubeVolumeTypeBindMount:
+			// If the container has bind mounts, we need to check if
+			// a selinux mount option exists for it
+			for k, v := range opts.Annotations {
+				// Make sure the z/Z option is not already there (from editing the YAML)
+				if strings.Replace(k, define.BindMountPrefix, "", 1) == volumeSource.Source && !util.StringInSlice("z", options) && !util.StringInSlice("Z", options) {
+					options = append(options, v)
+				}
+			}
 			mount := spec.Mount{
 				Destination: volume.MountPath,
 				Source:      volumeSource.Source,
@@ -303,6 +324,8 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 	if opts.NetNSIsHost {
 		s.NetNS.NSMode = specgen.Host
 	}
+	// Always set the userns to host since k8s doesn't have support for userns yet
+	s.UserNS.NSMode = specgen.Host
 
 	// Add labels that come from kube
 	if len(s.Labels) == 0 {
@@ -586,8 +609,8 @@ func envVarValue(env v1.EnvVar, opts *CtrSpecGenOptions) (string, error) {
 
 // getPodPorts converts a slice of kube container descriptions to an
 // array of portmapping
-func getPodPorts(containers []v1.Container) []specgen.PortMapping {
-	var infraPorts []specgen.PortMapping
+func getPodPorts(containers []v1.Container) []types.PortMapping {
+	var infraPorts []types.PortMapping
 	for _, container := range containers {
 		for _, p := range container.Ports {
 			if p.HostPort != 0 && p.ContainerPort == 0 {
@@ -596,7 +619,7 @@ func getPodPorts(containers []v1.Container) []specgen.PortMapping {
 			if p.Protocol == "" {
 				p.Protocol = "tcp"
 			}
-			portBinding := specgen.PortMapping{
+			portBinding := types.PortMapping{
 				HostPort:      uint16(p.HostPort),
 				ContainerPort: uint16(p.ContainerPort),
 				Protocol:      strings.ToLower(string(p.Protocol)),

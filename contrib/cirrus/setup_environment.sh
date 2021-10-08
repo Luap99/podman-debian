@@ -77,6 +77,13 @@ case "$CG_FS_TYPE" in
             else
                 echo "OCI_RUNTIME=runc" >> /etc/ci_environment
             fi
+
+            # As a general policy CGv1 + runc should coincide with the "older"
+            # VM Images in CI.  Verify this is the case.
+            if [[ -n "$VM_IMAGE_NAME" ]] && [[ ! "$VM_IMAGE_NAME" =~ prior ]]
+            then
+                die "Most recent distro. version should never run with CGv1"
+            fi
         fi
         ;;
     cgroup2fs)
@@ -85,6 +92,13 @@ case "$CG_FS_TYPE" in
             # which uses runc as the default.
             warn "Forcing testing with crun instead of runc"
             echo "OCI_RUNTIME=crun" >> /etc/ci_environment
+
+            # As a general policy CGv2 + crun should coincide with the "newer"
+            # VM Images in CI.  Verify this is the case.
+            if [[ -n "$VM_IMAGE_NAME" ]] && [[ "$VM_IMAGE_NAME" =~ prior ]]
+            then
+                die "Least recent distro. version should never run with CGv2"
+            fi
         fi
         ;;
     *) die_unknown CG_FS_TYPE
@@ -191,7 +205,19 @@ case "$TEST_FLAVOR" in
             bigto dnf install -y glibc-minimal-langpack rpm-build
         fi
         ;&
-    docker-py) ;&
+    docker-py)
+        remove_packaged_podman_files
+        make install PREFIX=/usr ETCDIR=/etc
+
+        # TODO: Don't install stuff at test runtime!  Do this from
+        # cache_images/fedora_packaging.sh in containers/automation_images
+        # and STRONGLY prefer installing RPMs vs pip packages in venv
+        dnf install -y python3-virtualenv python3-pytest4
+        virtualenv venv
+        source venv/bin/activate
+        pip install --upgrade pip
+        pip install --requirement $GOSRC/test/python/requirements.txt
+        ;;
     build) make clean ;;
     unit) ;;
     apiv2) ;&  # use next item

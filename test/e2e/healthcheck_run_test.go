@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	define "github.com/containers/podman/v3/libpod/define"
 	. "github.com/containers/podman/v3/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -79,6 +80,11 @@ var _ = Describe("Podman healthcheck run", func() {
 			time.Sleep(1 * time.Second)
 		}
 		Expect(exitCode).To(Equal(0))
+
+		ps := podmanTest.Podman([]string{"ps"})
+		ps.WaitWithDefaultTimeout()
+		Expect(ps).Should(Exit(0))
+		Expect(ps.OutputToString()).To(ContainSubstring("(healthy)"))
 	})
 
 	It("podman healthcheck that should fail", func() {
@@ -157,7 +163,7 @@ var _ = Describe("Podman healthcheck run", func() {
 		Expect(hc).Should(Exit(1))
 
 		inspect = podmanTest.InspectContainer("hc")
-		Expect(inspect[0].State.Healthcheck.Status).To(Equal("unhealthy"))
+		Expect(inspect[0].State.Healthcheck.Status).To(Equal(define.HealthCheckUnhealthy))
 
 	})
 
@@ -171,7 +177,7 @@ var _ = Describe("Podman healthcheck run", func() {
 		Expect(hc).Should(Exit(0))
 
 		inspect := podmanTest.InspectContainer("hc")
-		Expect(inspect[0].State.Healthcheck.Status).To(Equal("healthy"))
+		Expect(inspect[0].State.Healthcheck.Status).To(Equal(define.HealthCheckHealthy))
 	})
 
 	It("podman healthcheck unhealthy but valid arguments check", func() {
@@ -201,7 +207,7 @@ var _ = Describe("Podman healthcheck run", func() {
 		Expect(hc).Should(Exit(1))
 
 		inspect = podmanTest.InspectContainer("hc")
-		Expect(inspect[0].State.Healthcheck.Status).To(Equal("unhealthy"))
+		Expect(inspect[0].State.Healthcheck.Status).To(Equal(define.HealthCheckUnhealthy))
 
 		foo := podmanTest.Podman([]string{"exec", "hc", "touch", "/foo"})
 		foo.WaitWithDefaultTimeout()
@@ -212,6 +218,13 @@ var _ = Describe("Podman healthcheck run", func() {
 		Expect(hc).Should(Exit(0))
 
 		inspect = podmanTest.InspectContainer("hc")
-		Expect(inspect[0].State.Healthcheck.Status).To(Equal("healthy"))
+		Expect(inspect[0].State.Healthcheck.Status).To(Equal(define.HealthCheckHealthy))
+
+		// Test podman ps --filter heath is working (#11687)
+		ps := podmanTest.Podman([]string{"ps", "--filter", "health=healthy"})
+		ps.WaitWithDefaultTimeout()
+		Expect(ps).Should(Exit(0))
+		Expect(len(ps.OutputToStringArray())).To(Equal(2))
+		Expect(ps.OutputToString()).To(ContainSubstring("hc"))
 	})
 })

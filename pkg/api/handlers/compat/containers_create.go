@@ -8,17 +8,19 @@ import (
 	"github.com/containers/podman/v3/libpod"
 	"github.com/containers/podman/v3/pkg/api/handlers"
 	"github.com/containers/podman/v3/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v3/pkg/api/types"
 	"github.com/containers/podman/v3/pkg/domain/entities"
 	"github.com/containers/podman/v3/pkg/domain/infra/abi"
 	"github.com/containers/podman/v3/pkg/specgen"
+	"github.com/containers/podman/v3/pkg/specgenutil"
 	"github.com/containers/storage"
 	"github.com/gorilla/schema"
 	"github.com/pkg/errors"
 )
 
 func CreateContainer(w http.ResponseWriter, r *http.Request) {
-	runtime := r.Context().Value("runtime").(*libpod.Runtime)
-	decoder := r.Context().Value("decoder").(*schema.Decoder)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
+	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	query := struct {
 		Name string `schema:"name"`
 	}{
@@ -80,7 +82,7 @@ func CreateContainer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sg := specgen.NewSpecGenerator(imgNameOrID, cliOpts.RootFS)
-	if err := common.FillOutSpecGen(sg, cliOpts, args); err != nil {
+	if err := specgenutil.FillOutSpecGen(sg, cliOpts, args); err != nil {
 		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrap(err, "fill out specgen"))
 		return
 	}

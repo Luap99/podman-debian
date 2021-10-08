@@ -1,4 +1,4 @@
-// +build amd64,linux arm64,linux amd64,darwin arm64,darwin
+// +build amd64,!windows arm64,!windows
 
 package qemu
 
@@ -17,6 +17,8 @@ type MachineVM struct {
 	ImagePath string
 	// Memory in megabytes assigned to the vm
 	Memory uint64
+	// Disk size in gigabytes assigned to the vm
+	DiskSize uint64
 	// Name of the vm
 	Name string
 	// SSH port for user networking
