@@ -574,7 +574,6 @@ func WithMaxLogSize(limit int64) CtrCreateOption {
 		if ctr.valid {
 			return define.ErrRuntimeFinalized
 		}
-
 		ctr.config.LogSize = limit
 
 		return nil
@@ -881,7 +880,6 @@ func WithMountNSFrom(nsCtr *Container) CtrCreateOption {
 		if err := checkDependencyContainer(nsCtr, ctr); err != nil {
 			return err
 		}
-
 		ctr.config.MountNsCtr = nsCtr.ID()
 
 		return nil

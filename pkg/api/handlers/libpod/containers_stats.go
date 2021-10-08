@@ -30,16 +30,6 @@ func StatsContainer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Check if service is running rootless (cheap check)
-	if rootless.IsRootless() {
-		// if so, then verify cgroup v2 available (more expensive check)
-		if isV2, _ := cgroups.IsCgroup2UnifiedMode(); !isV2 {
-			msg := "Container stats resource only available for cgroup v2"
-			utils.Error(w, msg, http.StatusConflict, errors.New(msg))
-			return
-		}
-	}
-
 	query := struct {
 		Containers []string `schema:"containers"`
 		Stream     bool     `schema:"stream"`

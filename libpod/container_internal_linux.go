@@ -2009,7 +2009,6 @@ func (c *Container) getHosts() string {
 					}
 					break
 				}
-				break
 			}
 		}
 		// If we are net=none (have a network namespace, but not connected to

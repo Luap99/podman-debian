@@ -338,6 +338,8 @@ func createPodIfNecessary(s *specgen.SpecGenerator, netOpts *entities.NetOptions
 		Net:           netOpts,
 		CreateCommand: os.Args,
 		Hostname:      s.ContainerBasicConfig.Hostname,
+		Cpus:          cliVals.CPUS,
+		CpusetCpus:    cliVals.CPUSetCPUs,
 		Pid:           cliVals.PID,
 		Userns:        uns,
 	}

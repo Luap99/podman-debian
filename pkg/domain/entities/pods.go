@@ -7,6 +7,8 @@ import (
 
 	"github.com/containers/podman/v3/libpod/define"
 	"github.com/containers/podman/v3/pkg/specgen"
+	"github.com/containers/podman/v3/pkg/util"
+	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
 type PodKillOptions struct {
