@@ -126,15 +126,6 @@ Files: vendor/github.com/gorilla/schema/*
 Copyright: 2012, Rodrigo Moraes
 License: BSD-3-clause
 
-Files: vendor/github.com/nxadm/*
-Copyright: 2015, Hewlett Packard Enterprise Development LP
-  2013, 2014, ActiveState
-License: Expat
-
-Files: vendor/github.com/nxadm/tail/ratelimiter/*
-Copyright: 2013, 99designs
-License: Expat
-
 Files: vendor/github.com/uber/*
 Copyright: 2017,2018 Uber Technologies, Inc.
 License: Apache-2.0

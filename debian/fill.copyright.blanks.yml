@@ -1,7 +1,4 @@
 ---
-vendor/github.com/nxadm/:
-  skip: 1
-
 vendor/github.com/uber/jaeger-client-go/:
   license: Apache-2.0
   'override-copyright': 2017,2018 Uber Technologies, Inc.
