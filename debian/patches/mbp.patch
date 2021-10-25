@@ -2,11 +2,9 @@ From: Reinhard Tartler <siretart@tauware.de>
 Description: Allow compilation with newer vbauerster/mbp
 Forwarded: no
 
-diff --git a/pkg/machine/pull.go b/pkg/machine/pull.go
-index 662896de5..acece7a6a 100644
 --- a/pkg/machine/pull.go
 +++ b/pkg/machine/pull.go
-@@ -17,8 +17,8 @@ import (
+@@ -17,8 +17,8 @@
  	"github.com/containers/image/v5/pkg/compression"
  	"github.com/docker/docker/pkg/archive"
  	"github.com/sirupsen/logrus"
