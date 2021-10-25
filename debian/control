@@ -57,7 +57,7 @@ Build-Depends: debhelper-compat (= 13)
     ,golang-github-uber-go-atomic-dev
     ,golang-github-ulikunitz-xz-dev
     ,golang-github-vbatts-tar-split-dev
-    ,golang-github-vbauerster-mpb-dev (>= 6)
+    ,golang-github-vbauerster-mpb-dev (>= 7)
     ,golang-github-vishvananda-netlink-dev (>= 1.0.0+git20181030~)
     ,golang-github-vividcortex-ewma-dev
     ,golang-go-zfs-dev
