@@ -1,3 +1,10 @@
+libpod (3.4.1+ds1-2) unstable; urgency=medium
+
+  * Upload to unstable
+  * podman: Install tmpfiles.d/podman.conf, Closes: #995586
+
+ -- Reinhard Tartler <siretart@tauware.de>  Tue, 26 Oct 2021 18:20:56 -0400
+
 libpod (3.4.1+ds1-1) experimental; urgency=medium
 
   * New upstream release
