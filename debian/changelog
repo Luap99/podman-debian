@@ -1,3 +1,10 @@
+libpod (3.4.2+ds1-1) unstable; urgency=medium
+
+  * New upstream release
+  * Compile against system github.com/dtylman/scp
+
+ -- Reinhard Tartler <siretart@tauware.de>  Tue, 16 Nov 2021 11:04:08 -0500
+
 libpod (3.4.1+ds1-2) unstable; urgency=medium
 
   * Upload to unstable
