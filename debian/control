@@ -32,6 +32,7 @@ Build-Depends: debhelper-compat (= 13)
     ,golang-github-docker-go-connections-dev (>= 0.4.0~)
     ,golang-github-docker-go-units-dev (>= 0.4.0~)
     ,golang-github-docker-spdystream-dev
+    ,golang-github-dtylman-scp-dev
     ,golang-github-fullsailor-pkcs7-dev
     ,golang-github-ghodss-yaml-dev
     ,golang-github-go-logr-logr-dev
@@ -155,6 +156,7 @@ Depends: ${misc:Depends},
     ,golang-github-docker-go-connections-dev (>= 0.4.0~)
     ,golang-github-docker-go-units-dev (>= 0.4.0~)
     ,golang-github-docker-spdystream-dev
+    ,golang-github-dtylman-scp-dev
     ,golang-github-fullsailor-pkcs7-dev
     ,golang-github-ghodss-yaml-dev
     ,golang-github-google-shlex-dev
