@@ -105,19 +105,6 @@ Files: vendor/github.com/docker/go-plugins-helpers/NOTICE
 Copyright: 2012-2015, Docker, Inc.
 License: Expat
 
-Files: vendor/github.com/dtylman/*
-Copyright:
-    2016-2019 Red Hat, Inc.
- 2016, Danny
-License: Apache-2.0 or Expat
-
-Files: vendor/github.com/dtylman/scp/README.md
-  vendor/github.com/dtylman/scp/msg.go
-  vendor/github.com/dtylman/scp/scp.go
-Copyright:
-    2016-2019 Red Hat, Inc.
-License: Apache-2.0
-
 Files: vendor/github.com/gorilla/*
 Copyright: 2012, Rodrigo Moraes
 License: BSD-3-clause
