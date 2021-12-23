@@ -15,6 +15,7 @@ Currently, the supported Kubernetes kinds are:
 - Pod
 - Deployment
 - PersistentVolumeClaim
+- ConfigMap
 
 `Kubernetes Pods or Deployments`
 
@@ -67,6 +68,40 @@ like:
 The build will consider `foobar` to be the context directory for the build. If there is an image in local storage
 called `foobar`, the image will not be built unless the `--build` flag is used.
 
+`Kubernetes ConfigMap`
+
+Kubernetes ConfigMap can be referred as a source of environment variables in Pods or Deployments.
+
+For example ConfigMap defined in following YAML:
+```
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: foo
+data:
+    FOO: bar
+```
+
+can be referred in a Pod in following way:
+```
+apiVersion: v1
+kind: Pod
+metadata:
+...
+spec:
+  containers:
+  - command:
+    - top
+    name: container-1
+    image: foobar
+    envFrom:
+      - configMapRef:
+      name: foo
+      optional: false
+```
+
+and as a result environment variable `FOO` will be set to `bar` for container `container-1`.
+
 ## OPTIONS
 
 #### **--authfile**=*path*
@@ -83,7 +118,7 @@ Build images even if they are found in the local storage.
 
 #### **--cert-dir**=*path*
 
-Use certificates at *path* (\*.crt, \*.cert, \*.key) to connect to the registry.
+Use certificates at *path* (\*.crt, \*.cert, \*.key) to connect to the registry. (Default: /etc/containers/certs.d)
 Please refer to containers-certs.d(5) for details. (This option is not available with the remote Podman client)
 
 #### **--configmap**=*path*

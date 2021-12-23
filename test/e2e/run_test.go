@@ -186,6 +186,12 @@ var _ = Describe("Podman run", func() {
 		run.WaitWithDefaultTimeout()
 		Expect(run).Should(Exit(0))
 		Expect(podmanTest.NumberOfContainers()).To(Equal(3))
+
+		// Now registries.conf will be consulted where localhost:5000
+		// is set to be insecure.
+		run = podmanTest.Podman([]string{"run", ALPINE})
+		run.WaitWithDefaultTimeout()
+		Expect(run).Should(Exit(0))
 	})
 
 	It("podman run a container with a --rootfs", func() {
@@ -1457,7 +1463,7 @@ USER mail`, BB)
 	})
 
 	It("podman run --privileged and --group-add", func() {
-		groupName := "kvm"
+		groupName := "mail"
 		session := podmanTest.Podman([]string{"run", "-t", "-i", "--group-add", groupName, "--privileged", fedoraMinimal, "groups"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
@@ -1664,6 +1670,50 @@ WORKDIR /madethis`, BB)
 
 	})
 
+	It("podman run --secret source=mysecret,type=mount with target", func() {
+		secretsString := "somesecretdata"
+		secretFilePath := filepath.Join(podmanTest.TempDir, "secret")
+		err := ioutil.WriteFile(secretFilePath, []byte(secretsString), 0755)
+		Expect(err).To(BeNil())
+
+		session := podmanTest.Podman([]string{"secret", "create", "mysecret_target", secretFilePath})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		session = podmanTest.Podman([]string{"run", "--secret", "source=mysecret_target,type=mount,target=hello", "--name", "secr_target", ALPINE, "cat", "/run/secrets/hello"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToString()).To(Equal(secretsString))
+
+		session = podmanTest.Podman([]string{"inspect", "secr_target", "--format", " {{(index .Config.Secrets 0).Name}}"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToString()).To(ContainSubstring("mysecret_target"))
+
+	})
+
+	It("podman run --secret source=mysecret,type=mount with target at /tmp", func() {
+		secretsString := "somesecretdata"
+		secretFilePath := filepath.Join(podmanTest.TempDir, "secret")
+		err := ioutil.WriteFile(secretFilePath, []byte(secretsString), 0755)
+		Expect(err).To(BeNil())
+
+		session := podmanTest.Podman([]string{"secret", "create", "mysecret_target2", secretFilePath})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		session = podmanTest.Podman([]string{"run", "--secret", "source=mysecret_target2,type=mount,target=/tmp/hello", "--name", "secr_target2", ALPINE, "cat", "/tmp/hello"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToString()).To(Equal(secretsString))
+
+		session = podmanTest.Podman([]string{"inspect", "secr_target2", "--format", " {{(index .Config.Secrets 0).Name}}"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToString()).To(ContainSubstring("mysecret_target2"))
+
+	})
+
 	It("podman run --secret source=mysecret,type=env", func() {
 		secretsString := "somesecretdata"
 		secretFilePath := filepath.Join(podmanTest.TempDir, "secret")
@@ -1689,10 +1739,6 @@ WORKDIR /madethis`, BB)
 		session := podmanTest.Podman([]string{"secret", "create", "mysecret", secretFilePath})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		// target with mount type should fail
-		session = podmanTest.Podman([]string{"run", "--secret", "source=mysecret,type=mount,target=anotherplace", "--name", "secr", ALPINE, "cat", "/run/secrets/mysecret"})
-		session.WaitWithDefaultTimeout()
-		Expect(session).To(ExitWithError())
 
 		session = podmanTest.Podman([]string{"run", "--secret", "source=mysecret,type=env,target=anotherplace", "--name", "secr", ALPINE, "printenv", "anotherplace"})
 		session.WaitWithDefaultTimeout()
