@@ -1,6 +1,15 @@
+libpod (3.4.4+ds1-1) unstable; urgency=medium
+
+  * New upstream release
+    Confirming that CVE-2021-4024 is fixed in 3.4.3, Closes: #1000844
+
+ -- Reinhard Tartler <siretart@tauware.de>  Sat, 25 Dec 2021 19:48:14 -0500
+
 libpod (3.4.3+ds1-1) unstable; urgency=medium
 
   * New upstream release, Closes: #1001321
+    - podman machine spawns gvproxy with port binded to all IPs,
+      Closes: #1000844
 
  -- Reinhard Tartler <siretart@tauware.de>  Fri, 24 Dec 2021 14:40:01 -0500
 
