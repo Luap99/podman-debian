@@ -1,5 +1,11 @@
 # Release Notes
 
+## 3.4.4
+### Bugfixes
+- Fixed a bug where the `podman exec` command would, under some circumstances, print a warning message about failing to move `conmon` to the appropriate cgroup ([#12535](https://github.com/containers/podman/issues/12535)).
+- Fixed a bug where named volumes created as part of container creation (e.g. `podman run --volume avolume:/a/mountpoint` or similar) would be mounted with incorrect permissions ([#12523](https://github.com/containers/podman/issues/12523)).
+- Fixed a bug where the `podman-remote create` and `podman-remote run` commands did not properly handle the `--entrypoint=""` option (to clear the container's entrypoint) ([#12521](https://github.com/containers/podman/issues/12521)).
+
 ## 3.4.3
 ### Security
 - This release addresses CVE-2021-4024, where the `podman machine` command opened the `gvproxy` API (used to forward ports to `podman machine` VMs) to the public internet on port 7777.
@@ -38,6 +44,8 @@
 - Fixed a bug where the Compat List endpoint for Images included manifest lists (and not just images) in returned results ([#12453](https://github.com/containers/podman/issues/12453)).
 
 ### Misc
+- Updated the containers/image library to v5.17.0
+- Updated the containers/storage library to v1.37.0
 - Podman now builds by default with cgo enabled on OS X, resolving some issues with SSH ([#10737](https://github.com/containers/podman/issues/10737)).
 
 ## 3.4.2
