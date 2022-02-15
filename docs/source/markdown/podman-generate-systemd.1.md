@@ -212,6 +212,7 @@ $ podman generate systemd --files --name systemd-pod
 
 $ sudo cp pod-systemd-pod.service container-great_payne.service /etc/systemd/system
 $ systemctl enable pod-systemd-pod.service
+Created symlink /etc/systemd/system/multi-user.target.wants/pod-systemd-pod.service → /etc/systemd/system/pod-systemd-pod.service.
 Created symlink /etc/systemd/system/default.target.wants/pod-systemd-pod.service → /etc/systemd/system/pod-systemd-pod.service.
 $ systemctl is-enabled pod-systemd-pod.service
 enabled

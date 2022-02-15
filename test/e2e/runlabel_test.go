@@ -22,10 +22,6 @@ var PodmanRunlabelNameDockerfile = fmt.Sprintf(`
 FROM  %s
 LABEL RUN podman run --name NAME IMAGE`, ALPINE)
 
-var PodmanRunlabelNameDockerfile = fmt.Sprintf(`
-FROM  %s
-LABEL RUN podman run --name NAME IMAGE`, ALPINE)
-
 var _ = Describe("podman container runlabel", func() {
 	var (
 		tempdir    string

@@ -73,10 +73,6 @@ func ssh(cmd *cobra.Command, args []string) error {
 		if validVM {
 			sshOpts.Args = args[1:]
 		} else {
-			sshOpts.Username, err = remoteConnectionUsername()
-			if err != nil {
-				return err
-			}
 			sshOpts.Args = args
 		}
 	}

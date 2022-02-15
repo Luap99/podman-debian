@@ -536,6 +536,48 @@ ENTRYPOINT ["sleep","99999"]
 		Expect(create).Should(Exit(0))
 	})
 
+	It("podman pod create --cpus", func() {
+		podName := "testPod"
+		numCPU := float64(sysinfo.NumCPU())
+		period, quota := util.CoresToPeriodAndQuota(numCPU)
+		numCPUStr := strconv.Itoa(int(numCPU))
+		podCreate := podmanTest.Podman([]string{"pod", "create", "--cpus", numCPUStr, "--name", podName})
+		podCreate.WaitWithDefaultTimeout()
+		Expect(podCreate).Should(Exit(0))
+
+		contCreate := podmanTest.Podman([]string{"container", "create", "--pod", podName, "alpine"})
+		contCreate.WaitWithDefaultTimeout()
+		Expect(podCreate).Should(Exit(0))
+
+		podInspect := podmanTest.Podman([]string{"pod", "inspect", podName})
+		podInspect.WaitWithDefaultTimeout()
+		Expect(podInspect).Should(Exit(0))
+		podJSON := podInspect.InspectPodToJSON()
+		Expect(podJSON.CPUPeriod).To(Equal(period))
+		Expect(podJSON.CPUQuota).To(Equal(quota))
+	})
+
+	It("podman pod create --cpuset-cpus", func() {
+		podName := "testPod"
+		ctrName := "testCtr"
+		numCPU := float64(sysinfo.NumCPU()) - 1
+		numCPUStr := strconv.Itoa(int(numCPU))
+		in := "0-" + numCPUStr
+		podCreate := podmanTest.Podman([]string{"pod", "create", "--cpuset-cpus", in, "--name", podName})
+		podCreate.WaitWithDefaultTimeout()
+		Expect(podCreate).Should(Exit(0))
+
+		contCreate := podmanTest.Podman([]string{"container", "create", "--name", ctrName, "--pod", podName, "alpine"})
+		contCreate.WaitWithDefaultTimeout()
+		Expect(podCreate).Should(Exit(0))
+
+		podInspect := podmanTest.Podman([]string{"pod", "inspect", podName})
+		podInspect.WaitWithDefaultTimeout()
+		Expect(podInspect).Should(Exit(0))
+		podJSON := podInspect.InspectPodToJSON()
+		Expect(podJSON.CPUSetCPUs).To(Equal(in))
+	})
+
 	It("podman pod create --pid", func() {
 		podName := "pidPod"
 		ns := "ns:/proc/self/ns/"
@@ -1069,22 +1111,4 @@ ENTRYPOINT ["sleep","99999"]
 
 	})
 
-	It("podman pod create read network mode from config", func() {
-		confPath, err := filepath.Abs("config/containers-netns.conf")
-		Expect(err).ToNot(HaveOccurred())
-		os.Setenv("CONTAINERS_CONF", confPath)
-		defer os.Unsetenv("CONTAINERS_CONF")
-		if IsRemote() {
-			podmanTest.RestartRemoteService()
-		}
-
-		pod := podmanTest.Podman([]string{"pod", "create", "--name", "test", "--infra-name", "test-infra"})
-		pod.WaitWithDefaultTimeout()
-		Expect(pod).Should(Exit(0))
-
-		inspect := podmanTest.Podman([]string{"inspect", "--format", "{{.HostConfig.NetworkMode}}", "test-infra"})
-		inspect.WaitWithDefaultTimeout()
-		Expect(inspect).Should(Exit(0))
-		Expect(inspect.OutputToString()).Should(Equal("host"))
-	})
 })
