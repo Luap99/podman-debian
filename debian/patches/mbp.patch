@@ -2,12 +2,14 @@ From: Reinhard Tartler <siretart@tauware.de>
 Description: Allow compilation with newer vbauerster/mbp
 Forwarded: no
 
---- a/pkg/machine/pull.go
-+++ b/pkg/machine/pull.go
-@@ -17,8 +17,8 @@
- 	"github.com/containers/image/v5/pkg/compression"
+Index: libpod/pkg/machine/pull.go
+===================================================================
+--- libpod.orig/pkg/machine/pull.go
++++ libpod/pkg/machine/pull.go
+@@ -19,8 +19,8 @@ import (
  	"github.com/containers/storage/pkg/archive"
  	"github.com/sirupsen/logrus"
+ 	"github.com/ulikunitz/xz"
 -	"github.com/vbauerster/mpb/v6"
 -	"github.com/vbauerster/mpb/v6/decor"
 +	"github.com/vbauerster/mpb/v7"
