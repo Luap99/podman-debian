@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
-	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -14,17 +13,18 @@ import (
 
 	buildahDefine "github.com/containers/buildah/define"
 	"github.com/containers/common/libimage"
+	nettypes "github.com/containers/common/libnetwork/types"
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v3/libpod"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/pkg/autoupdate"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/specgen"
-	"github.com/containers/podman/v3/pkg/specgen/generate"
-	"github.com/containers/podman/v3/pkg/specgen/generate/kube"
-	"github.com/containers/podman/v3/pkg/specgenutil"
-	"github.com/containers/podman/v3/pkg/util"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/autoupdate"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/specgen"
+	"github.com/containers/podman/v4/pkg/specgen/generate"
+	"github.com/containers/podman/v4/pkg/specgen/generate/kube"
+	"github.com/containers/podman/v4/pkg/specgenutil"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/ghodss/yaml"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -122,7 +122,7 @@ func (ic *ContainerEngine) PlayKube(ctx context.Context, path string, options en
 			}
 			configMaps = append(configMaps, configMap)
 		default:
-			logrus.Infof("kube kind %s not supported", kind)
+			logrus.Infof("Kube kind %s not supported", kind)
 			continue
 		}
 	}
@@ -178,51 +178,57 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 		return nil, err
 	}
 
-	// check for name collision between pod and container
+	// Assert the pod has a name
 	if podName == "" {
 		return nil, errors.Errorf("pod does not have a name")
 	}
-	for _, n := range podYAML.Spec.Containers {
-		if n.Name == podName {
-			playKubePod.Logs = append(playKubePod.Logs,
-				fmt.Sprintf("a container exists with the same name (%q) as the pod in your YAML file; changing pod name to %s_pod\n", podName, podName))
-			podName = fmt.Sprintf("%s_pod", podName)
-		}
-	}
 
-	podOpt := entities.PodCreateOptions{Infra: true, Net: &entities.NetOptions{StaticIP: &net.IP{}, StaticMAC: &net.HardwareAddr{}}}
+	podOpt := entities.PodCreateOptions{Infra: true, Net: &entities.NetOptions{NoHosts: options.NoHosts}}
 	podOpt, err = kube.ToPodOpt(ctx, podName, podOpt, podYAML)
 	if err != nil {
 		return nil, err
 	}
 
-	if options.Network != "" {
-		ns, cniNets, netOpts, err := specgen.ParseNetworkString(options.Network)
-		if err != nil {
-			return nil, err
-		}
-
-		if (ns.IsBridge() && len(cniNets) == 0) || ns.IsHost() {
-			return nil, errors.Errorf("invalid value passed to --network: bridge or host networking must be configured in YAML")
-		}
-
-		podOpt.Net.Network = ns
-		if len(cniNets) > 0 {
-			podOpt.Net.CNINetworks = append(podOpt.Net.CNINetworks, cniNets...)
-		}
-		if len(netOpts) > 0 {
-			podOpt.Net.NetworkOptions = netOpts
-		}
+	ns, networks, netOpts, err := specgen.ParseNetworkFlag(options.Networks)
+	if err != nil {
+		return nil, err
 	}
 
+	if (ns.IsBridge() && len(networks) == 0) || ns.IsHost() {
+		return nil, errors.Errorf("invalid value passed to --network: bridge or host networking must be configured in YAML")
+	}
+
+	podOpt.Net.Network = ns
+	podOpt.Net.Networks = networks
+	podOpt.Net.NetworkOptions = netOpts
+
+	// FIXME This is very hard to support properly with a good ux
 	if len(options.StaticIPs) > *ipIndex {
-		podOpt.Net.StaticIP = &options.StaticIPs[*ipIndex]
+		if !podOpt.Net.Network.IsBridge() {
+			errors.Wrap(define.ErrInvalidArg, "static ip addresses can only be set when the network mode is bridge")
+		}
+		if len(podOpt.Net.Networks) != 1 {
+			return nil, errors.Wrap(define.ErrInvalidArg, "cannot set static ip addresses for more than network, use netname:ip=<ip> syntax to specify ips for more than network")
+		}
+		for name, netOpts := range podOpt.Net.Networks {
+			netOpts.StaticIPs = append(netOpts.StaticIPs, options.StaticIPs[*ipIndex])
+			podOpt.Net.Networks[name] = netOpts
+		}
 	} else if len(options.StaticIPs) > 0 {
 		// only warn if the user has set at least one ip
 		logrus.Warn("No more static ips left using a random one")
 	}
 	if len(options.StaticMACs) > *ipIndex {
-		podOpt.Net.StaticMAC = &options.StaticMACs[*ipIndex]
+		if !podOpt.Net.Network.IsBridge() {
+			errors.Wrap(define.ErrInvalidArg, "static mac address can only be set when the network mode is bridge")
+		}
+		if len(podOpt.Net.Networks) != 1 {
+			return nil, errors.Wrap(define.ErrInvalidArg, "cannot set static mac address for more than network, use netname:mac=<mac> syntax to specify mac for more than network")
+		}
+		for name, netOpts := range podOpt.Net.Networks {
+			netOpts.StaticMAC = nettypes.HardwareAddr(options.StaticMACs[*ipIndex])
+			podOpt.Net.Networks[name] = netOpts
+		}
 	} else if len(options.StaticIPs) > 0 {
 		// only warn if the user has set at least one mac
 		logrus.Warn("No more static macs left using a random one")
@@ -239,27 +245,6 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 		return nil, err
 	}
 	podSpec := entities.PodSpec{PodSpecGen: *p}
-	volumes, err := kube.InitializeVolumes(podYAML.Spec.Volumes)
-	if err != nil {
-		return nil, err
-	}
-
-	seccompPaths, err := kube.InitializeSeccompPaths(podYAML.ObjectMeta.Annotations, options.SeccompProfileRoot)
-	if err != nil {
-		return nil, err
-	}
-
-	var ctrRestartPolicy string
-	switch podYAML.Spec.RestartPolicy {
-	case v1.RestartPolicyAlways:
-		ctrRestartPolicy = define.RestartPolicyAlways
-	case v1.RestartPolicyOnFailure:
-		ctrRestartPolicy = define.RestartPolicyOnFailure
-	case v1.RestartPolicyNever:
-		ctrRestartPolicy = define.RestartPolicyNo
-	default: // Default to Always
-		ctrRestartPolicy = define.RestartPolicyAlways
-	}
 
 	configMapIndex := make(map[string]struct{})
 	for _, configMap := range configMaps {
@@ -284,18 +269,63 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 		configMaps = append(configMaps, cm)
 	}
 
-	if podOpt.Infra {
-		containerConfig := util.DefaultContainerConfig()
+	volumes, err := kube.InitializeVolumes(podYAML.Spec.Volumes, configMaps)
+	if err != nil {
+		return nil, err
+	}
 
-		pulledImages, err := pullImage(ic, writer, containerConfig.Engine.InfraImage, options, config.PullPolicyNewer)
-		if err != nil {
-			return nil, err
+	// Go through the volumes and create a podman volume for all volumes that have been
+	// defined by a configmap
+	for _, v := range volumes {
+		if v.Type == kube.KubeVolumeTypeConfigMap && !v.Optional {
+			vol, err := ic.Libpod.NewVolume(ctx, libpod.WithVolumeName(v.Source))
+			if err != nil {
+				return nil, errors.Wrapf(err, "cannot create a local volume for volume from configmap %q", v.Source)
+			}
+			mountPoint, err := vol.MountPoint()
+			if err != nil || mountPoint == "" {
+				return nil, errors.Wrapf(err, "unable to get mountpoint of volume %q", vol.Name())
+			}
+			// Create files and add data to the volume mountpoint based on the Items in the volume
+			for k, v := range v.Items {
+				dataPath := filepath.Join(mountPoint, k)
+				f, err := os.Create(dataPath)
+				if err != nil {
+					return nil, errors.Wrapf(err, "cannot create file %q at volume mountpoint %q", k, mountPoint)
+				}
+				defer f.Close()
+				_, err = f.WriteString(v)
+				if err != nil {
+					return nil, err
+				}
+			}
 		}
-		infraOptions := entities.ContainerCreateOptions{ImageVolume: "bind"}
+	}
 
-		podSpec.PodSpecGen.InfraImage = pulledImages[0].Names()[0]
+	seccompPaths, err := kube.InitializeSeccompPaths(podYAML.ObjectMeta.Annotations, options.SeccompProfileRoot)
+	if err != nil {
+		return nil, err
+	}
+
+	var ctrRestartPolicy string
+	switch podYAML.Spec.RestartPolicy {
+	case v1.RestartPolicyAlways:
+		ctrRestartPolicy = define.RestartPolicyAlways
+	case v1.RestartPolicyOnFailure:
+		ctrRestartPolicy = define.RestartPolicyOnFailure
+	case v1.RestartPolicyNever:
+		ctrRestartPolicy = define.RestartPolicyNo
+	default: // Default to Always
+		ctrRestartPolicy = define.RestartPolicyAlways
+	}
+
+	if podOpt.Infra {
+		infraImage := util.DefaultContainerConfig().Engine.InfraImage
+		infraOptions := entities.NewInfraContainerCreateOptions()
+		infraOptions.Hostname = podSpec.PodSpecGen.PodBasicConfig.Hostname
+		podSpec.PodSpecGen.InfraImage = infraImage
 		podSpec.PodSpecGen.NoInfra = false
-		podSpec.PodSpecGen.InfraContainerSpec = specgen.NewSpecGenerator(pulledImages[0].Names()[0], false)
+		podSpec.PodSpecGen.InfraContainerSpec = specgen.NewSpecGenerator(infraImage, false)
 		podSpec.PodSpecGen.InfraContainerSpec.NetworkOptions = p.NetworkOptions
 
 		err = specgenutil.FillOutSpecGen(podSpec.PodSpecGen.InfraContainerSpec, &infraOptions, []string{})
@@ -349,6 +379,7 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 			NetNSIsHost:       p.NetNS.IsHost(),
 			SecretsManager:    secretsManager,
 			LogDriver:         options.LogDriver,
+			LogOptions:        options.LogOptions,
 			Labels:            labels,
 			InitContainerType: define.AlwaysInitContainer,
 		}
@@ -387,6 +418,7 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 				NetNSIsHost:    p.NetNS.IsHost(),
 				SecretsManager: secretsManager,
 				LogDriver:      options.LogDriver,
+				LogOptions:     options.LogOptions,
 				Labels:         labels,
 			}
 			specGen, err := kube.ToSpecGen(ctx, &specgenOpts)
@@ -679,21 +711,21 @@ func getBuildFile(imageName string, cwd string) (string, error) {
 	containerfilePath := filepath.Join(cwd, buildDirName, "Containerfile")
 	dockerfilePath := filepath.Join(cwd, buildDirName, "Dockerfile")
 
-	_, err := os.Stat(filepath.Join(containerfilePath))
+	_, err := os.Stat(containerfilePath)
 	if err == nil {
-		logrus.Debugf("building %s with %s", imageName, containerfilePath)
+		logrus.Debugf("Building %s with %s", imageName, containerfilePath)
 		return containerfilePath, nil
 	}
 	// If the error is not because the file does not exist, take
 	// a mulligan and try Dockerfile.  If that also fails, return that
 	// error
 	if err != nil && !os.IsNotExist(err) {
-		logrus.Errorf("%v: unable to check for %s", err, containerfilePath)
+		logrus.Error(err.Error())
 	}
 
 	_, err = os.Stat(filepath.Join(dockerfilePath))
 	if err == nil {
-		logrus.Debugf("building %s with %s", imageName, dockerfilePath)
+		logrus.Debugf("Building %s with %s", imageName, dockerfilePath)
 		return dockerfilePath, nil
 	}
 	// Strike two
@@ -771,22 +803,4 @@ func (ic *ContainerEngine) PlayKubeDown(ctx context.Context, path string, _ enti
 		return nil, err
 	}
 	return reports, nil
-}
-
-// pullImage is a helper function to set up the proper pull options and pull the image for certain containers
-func pullImage(ic *ContainerEngine, writer io.Writer, imagePull string, options entities.PlayKubeOptions, pullPolicy config.PullPolicy) ([]*libimage.Image, error) {
-	// This ensures the image is the image store
-	pullOptions := &libimage.PullOptions{}
-	pullOptions.AuthFilePath = options.Authfile
-	pullOptions.CertDirPath = options.CertDir
-	pullOptions.SignaturePolicyPath = options.SignaturePolicy
-	pullOptions.Writer = writer
-	pullOptions.Username = options.Username
-	pullOptions.Password = options.Password
-	pullOptions.InsecureSkipTLSVerify = options.SkipTLSVerify
-	pulledImages, err := ic.Libpod.LibimageRuntime().Pull(context.Background(), imagePull, pullPolicy, pullOptions)
-	if err != nil {
-		return nil, err
-	}
-	return pulledImages, nil
 }

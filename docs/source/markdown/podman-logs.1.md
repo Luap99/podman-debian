@@ -20,13 +20,13 @@ any logs at the time you execute podman logs).
 Follow log output.  Default is false.
 
 Note: If you are following a container which is removed `podman container rm`
-or removed on exit `podman run --rm ...`, then there is a chance the the log
+or removed on exit `podman run --rm ...`, then there is a chance that the log
 file will be removed before `podman logs` reads the final content.
 
 #### **--latest**, **-l**
 
 Instead of providing the container name or ID, use the last created container. If you use methods other than Podman
-to run containers such as CRI-O, the last started container could be from either of those methods. (This option is not available with the remote Podman client)
+to run containers such as CRI-O, the last started container could be from either of those methods. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
 
 #### **--names**, **-n**
 
@@ -123,7 +123,7 @@ AH00558: httpd: Could not reliably determine the server's fully qualified domain
 ```
 
 ## SEE ALSO
-podman(1), podman-run(1), podman-container-rm(1)
+**[podman(1)](podman.1.md)**, **[podman-run(1)](podman-run.1.md)**, **[podman-container-rm(1)](podman-container-rm.1.md)**
 
 ## HISTORY
 February 2018, Updated by Brent Baude <bbaude@redhat.com>

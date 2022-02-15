@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/containers/podman/v3/pkg/api/handlers"
-	"github.com/containers/podman/v3/pkg/bindings"
+	"github.com/containers/podman/v4/pkg/api/handlers"
+	"github.com/containers/podman/v4/pkg/bindings"
 )
 
 // Commit creates a container image from a container.  The container is defined by nameOrID.  Use
@@ -24,7 +24,7 @@ func Commit(ctx context.Context, nameOrID string, options *CommitOptions) (handl
 		return handlers.IDResponse{}, err
 	}
 	params.Set("container", nameOrID)
-	response, err := conn.DoRequest(nil, http.MethodPost, "/commit", params, nil)
+	response, err := conn.DoRequest(ctx, nil, http.MethodPost, "/commit", params, nil)
 	if err != nil {
 		return id, err
 	}

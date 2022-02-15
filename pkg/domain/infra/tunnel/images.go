@@ -12,12 +12,13 @@ import (
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/image/v5/docker/reference"
 	"github.com/containers/image/v5/types"
-	images "github.com/containers/podman/v3/pkg/bindings/images"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/domain/entities/reports"
-	"github.com/containers/podman/v3/pkg/domain/utils"
-	"github.com/containers/podman/v3/pkg/errorhandling"
-	utils2 "github.com/containers/podman/v3/utils"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/bindings/images"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/domain/entities/reports"
+	"github.com/containers/podman/v4/pkg/domain/utils"
+	"github.com/containers/podman/v4/pkg/errorhandling"
+	utils2 "github.com/containers/podman/v4/utils"
 	"github.com/pkg/errors"
 )
 
@@ -95,7 +96,7 @@ func (ir *ImageEngine) Prune(ctx context.Context, opts entities.ImagePruneOption
 		f := strings.Split(filter, "=")
 		filters[f[0]] = f[1:]
 	}
-	options := new(images.PruneOptions).WithAll(opts.All).WithFilters(filters)
+	options := new(images.PruneOptions).WithAll(opts.All).WithFilters(filters).WithExternal(opts.External)
 	reports, err := images.Prune(ir.ClientCtx, options)
 	if err != nil {
 		return nil, err
@@ -120,6 +121,10 @@ func (ir *ImageEngine) Pull(ctx context.Context, rawImage string, opts entities.
 		return nil, err
 	}
 	return &entities.ImagePullReport{Images: pulledImages}, nil
+}
+
+func (ir *ImageEngine) Transfer(ctx context.Context, source entities.ImageScpOptions, dest entities.ImageScpOptions, parentFlags []string) error {
+	return errors.Wrapf(define.ErrNotImplemented, "cannot use the remote client to transfer images between root and rootless storage")
 }
 
 func (ir *ImageEngine) Tag(ctx context.Context, nameOrID string, tags []string, opt entities.ImageTagOptions) error {
@@ -256,6 +261,7 @@ func (ir *ImageEngine) Save(ctx context.Context, nameOrID string, tags []string,
 		err error
 	)
 	options := new(images.ExportOptions).WithFormat(opts.Format).WithCompress(opts.Compress)
+	options = options.WithOciAcceptUncompressedLayers(opts.OciAcceptUncompressedLayers)
 
 	switch opts.Format {
 	case "oci-dir", "docker-dir":
@@ -325,7 +331,7 @@ func (ir *ImageEngine) Search(ctx context.Context, term string, opts entities.Im
 
 	options := new(images.SearchOptions)
 	options.WithAuthfile(opts.Authfile).WithFilters(mappedFilters).WithLimit(opts.Limit)
-	options.WithListTags(opts.ListTags).WithNoTrunc(opts.NoTrunc)
+	options.WithListTags(opts.ListTags)
 	if s := opts.SkipTLSVerify; s != types.OptionalBoolUndefined {
 		if s == types.OptionalBoolTrue {
 			options.WithSkipTLSVerify(true)

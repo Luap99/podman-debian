@@ -4,7 +4,7 @@
 podman\-machine\-ssh - SSH into a virtual machine
 
 ## SYNOPSIS
-**podman machine ssh** [*name*] [*command* [*arg* ...]]
+**podman machine ssh** [*options*] [*name*] [*command* [*arg* ...]]
 
 ## DESCRIPTION
 
@@ -20,6 +20,10 @@ with the virtual machine is established.
 #### **--help**
 
 Print usage statement.
+
+#### **--username**=*name*
+
+Username to use when SSH-ing into the VM.
 
 ## EXAMPLES
 
@@ -45,7 +49,7 @@ $ podman machine ssh  myvm rpm -q podman
 ```
 
 ## SEE ALSO
-podman-machine (1)
+**[podman(1)](podman.1.md)**, **[podman-machine(1)](podman-machine.1.md)**
 
 ## HISTORY
 March 2021, Originally compiled by Ashley Cui <acui@redhat.com>

@@ -65,6 +65,8 @@ type ExportOptions struct {
 	Compress *bool
 	// Format of the output
 	Format *string
+	// Accept uncompressed layers when copying OCI images.
+	OciAcceptUncompressedLayers *bool
 }
 
 //go:generate go run ../generator/generator.go PruneOptions
@@ -72,6 +74,8 @@ type ExportOptions struct {
 type PruneOptions struct {
 	// Prune all images
 	All *bool
+	// Prune images even when they're used by external containers
+	External *bool
 	// Filters to apply when pruning images
 	Filters map[string][]string
 }
@@ -129,8 +133,6 @@ type SearchOptions struct {
 	Filters map[string][]string
 	// Limit the number of results.
 	Limit *int
-	// NoTrunc will not truncate the output.
-	NoTrunc *bool
 	// SkipTLSVerify to skip  HTTPS and certificate verification.
 	SkipTLSVerify *bool
 	// ListTags search the available tags of the repository

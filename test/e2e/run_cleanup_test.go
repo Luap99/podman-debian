@@ -3,7 +3,7 @@ package integration
 import (
 	"os"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -35,7 +35,7 @@ var _ = Describe("Podman run exit", func() {
 
 	It("podman run -d mount cleanup test", func() {
 		SkipIfRemote("podman-remote does not support mount")
-		SkipIfRootless("FIXME podman mount requires podman unshare first")
+		SkipIfRootless("TODO rootless podman mount requires podman unshare first")
 
 		result := podmanTest.Podman([]string{"run", "-dt", ALPINE, "top"})
 		result.WaitWithDefaultTimeout()
@@ -46,7 +46,7 @@ var _ = Describe("Podman run exit", func() {
 		Expect(mount).Should(Exit(0))
 		Expect(mount.OutputToString()).To(ContainSubstring(cid))
 
-		pmount := podmanTest.Podman([]string{"mount", "--notruncate"})
+		pmount := podmanTest.Podman([]string{"mount", "--no-trunc"})
 		pmount.WaitWithDefaultTimeout()
 		Expect(pmount).Should(Exit(0))
 		Expect(pmount.OutputToString()).To(ContainSubstring(cid))
@@ -64,7 +64,7 @@ var _ = Describe("Podman run exit", func() {
 		Expect(mount).Should(Exit(0))
 		Expect(mount.OutputToString()).NotTo(ContainSubstring(cid))
 
-		pmount = podmanTest.Podman([]string{"mount", "--notruncate"})
+		pmount = podmanTest.Podman([]string{"mount", "--no-trunc"})
 		pmount.WaitWithDefaultTimeout()
 		Expect(pmount).Should(Exit(0))
 		Expect(pmount.OutputToString()).NotTo(ContainSubstring(cid))

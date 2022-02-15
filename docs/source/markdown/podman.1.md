@@ -32,11 +32,16 @@ The CGroup manager to use for container cgroups. Supported values are cgroupfs o
 Note: Setting this flag can cause certain commands to break when called on containers previously created by the other CGroup manager type.
 Note: CGroup manager is not supported in rootless mode when using CGroups Version V1.
 
-#### **--cni-config-dir**
-Path of the configuration directory for CNI networks.  (Default: `/etc/cni/net.d`)
+#### **--network-config-dir**=*directory*
+
+Path to the directory where network configuration files are located.
+For the CNI backend the default is "/etc/cni/net.d" as root
+and "$HOME/.config/cni/net.d" as rootless.
+For the netavark backend "/etc/containers/networks" is used as root
+and "$graphroot/networks" as rootless.
 
 #### **--connection**, **-c**
-Connection to use for remote podman (Default connection is configured in `containers.conf`)
+Connection to use for remote podman, including Mac and Windows (excluding WSL2) machines, (Default connection is configured in `containers.conf`)
 Remote connections use local containers.conf for default.
 
 #### **--conmon**
@@ -92,9 +97,14 @@ When namespace is set, created containers and pods will join the given namespace
 #### **--network-cmd-path**=*path*
 Path to the command binary to use for setting up a network.  It is currently only used for setting up a slirp4netns network.  If "" is used then the binary is looked up using the $PATH environment variable.
 
+#### **--noout**
+
+Redirect stdout to /dev/null. This command will prevent all stdout from the Podman command. The **--noout**  option will not block stderr or stdout from containers.
+
 #### **--remote**, **-r**
-Access Podman service will be remote
-Remote connections use local containers.conf for default.
+When true, access to the Podman service will be remote. Defaults to false.
+Settings can be modified in the containers.conf file. If the CONTAINER_HOST
+environment variable is set, the **--remote** option defaults to true.
 
 #### **--url**=*value*
 URL to access Podman service (default from `containers.conf`, rootless `unix://run/user/$UID/podman/podman.sock` or as root `unix://run/podman/podman.sock`).
@@ -102,18 +112,31 @@ URL to access Podman service (default from `containers.conf`, rootless `unix://r
  - `CONTAINER_HOST` is of the format `<schema>://[<user[:<password>]@]<host>[:<port>][<path>]`
 
 Details:
- - `user` will default to either `root` or current running user
- - `password` has no default
- - `host` must be provided and is either the IP or name of the machine hosting the Podman service
- - `port` defaults to 22
- - `path` defaults to either `/run/podman/podman.sock`, or `/run/user/<uid>/podman/podman.sock` if running rootless.
+ - `schema` is one of:
+   * `ssh` (default): a local unix(7) socket on the named `host` and `port`, reachable via SSH
+   * `tcp`: an unencrypted, unauthenticated TCP connection to the named `host` and `port`
+   * `unix`: a local unix(7) socket at the specified `path`, or the default for the user
+ - `user` will default to either `root` or the current running user (`ssh` only)
+ - `password` has no default (`ssh` only)
+ - `host` must be provided and is either the IP or name of the machine hosting the Podman service (`ssh` and `tcp`)
+ - `port` defaults to 22 (`ssh` and `tcp`)
+ - `path` defaults to either `/run/podman/podman.sock`, or `/run/user/$UID/podman/podman.sock` if running rootless (`unix`), or must be explicitly specified (`ssh`)
 
 URL value resolution precedence:
  - command line value
  - environment variable `CONTAINER_HOST`
- - `containers.conf`
+ - `containers.conf` `service_destinations` table
  - `unix://run/podman/podman.sock`
+
 Remote connections use local containers.conf for default.
+
+Some example URL values in valid formats:
+ - unix://run/podman/podman.sock
+ - unix://run/user/$UID/podman/podman.sock
+ - ssh://notroot@localhost:22/run/user/$UID/podman/podman.sock
+ - ssh://root@localhost:22/run/podman/podman.sock
+ - tcp://localhost:34451
+ - tcp://127.0.0.1:34451
 
 #### **--root**=*value*
 
@@ -152,11 +175,11 @@ specify additional options via the `--storage-opt` flag.
 
 Storage driver option, Default storage driver options are configured in /etc/containers/storage.conf (`$HOME/.config/containers/storage.conf` in rootless mode). The `STORAGE_OPTS` environment variable overrides the default. The --storage-opt specified options overrides all. If you specify --storage-opt="", no storage options will be used.
 
-#### **--syslog**=*true|false*
+#### **--syslog**
 
 Output logging information to syslog as well as the console (default *false*).
 
-On remote clients, logging is directed to the file $HOME/.config/containers/podman.log.
+On remote clients, including Mac and Windows (excluding WSL2) machines, logging is directed to the file $HOME/.config/containers/podman.log.
 
 #### **--tmpdir**
 
@@ -171,6 +194,58 @@ Print the version
 ## Environment Variables
 
 Podman can set up environment variables from env of [engine] table in containers.conf. These variables can be overridden by passing  environment variables before the `podman` commands.
+
+#### **CONTAINERS_CONF**
+
+Set default locations of containers.conf file
+
+#### **CONTAINERS_REGISTRIES_CONF**
+
+Set default location of the registries.conf file.
+
+#### **CONTAINERS_STORAGE_CONF**
+
+Set default location of the storage.conf file.
+
+#### **CONTAINER_CONNECTION**
+
+Override default `--connection` value to access Podman service. Also enabled --remote option.
+
+#### **CONTAINER_HOST**
+
+Set default `--url` value to access Podman service. Also enabled --remote option.
+
+#### **CONTAINER_SSHKEY**
+
+Set default `--identity` path to ssh key file value used to access Podman service.
+
+#### **STORAGE_DRIVER**
+
+Set default `--storage-driver` value.
+
+#### **STORAGE_OPTS**
+
+Set default `--storage-opts` value.
+
+#### **TMPDIR**
+
+Set the temporary storage location of downloaded container images. Podman defaults to use `/var/tmp`.
+
+#### **XDG_CONFIG_HOME**
+
+In Rootless mode configuration files are read from `XDG_CONFIG_HOME` when
+specified, otherwise in the home directory of the user under
+`$HOME/.config/containers`.
+
+#### **XDG_DATA_HOME**
+
+In Rootless mode images are pulled under `XDG_DATA_HOME` when specified,
+otherwise in the home directory of the user under
+`$HOME/.local/share/containers/storage`.
+
+#### **XDG_RUNTIME_DIR**
+
+In Rootless mode temporary configuration data is stored in `${XDG_RUNTIME_DIR}/containers`.
 
 ## Remote Access
 
@@ -310,7 +385,7 @@ The storage configuration file specifies all of the available container storage 
 
 When Podman runs in rootless mode, the file `$HOME/.config/containers/storage.conf` is used instead of the system defaults.
 
-If the **CONTAINERS_STORAGE_CONF** environment variable is set, the its value is used for the storage.conf file rather than the default.
+If the **CONTAINERS_STORAGE_CONF** environment variable is set, then its value is used for the storage.conf file rather than the default.
 
 ## Rootless mode
 Podman can also be used as non-root user. When podman runs in rootless mode, a user namespace is automatically created for the user, defined in /etc/subuid and /etc/subgid.
@@ -344,10 +419,10 @@ The Overlay file system (OverlayFS) is not supported with kernels prior to 5.12.
 
 The Network File System (NFS) and other distributed file systems (for example: Lustre, Spectrum Scale, the General Parallel File System (GPFS)) are not supported when running in rootless mode as these file systems do not understand user namespace.  However, rootless Podman can make use of an NFS Homedir by modifying the `$HOME/.config/containers/storage.conf` to have the `graphroot` option point to a directory stored on local (Non NFS) storage.
 
-For more information, please refer to the [Podman Troubleshooting Page](https://github.com/containers/podman/blob/master/troubleshooting.md).
+For more information, please refer to the [Podman Troubleshooting Page](https://github.com/containers/podman/blob/main/troubleshooting.md).
 
 ## SEE ALSO
-**containers-mounts.conf**(5), **containers-registries.conf**(5), **containers-storage.conf**(5), **buildah**(1), **containers.conf**(5), **oci-hooks**(5), **containers-policy.json**(5), **crun**(8), **runc**(8), **subuid**(5), **subgid**(5), **slirp4netns**(1), **conmon**(8).
+**[containers-mounts.conf(5)](https://github.com/containers/common/blob/main/docs/containers-mounts.conf.5.md)**, **[containers.conf(5)](https://github.com/containers/common/blob/main/docs/containers.conf.5.md)**, **[containers-registries.conf(5)](https://github.com/containers/image/blob/main/docs/containers-registries.conf.5.md)**, **[containers-storage.conf(5)](https://github.com/containers/storage/blob/main/docs/containers-storage.conf.5.md)**, **[buildah(1)](https://github.com/containers/buildah/blob/main/docs/buildah.1.md)**, **oci-hooks(5)**, **[containers-policy.json(5)](https://github.com/containers/image/blob/main/docs/containers-policy.json.5.md)**, **[crun(1)](https://github.com/containers/crun/blob/main/crun.1.md)**, **[runc(8)](https://github.com/opencontainers/runc/blob/master/man/runc.8.md)**, **[subuid(5)](https://www.unix.com/man-page/linux/5/subuid)**, **[subgid(5)](https://www.unix.com/man-page/linux/5/subgid)**, **[slirp4netns(1)](https://github.com/rootless-containers/slirp4netns/blob/master/slirp4netns.1.md)**, **[conmon(8)](https://github.com/containers/conmon/blob/main/docs/conmon.8.md)**
 
 ## HISTORY
 Dec 2016, Originally compiled by Dan Walsh <dwalsh@redhat.com>

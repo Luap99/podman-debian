@@ -3,13 +3,14 @@ package system
 import (
 	"fmt"
 	"os"
+	"text/template"
 
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/report"
-	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/cmd/podman/validate"
-	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/validate"
+	"github.com/containers/podman/v4/libpod/define"
 	"github.com/ghodss/yaml"
 	"github.com/spf13/cobra"
 )
@@ -84,7 +85,10 @@ func info(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Println(string(b))
 	case cmd.Flags().Changed("format"):
-		tmpl, err := report.NewTemplate("info").Parse(inFormat)
+		// Cannot use report.New() as it enforces {{range .}} for OriginUser templates
+		tmpl := template.New(cmd.Name()).Funcs(template.FuncMap(report.DefaultFuncs))
+		inFormat = report.NormalizeFormat(inFormat)
+		tmpl, err := tmpl.Parse(inFormat)
 		if err != nil {
 			return err
 		}

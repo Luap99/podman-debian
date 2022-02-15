@@ -4,7 +4,7 @@ package volumes
 import (
 	"net/url"
 
-	"github.com/containers/podman/v3/pkg/bindings/internal/util"
+	"github.com/containers/podman/v4/pkg/bindings/internal/util"
 )
 
 // Changed returns true if named field has been set
@@ -30,4 +30,19 @@ func (o *RemoveOptions) GetForce() bool {
 		return z
 	}
 	return *o.Force
+}
+
+// WithTimeout set field Timeout to given value
+func (o *RemoveOptions) WithTimeout(value uint) *RemoveOptions {
+	o.Timeout = &value
+	return o
+}
+
+// GetTimeout returns value of field Timeout
+func (o *RemoveOptions) GetTimeout() uint {
+	if o.Timeout == nil {
+		var z uint
+		return z
+	}
+	return *o.Timeout
 }

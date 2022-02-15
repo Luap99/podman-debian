@@ -12,13 +12,10 @@ function _check_health {
     local testname="$1"
     local tests="$2"
 
-    run_podman inspect --format json healthcheck_c
+    run_podman inspect --format "{{json .State.Healthcheck}}" healthcheck_c
 
     parse_table "$tests" | while read field expect;do
-        # (kludge to deal with parse_table and empty strings)
-        if [ "$expect" = "''" ]; then expect=""; fi
-
-        actual=$(jq -r ".[0].State.Healthcheck.$field" <<<"$output")
+        actual=$(jq ".$field" <<<"$output")
         is "$actual" "$expect" "$testname - .State.Healthcheck.$field"
     done
 }
@@ -77,10 +74,10 @@ EOF
     is "$output" "" "output from 'podman healthcheck run'"
 
     _check_health "All healthy" "
-Status           | healthy
+Status           | \"healthy\"
 FailingStreak    | 0
 Log[-1].ExitCode | 0
-Log[-1].Output   |
+Log[-1].Output   | \"Life is Good on stdout\\\nLife is Good on stderr\"
 "
 
     # Force a failure
@@ -88,19 +85,19 @@ Log[-1].Output   |
     sleep 2
 
     _check_health "First failure" "
-Status           | healthy
+Status           | \"healthy\"
 FailingStreak    | [123]
 Log[-1].ExitCode | 1
-Log[-1].Output   |
+Log[-1].Output   | \"Uh-oh on stdout!\\\nUh-oh on stderr!\"
 "
 
     # After three successive failures, container should no longer be healthy
     sleep 5
     _check_health "Three or more failures" "
-Status           | unhealthy
+Status           | \"unhealthy\"
 FailingStreak    | [3456]
 Log[-1].ExitCode | 1
-Log[-1].Output   |
+Log[-1].Output   | \"Uh-oh on stdout!\\\nUh-oh on stderr!\"
 "
 
     # healthcheck should now fail, with exit status 1 and 'unhealthy' output
@@ -108,8 +105,7 @@ Log[-1].Output   |
     is "$output" "unhealthy" "output from 'podman healthcheck run'"
 
     # Clean up
-    run_podman stop -t 0 healthcheck_c
-    run_podman rm -f healthcheck_c
+    run_podman rm -t 0 -f healthcheck_c
     run_podman rmi   healthcheck_i
 }
 

@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -57,7 +57,7 @@ var _ = Describe("podman system df", func() {
 		session = podmanTest.Podman([]string{"system", "df"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(len(session.OutputToStringArray())).To(Equal(4))
+		Expect(session.OutputToStringArray()).To(HaveLen(4))
 		images := strings.Fields(session.OutputToStringArray()[1])
 		containers := strings.Fields(session.OutputToStringArray()[2])
 		volumes := strings.Fields(session.OutputToStringArray()[3])

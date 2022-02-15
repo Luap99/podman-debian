@@ -18,7 +18,7 @@ Starts all pods
 
 #### **--latest**, **-l**
 
-Instead of providing the pod name or ID, start the last created pod. (This option is not available with the remote Podman client)
+Instead of providing the pod name or ID, start the last created pod. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
 
 #### **--pod-id-file**
 
@@ -37,7 +37,7 @@ podman pod start --all
 podman pod start --pod-id-file /path/to/id/file
 
 ## SEE ALSO
-podman-pod(1), podman-pod-stop(1), podman-start(1)
+**[podman(1)](podman.1.md)**, **[podman-pod(1)](podman-pod.1.md)**, **[podman-pod-stop(1)](podman-pod-stop.1.md)**
 
 ## HISTORY
 July 2018, Adapted from podman start man page by Peter Hunt <pehunt@redhat.com>

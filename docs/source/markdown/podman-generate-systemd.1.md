@@ -10,7 +10,7 @@ podman\-generate\-systemd - Generate systemd unit file(s) for a container or pod
 **podman generate systemd** will create a systemd unit file that can be used to control a container or pod.
 By default, the command will print the content of the unit files to stdout.
 
-_Note: If you use this command with the remote client, you would still have to place the generated units on the remote system.  Moreover, please make sure that the XDG_RUNTIME_DIR environment variable is set.  If unset, you may set it via `export XDG_RUNTIME_DIR=/run/user/$(id -u)`._
+_Note: If you use this command with the remote client, including Mac and Windows (excluding WSL2) machines, you would still have to place the generated units on the remote system.  Moreover, please make sure that the XDG_RUNTIME_DIR environment variable is set.  If unset, you may set it via `export XDG_RUNTIME_DIR=/run/user/$(id -u)`._
 
 ## OPTIONS
 
@@ -38,14 +38,23 @@ Note that `--new` only works on containers and pods created directly via Podman 
 
 Do not generate the header including meta data such as the Podman version and the timestamp.
 
-#### **--time**, **-t**=*value*
+#### **--start-timeout** =*value*
 
-Override the default stop timeout for the container with the given value.
+Override the default start timeout for the container with the given value in seconds.
+
+#### **--stop-timeout** =*value*
+
+Override the default stop timeout for the container with the given value in seconds.
 
 #### **--restart-policy**=*policy*
 
 Set the systemd restart policy.  The restart-policy must be one of: "no", "on-success", "on-failure", "on-abnormal",
 "on-watchdog", "on-abort", or "always".  The default policy is *on-failure*.
+
+#### **--restart-sec**=*time*
+
+Set the systemd service restartsec value. Configures the time to sleep before restarting a service (as configured with restart-policy).
+Takes a value in seconds.
 
 #### **--container-prefix**=*prefix*
 
@@ -58,6 +67,28 @@ Set the systemd unit name prefix for pods. The default is *pod*.
 #### **--separator**=*separator*
 
 Set the systemd unit name separator between the name/id of a container/pod and the prefix. The default is *-*.
+
+#### **--wants**=*dependency_name*
+
+Add the systemd unit wants (`Wants=`) option, that this service is (weak) dependent on. This option may be specified more than once. This option does not influence the order in which services are started or stopped.
+
+User-defined dependencies will be appended to the generated unit file, but any existing options such as needed or defined by default (e.g. `online.target`) will **not** be removed or overridden.
+
+#### **--after**=*dependency_name*
+
+Add the systemd unit after (`After=`) option, that ordering dependencies between the list of dependencies and this service. This option may be specified more than once.
+
+User-defined dependencies will be appended to the generated unit file, but any existing options such as needed or defined by default (e.g. `online.target`) will **not** be removed or overridden.
+
+#### **--requires**=*dependency_name*
+
+Set the systemd unit requires (`Requires=`) option. Similar to wants, but declares a stronger requirement dependency.
+
+#### **--template**
+
+Add template specifiers to run multiple services from the systemd unit file.
+
+Note that if `--new` was not set to true, it is set to true by default. However, if `--new` is set to `false` explicitly the command will fail.
 
 ## EXAMPLES
 
@@ -234,7 +265,7 @@ CONTAINER ID  IMAGE                            COMMAND  CREATED        STATUS   
 bb310a0780ae  docker.io/library/alpine:latest  /bin/sh  3 minutes ago  Created                      busy_moser
 ```
 ## SEE ALSO
-[**podman**(1)](podman.1.md), [**podman-container**(1)](podman-container.1.md), **systemctl**(1), **systemd.unit**(5), **systemd.service**(5), **conmon**(8).
+**[podman(1)](podman.1.md)**, **[podman-container(1)](podman-container.1.md)**, **systemctl(1)**, **systemd.unit(5)**, **systemd.service(5)**, **[conmon(8)](https://github.com/containers/conmon/blob/main/docs/conmon.8.md)**
 
 ## HISTORY
 April 2020, Updated details and added use case to use generated .service files as root and non-root, by Sujil Shah (sushah at redhat dot com)

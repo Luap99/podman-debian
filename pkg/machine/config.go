@@ -1,4 +1,4 @@
-// +build amd64,!windows arm64,!windows
+// +build amd64 arm64
 
 package machine
 
@@ -18,11 +18,32 @@ type InitOptions struct {
 	DiskSize     uint64
 	IgnitionPath string
 	ImagePath    string
+	Volumes      []string
+	VolumeDriver string
 	IsDefault    bool
 	Memory       uint64
 	Name         string
+	TimeZone     string
 	URI          url.URL
 	Username     string
+	ReExec       bool
+}
+
+type QemuMachineStatus = string
+
+const (
+	// Running indicates the qemu vm is running
+	Running QemuMachineStatus = "running"
+	//	Stopped indicates the vm has stopped
+	Stopped QemuMachineStatus = "stopped"
+)
+
+type Provider interface {
+	NewMachine(opts InitOptions) (VM, error)
+	LoadVMByName(name string) (VM, error)
+	List(opts ListOptions) ([]*ListResponse, error)
+	IsValidVMName(name string) (bool, error)
+	CheckExclusiveActiveVM() (bool, string, error)
 }
 
 type RemoteConnectionType string
@@ -48,19 +69,24 @@ type Download struct {
 	Sha256sum             string
 	URL                   *url.URL
 	VMName                string
+	Size                  int64
 }
 
 type ListOptions struct{}
 
 type ListResponse struct {
-	Name      string
-	CreatedAt time.Time
-	LastUp    time.Time
-	Running   bool
-	VMType    string
-	CPUs      uint64
-	Memory    uint64
-	DiskSize  uint64
+	Name           string
+	CreatedAt      time.Time
+	LastUp         time.Time
+	Running        bool
+	Stream         string
+	VMType         string
+	CPUs           uint64
+	Memory         uint64
+	DiskSize       uint64
+	Port           int
+	RemoteUsername string
+	IdentityPath   string
 }
 
 type SSHOptions struct {
@@ -79,7 +105,7 @@ type RemoveOptions struct {
 }
 
 type VM interface {
-	Init(opts InitOptions) error
+	Init(opts InitOptions) (bool, error)
 	Remove(name string, opts RemoveOptions) (string, func() error, error)
 	SSH(name string, opts SSHOptions) error
 	Start(name string, opts StartOptions) error
@@ -87,7 +113,7 @@ type VM interface {
 }
 
 type DistributionDownload interface {
-	DownloadImage() error
+	HasUsableCache() (bool, error)
 	Get() *Download
 }
 

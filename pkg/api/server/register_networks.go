@@ -3,8 +3,8 @@ package server
 import (
 	"net/http"
 
-	"github.com/containers/podman/v3/pkg/api/handlers/compat"
-	"github.com/containers/podman/v3/pkg/api/handlers/libpod"
+	"github.com/containers/podman/v4/pkg/api/handlers/compat"
+	"github.com/containers/podman/v4/pkg/api/handlers/libpod"
 	"github.com/gorilla/mux"
 )
 
@@ -101,7 +101,7 @@ func (s *APIServer) registerNetworkHandlers(r *mux.Router) error {
 	// parameters:
 	//  - in: body
 	//    name: create
-	//    description: attributes for creating a container
+	//    description: attributes for creating a network
 	//    schema:
 	//      $ref: "#/definitions/NetworkCreateRequest"
 	// responses:
@@ -131,7 +131,7 @@ func (s *APIServer) registerNetworkHandlers(r *mux.Router) error {
 	//    name: create
 	//    description: attributes for connecting a container to a network
 	//    schema:
-	//      $ref: "#/definitions/NetworkConnectRequest"
+	//      $ref: "#/definitions/NetworkCompatConnectRequest"
 	// responses:
 	//   200:
 	//     description: OK
@@ -159,7 +159,7 @@ func (s *APIServer) registerNetworkHandlers(r *mux.Router) error {
 	//    name: create
 	//    description: attributes for disconnecting a container from a network
 	//    schema:
-	//      $ref: "#/definitions/NetworkDisconnectRequest"
+	//      $ref: "#/definitions/NetworkCompatDisconnectRequest"
 	// responses:
 	//   200:
 	//     description: OK
@@ -267,7 +267,7 @@ func (s *APIServer) registerNetworkHandlers(r *mux.Router) error {
 	//        - `id=[id]` Matches for full or partial ID.
 	//        - `driver=[driver]` Only bridge is supported.
 	//        - `label=[key]` or `label=[key=value]` Matches networks based on the presence of a label alone or a label and a value.
-	//        - `plugin=[plugin]` Matches CNI plugins included in a network (e.g `bridge`,`portmap`,`firewall`,`tuning`,`dnsname`,`macvlan`)
+	//        - `until=[timestamp]` Matches all networks that were create before the given timestamp.
 	// produces:
 	// - application/json
 	// responses:
@@ -306,19 +306,15 @@ func (s *APIServer) registerNetworkHandlers(r *mux.Router) error {
 	// tags:
 	//  - networks
 	// summary: Create network
-	// description: Create a new CNI network configuration
+	// description: Create a new network configuration
 	// produces:
 	// - application/json
 	// parameters:
-	//  - in: query
-	//    name: name
-	//    type: string
-	//    description: optional name for new network
 	//  - in: body
 	//    name: create
-	//    description: attributes for creating a container
+	//    description: attributes for creating a network
 	//    schema:
-	//      $ref: "#/definitions/NetworkCreateOptions"
+	//      $ref: "#/definitions/NetworkCreateLibpod"
 	// responses:
 	//   200:
 	//     $ref: "#/responses/NetworkCreateReport"
@@ -372,7 +368,7 @@ func (s *APIServer) registerNetworkHandlers(r *mux.Router) error {
 	//    name: create
 	//    description: attributes for disconnecting a container from a network
 	//    schema:
-	//      $ref: "#/definitions/NetworkDisconnectRequest"
+	//      $ref: "#/definitions/NetworkCompatDisconnectRequest"
 	// responses:
 	//   200:
 	//     description: OK

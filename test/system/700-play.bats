@@ -7,11 +7,11 @@ load helpers
 
 # This is a long ugly way to clean up pods and remove the pause image
 function teardown() {
-    run_podman pod rm -f -a
-    run_podman rm -f -a
+    run_podman pod rm -t 0 -f -a
+    run_podman rm -t 0 -f -a
     run_podman image list --format '{{.ID}} {{.Repository}}'
     while read id name; do
-        if [[ "$name" =~ /pause ]]; then
+        if [[ "$name" =~ /podman-pause ]]; then
             run_podman rmi $id
         fi
     done <<<"$output"
@@ -30,7 +30,7 @@ spec:
   containers:
   - command:
     - sleep
-    - "100"
+    - \"100\"
     env:
     - name: PATH
       value: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -49,7 +49,7 @@ spec:
       capabilities: {}
       privileged: false
       seLinuxOptions:
-         level: "s0:c1,c2"
+         level: \"s0:c1,c2\"
       readOnlyRootFilesystem: false
     volumeMounts:
     - mountPath: /testdir:z
@@ -73,12 +73,17 @@ RELABEL="system_u:object_r:container_file_t:s0"
     run_podman play kube - < $PODMAN_TMPDIR/test.yaml
     if [ -e /usr/sbin/selinuxenabled -a /usr/sbin/selinuxenabled ]; then
        run ls -Zd $TESTDIR
-       is "$output" ${RELABEL} "selinux relabel should have happened"
+       is "$output" "${RELABEL} $TESTDIR" "selinux relabel should have happened"
     fi
 
+    # Make sure that the K8s pause image isn't pulled but the local podman-pause is built.
+    run_podman images
+    run_podman 1 image exists k8s.gcr.io/pause
+    run_podman version --format "{{.Server.Version}}-{{.Server.Built}}"
+    run_podman image exists localhost/podman-pause:$output
+
     run_podman stop -a -t 0
-    run_podman pod stop test_pod
-    run_podman pod rm -f test_pod
+    run_podman pod rm -t 0 -f test_pod
 }
 
 @test "podman play" {
@@ -88,20 +93,17 @@ RELABEL="system_u:object_r:container_file_t:s0"
     run_podman play kube $PODMAN_TMPDIR/test.yaml
     if [ -e /usr/sbin/selinuxenabled -a /usr/sbin/selinuxenabled ]; then
        run ls -Zd $TESTDIR
-       is "$output" ${RELABEL} "selinux relabel should have happened"
+       is "$output" "${RELABEL} $TESTDIR" "selinux relabel should have happened"
     fi
 
     run_podman stop -a -t 0
-    run_podman pod stop test_pod
-    run_podman pod rm -f test_pod
+    run_podman pod rm -t 0 -f test_pod
 }
 
 @test "podman play --network" {
     TESTDIR=$PODMAN_TMPDIR/testdir
     mkdir -p $TESTDIR
     echo "$testYaml" | sed "s|TESTDIR|${TESTDIR}|g" > $PODMAN_TMPDIR/test.yaml
-    run_podman 125 play kube --network bridge $PODMAN_TMPDIR/test.yaml
-    is "$output" ".*invalid value passed to --network: bridge or host networking must be configured in YAML" "podman plan-network should fail with --network host"
     run_podman 125 play kube --network host $PODMAN_TMPDIR/test.yaml
     is "$output" ".*invalid value passed to --network: bridge or host networking must be configured in YAML" "podman plan-network should fail with --network host"
     run_podman play kube --network slirp4netns:port_handler=slirp4netns $PODMAN_TMPDIR/test.yaml
@@ -111,8 +113,7 @@ RELABEL="system_u:object_r:container_file_t:s0"
     is "$output" "slirp4netns" "network mode slirp4netns is set for the container"
 
     run_podman stop -a -t 0
-    run_podman pod stop test_pod
-    run_podman pod rm -f test_pod
+    run_podman pod rm -t 0 -f test_pod
 
     run_podman play kube --network none $PODMAN_TMPDIR/test.yaml
     run_podman pod inspect --format {{.InfraContainerID}} "${lines[1]}"
@@ -121,8 +122,7 @@ RELABEL="system_u:object_r:container_file_t:s0"
     is "$output" "none" "network mode none is set for the container"
 
     run_podman stop -a -t 0
-    run_podman pod stop test_pod
-    run_podman pod rm -f test_pod
+    run_podman pod rm -t 0 -f test_pod
 }
 
 @test "podman play with user from image" {
@@ -165,7 +165,6 @@ _EOF
     is "$output" bin "expect container within pod to run as the bin user"
 
     run_podman stop -a -t 0
-    run_podman pod stop test_pod
-    run_podman pod rm -f test_pod
+    run_podman pod rm -t 0 -f test_pod
     run_podman rmi -f userimage:latest
 }

@@ -6,10 +6,10 @@ import (
 	"github.com/containers/common/pkg/auth"
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/util"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/spf13/cobra"
 )
 
@@ -101,13 +101,16 @@ func pushFlags(cmd *cobra.Command) {
 
 	flags.BoolVarP(&pushOptions.Quiet, "quiet", "q", false, "Suppress output information when pushing images")
 	flags.BoolVar(&pushOptions.RemoveSignatures, "remove-signatures", false, "Discard any pre-existing signatures in the image")
-	flags.StringVar(&pushOptions.SignaturePolicy, "signature-policy", "", "Path to a signature-policy file")
 
 	signByFlagName := "sign-by"
 	flags.StringVar(&pushOptions.SignBy, signByFlagName, "", "Add a signature at the destination using the specified key")
 	_ = cmd.RegisterFlagCompletionFunc(signByFlagName, completion.AutocompleteNone)
 
 	flags.BoolVar(&pushOptions.TLSVerifyCLI, "tls-verify", true, "Require HTTPS and verify certificates when contacting registries")
+
+	compressionFormat := "compression-format"
+	flags.StringVar(&pushOptions.CompressionFormat, compressionFormat, "", "compression format to use")
+	_ = cmd.RegisterFlagCompletionFunc(compressionFormat, common.AutocompleteCompressionFormat)
 
 	if registry.IsRemote() {
 		_ = flags.MarkHidden("cert-dir")
@@ -117,7 +120,10 @@ func pushFlags(cmd *cobra.Command) {
 		_ = flags.MarkHidden("remove-signatures")
 		_ = flags.MarkHidden("sign-by")
 	}
-	_ = flags.MarkHidden("signature-policy")
+	if !registry.IsRemote() {
+		flags.StringVar(&pushOptions.SignaturePolicy, "signature-policy", "", "Path to a signature-policy file")
+		_ = flags.MarkHidden("signature-policy")
+	}
 }
 
 // imagePush is implement the command for pushing images.

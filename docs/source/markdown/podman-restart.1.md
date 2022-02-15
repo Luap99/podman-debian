@@ -19,14 +19,14 @@ Restart all containers regardless of their current state.
 
 #### **--latest**, **-l**
 Instead of providing the container name or ID, use the last created container. If you use methods other than Podman
-to run containers such as CRI-O, the last started container could be from either of those methods. (This option is not available with the remote Podman client)
+to run containers such as CRI-O, the last started container could be from either of those methods. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
 
 #### **--running**
 Restart all containers that are already in the *running* state.
 
-#### **--time**=*time*, **-t**
-Timeout to wait before forcibly stopping the container.
+#### **--time**, **-t**=*seconds*
 
+Seconds to wait before forcibly stopping the container.
 
 ## EXAMPLES
 
@@ -60,7 +60,7 @@ $ podman restart --all
 ```
 
 ## SEE ALSO
-podman(1), podman-run(1), podman-start(1), podman-create(1)
+**[podman(1)](podman.1.md)**
 
 ## HISTORY
 March 2018, Originally compiled by Matt Heon <mheon@redhat.com>

@@ -23,11 +23,11 @@ ExecStop directive of a systemd service referencing that pod.
 
 #### **--latest**, **-l**
 
-Instead of providing the pod name or ID, stop the last created pod. (This option is not available with the remote Podman client)
+Instead of providing the pod name or ID, stop the last created pod. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
 
-#### **--time**, **-t**=*time*
+#### **--time**, **-t**=*seconds*
 
-Timeout to wait before forcibly stopping the containers in the pod.
+Seconds to wait before forcibly stopping the containers in the pod.
 
 #### **--pod-id-file**
 
@@ -80,7 +80,7 @@ $ podman pod stop -a -t 1
 ```
 
 ## SEE ALSO
-podman-pod(1), podman-pod-start(1), podman-stop(1)
+**[podman(1)](podman.1.md)**, **[podman-pod(1)](podman-pod.1.md)**, **[podman-pod-start(1)](podman-pod-start.1.md)**
 
 ## HISTORY
 July 2018, Originally compiled by Peter Hunt <pehunt@redhat.com>

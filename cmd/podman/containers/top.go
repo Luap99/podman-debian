@@ -7,11 +7,11 @@ import (
 	"strings"
 
 	"github.com/containers/common/pkg/report"
-	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/cmd/podman/validate"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/util"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/validate"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -77,7 +77,7 @@ func init() {
 	validate.AddLatestFlag(containerTopCommand, &topOptions.Latest)
 }
 
-func top(_ *cobra.Command, args []string) error {
+func top(cmd *cobra.Command, args []string) error {
 	if topOptions.ListDescriptors {
 		descriptors, err := util.GetContainerPidInformationDescriptors()
 		if err != nil {
@@ -103,15 +103,13 @@ func top(_ *cobra.Command, args []string) error {
 		return err
 	}
 
-	w, err := report.NewWriterDefault(os.Stdout)
-	if err != nil {
-		return err
-	}
+	rpt := report.New(os.Stdout, cmd.Name()).Init(os.Stdout, 12, 2, 2, ' ', 0)
+	defer rpt.Flush()
 
 	for _, proc := range topResponse.Value {
-		if _, err := fmt.Fprintln(w, proc); err != nil {
+		if _, err := fmt.Fprintln(rpt.Writer(), proc); err != nil {
 			return err
 		}
 	}
-	return w.Flush()
+	return nil
 }

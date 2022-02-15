@@ -3,12 +3,12 @@ package abi
 import (
 	"context"
 
-	"github.com/containers/podman/v3/libpod"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/domain/entities/reports"
-	"github.com/containers/podman/v3/pkg/domain/filters"
-	"github.com/containers/podman/v3/pkg/domain/infra/abi/parse"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/domain/entities/reports"
+	"github.com/containers/podman/v4/pkg/domain/filters"
+	"github.com/containers/podman/v4/pkg/domain/infra/abi/parse"
 	"github.com/pkg/errors"
 )
 
@@ -66,7 +66,7 @@ func (ic *ContainerEngine) VolumeRm(ctx context.Context, namesOrIds []string, op
 	}
 	for _, vol := range vols {
 		reports = append(reports, &entities.VolumeRmReport{
-			Err: ic.Libpod.RemoveVolume(ctx, vol, opts.Force),
+			Err: ic.Libpod.RemoveVolume(ctx, vol, opts.Force, opts.Timeout),
 			Id:  vol.Name(),
 		})
 	}

@@ -9,6 +9,8 @@ podman\-container\-checkpoint - Checkpoints one or more running containers
 ## DESCRIPTION
 **podman container checkpoint** checkpoints all the processes in one or more *containers*. A *container* can be restored from a checkpoint with **[podman-container-restore](podman-container-restore.1.md)**. The *container IDs* or *names* are used as input.
 
+*IMPORTANT: If the container is using __systemd__ as __entrypoint__ checkpointing the container might not be possible.*
+
 ## OPTIONS
 #### **--all**, **-a**
 
@@ -37,7 +39,7 @@ root file-system, if not explicitly disabled using **--ignore-rootfs**.
 
 If a checkpoint is exported to a tar.gz file it is possible with the help of **--ignore-rootfs** to explicitly disable including changes to the root file-system into the checkpoint archive file.\
 The default is **false**.\
-*IMPORTANT: This OPTION only works in combination with **--export, -e**.*
+*IMPORTANT: This OPTION only works in combination with __--export, -e__.*
 
 #### **--ignore-volumes**
 
@@ -55,7 +57,7 @@ The default is **false**.
 
 Instead of providing the *container ID* or *name*, use the last created *container*. If other methods than Podman are used to run *containers* such as `CRI-O`, the last started *container* could be from either of those methods.\
 The default is **false**.\
-*IMPORTANT: This OPTION is not available with the remote Podman client. This OPTION does not need a container name or ID as input argument.*
+*IMPORTANT: This OPTION is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines. This OPTION does not need a container name or ID as input argument.*
 
 #### **--leave-running**, **-R**
 
@@ -68,6 +70,47 @@ Dump the *container's* memory information only, leaving the *container* running.
 operations will supersede prior dumps. It only works on `runc 1.0-rc3` or `higher`.\
 The default is **false**.
 
+The functionality to only checkpoint the memory of the container and in a second
+checkpoint only write out the memory pages which have changed since the first
+checkpoint relies on the Linux kernel's soft-dirty bit, which is not available
+on all systems as it depends on the system architecture and the configuration
+of the Linux kernel. Podman will verify if the current system supports this
+functionality and return an error if the current system does not support it.
+
+#### **--print-stats**
+
+Print out statistics about checkpointing the container(s). The output is
+rendered in a JSON array and contains information about how much time different
+checkpoint operations required. Many of the checkpoint statistics are created
+by CRIU and just passed through to Podman. The following information is provided
+in the JSON array:
+
+- **podman_checkpoint_duration**: Overall time (in microseconds) needed to create
+  all checkpoints.
+
+- **runtime_checkpoint_duration**: Time (in microseconds) the container runtime
+  needed to create the checkpoint.
+
+- **freezing_time**: Time (in microseconds) CRIU needed to pause (freeze) all
+  processes in the container (measured by CRIU).
+
+- **frozen_time**: Time (in microseconds) all processes in the container were
+  paused (measured by CRIU).
+
+- **memdump_time**: Time (in microseconds) needed to extract all required memory
+  pages from all container processes (measured by CRIU).
+
+- **memwrite_time**: Time (in microseconds) needed to write all required memory
+  pages to the corresponding checkpoint image files (measured by CRIU).
+
+- **pages_scanned**: Number of memory pages scanned to determine if they need
+  to be checkpointed (measured by CRIU).
+
+- **pages_written**: Number of memory pages actually written to the checkpoint
+  image files (measured by CRIU).
+
+The default is **false**.
+
 #### **--tcp-established**
 
 Checkpoint a *container* with established TCP connections. If the checkpoint
@@ -76,12 +119,25 @@ restore. Defaults to not checkpointing *containers* with established TCP
 connections.\
 The default is **false**.
 
+#### **--file-locks**
+
+Checkpoint a *container* with file locks. If an application running in the container
+is using file locks, this OPTION is required during checkpoint and restore. Otherwise
+checkpointing *containers* with file locks is expected to fail. If file locks are not
+used, this option is ignored.\
+The default is **false**.
+
 #### **--with-previous**
 
 Check out the *container* with previous criu image files in pre-dump. It only works on `runc 1.0-rc3` or `higher`.\
 The default is **false**.\
-*IMPORTANT: This OPTION is not available with **--pre-checkpoint***.
+*IMPORTANT: This OPTION is not available with __--pre-checkpoint__*.
 
+This option requires that the option __--pre-checkpoint__ has been used before on the
+same container. Without an existing pre-checkpoint, this option will fail.
+
+Also see __--pre-checkpoint__ for additional information about __--pre-checkpoint__
+availability on different systems.
 
 ## EXAMPLES
 Make a checkpoint for the container "mywebserver".
@@ -106,7 +162,7 @@ Dump the container's memory information of the latest container into an archive 
 ```
 
 ## SEE ALSO
-**[podman(1)](podman.1.md)**, **[podman-container-restore(1)](podman-container-restore.1.md)**
+**[podman(1)](podman.1.md)**, **[podman-container-restore(1)](podman-container-restore.1.md)**, **criu(8)**
 
 ## HISTORY
 September 2018, Originally compiled by Adrian Reber <areber@redhat.com>

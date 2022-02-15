@@ -9,11 +9,11 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/containers/podman/v3/libpod"
-	libpodDefine "github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/systemd/define"
-	"github.com/containers/podman/v3/version"
+	"github.com/containers/podman/v4/libpod"
+	libpodDefine "github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/systemd/define"
+	"github.com/containers/podman/v4/version"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/pflag"
@@ -73,6 +73,8 @@ type containerInfo struct {
 	ExecStartPre string
 	// ExecStart of the unit.
 	ExecStart string
+	// TimeoutStartSec of the unit.
+	TimeoutStartSec uint
 	// TimeoutStopSec of the unit.
 	TimeoutStopSec uint
 	// ExecStop of the unit.
@@ -90,6 +92,15 @@ type containerInfo struct {
 	// Location of the RunRoot for the container.  Required for ensuring the tmpfs
 	// or volume exists and is mounted when coming online at boot.
 	RunRoot string
+	// Add %i and %I to description and execute parts
+	IdentifySpecifier bool
+	// Wants are the list of services that this service is (weak) dependent on. This
+	// option does not influence the order in which services are started or stopped.
+	Wants []string
+	// After ordering dependencies between the list of services and this service.
+	After []string
+	// Similar to Wants, but declares a stronger requirement dependency.
+	Requires []string
 }
 
 const containerTemplate = headerTemplate + `
@@ -97,15 +108,31 @@ const containerTemplate = headerTemplate + `
 BindsTo={{{{- range $index, $value := .BoundToServices -}}}}{{{{if $index}}}} {{{{end}}}}{{{{ $value }}}}.service{{{{end}}}}
 After={{{{- range $index, $value := .BoundToServices -}}}}{{{{if $index}}}} {{{{end}}}}{{{{ $value }}}}.service{{{{end}}}}
 {{{{- end}}}}
+{{{{- if or .Wants .After .Requires }}}}
+
+# User-defined dependencies
+{{{{- end}}}}
+{{{{- if .Wants}}}}
+Wants={{{{- range $index, $value := .Wants }}}}{{{{ if $index}}}} {{{{end}}}}{{{{ $value }}}}{{{{end}}}}
+{{{{- end}}}}
+{{{{- if .After}}}}
+After={{{{- range $index, $value := .After }}}}{{{{ if $index}}}} {{{{end}}}}{{{{ $value }}}}{{{{end}}}}
+{{{{- end}}}}
+{{{{- if .Requires}}}}
+Requires={{{{- range $index, $value := .Requires }}}}{{{{ if $index}}}} {{{{end}}}}{{{{ $value }}}}{{{{end}}}}
+{{{{- end}}}}
 
 [Service]
-Environment={{{{.EnvVariable}}}}=%n
+Environment={{{{.EnvVariable}}}}=%n{{{{- if (eq .IdentifySpecifier true) }}}}-%i{{{{- end}}}}
 {{{{- if .ExtraEnvs}}}}
 Environment={{{{- range $index, $value := .ExtraEnvs -}}}}{{{{if $index}}}} {{{{end}}}}{{{{ $value }}}}{{{{end}}}}
 {{{{- end}}}}
 Restart={{{{.RestartPolicy}}}}
 {{{{- if .StartLimitBurst}}}}
 StartLimitBurst={{{{.StartLimitBurst}}}}
+{{{{- end}}}}
+{{{{- if ne .TimeoutStartSec 0}}}}
+TimeoutStartSec={{{{.TimeoutStartSec}}}}
 {{{{- end}}}}
 TimeoutStopSec={{{{.TimeoutStopSec}}}}
 {{{{- if .ExecStartPre}}}}
@@ -146,9 +173,14 @@ func ContainerUnit(ctr *libpod.Container, options entities.GenerateSystemdOption
 }
 
 func generateContainerInfo(ctr *libpod.Container, options entities.GenerateSystemdOptions) (*containerInfo, error) {
-	timeout := ctr.StopTimeout()
+	stopTimeout := ctr.StopTimeout()
 	if options.StopTimeout != nil {
-		timeout = *options.StopTimeout
+		stopTimeout = *options.StopTimeout
+	}
+
+	startTimeout := uint(0)
+	if options.StartTimeout != nil {
+		startTimeout = *options.StartTimeout
 	}
 
 	config := ctr.Config()
@@ -183,11 +215,15 @@ func generateContainerInfo(ctr *libpod.Container, options entities.GenerateSyste
 		ContainerNameOrID: nameOrID,
 		RestartPolicy:     define.DefaultRestartPolicy,
 		PIDFile:           conmonPidFile,
-		StopTimeout:       timeout,
+		TimeoutStartSec:   startTimeout,
+		StopTimeout:       stopTimeout,
 		GenerateTimestamp: true,
 		CreateCommand:     createCommand,
 		RunRoot:           runRoot,
 		containerEnv:      envs,
+		Wants:             options.Wants,
+		After:             options.After,
+		Requires:          options.Requires,
 	}
 
 	return &info, nil
@@ -202,6 +238,46 @@ func containerServiceName(ctr *libpod.Container, options entities.GenerateSystem
 	}
 	serviceName := fmt.Sprintf("%s%s%s", options.ContainerPrefix, options.Separator, nameOrID)
 	return nameOrID, serviceName
+}
+
+// setContainerNameForTemplate updates startCommand to contain the name argument with
+// a value that includes the identify specifier.
+// In case startCommand doesn't contain that argument it's added after "run" and its
+// value will be set to info.ServiceName concated with the identify specifier %i.
+func setContainerNameForTemplate(startCommand []string, info *containerInfo) ([]string, error) {
+	// find the index of "--name" in the command slice
+	nameIx := -1
+	for argIx, arg := range startCommand {
+		if arg == "--name" {
+			nameIx = argIx + 1
+			break
+		}
+		if strings.HasPrefix(arg, "--name=") {
+			nameIx = argIx
+			break
+		}
+	}
+	switch {
+	case nameIx == -1:
+		// if not found, add --name argument in the command slice before the "run" argument.
+		// it's assumed that the command slice contains this argument.
+		runIx := -1
+		for argIx, arg := range startCommand {
+			if arg == "run" {
+				runIx = argIx
+				break
+			}
+		}
+		if runIx == -1 {
+			return startCommand, fmt.Errorf("\"run\" is missing in the command arguments")
+		}
+		startCommand = append(startCommand[:runIx+1], startCommand[runIx:]...)
+		startCommand[runIx+1] = fmt.Sprintf("--name=%s-%%i", info.ServiceName)
+	default:
+		// append the identity specifier (%i) to the end of the --name value
+		startCommand[nameIx] = fmt.Sprintf("%s-%%i", startCommand[nameIx])
+	}
+	return startCommand, nil
 }
 
 // executeContainerTemplate executes the container template on the specified
@@ -273,7 +349,6 @@ func executeContainerTemplate(info *containerInfo, options entities.GenerateSyst
 			"--rm",
 		)
 		remainingCmd := info.CreateCommand[index:]
-
 		// Presence check for certain flags/options.
 		fs := pflag.NewFlagSet("args", pflag.ContinueOnError)
 		fs.ParseErrorsWhitelist.UnknownFlags = true
@@ -389,6 +464,13 @@ func executeContainerTemplate(info *containerInfo, options entities.GenerateSyst
 
 		startCommand = append(startCommand, remainingCmd...)
 		startCommand = escapeSystemdArguments(startCommand)
+		if options.TemplateUnitFile {
+			info.IdentifySpecifier = true
+			startCommand, err = setContainerNameForTemplate(startCommand, info)
+			if err != nil {
+				return "", err
+			}
+		}
 		info.ExecStart = strings.Join(startCommand, " ")
 	}
 

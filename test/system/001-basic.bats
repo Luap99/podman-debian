@@ -15,12 +15,10 @@ function setup() {
 @test "podman version emits reasonable output" {
     run_podman version
 
-    # First line of podman-remote is "Client:<blank>".
+    # First line of podman version is "Client: *Podman Engine".
     # Just delete it (i.e. remove the first entry from the 'lines' array)
-    if is_remote; then
-        if expr "${lines[0]}" : "Client:" >/dev/null; then
-            lines=("${lines[@]:1}")
-        fi
+    if expr "${lines[0]}" : "Client: *" >/dev/null; then
+        lines=("${lines[@]:1}")
     fi
 
     is "${lines[0]}" "Version:[ ]\+[1-9][0-9.]\+" "Version line 1"
@@ -43,7 +41,7 @@ function setup() {
     # This one must fail
     run_podman 125 --context=swarm version
     is "$output" \
-       "Error: Podman does not support swarm, the only --context value allowed is \"default\"" \
+       "Error: podman does not support swarm, the only --context value allowed is \"default\"" \
        "--context=default or fail"
 }
 
@@ -93,6 +91,25 @@ function setup() {
     is "$output" "Error: unknown flag: --remote" "podman version --remote"
 }
 
+@test "podman-remote: defaults" {
+    skip_if_remote "only applicable on a local run"
+
+    # By default, podman should include '--remote' in its help output
+    run_podman --help
+    is "$output" ".* --remote " "podman --help includes the --remote option"
+
+    # When it detects CONTAINER_HOST or _CONNECTION, --remote is not an option
+    CONTAINER_HOST=foobar run_podman --help
+    if grep -- " --remote " <<<"$output"; then
+        die "podman --help, with CONTAINER_HOST set, is showing --remote"
+    fi
+
+    CONTAINER_CONNECTION=foobar run_podman --help
+    if grep -- " --remote " <<<"$output"; then
+        die "podman --help, with CONTAINER_CONNECTION set, is showing --remote"
+    fi
+}
+
 # Check that just calling "podman-remote" prints the usage message even
 # without a running endpoint. Use "podman --remote" for this as this works the same.
 @test "podman-remote: check for command usage message without a running endpoint" {
@@ -101,7 +118,7 @@ function setup() {
     fi
 
     run_podman 125 --remote
-    is "$output" "Error: missing command 'podman COMMAND'" "podman remote show usage message without running endpoint"
+    is "$output" ".*Usage:" "podman --remote show usage message without running endpoint"
 }
 
 # This is for development only; it's intended to make sure our timeout

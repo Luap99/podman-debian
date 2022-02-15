@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/libpod/events"
-	"github.com/containers/podman/v3/pkg/signal"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/libpod/events"
+	"github.com/containers/podman/v4/pkg/signal"
 	"github.com/containers/storage/pkg/archive"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -53,7 +53,7 @@ func (c *Container) Init(ctx context.Context, recursive bool) error {
 
 	if err := c.prepare(); err != nil {
 		if err2 := c.cleanup(ctx); err2 != nil {
-			logrus.Errorf("error cleaning up container %s: %v", c.ID(), err2)
+			logrus.Errorf("Cleaning up container %s: %v", c.ID(), err2)
 		}
 		return err
 	}
@@ -229,6 +229,10 @@ func (c *Container) Kill(signal uint) error {
 // This function returns when the attach finishes. It does not hold the lock for
 // the duration of its runtime, only using it at the beginning to verify state.
 func (c *Container) Attach(streams *define.AttachStreams, keys string, resize <-chan define.TerminalSize) error {
+	switch c.LogDriver() {
+	case define.PassthroughLogging:
+		return errors.Wrapf(define.ErrNoLogs, "this container is using the 'passthrough' log driver, cannot attach")
+	}
 	if !c.batched {
 		c.lock.Lock()
 		if err := c.syncContainer(); err != nil {
@@ -790,21 +794,32 @@ type ContainerCheckpointOptions struct {
 	// container no PID 1 will be in the namespace and that is not
 	// possible.
 	Pod string
+	// PrintStats tells the API to fill out the statistics about
+	// how much time each component in the stack requires to
+	// checkpoint a container.
+	PrintStats bool
+	// FileLocks tells the API to checkpoint/restore a container
+	// with file-locks
+	FileLocks bool
 }
 
 // Checkpoint checkpoints a container
-func (c *Container) Checkpoint(ctx context.Context, options ContainerCheckpointOptions) error {
+// The return values *define.CRIUCheckpointRestoreStatistics and int64 (time
+// the runtime needs to checkpoint the container) are only set if
+// options.PrintStats is set to true. Not setting options.PrintStats to true
+// will return nil and 0.
+func (c *Container) Checkpoint(ctx context.Context, options ContainerCheckpointOptions) (*define.CRIUCheckpointRestoreStatistics, int64, error) {
 	logrus.Debugf("Trying to checkpoint container %s", c.ID())
 
 	if options.TargetFile != "" {
 		if err := c.prepareCheckpointExport(); err != nil {
-			return err
+			return nil, 0, err
 		}
 	}
 
 	if options.WithPrevious {
 		if err := c.canWithPrevious(); err != nil {
-			return err
+			return nil, 0, err
 		}
 	}
 
@@ -813,14 +828,18 @@ func (c *Container) Checkpoint(ctx context.Context, options ContainerCheckpointO
 		defer c.lock.Unlock()
 
 		if err := c.syncContainer(); err != nil {
-			return err
+			return nil, 0, err
 		}
 	}
 	return c.checkpoint(ctx, options)
 }
 
 // Restore restores a container
-func (c *Container) Restore(ctx context.Context, options ContainerCheckpointOptions) error {
+// The return values *define.CRIUCheckpointRestoreStatistics and int64 (time
+// the runtime needs to restore the container) are only set if
+// options.PrintStats is set to true. Not setting options.PrintStats to true
+// will return nil and 0.
+func (c *Container) Restore(ctx context.Context, options ContainerCheckpointOptions) (*define.CRIUCheckpointRestoreStatistics, int64, error) {
 	if options.Pod == "" {
 		logrus.Debugf("Trying to restore container %s", c.ID())
 	} else {
@@ -831,7 +850,7 @@ func (c *Container) Restore(ctx context.Context, options ContainerCheckpointOpti
 		defer c.lock.Unlock()
 
 		if err := c.syncContainer(); err != nil {
-			return err
+			return nil, 0, err
 		}
 	}
 	defer c.newContainerEvent(events.Restore)

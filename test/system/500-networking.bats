@@ -6,7 +6,7 @@
 load helpers
 
 @test "podman network - basic tests" {
-    heading="*NETWORK*ID*NAME*VERSION*PLUGINS*"
+    heading="*NETWORK*ID*NAME*DRIVER*"
     run_podman network ls
     if  [[ ${output} != ${heading} ]]; then
        die "network ls expected heading is not available"
@@ -16,6 +16,21 @@ load helpers
     if  [[ ${output} = ${heading} ]]; then
        die "network ls --noheading did not remove heading: $output"
     fi
+
+    # check deterministic list order
+    local net1=a-$(random_string 10)
+    local net2=b-$(random_string 10)
+    local net3=c-$(random_string 10)
+    run_podman network create $net1
+    run_podman network create $net2
+    run_podman network create $net3
+
+    run_podman network ls --quiet
+    # just check the the order of the created networks is correct
+    # we cannot do an exact match since developer and CI systems could contain more networks
+    is "$output" ".*$net1.*$net2.*$net3.*podman.*" "networks sorted alphabetically"
+
+    run_podman network rm $net1 $net2 $net3
 }
 
 # Copied from tsweeney's https://github.com/containers/podman/issues/4827
@@ -78,6 +93,9 @@ load helpers
         if [[ -z $cidr ]]; then
             # regex to match that we are in 10.X subnet
             match="10\..*"
+            # force bridge networking also for rootless
+            # this ensures that rootless + bridge + userns + ports works
+            network_arg="--network bridge"
         else
             # Issue #9828 make sure a custom slir4netns cidr also works
             network_arg="--network slirp4netns:cidr=$cidr"
@@ -121,10 +139,11 @@ load helpers
 
 @test "podman run with slirp4ns assigns correct addresses to /etc/hosts" {
     CIDR="$(random_rfc1918_subnet)"
+    IP=$(hostname -I | cut -f 1 -d " ")
     local conname=con-$(random_string 10)
     run_podman run --rm --network slirp4netns:cidr="${CIDR}.0/24" \
                 --name $conname --hostname $conname $IMAGE cat /etc/hosts
-    is "$output"   ".*${CIDR}.2 host.containers.internal"   "host.containers.internal should be the cidr+2 address"
+    is "$output"   ".*${IP}	host.containers.internal"   "host.containers.internal should be the cidr+2 address"
     is "$output"   ".*${CIDR}.100	$conname $conname"   "$conname should be the cidr+100 address"
 }
 
@@ -151,7 +170,7 @@ load helpers
     local mysubnet=$(random_rfc1918_subnet)
 
     run_podman network create --subnet "${mysubnet}.0/24" $mynetname
-    is "$output" ".*/cni/net.d/$mynetname.conflist" "output of 'network create'"
+    is "$output" "$mynetname" "output of 'network create'"
 
     # (Assert that output is formatted, not a one-line blob: #8011)
     run_podman network inspect $mynetname
@@ -196,12 +215,12 @@ load helpers
 
     # Cannot create network with the same name
     run_podman 125 network create $mynetname
-    is "$output" "Error: the network name $mynetname is already used" \
+    is "$output" "Error: network name $mynetname already used: network already exists" \
        "Trying to create an already-existing network"
 
-    run_podman rm $cid
+    run_podman rm -t 0 -f $cid
     run_podman network rm $mynetname
-    run_podman 1 network rm $mynetname
+    run_podman 1 network rm -f $mynetname
 }
 
 @test "podman network reload" {
@@ -215,14 +234,8 @@ load helpers
     INDEX1=$PODMAN_TMPDIR/hello.txt
     echo $random_1 > $INDEX1
 
-    # use default network for root
+    # use default network
     local netname=podman
-    # for rootless we have to create a custom network since there is no default network
-    if is_rootless; then
-        netname=testnet-$(random_string 10)
-        run_podman network create $netname
-        is "$output" ".*/cni/net.d/$netname.conflist" "output of 'network create'"
-    fi
 
     # Bind-mount this file with a different name to a container running httpd
     run_podman run -d --name myweb -p "$HOST_PORT:80" \
@@ -233,9 +246,9 @@ load helpers
     cid=$output
 
     run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname\").IPAddress}}"
-    ip="$output"
+    ip1="$output"
     run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname\").MacAddress}}"
-    mac="$output"
+    mac1="$output"
 
     # Verify http contents: curl from localhost
     run curl -s $SERVER/index.txt
@@ -255,40 +268,72 @@ load helpers
 
     # reload the network to recreate the iptables rules
     run_podman network reload $cid
-    is "$output" "$cid" "Output does not match container ID"
+    is "$output" "$cid" "Output does match container ID"
 
     # check that we still have the same mac and ip
     run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname\").IPAddress}}"
-    is "$output" "$ip" "IP address changed after podman network reload"
+    is "$output" "$ip1" "IP address changed after podman network reload"
     run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname\").MacAddress}}"
-    is "$output" "$mac" "MAC address changed after podman network reload"
+    is "$output" "$mac1" "MAC address changed after podman network reload"
 
     # check that we can still curl
     run curl -s $SERVER/index.txt
     is "$output" "$random_1" "curl 127.0.0.1:/index.txt"
 
+    # create second network
+    netname2=testnet-$(random_string 10)
+    # TODO add --ipv6 and uncomment the ipv6 checks below once cni plugins 1.0 is available on ubuntu CI VMs.
+    run_podman network create $netname2
+    is "$output" "$netname2" "output of 'network create'"
+
+    # connect the container to the second network
+    run_podman network connect $netname2 $cid
+
+    run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname2\").IPAddress}}"
+    ip2="$output"
+    #run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname2\").GlobalIPv6Address}}"
+    #is "$output" "fd.*:.*" "IPv6 address should start with fd..."
+    #ipv6="$output"
+    run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname2\").MacAddress}}"
+    mac2="$output"
+
     # make sure --all is working and that this
     # cmd also works if the iptables still exists
     run_podman network reload --all
-    is "$output" "$cid" "Output does not match container ID"
+    is "$output" "$cid" "Output does match container ID"
+
+    # check that both network keep there ip and mac
+    run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname\").IPAddress}}"
+    is "$output" "$ip1" "IP address changed after podman network reload ($netname)"
+    run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname\").MacAddress}}"
+    is "$output" "$mac1" "MAC address changed after podman network reload ($netname)"
+    run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname2\").IPAddress}}"
+    is "$output" "$ip2" "IP address changed after podman network reload ($netname2)"
+    #run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname2\").GlobalIPv6Address}}"
+    #is "$output" "$ipv6" "IPv6 address changed after podman network reload ($netname2)"
+    run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname2\").MacAddress}}"
+    is "$output" "$mac2" "MAC address changed after podman network reload ($netname2)"
 
     # check that we can still curl
     run curl -s $SERVER/index.txt
     is "$output" "$random_1" "curl 127.0.0.1:/index.txt"
 
     # cleanup the container
-    run_podman rm -f $cid
+    run_podman rm -t 0 -f $cid
 
-    if is_rootless; then
-        run_podman network rm -f $netname
-    fi
+    # test that we cannot remove the default network
+    run_podman 125 network rm -t 0 -f $netname
+    is "$output" "Error: default network $netname cannot be removed" "Remove default network"
+
+    run_podman network rm -t 0 -f $netname2
 }
 
 @test "podman rootless cni adds /usr/sbin to PATH" {
     is_rootless || skip "only meaningful for rootless"
 
     local mynetname=testnet-$(random_string 10)
-    run_podman network create $mynetname
+    run_podman --noout network create $mynetname
+    is "$output" "" "output should be empty"
 
     # Test that rootless cni adds /usr/sbin to $PATH
     # iptables is located under /usr/sbin and is needed for the CNI plugins.
@@ -296,7 +341,8 @@ load helpers
     PATH=/usr/local/bin:/usr/bin run_podman run --rm --network $mynetname $IMAGE ip addr
     is "$output" ".*eth0.*" "Interface eth0 not found in ip addr output"
 
-    run_podman network rm -f $mynetname
+    run_podman --noout network rm -t 0 -f $mynetname
+    is "$output" "" "output should be empty"
 }
 
 @test "podman ipv6 in /etc/resolv.conf" {
@@ -332,21 +378,21 @@ load helpers
     local netname=testnet-$(random_string 10)
 
     run_podman network create --subnet $mysubnet.0/24 $netname
-    is "$output" ".*/cni/net.d/$netname.conflist" "output of 'network create'"
+    is "$output" "$netname" "output of 'network create'"
 
     run_podman run --rm --network $netname $IMAGE cat /etc/resolv.conf
     if grep -E "$ipv6_regex" <<< $output; then
         die "resolv.conf contains a ipv6 nameserver"
     fi
 
-    run_podman network rm -f $netname
+    run_podman network rm -t 0 -f $netname
 
     # ipv6 cni
     mysubnet=fd00:4:4:4:4::/64
     netname=testnet-$(random_string 10)
 
     run_podman network create --subnet $mysubnet $netname
-    is "$output" ".*/cni/net.d/$netname.conflist" "output of 'network create'"
+    is "$output" "$netname" "output of 'network create'"
 
     run_podman run --rm --network $netname $IMAGE cat /etc/resolv.conf
     # "is" does not like the ipv6 regex
@@ -354,7 +400,7 @@ load helpers
         die "resolv.conf does not contain a ipv6 nameserver"
     fi
 
-    run_podman network rm -f $netname
+    run_podman network rm -t 0 -f $netname
 }
 
 # Test for https://github.com/containers/podman/issues/10052
@@ -369,11 +415,11 @@ load helpers
 
     local netname=testnet-$(random_string 10)
     run_podman network create $netname
-    is "$output" ".*/cni/net.d/$netname.conflist" "output of 'network create'"
+    is "$output" "$netname" "output of 'network create'"
 
     local netname2=testnet2-$(random_string 10)
     run_podman network create $netname2
-    is "$output" ".*/cni/net.d/$netname2.conflist" "output of 'network create'"
+    is "$output" "$netname2" "output of 'network create'"
 
     # First, run a container in background to ensure that the rootless cni ns
     # is not destroyed after network disconnect.
@@ -396,6 +442,10 @@ load helpers
     ip="$output"
     run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname\").MacAddress}}"
     mac="$output"
+
+    # check network alias for container short id
+    run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname\").Aliases}}"
+    is "$output" "[${cid:0:12}]" "short container id in network aliases"
 
     run_podman network disconnect $netname $cid
     is "$output" "" "Output should be empty (no errors)"
@@ -430,9 +480,21 @@ load helpers
     run_podman network connect $netname $background_cid
     is "$output" "" "(re)connect of container with no open ports"
 
+    # FIXME FIXME FIXME: #11825: bodhi tests are failing, remote+rootless only,
+    # with "dnsmasq: failed to create inotify". This error has never occurred
+    # in CI, and Ed has been unable to reproduce it on 1minutetip. This next
+    # line is a suggestion from Paul Holzinger for trying to shed light on
+    # the system context before the failure. This output will be invisible
+    # if the test passes.
+    for foo in /proc/\*/fd/*; do readlink -f $foo; done |grep '^/proc/.*inotify' |cut -d/ -f3 | xargs -I '{}' -- ps --no-headers -o '%p %U %a' -p '{}' |uniq -c |sort -n
+
     # connect a second network
     run_podman network connect $netname2 $cid
     is "$output" "" "Output should be empty (no errors)"
+
+    # check network2 alias for container short id
+    run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname2\").Aliases}}"
+    is "$output" "[${cid:0:12}]" "short container id in network aliases"
 
     # curl should work
     run curl --max-time 3 -s $SERVER/index.txt
@@ -446,9 +508,124 @@ load helpers
     is "$output" "$random_1" "curl 127.0.0.1:/index.txt should still work"
 
     # cleanup
-    run_podman stop -t 0 $cid $background_cid
-    run_podman rm -f $cid $background_cid
-    run_podman network rm -f $netname $netname2
+    run_podman rm -t 0 -f $cid $background_cid
+    run_podman network rm -t 0 -f $netname $netname2
+}
+
+@test "podman network after restart" {
+    random_1=$(random_string 30)
+
+    HOST_PORT=$(random_free_port)
+    SERVER=http://127.0.0.1:$HOST_PORT
+
+    # Create a test file with random content
+    INDEX1=$PODMAN_TMPDIR/hello.txt
+    echo $random_1 > $INDEX1
+
+    local netname=testnet-$(random_string 10)
+    run_podman network create $netname
+    is "$output" "$netname" "output of 'network create'"
+
+    for network in "slirp4netns" "$netname"; do
+        # Start container with the restart always policy
+        run_podman run -d --name myweb -p "$HOST_PORT:80" \
+                --restart always \
+                --network $network \
+                -v $INDEX1:/var/www/index.txt:Z \
+                -w /var/www \
+                $IMAGE /bin/busybox-extras httpd -f -p 80
+        cid=$output
+
+        # Tests #10310: podman will restart slirp4netns on container restart
+        run_podman container inspect --format "{{.State.Pid}}" $cid
+        pid=$output
+
+        # Kill the process; podman restart policy will bring up a new container.
+        # -9 is crucial: busybox httpd ignores all other signals.
+        kill -9 $pid
+        # Wait for process to exit
+        retries=30
+        while kill -0 $pid; do
+            sleep 0.5
+            retries=$((retries - 1))
+            if [[ $retries -eq 0 ]]; then
+                die "Process $pid (container $cid) refused to die"
+            fi
+        done
+
+        # Wait for container to restart
+        retries=20
+        while :;do
+            run_podman container inspect --format "{{.State.Pid}}" $cid
+            # pid is 0 as long as the container is not running
+            if [[ $output -ne 0 ]]; then
+                if [[ $output == $pid ]]; then
+                    die "This should never happen! Restarted container has same PID ($output) as killed one!"
+                fi
+                break
+            fi
+            sleep 0.5
+            retries=$((retries - 1))
+            if [[ $retries -eq 0 ]]; then
+                die "Timed out waiting for container to restart"
+            fi
+        done
+
+        # Verify http contents again: curl from localhost
+        # Use retry since it can take a moment until the new container is ready
+        run curl --retry 2 -s $SERVER/index.txt
+        is "$output" "$random_1" "curl 127.0.0.1:/index.txt after auto restart"
+
+        run_podman restart $cid
+        # Verify http contents again: curl from localhost
+        # Use retry since it can take a moment until the new container is ready
+        run curl --retry 2 -s $SERVER/index.txt
+        is "$output" "$random_1" "curl 127.0.0.1:/index.txt after podman restart"
+
+        run_podman rm -t 0 -f $cid
+    done
+
+    # Cleanup network
+    run_podman network rm -t 0 -f $netname
+}
+
+@test "podman run CONTAINERS_CONF dns options" {
+    skip_if_remote "CONTAINERS_CONF redirect does not work on remote"
+    # Test on the CLI and via containers.conf
+    containersconf=$PODMAN_TMPDIR/containers.conf
+
+    searchIP="100.100.100.100"
+    cat >$containersconf <<EOF
+[containers]
+  dns_searches  = [ "example.com"]
+  dns_servers = [
+    "1.1.1.1",
+    "$searchIP",
+    "1.0.0.1",
+    "8.8.8.8",
+]
+EOF
+
+    local nl="
+"
+
+    CONTAINERS_CONF=$containersconf run_podman run --rm $IMAGE cat /etc/resolv.conf
+    is "$output" "search example.com$nl.*" "correct seach domain"
+    is "$output" ".*nameserver 1.1.1.1${nl}nameserver $searchIP${nl}nameserver 1.0.0.1${nl}nameserver 8.8.8.8" "nameserver order is correct"
+
+    # create network with dns
+    local netname=testnet-$(random_string 10)
+    local subnet=$(random_rfc1918_subnet)
+    run_podman network create --subnet "$subnet.0/24"  $netname
+    # custom server overwrites the network dns server
+    CONTAINERS_CONF=$containersconf run_podman run --network $netname --rm $IMAGE cat /etc/resolv.conf
+    is "$output" "search example.com$nl.*" "correct seach domain"
+    is "$output" ".*nameserver 1.1.1.1${nl}nameserver $searchIP${nl}nameserver 1.0.0.1${nl}nameserver 8.8.8.8" "nameserver order is correct"
+
+    # we should use the integrated dns server
+    run_podman run --network $netname --rm $IMAGE cat /etc/resolv.conf
+    is "$output" "search dns.podman.*" "correct seach domain"
+    is "$output" ".*nameserver $subnet.1.*" "integrated dns nameserver is set"
 }
 
 @test "podman network after restart" {

@@ -4,12 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/containers/podman/v3/libpod/events"
-	. "github.com/containers/podman/v3/test/utils"
+	"github.com/containers/podman/v4/libpod/events"
+	. "github.com/containers/podman/v4/test/utils"
 	"github.com/containers/storage/pkg/stringid"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -62,12 +61,12 @@ var _ = Describe("Podman events", func() {
 		result := podmanTest.Podman([]string{"events", "--stream=false", "--filter", "event=start"})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
-		Expect(len(result.OutputToStringArray()) >= 1)
+		Expect(len(result.OutputToStringArray())).To(BeNumerically(">=", 1), "Number of events")
+		date := time.Now().Format("2006-01-02")
+		Expect(result.OutputToStringArray()).To(ContainElement(HavePrefix(date)), "event log has correct timestamp")
 	})
 
 	It("podman events with an event filter and container=cid", func() {
-		Skip("Does not work on v2")
-		SkipIfNotFedora()
 		_, ec, cid := podmanTest.RunLsContainer("")
 		Expect(ec).To(Equal(0))
 		_, ec2, cid2 := podmanTest.RunLsContainer("")
@@ -76,8 +75,10 @@ var _ = Describe("Podman events", func() {
 		result := podmanTest.Podman([]string{"events", "--stream=false", "--filter", "event=start", "--filter", fmt.Sprintf("container=%s", cid)})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
-		Expect(len(result.OutputToStringArray())).To(Equal(1))
-		Expect(!strings.Contains(result.OutputToString(), cid2))
+		events := result.OutputToStringArray()
+		Expect(events).To(HaveLen(1), "number of events")
+		Expect(events[0]).To(ContainSubstring(cid), "event log includes CID")
+		Expect(events[0]).To(Not(ContainSubstring(cid2)), "event log does not include second CID")
 	})
 
 	It("podman events with a type and filter container=id", func() {
@@ -87,7 +88,7 @@ var _ = Describe("Podman events", func() {
 		result := podmanTest.Podman([]string{"events", "--stream=false", "--filter", "type=pod", "--filter", fmt.Sprintf("container=%s", cid)})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
-		Expect(len(result.OutputToStringArray())).To(Equal(0))
+		Expect(result.OutputToStringArray()).To(BeEmpty())
 	})
 
 	It("podman events with a type", func() {
@@ -101,8 +102,12 @@ var _ = Describe("Podman events", func() {
 		result := podmanTest.Podman([]string{"events", "--stream=false", "--filter", "type=pod", "--filter", "pod=foobarpod"})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
-		fmt.Println(result.OutputToStringArray())
-		Expect(len(result.OutputToStringArray()) >= 2)
+		events := result.OutputToStringArray()
+		fmt.Println(events)
+		Expect(len(events)).To(BeNumerically(">=", 2), "Number of events")
+		Expect(events).To(ContainElement(ContainSubstring(" pod create ")))
+		Expect(events).To(ContainElement(ContainSubstring(" pod stop ")))
+		Expect(events).To(ContainElement(ContainSubstring("name=foobarpod")))
 	})
 
 	It("podman events --since", func() {
@@ -199,4 +204,17 @@ var _ = Describe("Podman events", func() {
 
 		wg.Wait()
 	})
+
+	It("podman events pod creation", func() {
+		create := podmanTest.Podman([]string{"pod", "create", "--infra=false", "--name", "foobarpod"})
+		create.WaitWithDefaultTimeout()
+		Expect(create).Should(Exit(0))
+		id := create.OutputToString()
+		result := podmanTest.Podman([]string{"events", "--stream=false", "--filter", "pod=" + id})
+		result.WaitWithDefaultTimeout()
+		Expect(result).Should(Exit(0))
+		Expect(result.OutputToStringArray()).To(HaveLen(1))
+		Expect(result.OutputToString()).To(ContainSubstring("create"))
+	})
+
 })

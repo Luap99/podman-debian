@@ -1,4 +1,4 @@
-package test_bindings
+package bindings_test
 
 import (
 	"context"
@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containers/podman/v3/libpod/define"
-	. "github.com/containers/podman/v3/pkg/bindings"
-	"github.com/containers/podman/v3/pkg/bindings/containers"
-	"github.com/containers/podman/v3/pkg/specgen"
+	"github.com/containers/podman/v4/libpod/define"
+	. "github.com/containers/podman/v4/pkg/bindings"
+	"github.com/containers/podman/v4/pkg/bindings/containers"
+	"github.com/containers/podman/v4/pkg/specgen"
 	"github.com/onsi/ginkgo"
 	"github.com/onsi/gomega/gexec"
 	"github.com/pkg/errors"
@@ -51,7 +51,7 @@ var (
 		shortName:   "busybox",
 		tarballName: "busybox.tar",
 	}
-	CACHE_IMAGES = []testImage{alpine, busybox}
+	CACHE_IMAGES = []testImage{alpine, busybox} //nolint:golint,stylecheck
 )
 
 type bindingTest struct {
@@ -86,7 +86,7 @@ func (b *bindingTest) runPodman(command []string) *gexec.Session {
 	}
 	val, ok = os.LookupEnv("CNI_CONFIG_DIR")
 	if ok {
-		cmd = append(cmd, "--cni-config-dir", val)
+		cmd = append(cmd, "--network-config-dir", val)
 	}
 	val, ok = os.LookupEnv("CONMON")
 	if ok {
@@ -151,7 +151,7 @@ func createTempDirInTempDir() (string, error) {
 }
 
 func (b *bindingTest) startAPIService() *gexec.Session {
-	cmd := []string{"--log-level=debug", "--events-backend=file", "system", "service", "--timeout=0", b.sock}
+	cmd := []string{"--log-level=debug", "system", "service", "--timeout=0", b.sock}
 	session := b.runPodman(cmd)
 
 	sock := strings.TrimPrefix(b.sock, "unix://")

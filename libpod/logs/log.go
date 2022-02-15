@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/containers/podman/v3/libpod/logs/reversereader"
+	"github.com/containers/podman/v4/libpod/logs/reversereader"
 	"github.com/hpcloud/tail"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -259,6 +259,6 @@ func (l *LogLine) Write(stdout io.Writer, stderr io.Writer, logOpts *LogOptions)
 		}
 	default:
 		// Warn the user if the device type does not match. Most likely the file is corrupted.
-		logrus.Warnf("unknown Device type '%s' in log file from Container %s", l.Device, l.CID)
+		logrus.Warnf("Unknown Device type '%s' in log file from Container %s", l.Device, l.CID)
 	}
 }

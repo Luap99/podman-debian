@@ -22,7 +22,7 @@ Print usage statement
 ## EXAMPLES
 
 ```
-$ gunzip -c hellow.tar.gz | podman volume import myvol -
+$ gunzip -c hello.tar.gz | podman volume import myvol -
 ```
 ```
 $ podman volume import myvol test.tar
@@ -32,4 +32,4 @@ $ podman volume export myvol | podman volume import oldmyvol -
 ```
 
 ## SEE ALSO
-podman-volume(1), podman-volume-export(1)
+**[podman(1)](podman.1.md)**, **[podman-volume(1)](podman-volume.1.md)**, **[podman-volume-export(1)](podman-volume-export.1.md)**

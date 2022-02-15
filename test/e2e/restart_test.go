@@ -4,7 +4,7 @@ import (
 	"os"
 	"time"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -154,8 +154,8 @@ var _ = Describe("Podman restart", func() {
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		timeSince := time.Since(startTime)
-		Expect(timeSince < 10*time.Second).To(BeTrue())
-		Expect(timeSince > 2*time.Second).To(BeTrue())
+		Expect(timeSince).To(BeNumerically("<", 10*time.Second))
+		Expect(timeSince).To(BeNumerically(">", 2*time.Second))
 	})
 
 	It("Podman restart --all", func() {

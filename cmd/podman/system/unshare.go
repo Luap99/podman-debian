@@ -5,11 +5,12 @@ import (
 	"os/exec"
 
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/rootless"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/rootless"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 var (
@@ -34,7 +35,14 @@ func init() {
 	})
 	flags := unshareCommand.Flags()
 	flags.SetInterspersed(false)
-	flags.BoolVar(&unshareOptions.RootlessCNI, "rootless-cni", false, "Join the rootless network namespace used for CNI networking")
+	flags.BoolVar(&unshareOptions.RootlessNetNS, "rootless-netns", false, "Join the rootless network namespace used for CNI and netavark networking")
+	// backwards compat still allow --rootless-cni
+	flags.SetNormalizeFunc(func(f *pflag.FlagSet, name string) pflag.NormalizedName {
+		if name == "rootless-cni" {
+			name = "rootless-netns"
+		}
+		return pflag.NormalizedName(name)
+	})
 }
 
 func unshare(cmd *cobra.Command, args []string) error {

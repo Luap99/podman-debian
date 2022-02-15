@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/containers/common/libnetwork/types"
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/utils"
-	"github.com/cri-o/ocicni/pkg/ocicni"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/utils"
 	"github.com/fsnotify/fsnotify"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/selinux/go-selinux/label"
@@ -56,6 +56,7 @@ func WaitForFile(path string, chWait chan error, timeout time.Duration) (bool, e
 			inotifyEvents = watcher.Events
 		}
 		defer watcher.Close()
+		defer watcher.Remove(filepath.Dir(path))
 	}
 
 	var timeoutChan <-chan time.Time
@@ -149,6 +150,10 @@ func queryPackageVersion(cmdArg ...string) string {
 		if outp, err := cmd.Output(); err == nil {
 			output = string(outp)
 		}
+		if cmdArg[0] == "/sbin/apk" {
+			prefix := cmdArg[len(cmdArg)-1] + " is owned by "
+			output = strings.Replace(output, prefix, "", 1)
+		}
 	}
 	return strings.Trim(output, "\n")
 }
@@ -156,10 +161,11 @@ func queryPackageVersion(cmdArg ...string) string {
 func packageVersion(program string) string { // program is full path
 	packagers := [][]string{
 		{"/usr/bin/rpm", "-q", "-f"},
-		{"/usr/bin/dpkg", "-S"},    // Debian, Ubuntu
-		{"/usr/bin/pacman", "-Qo"}, // Arch
-		{"/usr/bin/qfile", "-qv"},  // Gentoo (quick)
-		{"/usr/bin/equery", "b"},   // Gentoo (slow)
+		{"/usr/bin/dpkg", "-S"},     // Debian, Ubuntu
+		{"/usr/bin/pacman", "-Qo"},  // Arch
+		{"/usr/bin/qfile", "-qv"},   // Gentoo (quick)
+		{"/usr/bin/equery", "b"},    // Gentoo (slow)
+		{"/sbin/apk", "info", "-W"}, // Alpine
 	}
 
 	for _, cmd := range packagers {
@@ -240,14 +246,14 @@ func hijackWriteError(toWrite error, cid string, terminal bool, httpBuf *bufio.R
 			// We need a header.
 			header := makeHTTPAttachHeader(2, uint32(len(errString)))
 			if _, err := httpBuf.Write(header); err != nil {
-				logrus.Errorf("Error writing header for container %s attach connection error: %v", cid, err)
+				logrus.Errorf("Writing header for container %s attach connection error: %v", cid, err)
 			}
 		}
 		if _, err := httpBuf.Write(errString); err != nil {
-			logrus.Errorf("Error writing error to container %s HTTP attach connection: %v", cid, err)
+			logrus.Errorf("Writing error to container %s HTTP attach connection: %v", cid, err)
 		}
 		if err := httpBuf.Flush(); err != nil {
-			logrus.Errorf("Error flushing HTTP buffer for container %s HTTP attach connection: %v", cid, err)
+			logrus.Errorf("Flushing HTTP buffer for container %s HTTP attach connection: %v", cid, err)
 		}
 	}
 }
@@ -259,7 +265,7 @@ func hijackWriteErrorAndClose(toWrite error, cid string, terminal bool, httpCon 
 	hijackWriteError(toWrite, cid, terminal, httpBuf)
 
 	if err := httpCon.Close(); err != nil {
-		logrus.Errorf("Error closing container %s HTTP attach connection: %v", cid, err)
+		logrus.Errorf("Closing container %s HTTP attach connection: %v", cid, err)
 	}
 }
 
@@ -295,19 +301,21 @@ func writeHijackHeader(r *http.Request, conn io.Writer) {
 }
 
 // Convert OCICNI port bindings into Inspect-formatted port bindings.
-func makeInspectPortBindings(bindings []ocicni.PortMapping, expose map[uint16][]string) map[string][]define.InspectHostPort {
-	portBindings := make(map[string][]define.InspectHostPort, len(bindings))
+func makeInspectPortBindings(bindings []types.PortMapping, expose map[uint16][]string) map[string][]define.InspectHostPort {
+	portBindings := make(map[string][]define.InspectHostPort)
 	for _, port := range bindings {
-		key := fmt.Sprintf("%d/%s", port.ContainerPort, port.Protocol)
-		hostPorts := portBindings[key]
-		if hostPorts == nil {
-			hostPorts = []define.InspectHostPort{}
+		protocols := strings.Split(port.Protocol, ",")
+		for _, protocol := range protocols {
+			for i := uint16(0); i < port.Range; i++ {
+				key := fmt.Sprintf("%d/%s", port.ContainerPort+i, protocol)
+				hostPorts := portBindings[key]
+				hostPorts = append(hostPorts, define.InspectHostPort{
+					HostIP:   port.HostIP,
+					HostPort: fmt.Sprintf("%d", port.HostPort+i),
+				})
+				portBindings[key] = hostPorts
+			}
 		}
-		hostPorts = append(hostPorts, define.InspectHostPort{
-			HostIP:   port.HostIP,
-			HostPort: fmt.Sprintf("%d", port.HostPort),
-		})
-		portBindings[key] = hostPorts
 	}
 	// add exposed ports without host port information to match docker
 	for port, protocols := range expose {

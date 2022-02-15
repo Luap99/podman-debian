@@ -4,7 +4,7 @@ import (
 	"io/ioutil"
 	"os"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -52,7 +52,7 @@ var _ = Describe("Podman run cpu", func() {
 		}
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
-		Expect(result.LineInOutputContains("5000")).To(BeTrue())
+		Expect(result.OutputToString()).To(ContainSubstring("5000"))
 	})
 
 	It("podman run cpu-quota", func() {
@@ -65,7 +65,7 @@ var _ = Describe("Podman run cpu", func() {
 		}
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
-		Expect(result.LineInOutputContains("5000")).To(BeTrue())
+		Expect(result.OutputToString()).To(ContainSubstring("5000"))
 	})
 
 	It("podman run cpus", func() {

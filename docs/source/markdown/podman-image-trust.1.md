@@ -8,7 +8,7 @@ podman\-image\-trust - Manage container registry image trust policy
 **podman image trust** set|show [*options*] *registry[/repository]*
 
 ## DESCRIPTION
-Manages which registries you trust as a source of container images  based on its location. (This option is not available with the remote Podman client)
+Manages which registries you trust as a source of container images  based on its location. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
 
 The location is determined
 by the transport and the registry host of the image.  Using this container image `docker://docker.io/library/busybox`
@@ -85,8 +85,7 @@ Display trust as JSON
    sudo podman image trust show --json
 
 ## SEE ALSO
-
-containers-policy.json(5)
+**[containers-policy.json(5)](https://github.com/containers/image/blob/main/docs/containers-policy.json.5.md)**
 
 ## HISTORY
 January 2019, updated by Tom Sweeney (tsweeney at redhat dot com)

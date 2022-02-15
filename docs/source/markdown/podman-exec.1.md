@@ -30,14 +30,14 @@ command to be executed.
 
 Read in a line delimited file of environment variables.
 
-#### **--interactive**, **-i**=*true|false*
+#### **--interactive**, **-i**
 
 When set to true, keep stdin open even if not attached. The default is *false*.
 
 #### **--latest**, **-l**
 
 Instead of providing the container name or ID, use the last created container. If you use methods other than Podman
-to run containers such as CRI-O, the last started container could be from either of those methods. (This option is not available with the remote Podman client)
+to run containers such as CRI-O, the last started container could be from either of those methods. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
 
 #### **--preserve-fds**=*N*
 
@@ -114,7 +114,7 @@ $ podman exec --user root ctrID ls
 ```
 
 ## SEE ALSO
-podman(1), podman-run(1)
+**[podman(1)](podman.1.md)**, **[podman-run(1)](podman-run.1.md)**
 
 ## HISTORY
 December 2017, Originally compiled by Brent Baude<bbaude@redhat.com>

@@ -3,10 +3,11 @@ package libpod
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/libpod/lock"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/libpod/lock"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 )
@@ -42,9 +43,9 @@ type PodConfig struct {
 
 	// Labels contains labels applied to the pod
 	Labels map[string]string `json:"labels"`
-	// CgroupParent contains the pod's CGroup parent
+	// CgroupParent contains the pod's Cgroup parent
 	CgroupParent string `json:"cgroupParent"`
-	// UsePodCgroup indicates whether the pod will create its own CGroup and
+	// UsePodCgroup indicates whether the pod will create its own Cgroup and
 	// join containers to it.
 	// If true, all containers joined to the pod will use the pod cgroup as
 	// their cgroup parent, and cannot set a different cgroup parent
@@ -75,7 +76,7 @@ type PodConfig struct {
 
 // podState represents a pod's state
 type podState struct {
-	// CgroupPath is the path to the pod's CGroup
+	// CgroupPath is the path to the pod's Cgroup
 	CgroupPath string `json:"cgroupPath"`
 	// InfraContainerID is the container that holds pod namespace information
 	// Most often an infra container
@@ -140,6 +141,21 @@ func (p *Pod) UserNSMode() string {
 	return ""
 }
 
+// CPUQuota returns the pod CPU quota
+func (p *Pod) VolumesFrom() []string {
+	if p.state.InfraContainerID == "" {
+		return nil
+	}
+	infra, err := p.runtime.GetContainer(p.state.InfraContainerID)
+	if err != nil {
+		return nil
+	}
+	if ctrs, ok := infra.config.Spec.Annotations[define.InspectAnnotationVolumesFrom]; ok {
+		return strings.Split(ctrs, ",")
+	}
+	return nil
+}
+
 // Labels returns the pod's labels
 func (p *Pod) Labels() map[string]string {
 	labels := make(map[string]string)
@@ -161,7 +177,7 @@ func (p *Pod) CreateCommand() []string {
 	return p.config.CreateCommand
 }
 
-// CgroupParent returns the pod's CGroup parent
+// CgroupParent returns the pod's Cgroup parent
 func (p *Pod) CgroupParent() string {
 	return p.config.CgroupParent
 }
@@ -213,12 +229,41 @@ func (p *Pod) Hostname() string {
 	return p.config.Hostname
 }
 
-// CgroupPath returns the path to the pod's CGroup
+// CgroupPath returns the path to the pod's Cgroup
 func (p *Pod) CgroupPath() (string, error) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	if err := p.updatePod(); err != nil {
 		return "", err
+	}
+	if p.state.CgroupPath != "" {
+		return p.state.CgroupPath, nil
+	}
+	if p.state.InfraContainerID == "" {
+		return "", errors.Wrap(define.ErrNoSuchCtr, "pod has no infra container")
+	}
+
+	id, err := p.infraContainerID()
+	if err != nil {
+		return "", err
+	}
+
+	if id != "" {
+		ctr, err := p.infraContainer()
+		if err != nil {
+			return "", errors.Wrapf(err, "could not get infra")
+		}
+		if ctr != nil {
+			ctr.Start(context.Background(), true)
+			cgroupPath, err := ctr.CgroupPath()
+			fmt.Println(cgroupPath)
+			if err != nil {
+				return "", errors.Wrapf(err, "could not get container cgroup")
+			}
+			p.state.CgroupPath = cgroupPath
+			p.save()
+			return cgroupPath, nil
+		}
 	}
 	return p.state.CgroupPath, nil
 }
@@ -285,7 +330,7 @@ func (p *Pod) InfraContainerID() (string, error) {
 	return p.infraContainerID()
 }
 
-// infraContainer is the unlocked versio of InfraContainer which returns the infra container
+// infraContainer is the unlocked version of InfraContainer which returns the infra container
 func (p *Pod) infraContainer() (*Container, error) {
 	id, err := p.infraContainerID()
 	if err != nil {

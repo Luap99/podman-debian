@@ -2,23 +2,19 @@ package compat
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
-	"os"
-	"strings"
-	"syscall"
-	"time"
 
-	"github.com/containernetworking/cni/libcni"
-	"github.com/containers/podman/v3/libpod"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/libpod/network"
-	"github.com/containers/podman/v3/pkg/api/handlers/utils"
-	api "github.com/containers/podman/v3/pkg/api/types"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/domain/infra/abi"
-	networkid "github.com/containers/podman/v3/pkg/network"
-	"github.com/containers/podman/v3/pkg/util"
+	nettypes "github.com/containers/common/libnetwork/types"
+	netutil "github.com/containers/common/libnetwork/util"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v4/pkg/api/types"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/domain/infra/abi"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/docker/docker/api/types"
 
 	dockerNetwork "github.com/docker/docker/api/types/network"
@@ -26,12 +22,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
-
-type pluginInterface struct {
-	PluginType string             `json:"type"`
-	IPAM       network.IPAMConfig `json:"ipam"`
-	IsGW       bool               `json:"isGateway"`
-}
 
 func InspectNetwork(w http.ResponseWriter, r *http.Request) {
 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
@@ -46,26 +36,21 @@ func InspectNetwork(w http.ResponseWriter, r *http.Request) {
 	}
 	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	if err := decoder.Decode(&query, r.URL.Query()); err != nil {
-		utils.Error(w, "Something went wrong.", http.StatusBadRequest, errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
+		utils.Error(w, http.StatusBadRequest, errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
 		return
 	}
 
 	if query.scope != "local" {
-		utils.Error(w, "Invalid scope value. Can only be local.", http.StatusBadRequest, define.ErrInvalidArg)
-		return
-	}
-	config, err := runtime.GetConfig()
-	if err != nil {
-		utils.InternalServerError(w, err)
+		utils.Error(w, http.StatusBadRequest, define.ErrInvalidArg)
 		return
 	}
 	name := utils.GetName(r)
-	_, err = network.InspectNetwork(config, name)
+	net, err := runtime.Network().NetworkInspect(name)
 	if err != nil {
 		utils.NetworkNotFound(w, name, err)
 		return
 	}
-	report, err := getNetworkResourceByNameOrID(name, runtime, nil)
+	report, err := convertLibpodNetworktoDockerNetwork(runtime, net)
 	if err != nil {
 		utils.InternalServerError(w, err)
 		return
@@ -73,234 +58,193 @@ func InspectNetwork(w http.ResponseWriter, r *http.Request) {
 	utils.WriteResponse(w, http.StatusOK, report)
 }
 
-func getNetworkResourceByNameOrID(nameOrID string, runtime *libpod.Runtime, filters map[string][]string) (*types.NetworkResource, error) {
-	var (
-		ipamConfigs []dockerNetwork.IPAMConfig
-	)
-	config, err := runtime.GetConfig()
-	if err != nil {
-		return nil, err
-	}
-	containerEndpoints := map[string]types.EndpointResource{}
-	// Get the network path so we can get created time
-	networkConfigPath, err := network.GetCNIConfigPathByNameOrID(config, nameOrID)
-	if err != nil {
-		return nil, err
-	}
-	f, err := os.Stat(networkConfigPath)
-	if err != nil {
-		return nil, err
-	}
-	stat := f.Sys().(*syscall.Stat_t)
+func convertLibpodNetworktoDockerNetwork(runtime *libpod.Runtime, network nettypes.Network) (*types.NetworkResource, error) {
 	cons, err := runtime.GetAllContainers()
 	if err != nil {
 		return nil, err
 	}
-	conf, err := libcni.ConfListFromFile(networkConfigPath)
-	if err != nil {
-		return nil, err
-	}
-	if len(filters) > 0 {
-		ok, err := network.IfPassesFilter(conf, filters)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			// do not return the config if we did not match the filter
-			return nil, nil
-		}
-	}
-
-	plugin, err := getPlugin(conf.Plugins)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, outer := range plugin.IPAM.Ranges {
-		for _, n := range outer {
-			ipamConfig := dockerNetwork.IPAMConfig{
-				Subnet:  n.Subnet,
-				Gateway: n.Gateway,
-			}
-			ipamConfigs = append(ipamConfigs, ipamConfig)
-		}
-	}
-
+	containerEndpoints := make(map[string]types.EndpointResource, len(cons))
 	for _, con := range cons {
 		data, err := con.Inspect(false)
 		if err != nil {
 			return nil, err
 		}
-		if netData, ok := data.NetworkSettings.Networks[conf.Name]; ok {
+		if netData, ok := data.NetworkSettings.Networks[network.Name]; ok {
+			ipv4Address := ""
+			if netData.IPAddress != "" {
+				ipv4Address = fmt.Sprintf("%s/%d", netData.IPAddress, netData.IPPrefixLen)
+			}
+			ipv6Address := ""
+			if netData.GlobalIPv6Address != "" {
+				ipv6Address = fmt.Sprintf("%s/%d", netData.GlobalIPv6Address, netData.GlobalIPv6PrefixLen)
+			}
 			containerEndpoint := types.EndpointResource{
-				Name:        netData.NetworkID,
+				Name:        con.Name(),
 				EndpointID:  netData.EndpointID,
 				MacAddress:  netData.MacAddress,
-				IPv4Address: netData.IPAddress,
-				IPv6Address: netData.GlobalIPv6Address,
+				IPv4Address: ipv4Address,
+				IPv6Address: ipv6Address,
 			}
 			containerEndpoints[con.ID()] = containerEndpoint
 		}
 	}
-
-	labels := network.GetNetworkLabels(conf)
-	if labels == nil {
-		labels = map[string]string{}
+	ipamConfigs := make([]dockerNetwork.IPAMConfig, 0, len(network.Subnets))
+	for _, sub := range network.Subnets {
+		ipamConfig := dockerNetwork.IPAMConfig{
+			Subnet:  sub.Subnet.String(),
+			Gateway: sub.Gateway.String(),
+			// TODO add range
+		}
+		ipamConfigs = append(ipamConfigs, ipamConfig)
 	}
-
-	isInternal := false
-	dockerDriver := plugin.PluginType
-	if plugin.PluginType == network.DefaultNetworkDriver {
-		isInternal = !plugin.IsGW
-		dockerDriver = "default"
+	ipamDriver := network.IPAMOptions["driver"]
+	if ipamDriver == nettypes.HostLocalIPAMDriver {
+		ipamDriver = "default"
+	}
+	ipam := dockerNetwork.IPAM{
+		Driver:  ipamDriver,
+		Options: network.IPAMOptions,
+		Config:  ipamConfigs,
 	}
 
 	report := types.NetworkResource{
-		Name:       conf.Name,
-		ID:         networkid.GetNetworkID(conf.Name),
-		Created:    time.Unix(int64(stat.Ctim.Sec), int64(stat.Ctim.Nsec)), // nolint: unconvert
+		Name:   network.Name,
+		ID:     network.ID,
+		Driver: network.Driver,
+		// TODO add Created: ,
+		Internal:   network.Internal,
+		EnableIPv6: network.IPv6Enabled,
+		Labels:     network.Labels,
+		Options:    network.Options,
+		IPAM:       ipam,
 		Scope:      "local",
-		Driver:     plugin.PluginType,
-		EnableIPv6: false,
-		IPAM: dockerNetwork.IPAM{
-			Driver:  dockerDriver,
-			Options: map[string]string{},
-			Config:  ipamConfigs,
-		},
-		Internal:   isInternal,
 		Attachable: false,
 		Ingress:    false,
 		ConfigFrom: dockerNetwork.ConfigReference{},
 		ConfigOnly: false,
 		Containers: containerEndpoints,
-		Options:    map[string]string{},
-		Labels:     labels,
 		Peers:      nil,
 		Services:   nil,
 	}
 	return &report, nil
 }
 
-func getPlugin(plugins []*libcni.NetworkConfig) (pluginInterface, error) {
-	var plugin pluginInterface
-
-	for _, p := range plugins {
-		for _, pluginType := range network.SupportedNetworkDrivers {
-			if pluginType == p.Network.Type {
-				err := json.Unmarshal(p.Bytes, &plugin)
-				return plugin, err
-			}
-		}
-	}
-
-	return plugin, errors.New("unable to find supported plugin")
-}
-
 func ListNetworks(w http.ResponseWriter, r *http.Request) {
 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	filterMap, err := util.PrepareFilters(r)
 	if err != nil {
-		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
+		utils.Error(w, http.StatusInternalServerError, errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
 		return
 	}
 
-	config, err := runtime.GetConfig()
+	options := entities.NetworkListOptions{
+		Filters: *filterMap,
+	}
+
+	ic := abi.ContainerEngine{Libpod: runtime}
+	nets, err := ic.NetworkList(r.Context(), options)
 	if err != nil {
 		utils.InternalServerError(w, err)
 		return
 	}
-
-	netNames, err := network.GetNetworkNamesFromFileSystem(config)
-	if err != nil {
-		utils.InternalServerError(w, err)
-		return
-	}
-
-	reports := []*types.NetworkResource{}
-	logrus.Debugf("netNames: %q", strings.Join(netNames, ", "))
-	for _, name := range netNames {
-		report, err := getNetworkResourceByNameOrID(name, runtime, *filterMap)
+	reports := make([]*types.NetworkResource, 0, len(nets))
+	for _, net := range nets {
+		report, err := convertLibpodNetworktoDockerNetwork(runtime, net)
 		if err != nil {
 			utils.InternalServerError(w, err)
 			return
 		}
-		if report != nil {
-			reports = append(reports, report)
-		}
+		reports = append(reports, report)
 	}
 	utils.WriteResponse(w, http.StatusOK, reports)
 }
 
 func CreateNetwork(w http.ResponseWriter, r *http.Request) {
 	var (
-		name          string
 		networkCreate types.NetworkCreateRequest
+		network       nettypes.Network
 	)
 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	if err := json.NewDecoder(r.Body).Decode(&networkCreate); err != nil {
-		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrap(err, "Decode()"))
+		utils.Error(w, http.StatusInternalServerError, errors.Wrap(err, "Decode()"))
 		return
 	}
 
-	if len(networkCreate.Name) > 0 {
-		name = networkCreate.Name
+	network.Name = networkCreate.Name
+	if networkCreate.Driver == "" {
+		networkCreate.Driver = nettypes.DefaultNetworkDriver
 	}
-	if len(networkCreate.Driver) < 1 {
-		networkCreate.Driver = network.DefaultNetworkDriver
+	network.Driver = networkCreate.Driver
+	network.Labels = networkCreate.Labels
+	network.Internal = networkCreate.Internal
+	network.IPv6Enabled = networkCreate.EnableIPv6
+
+	// FIXME use docker options and convert them to valid libpod options
+	// network.Options = networkCreate.Options
+
+	// dns is only enabled for the bridge driver
+	if network.Driver == nettypes.BridgeNetworkDriver {
+		network.DNSEnabled = true
 	}
-	// At present I think we should just support the bridge driver
-	// and allow demand to make us consider more
-	if networkCreate.Driver != network.DefaultNetworkDriver {
-		utils.InternalServerError(w, errors.New("network create only supports the bridge driver"))
-		return
-	}
-	ncOptions := entities.NetworkCreateOptions{
-		Driver:   network.DefaultNetworkDriver,
-		Internal: networkCreate.Internal,
-		Labels:   networkCreate.Labels,
-	}
+
 	if networkCreate.IPAM != nil && len(networkCreate.IPAM.Config) > 0 {
-		if len(networkCreate.IPAM.Config) > 1 {
-			utils.InternalServerError(w, errors.New("compat network create can only support one IPAM config"))
-			return
-		}
-
-		if len(networkCreate.IPAM.Config[0].Subnet) > 0 {
-			_, subnet, err := net.ParseCIDR(networkCreate.IPAM.Config[0].Subnet)
-			if err != nil {
-				utils.InternalServerError(w, err)
-				return
+		for _, conf := range networkCreate.IPAM.Config {
+			s := nettypes.Subnet{}
+			if len(conf.Subnet) > 0 {
+				var err error
+				subnet, err := nettypes.ParseCIDR(conf.Subnet)
+				if err != nil {
+					utils.InternalServerError(w, errors.Wrap(err, "failed to parse subnet"))
+					return
+				}
+				s.Subnet = subnet
 			}
-			ncOptions.Subnet = *subnet
-		}
-		if len(networkCreate.IPAM.Config[0].Gateway) > 0 {
-			ncOptions.Gateway = net.ParseIP(networkCreate.IPAM.Config[0].Gateway)
-		}
-		if len(networkCreate.IPAM.Config[0].IPRange) > 0 {
-			_, IPRange, err := net.ParseCIDR(networkCreate.IPAM.Config[0].IPRange)
-			if err != nil {
-				utils.InternalServerError(w, err)
-				return
+			if len(conf.Gateway) > 0 {
+				gw := net.ParseIP(conf.Gateway)
+				if gw == nil {
+					utils.InternalServerError(w, errors.Errorf("failed to parse gateway ip %s", conf.Gateway))
+					return
+				}
+				s.Gateway = gw
 			}
-			ncOptions.Range = *IPRange
+			if len(conf.IPRange) > 0 {
+				_, net, err := net.ParseCIDR(conf.IPRange)
+				if err != nil {
+					utils.InternalServerError(w, errors.Wrap(err, "failed to parse ip range"))
+					return
+				}
+				startIP, err := netutil.FirstIPInSubnet(net)
+				if err != nil {
+					utils.InternalServerError(w, errors.Wrap(err, "failed to get first ip in range"))
+					return
+				}
+				lastIP, err := netutil.LastIPInSubnet(net)
+				if err != nil {
+					utils.InternalServerError(w, errors.Wrap(err, "failed to get last ip in range"))
+					return
+				}
+				s.LeaseRange = &nettypes.LeaseRange{
+					StartIP: startIP,
+					EndIP:   lastIP,
+				}
+			}
+			network.Subnets = append(network.Subnets, s)
 		}
-	}
-	ce := abi.ContainerEngine{Libpod: runtime}
-	if _, err := ce.NetworkCreate(r.Context(), name, ncOptions); err != nil {
-		utils.InternalServerError(w, err)
-		return
+		// FIXME can we use the IPAM driver and options?
 	}
 
-	net, err := getNetworkResourceByNameOrID(name, runtime, nil)
+	ic := abi.ContainerEngine{Libpod: runtime}
+	newNetwork, err := ic.NetworkCreate(r.Context(), network)
 	if err != nil {
 		utils.InternalServerError(w, err)
 		return
 	}
+
 	body := struct {
 		ID      string `json:"Id"`
 		Warning []string
 	}{
-		ID: net.ID,
+		ID: newNetwork.ID,
 	}
 	utils.WriteResponse(w, http.StatusCreated, body)
 }
@@ -310,35 +254,37 @@ func RemoveNetwork(w http.ResponseWriter, r *http.Request) {
 	ic := abi.ContainerEngine{Libpod: runtime}
 
 	query := struct {
-		Force bool `schema:"force"`
+		Force   bool  `schema:"force"`
+		Timeout *uint `schema:"timeout"`
 	}{
 		// This is where you can override the golang default value for one of fields
 	}
 
 	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	if err := decoder.Decode(&query, r.URL.Query()); err != nil {
-		utils.Error(w, "Something went wrong.", http.StatusBadRequest, errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
+		utils.Error(w, http.StatusBadRequest, errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
 		return
 	}
 
 	options := entities.NetworkRmOptions{
-		Force: query.Force,
+		Force:   query.Force,
+		Timeout: query.Timeout,
 	}
 
 	name := utils.GetName(r)
 	reports, err := ic.NetworkRm(r.Context(), []string{name}, options)
 	if err != nil {
-		utils.Error(w, "remove Network failed", http.StatusInternalServerError, err)
+		utils.Error(w, http.StatusInternalServerError, err)
 		return
 	}
 	if len(reports) == 0 {
-		utils.Error(w, "remove Network failed", http.StatusInternalServerError, errors.Errorf("internal error"))
+		utils.Error(w, http.StatusInternalServerError, errors.Errorf("internal error"))
 		return
 	}
 	report := reports[0]
 	if report.Err != nil {
 		if errors.Cause(report.Err) == define.ErrNoSuchNetwork {
-			utils.Error(w, "network not found", http.StatusNotFound, define.ErrNoSuchNetwork)
+			utils.Error(w, http.StatusNotFound, define.ErrNoSuchNetwork)
 			return
 		}
 		utils.InternalServerError(w, report.Err)
@@ -353,30 +299,76 @@ func Connect(w http.ResponseWriter, r *http.Request) {
 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 
 	var (
-		aliases    []string
 		netConnect types.NetworkConnect
 	)
 	if err := json.NewDecoder(r.Body).Decode(&netConnect); err != nil {
-		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrap(err, "Decode()"))
+		utils.Error(w, http.StatusInternalServerError, errors.Wrap(err, "Decode()"))
 		return
 	}
+
+	netOpts := nettypes.PerNetworkOptions{}
+
 	name := utils.GetName(r)
 	if netConnect.EndpointConfig != nil {
 		if netConnect.EndpointConfig.Aliases != nil {
-			aliases = netConnect.EndpointConfig.Aliases
+			netOpts.Aliases = netConnect.EndpointConfig.Aliases
+		}
+
+		// if IP address is provided
+		if len(netConnect.EndpointConfig.IPAddress) > 0 {
+			staticIP := net.ParseIP(netConnect.EndpointConfig.IPAddress)
+			if staticIP == nil {
+				utils.Error(w, http.StatusInternalServerError,
+					errors.Errorf("failed to parse the ip address %q", netConnect.EndpointConfig.IPAddress))
+				return
+			}
+			netOpts.StaticIPs = append(netOpts.StaticIPs, staticIP)
+		}
+
+		if netConnect.EndpointConfig.IPAMConfig != nil {
+			// if IPAMConfig.IPv4Address is provided
+			if len(netConnect.EndpointConfig.IPAMConfig.IPv4Address) > 0 {
+				staticIP := net.ParseIP(netConnect.EndpointConfig.IPAMConfig.IPv4Address)
+				if staticIP == nil {
+					utils.Error(w, http.StatusInternalServerError,
+						errors.Errorf("failed to parse the ipv4 address %q", netConnect.EndpointConfig.IPAMConfig.IPv4Address))
+					return
+				}
+				netOpts.StaticIPs = append(netOpts.StaticIPs, staticIP)
+			}
+			// if IPAMConfig.IPv6Address is provided
+			if len(netConnect.EndpointConfig.IPAMConfig.IPv6Address) > 0 {
+				staticIP := net.ParseIP(netConnect.EndpointConfig.IPAMConfig.IPv6Address)
+				if staticIP == nil {
+					utils.Error(w, http.StatusInternalServerError,
+						errors.Errorf("failed to parse the ipv6 address %q", netConnect.EndpointConfig.IPAMConfig.IPv6Address))
+					return
+				}
+				netOpts.StaticIPs = append(netOpts.StaticIPs, staticIP)
+			}
+		}
+		// If MAC address is provided
+		if len(netConnect.EndpointConfig.MacAddress) > 0 {
+			staticMac, err := net.ParseMAC(netConnect.EndpointConfig.MacAddress)
+			if err != nil {
+				utils.Error(w, http.StatusInternalServerError,
+					errors.Errorf("failed to parse the mac address %q", netConnect.EndpointConfig.IPAMConfig.IPv6Address))
+				return
+			}
+			netOpts.StaticMAC = nettypes.HardwareAddr(staticMac)
 		}
 	}
-	err := runtime.ConnectContainerToNetwork(netConnect.Container, name, aliases)
+	err := runtime.ConnectContainerToNetwork(netConnect.Container, name, netOpts)
 	if err != nil {
 		if errors.Cause(err) == define.ErrNoSuchCtr {
 			utils.ContainerNotFound(w, netConnect.Container, err)
 			return
 		}
 		if errors.Cause(err) == define.ErrNoSuchNetwork {
-			utils.Error(w, "network not found", http.StatusNotFound, err)
+			utils.Error(w, http.StatusNotFound, err)
 			return
 		}
-		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, err)
+		utils.Error(w, http.StatusInternalServerError, err)
 		return
 	}
 	utils.WriteResponse(w, http.StatusOK, "OK")
@@ -388,7 +380,7 @@ func Disconnect(w http.ResponseWriter, r *http.Request) {
 
 	var netDisconnect types.NetworkDisconnect
 	if err := json.NewDecoder(r.Body).Decode(&netDisconnect); err != nil {
-		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrap(err, "Decode()"))
+		utils.Error(w, http.StatusInternalServerError, errors.Wrap(err, "Decode()"))
 		return
 	}
 
@@ -396,14 +388,14 @@ func Disconnect(w http.ResponseWriter, r *http.Request) {
 	err := runtime.DisconnectContainerFromNetwork(netDisconnect.Container, name, netDisconnect.Force)
 	if err != nil {
 		if errors.Cause(err) == define.ErrNoSuchCtr {
-			utils.Error(w, "container not found", http.StatusNotFound, err)
+			utils.Error(w, http.StatusNotFound, err)
 			return
 		}
 		if errors.Cause(err) == define.ErrNoSuchNetwork {
-			utils.Error(w, "network not found", http.StatusNotFound, err)
+			utils.Error(w, http.StatusNotFound, err)
 			return
 		}
-		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, err)
+		utils.Error(w, http.StatusInternalServerError, err)
 		return
 	}
 	utils.WriteResponse(w, http.StatusOK, "OK")
@@ -414,7 +406,7 @@ func Prune(w http.ResponseWriter, r *http.Request) {
 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	filterMap, err := util.PrepareFilters(r)
 	if err != nil {
-		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrap(err, "Decode()"))
+		utils.Error(w, http.StatusInternalServerError, errors.Wrap(err, "Decode()"))
 		return
 	}
 
@@ -424,7 +416,7 @@ func Prune(w http.ResponseWriter, r *http.Request) {
 	}
 	pruneReports, err := ic.NetworkPrune(r.Context(), pruneOptions)
 	if err != nil {
-		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, err)
+		utils.Error(w, http.StatusInternalServerError, err)
 		return
 	}
 	type response struct {

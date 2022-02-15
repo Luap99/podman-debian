@@ -8,14 +8,15 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/containers/common/libnetwork/types"
+	"github.com/containers/common/pkg/cgroups"
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/libpod/network/types"
-	"github.com/containers/podman/v3/pkg/api/handlers"
-	"github.com/containers/podman/v3/pkg/cgroups"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/rootless"
-	"github.com/containers/podman/v3/pkg/specgen"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/api/handlers"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/specgen"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/pkg/errors"
 )
@@ -155,16 +156,9 @@ func ContainerCreateToContainerCLIOpts(cc handlers.CreateContainerConfig, rtc *c
 	}
 
 	// netMode
-	nsmode, networks, err := specgen.ParseNetworkNamespace(string(cc.HostConfig.NetworkMode), true)
+	nsmode, networks, netOpts, err := specgen.ParseNetworkFlag([]string{string(cc.HostConfig.NetworkMode)})
 	if err != nil {
 		return nil, nil, err
-	}
-
-	var netOpts map[string][]string
-	parts := strings.SplitN(string(cc.HostConfig.NetworkMode), ":", 2)
-	if len(parts) > 1 {
-		netOpts = make(map[string][]string)
-		netOpts[parts[0]] = strings.Split(parts[1], ",")
 	}
 
 	// network
@@ -183,52 +177,56 @@ func ContainerCreateToContainerCLIOpts(cc handlers.CreateContainerConfig, rtc *c
 	// network names
 	switch {
 	case len(cc.NetworkingConfig.EndpointsConfig) > 0:
-		var aliases []string
-
 		endpointsConfig := cc.NetworkingConfig.EndpointsConfig
-		cniNetworks := make([]string, 0, len(endpointsConfig))
+		networks := make(map[string]types.PerNetworkOptions, len(endpointsConfig))
 		for netName, endpoint := range endpointsConfig {
-			cniNetworks = append(cniNetworks, netName)
+			netOpts := types.PerNetworkOptions{}
+			if endpoint != nil {
+				netOpts.Aliases = endpoint.Aliases
 
-			if endpoint == nil {
-				continue
-			}
-			if len(endpoint.Aliases) > 0 {
-				aliases = append(aliases, endpoint.Aliases...)
-			}
-		}
-
-		// static IP and MAC
-		if len(endpointsConfig) == 1 {
-			for _, ep := range endpointsConfig {
-				if ep == nil {
-					continue
-				}
 				// if IP address is provided
-				if len(ep.IPAddress) > 0 {
-					staticIP := net.ParseIP(ep.IPAddress)
-					netInfo.StaticIP = &staticIP
+				if len(endpoint.IPAddress) > 0 {
+					staticIP := net.ParseIP(endpoint.IPAddress)
+					if staticIP == nil {
+						return nil, nil, errors.Errorf("failed to parse the ip address %q", endpoint.IPAddress)
+					}
+					netOpts.StaticIPs = append(netOpts.StaticIPs, staticIP)
 				}
-				// if IPAMConfig.IPv4Address is provided
-				if ep.IPAMConfig != nil && ep.IPAMConfig.IPv4Address != "" {
-					staticIP := net.ParseIP(ep.IPAMConfig.IPv4Address)
-					netInfo.StaticIP = &staticIP
+
+				if endpoint.IPAMConfig != nil {
+					// if IPAMConfig.IPv4Address is provided
+					if len(endpoint.IPAMConfig.IPv4Address) > 0 {
+						staticIP := net.ParseIP(endpoint.IPAMConfig.IPv4Address)
+						if staticIP == nil {
+							return nil, nil, errors.Errorf("failed to parse the ipv4 address %q", endpoint.IPAMConfig.IPv4Address)
+						}
+						netOpts.StaticIPs = append(netOpts.StaticIPs, staticIP)
+					}
+					// if IPAMConfig.IPv6Address is provided
+					if len(endpoint.IPAMConfig.IPv6Address) > 0 {
+						staticIP := net.ParseIP(endpoint.IPAMConfig.IPv6Address)
+						if staticIP == nil {
+							return nil, nil, errors.Errorf("failed to parse the ipv6 address %q", endpoint.IPAMConfig.IPv6Address)
+						}
+						netOpts.StaticIPs = append(netOpts.StaticIPs, staticIP)
+					}
 				}
 				// If MAC address is provided
-				if len(ep.MacAddress) > 0 {
-					staticMac, err := net.ParseMAC(ep.MacAddress)
+				if len(endpoint.MacAddress) > 0 {
+					staticMac, err := net.ParseMAC(endpoint.MacAddress)
 					if err != nil {
-						return nil, nil, err
+						return nil, nil, errors.Errorf("failed to parse the mac address %q", endpoint.MacAddress)
 					}
-					netInfo.StaticMAC = &staticMac
+					netOpts.StaticMAC = types.HardwareAddr(staticMac)
 				}
-				break
 			}
+
+			networks[netName] = netOpts
 		}
-		netInfo.Aliases = aliases
-		netInfo.CNINetworks = cniNetworks
+
+		netInfo.Networks = networks
 	case len(cc.HostConfig.NetworkMode) > 0:
-		netInfo.CNINetworks = networks
+		netInfo.Networks = networks
 	}
 
 	parsedTmp := make([]string, 0, len(cc.HostConfig.Tmpfs))
@@ -248,7 +246,7 @@ func ContainerCreateToContainerCLIOpts(cc handlers.CreateContainerConfig, rtc *c
 		Authfile:     "",
 		CapAdd:       append(capAdd, cc.HostConfig.CapAdd...),
 		CapDrop:      append(cappDrop, cc.HostConfig.CapDrop...),
-		CGroupParent: cc.HostConfig.CgroupParent,
+		CgroupParent: cc.HostConfig.CgroupParent,
 		CIDFile:      cc.HostConfig.ContainerIDFile,
 		CPUPeriod:    uint64(cc.HostConfig.CPUPeriod),
 		CPUQuota:     cc.HostConfig.CPUQuota,
@@ -261,7 +259,7 @@ func ContainerCreateToContainerCLIOpts(cc handlers.CreateContainerConfig, rtc *c
 		// Detach:            false, // don't need
 		// DetachKeys:        "",    // don't need
 		Devices:           devices,
-		DeviceCGroupRule:  nil,
+		DeviceCgroupRule:  nil,
 		DeviceReadBPs:     readBps,
 		DeviceReadIOPs:    readIops,
 		DeviceWriteBPs:    writeBps,
@@ -293,11 +291,13 @@ func ContainerCreateToContainerCLIOpts(cc handlers.CreateContainerConfig, rtc *c
 		Rm:                cc.HostConfig.AutoRemove,
 		SecurityOpt:       cc.HostConfig.SecurityOpt,
 		StopSignal:        cc.Config.StopSignal,
-		StorageOpt:        stringMaptoArray(cc.HostConfig.StorageOpt),
+		StorageOpts:       stringMaptoArray(cc.HostConfig.StorageOpt),
 		Sysctl:            stringMaptoArray(cc.HostConfig.Sysctls),
 		Systemd:           "true", // podman default
 		TmpFS:             parsedTmp,
 		TTY:               cc.Config.Tty,
+		UnsetEnv:          cc.UnsetEnv,
+		UnsetEnvAll:       cc.UnsetEnvAll,
 		User:              cc.Config.User,
 		UserNS:            string(cc.HostConfig.UsernsMode),
 		UTS:               string(cc.HostConfig.UTSMode),
@@ -305,10 +305,10 @@ func ContainerCreateToContainerCLIOpts(cc handlers.CreateContainerConfig, rtc *c
 		VolumesFrom:       cc.HostConfig.VolumesFrom,
 		Workdir:           cc.Config.WorkingDir,
 		Net:               &netInfo,
-		HealthInterval:    DefaultHealthCheckInterval,
-		HealthRetries:     DefaultHealthCheckRetries,
-		HealthTimeout:     DefaultHealthCheckTimeout,
-		HealthStartPeriod: DefaultHealthCheckStartPeriod,
+		HealthInterval:    define.DefaultHealthCheckInterval,
+		HealthRetries:     define.DefaultHealthCheckRetries,
+		HealthTimeout:     define.DefaultHealthCheckTimeout,
+		HealthStartPeriod: define.DefaultHealthCheckStartPeriod,
 	}
 	if !rootless.IsRootless() {
 		var ulimits []string
@@ -406,9 +406,6 @@ func ContainerCreateToContainerCLIOpts(cc handlers.CreateContainerConfig, rtc *c
 		cliOpts.ShmSize = strconv.Itoa(int(cc.HostConfig.ShmSize))
 	}
 
-	if cc.HostConfig.KernelMemory > 0 {
-		cliOpts.KernelMemory = strconv.Itoa(int(cc.HostConfig.KernelMemory))
-	}
 	if len(cc.HostConfig.RestartPolicy.Name) > 0 {
 		policy := cc.HostConfig.RestartPolicy.Name
 		// only add restart count on failure

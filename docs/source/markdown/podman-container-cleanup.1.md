@@ -27,7 +27,7 @@ Can only be specified if a single *container* is being cleaned up (conflicts wit
 
 Instead of providing the *container ID* or *name*, use the last created *container*. If other methods than Podman are used to run *containers* such as `CRI-O`, the last started *container* could be from either of those methods.\
 The default is **false**.\
-*IMPORTANT: This OPTION is not available with the remote Podman client. This OPTION does not need a container name or ID as input argument.*
+*IMPORTANT: This OPTION is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines. This OPTION does not need a container name or ID as input argument.*
 
 #### **--rm**
 
@@ -51,7 +51,7 @@ $ podman container cleanup mywebserver myflaskserver 860a4b23
 ```
 
 ## SEE ALSO
-**[podman(1)](podman.1.md)**, **[podman-container(1)](podman-container.1.md)**, conmon(8)
+**[podman(1)](podman.1.md)**, **[podman-container(1)](podman-container.1.md)**, **[conmon(8)](https://github.com/containers/conmon/blob/main/docs/conmon.8.md)**
 
 ## HISTORY
 Jun 2018, Originally compiled by Dan Walsh <dwalsh@redhat.com>

@@ -6,9 +6,9 @@ import (
 	"strings"
 
 	"github.com/containers/common/pkg/parse"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/pkg/specgen"
-	"github.com/containers/podman/v3/pkg/util"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/specgen"
+	"github.com/containers/podman/v4/pkg/util"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 )
@@ -243,7 +243,7 @@ func getBindMount(args []string) (spec.Mount, error) {
 		Type: define.TypeBind,
 	}
 
-	var setSource, setDest, setRORW, setSuid, setDev, setExec, setRelabel bool
+	var setSource, setDest, setRORW, setSuid, setDev, setExec, setRelabel, setOwnership bool
 
 	for _, val := range args {
 		kv := strings.SplitN(val, "=", 2)
@@ -343,12 +343,26 @@ func getBindMount(args []string) (spec.Mount, error) {
 			default:
 				return newMount, errors.Wrapf(util.ErrBadMntOption, "%s mount option must be 'private' or 'shared'", kv[0])
 			}
+		case "U", "chown":
+			if setOwnership {
+				return newMount, errors.Wrapf(optionArgError, "cannot pass 'U' or 'chown' option more than once")
+			}
+			ok, err := validChownFlag(val)
+			if err != nil {
+				return newMount, err
+			}
+			if ok {
+				newMount.Options = append(newMount.Options, "U")
+			}
+			setOwnership = true
+		case "idmap":
+			newMount.Options = append(newMount.Options, "idmap")
 		case "consistency":
 			// Often used on MACs and mistakenly on Linux platforms.
 			// Since Docker ignores this option so shall we.
 			continue
 		default:
-			return newMount, errors.Wrapf(util.ErrBadMntOption, kv[0])
+			return newMount, errors.Wrapf(util.ErrBadMntOption, "%s", kv[0])
 		}
 	}
 
@@ -375,7 +389,7 @@ func getTmpfsMount(args []string) (spec.Mount, error) {
 		Source: define.TypeTmpfs,
 	}
 
-	var setDest, setRORW, setSuid, setDev, setExec, setTmpcopyup bool
+	var setDest, setRORW, setSuid, setDev, setExec, setTmpcopyup, setOwnership bool
 
 	for _, val := range args {
 		kv := strings.SplitN(val, "=", 2)
@@ -431,12 +445,24 @@ func getTmpfsMount(args []string) (spec.Mount, error) {
 			}
 			newMount.Destination = filepath.Clean(kv[1])
 			setDest = true
+		case "U", "chown":
+			if setOwnership {
+				return newMount, errors.Wrapf(optionArgError, "cannot pass 'U' or 'chown' option more than once")
+			}
+			ok, err := validChownFlag(val)
+			if err != nil {
+				return newMount, err
+			}
+			if ok {
+				newMount.Options = append(newMount.Options, "U")
+			}
+			setOwnership = true
 		case "consistency":
 			// Often used on MACs and mistakenly on Linux platforms.
 			// Since Docker ignores this option so shall we.
 			continue
 		default:
-			return newMount, errors.Wrapf(util.ErrBadMntOption, kv[0])
+			return newMount, errors.Wrapf(util.ErrBadMntOption, "%s", kv[0])
 		}
 	}
 
@@ -459,6 +485,8 @@ func getDevptsMount(args []string) (spec.Mount, error) {
 	for _, val := range args {
 		kv := strings.SplitN(val, "=", 2)
 		switch kv[0] {
+		case "uid", "gid", "mode", "ptxmode", "newinstance", "max":
+			newMount.Options = append(newMount.Options, val)
 		case "target", "dst", "destination":
 			if len(kv) == 1 {
 				return newMount, errors.Wrapf(optionArgError, kv[0])
@@ -469,7 +497,7 @@ func getDevptsMount(args []string) (spec.Mount, error) {
 			newMount.Destination = filepath.Clean(kv[1])
 			setDest = true
 		default:
-			return newMount, errors.Wrapf(util.ErrBadMntOption, kv[0])
+			return newMount, errors.Wrapf(util.ErrBadMntOption, "%s", kv[0])
 		}
 	}
 
@@ -486,7 +514,7 @@ func getDevptsMount(args []string) (spec.Mount, error) {
 func getNamedVolume(args []string) (*specgen.NamedVolume, error) {
 	newVolume := new(specgen.NamedVolume)
 
-	var setSource, setDest, setRORW, setSuid, setDev, setExec bool
+	var setSource, setDest, setRORW, setSuid, setDev, setExec, setOwnership bool
 
 	for _, val := range args {
 		kv := strings.SplitN(val, "=", 2)
@@ -532,12 +560,24 @@ func getNamedVolume(args []string) (*specgen.NamedVolume, error) {
 			}
 			newVolume.Dest = filepath.Clean(kv[1])
 			setDest = true
+		case "U", "chown":
+			if setOwnership {
+				return newVolume, errors.Wrapf(optionArgError, "cannot pass 'U' or 'chown' option more than once")
+			}
+			ok, err := validChownFlag(val)
+			if err != nil {
+				return newVolume, err
+			}
+			if ok {
+				newVolume.Options = append(newVolume.Options, "U")
+			}
+			setOwnership = true
 		case "consistency":
 			// Often used on MACs and mistakenly on Linux platforms.
 			// Since Docker ignores this option so shall we.
 			continue
 		default:
-			return nil, errors.Wrapf(util.ErrBadMntOption, kv[0])
+			return nil, errors.Wrapf(util.ErrBadMntOption, "%s", kv[0])
 		}
 	}
 
@@ -588,7 +628,7 @@ func getImageVolume(args []string) (*specgen.ImageVolume, error) {
 			// Since Docker ignores this option so shall we.
 			continue
 		default:
-			return nil, errors.Wrapf(util.ErrBadMntOption, kv[0])
+			return nil, errors.Wrapf(util.ErrBadMntOption, "%s", kv[0])
 		}
 	}
 
@@ -627,4 +667,25 @@ func getTmpfsMounts(tmpfsFlag []string) (map[string]spec.Mount, error) {
 		m[destPath] = mount
 	}
 	return m, nil
+}
+
+// validChownFlag ensures that the U or chown flag is correctly used
+func validChownFlag(flag string) (bool, error) {
+	kv := strings.SplitN(flag, "=", 2)
+	switch len(kv) {
+	case 1:
+	case 2:
+		// U=[true|false]
+		switch strings.ToLower(kv[1]) {
+		case "true":
+		case "false":
+			return false, nil
+		default:
+			return false, errors.Wrapf(optionArgError, "'U' or 'chown' must be set to true or false, instead received %q", kv[1])
+		}
+	default:
+		return false, errors.Wrapf(optionArgError, "badly formatted option %q", flag)
+	}
+
+	return true, nil
 }

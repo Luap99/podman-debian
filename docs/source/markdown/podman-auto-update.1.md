@@ -41,7 +41,7 @@ If the authorization state is not found there, `$HOME/.docker/config.json` is ch
 
 Note: There is also the option to override the default path of the authentication file by setting the `REGISTRY_AUTH_FILE` environment variable. This can be done with **export REGISTRY_AUTH_FILE=_path_**.
 
-#### **--dry-run**=*true|false*
+#### **--dry-run**
 
 Check for the availability of new images but do not perform any pull operation or restart any service or container.
 The `UPDATED` field indicates the availability of a new image with "pending".
@@ -51,7 +51,7 @@ The `UPDATED` field indicates the availability of a new image with "pending".
 Change the default output format.  This can be of a supported type like 'json' or a Go template.
 Valid placeholders for the Go template are listed below:
 
-#### **--rollback**=*true|false*
+#### **--rollback**
 
 If restarting a systemd unit after updating the image has failed, rollback to using the previous image and restart the unit another time.  Default is true.
 
@@ -141,4 +141,4 @@ $ podman auto-update
 ```
 
 ## SEE ALSO
-**[podman(1)](podman.1.md)**, **[podman-generate-systemd(1)](podman-generate-systemd.1.md)**, **[podman-run(1)](podman-run.1.md)**, sd_notify(3), systemd.unit(5)
+**[podman(1)](podman.1.md)**, **[podman-generate-systemd(1)](podman-generate-systemd.1.md)**, **[podman-run(1)](podman-run.1.md)**, **sd_notify(3)**, **[systemd.unit(5)](https://www.freedesktop.org/software/systemd/man/systemd.unit.html)**

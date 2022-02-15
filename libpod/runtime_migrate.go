@@ -11,9 +11,9 @@ import (
 	"strconv"
 	"syscall"
 
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/pkg/rootless"
-	"github.com/containers/podman/v3/pkg/util"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -56,7 +56,7 @@ func (r *Runtime) migrate(ctx context.Context) error {
 		return err
 	}
 
-	logrus.Infof("stopping all containers")
+	logrus.Infof("Stopping all containers")
 	for _, ctr := range runningContainers {
 		fmt.Printf("stopped %s\n", ctr.ID())
 		if err := ctr.Stop(); err != nil {
@@ -77,7 +77,7 @@ func (r *Runtime) migrate(ctx context.Context) error {
 		// Reset pause process location
 		oldLocation := filepath.Join(ctr.state.RunDir, "conmon.pid")
 		if ctr.config.ConmonPidFile == oldLocation {
-			logrus.Infof("changing conmon PID file for %s", ctr.ID())
+			logrus.Infof("Changing conmon PID file for %s", ctr.ID())
 			ctr.config.ConmonPidFile = filepath.Join(ctr.config.StaticDir, "conmon.pid")
 			needsWrite = true
 		}

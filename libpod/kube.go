@@ -11,13 +11,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/pkg/env"
-	"github.com/containers/podman/v3/pkg/lookup"
-	"github.com/containers/podman/v3/pkg/namespaces"
-	"github.com/containers/podman/v3/pkg/specgen"
-	"github.com/containers/podman/v3/pkg/util"
-	"github.com/cri-o/ocicni/pkg/ocicni"
+	"github.com/containers/common/libnetwork/types"
+	"github.com/containers/common/pkg/config"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/env"
+	"github.com/containers/podman/v4/pkg/lookup"
+	"github.com/containers/podman/v4/pkg/namespaces"
+	"github.com/containers/podman/v4/pkg/specgen"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/runtime-tools/generate"
 	"github.com/pkg/errors"
@@ -74,7 +75,7 @@ func (p *Pod) GenerateForKube(ctx context.Context) (*v1.Pod, []v1.ServicePort, e
 				Hostnames: []string{hostSli[0]},
 			})
 		}
-		ports, err = ocicniPortMappingToContainerPort(infraContainer.config.PortMappings)
+		ports, err = portMappingToContainerPort(infraContainer.config.PortMappings)
 		if err != nil {
 			return nil, servicePorts, err
 		}
@@ -463,7 +464,9 @@ func simplePodWithV1Containers(ctx context.Context, ctrs []*Container) (*v1.Pod,
 	hostNetwork := true
 	podDNS := v1.PodDNSConfig{}
 	kubeAnnotations := make(map[string]string)
+	ctrNames := make([]string, 0, len(ctrs))
 	for _, ctr := range ctrs {
+		ctrNames = append(ctrNames, strings.ReplaceAll(ctr.Name(), "_", ""))
 		// Convert auto-update labels into kube annotations
 		for k, v := range getAutoUpdateAnnotations(removeUnderscores(ctr.Name()), ctr.Labels()) {
 			kubeAnnotations[k] = v
@@ -520,8 +523,15 @@ func simplePodWithV1Containers(ctx context.Context, ctrs []*Container) (*v1.Pod,
 			}
 		} // end if ctrDNS
 	}
+	podName := strings.ReplaceAll(ctrs[0].Name(), "_", "")
+	// Check if the pod name and container name will end up conflicting
+	// Append _pod if so
+	if util.StringInSlice(podName, ctrNames) {
+		podName = podName + "_pod"
+	}
+
 	return newPodObject(
-		strings.ReplaceAll(ctrs[0].Name(), "_", ""),
+		podName,
 		kubeAnnotations,
 		kubeInitCtrs,
 		kubeCtrs,
@@ -562,7 +572,7 @@ func containerToV1Container(ctx context.Context, c *Container) (v1.Container, []
 	if err != nil {
 		return kubeContainer, kubeVolumes, nil, annotations, err
 	}
-	ports, err := ocicniPortMappingToContainerPort(portmappings)
+	ports, err := portMappingToContainerPort(portmappings)
 	if err != nil {
 		return kubeContainer, kubeVolumes, nil, annotations, err
 	}
@@ -579,13 +589,25 @@ func containerToV1Container(ctx context.Context, c *Container) (v1.Container, []
 
 	kubeContainer.Name = removeUnderscores(c.Name())
 	_, image := c.Image()
+
+	// The infra container may have been created with an overlay root FS
+	// instead of an infra image.  If so, set the imageto the default K8s
+	// pause one and make sure it's in the storage by pulling it down if
+	// missing.
+	if image == "" && c.IsInfra() {
+		image = c.runtime.config.Engine.InfraImage
+		if _, err := c.runtime.libimageRuntime.Pull(ctx, image, config.PullPolicyMissing, nil); err != nil {
+			return kubeContainer, nil, nil, nil, err
+		}
+	}
+
 	kubeContainer.Image = image
 	kubeContainer.Stdin = c.Stdin()
 	img, _, err := c.runtime.libimageRuntime.LookupImage(image, nil)
 	if err != nil {
-		return kubeContainer, kubeVolumes, nil, annotations, err
+		return kubeContainer, kubeVolumes, nil, annotations, fmt.Errorf("looking up image %q of container %q: %w", image, c.ID(), err)
 	}
-	imgData, err := img.Inspect(ctx, false)
+	imgData, err := img.Inspect(ctx, nil)
 	if err != nil {
 		return kubeContainer, kubeVolumes, nil, annotations, err
 	}
@@ -686,29 +708,36 @@ func containerToV1Container(ctx context.Context, c *Container) (v1.Container, []
 	return kubeContainer, kubeVolumes, &dns, annotations, nil
 }
 
-// ocicniPortMappingToContainerPort takes an ocicni portmapping and converts
+// portMappingToContainerPort takes an portmapping and converts
 // it to a v1.ContainerPort format for kube output
-func ocicniPortMappingToContainerPort(portMappings []ocicni.PortMapping) ([]v1.ContainerPort, error) {
+func portMappingToContainerPort(portMappings []types.PortMapping) ([]v1.ContainerPort, error) {
 	containerPorts := make([]v1.ContainerPort, 0, len(portMappings))
 	for _, p := range portMappings {
-		var protocol v1.Protocol
-		switch strings.ToUpper(p.Protocol) {
-		case "TCP":
-			// do nothing as it is the default protocol in k8s, there is no need to explicitly
-			// add it to the generated yaml
-		case "UDP":
-			protocol = v1.ProtocolUDP
-		default:
-			return containerPorts, errors.Errorf("unknown network protocol %s", p.Protocol)
+		protocols := strings.Split(p.Protocol, ",")
+		for _, proto := range protocols {
+			var protocol v1.Protocol
+			switch strings.ToUpper(proto) {
+			case "TCP":
+				// do nothing as it is the default protocol in k8s, there is no need to explicitly
+				// add it to the generated yaml
+			case "UDP":
+				protocol = v1.ProtocolUDP
+			case "SCTP":
+				protocol = v1.ProtocolSCTP
+			default:
+				return containerPorts, errors.Errorf("unknown network protocol %s", p.Protocol)
+			}
+			for i := uint16(0); i < p.Range; i++ {
+				cp := v1.ContainerPort{
+					// Name will not be supported
+					HostPort:      int32(p.HostPort + i),
+					HostIP:        p.HostIP,
+					ContainerPort: int32(p.ContainerPort + i),
+					Protocol:      protocol,
+				}
+				containerPorts = append(containerPorts, cp)
+			}
 		}
-		cp := v1.ContainerPort{
-			// Name will not be supported
-			HostPort:      p.HostPort,
-			HostIP:        p.HostIP,
-			ContainerPort: p.ContainerPort,
-			Protocol:      protocol,
-		}
-		containerPorts = append(containerPorts, cp)
 	}
 	return containerPorts, nil
 }
@@ -718,7 +747,7 @@ func libpodEnvVarsToKubeEnvVars(envs []string, imageEnvs []string) ([]v1.EnvVar,
 	defaultEnv := env.DefaultEnvVariables()
 	envVars := make([]v1.EnvVar, 0, len(envs))
 	imageMap := make(map[string]string, len(imageEnvs))
-	for _, ie := range envs {
+	for _, ie := range imageEnvs {
 		split := strings.SplitN(ie, "=", 2)
 		imageMap[split[0]] = split[1]
 	}

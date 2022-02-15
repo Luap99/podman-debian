@@ -3,20 +3,18 @@ package containers
 import (
 	"fmt"
 	"os"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	tm "github.com/buger/goterm"
+	"github.com/containers/common/libnetwork/types"
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/report"
-	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/cmd/podman/utils"
-	"github.com/containers/podman/v3/cmd/podman/validate"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/cri-o/ocicni/pkg/ocicni"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/utils"
+	"github.com/containers/podman/v4/cmd/podman/validate"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/docker/go-units"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -222,30 +220,28 @@ func ps(cmd *cobra.Command, _ []string) error {
 
 	hdrs, format := createPsOut()
 
+	var origin report.Origin
 	noHeading, _ := cmd.Flags().GetBool("noheading")
 	if cmd.Flags().Changed("format") {
 		noHeading = noHeading || !report.HasTable(listOpts.Format)
-		format = report.NormalizeFormat(listOpts.Format)
-		format = report.EnforceRange(format)
+		format = listOpts.Format
+		origin = report.OriginUser
+	} else {
+		origin = report.OriginPodman
 	}
 	ns := strings.NewReplacer(".Namespaces.", ".")
 	format = ns.Replace(format)
 
-	tmpl, err := report.NewTemplate("list").Parse(format)
+	rpt, err := report.New(os.Stdout, cmd.Name()).Parse(origin, format)
 	if err != nil {
 		return err
 	}
-
-	w, err := report.NewWriterDefault(os.Stdout)
-	if err != nil {
-		return err
-	}
-	defer w.Flush()
+	defer rpt.Flush()
 
 	headers := func() error { return nil }
 	if !noHeading {
 		headers = func() error {
-			return tmpl.Execute(w, hdrs)
+			return rpt.Execute(hdrs)
 		}
 	}
 
@@ -270,10 +266,10 @@ func ps(cmd *cobra.Command, _ []string) error {
 			if err := headers(); err != nil {
 				return err
 			}
-			if err := tmpl.Execute(w, responses); err != nil {
+			if err := rpt.Execute(responses); err != nil {
 				return err
 			}
-			if err := w.Flush(); err != nil {
+			if err := rpt.Flush(); err != nil {
 				// we usually do not care about Flush() failures but here do not loop if Flush() has failed
 				return err
 			}
@@ -284,7 +280,7 @@ func ps(cmd *cobra.Command, _ []string) error {
 		if err := headers(); err != nil {
 			return err
 		}
-		if err := tmpl.Execute(w, responses); err != nil {
+		if err := rpt.Execute(responses); err != nil {
 			return err
 		}
 	}
@@ -362,13 +358,12 @@ func (l psReporter) State() string {
 	case "running":
 		t := units.HumanDuration(time.Since(time.Unix(l.StartedAt, 0)))
 		state = "Up " + t + " ago"
-	case "configured":
-		state = "Created"
 	case "exited", "stopped":
 		t := units.HumanDuration(time.Since(time.Unix(l.ExitedAt, 0)))
 		state = fmt.Sprintf("Exited (%d) %s ago", l.ExitCode, t)
 	default:
-		state = l.ListContainer.State
+		// Need to capitalize the first letter to match Docker.
+		state = strings.Title(l.ListContainer.State)
 	}
 	return state
 }
@@ -477,174 +472,31 @@ func (l psReporter) UTS() string {
 
 // portsToString converts the ports used to a string of the from "port1, port2"
 // and also groups a continuous list of ports into a readable format.
-func portsToString(ports []ocicni.PortMapping) string {
+// The format is IP:HostPort(-Range)->ContainerPort(-Range)/Proto
+func portsToString(ports []types.PortMapping) string {
 	if len(ports) == 0 {
 		return ""
 	}
-	// Sort the ports, so grouping continuous ports become easy.
-	sort.Slice(ports, func(i, j int) bool {
-		return comparePorts(ports[i], ports[j])
-	})
-
-	portGroups := [][]ocicni.PortMapping{}
-	currentGroup := []ocicni.PortMapping{}
-	for i, v := range ports {
-		var prevPort, nextPort *int32
-		if i > 0 {
-			prevPort = &ports[i-1].ContainerPort
-		}
-		if i+1 < len(ports) {
-			nextPort = &ports[i+1].ContainerPort
-		}
-
-		port := v.ContainerPort
-
-		// Helper functions
-		addToCurrentGroup := func(x ocicni.PortMapping) {
-			currentGroup = append(currentGroup, x)
-		}
-
-		addToPortGroup := func(x ocicni.PortMapping) {
-			portGroups = append(portGroups, []ocicni.PortMapping{x})
-		}
-
-		finishCurrentGroup := func() {
-			portGroups = append(portGroups, currentGroup)
-			currentGroup = []ocicni.PortMapping{}
-		}
-
-		// Single entry slice
-		if prevPort == nil && nextPort == nil {
-			addToPortGroup(v)
-		}
-
-		// Start of the slice with len > 0
-		if prevPort == nil && nextPort != nil {
-			isGroup := *nextPort-1 == port
-
-			if isGroup {
-				// Start with a group
-				addToCurrentGroup(v)
-			} else {
-				// Start with single item
-				addToPortGroup(v)
-			}
-
-			continue
-		}
-
-		// Middle of the slice with len > 0
-		if prevPort != nil && nextPort != nil {
-			currentIsGroup := *prevPort+1 == port
-			nextIsGroup := *nextPort-1 == port
-
-			if currentIsGroup {
-				// Maybe in the middle of a group
-				addToCurrentGroup(v)
-
-				if !nextIsGroup {
-					// End of a group
-					finishCurrentGroup()
-				}
-			} else if nextIsGroup {
-				// Start of a new group
-				addToCurrentGroup(v)
-			} else {
-				// No group at all
-				addToPortGroup(v)
-			}
-
-			continue
-		}
-
-		// End of the slice with len > 0
-		if prevPort != nil && nextPort == nil {
-			isGroup := *prevPort+1 == port
-
-			if isGroup {
-				// End group
-				addToCurrentGroup(v)
-				finishCurrentGroup()
-			} else {
-				// End single item
-				addToPortGroup(v)
-			}
-		}
-	}
-
-	portDisplay := []string{}
-	for _, group := range portGroups {
-		if len(group) == 0 {
-			// Usually should not happen, but better do not crash.
-			continue
-		}
-
-		first := group[0]
-
-		hostIP := first.HostIP
+	sb := &strings.Builder{}
+	for _, port := range ports {
+		hostIP := port.HostIP
 		if hostIP == "" {
 			hostIP = "0.0.0.0"
 		}
-
-		// Single mappings
-		if len(group) == 1 {
-			portDisplay = append(portDisplay,
-				fmt.Sprintf(
-					"%s:%d->%d/%s",
-					hostIP, first.HostPort, first.ContainerPort, first.Protocol,
-				),
-			)
-			continue
+		protocols := strings.Split(port.Protocol, ",")
+		for _, protocol := range protocols {
+			if port.Range > 1 {
+				fmt.Fprintf(sb, "%s:%d-%d->%d-%d/%s, ",
+					hostIP, port.HostPort, port.HostPort+port.Range-1,
+					port.ContainerPort, port.ContainerPort+port.Range-1, protocol)
+			} else {
+				fmt.Fprintf(sb, "%s:%d->%d/%s, ",
+					hostIP, port.HostPort,
+					port.ContainerPort, protocol)
+			}
 		}
-
-		// Group mappings
-		last := group[len(group)-1]
-		portDisplay = append(portDisplay, formatGroup(
-			fmt.Sprintf("%s/%s", hostIP, first.Protocol),
-			first.HostPort, last.HostPort,
-			first.ContainerPort, last.ContainerPort,
-		))
 	}
-	return strings.Join(portDisplay, ", ")
-}
-
-func comparePorts(i, j ocicni.PortMapping) bool {
-	if i.ContainerPort != j.ContainerPort {
-		return i.ContainerPort < j.ContainerPort
-	}
-
-	if i.HostIP != j.HostIP {
-		return i.HostIP < j.HostIP
-	}
-
-	if i.HostPort != j.HostPort {
-		return i.HostPort < j.HostPort
-	}
-
-	return i.Protocol < j.Protocol
-}
-
-// formatGroup returns the group in the format:
-// <IP:firstHost:lastHost->firstCtr:lastCtr/Proto>
-// e.g 0.0.0.0:1000-1006->2000-2006/tcp.
-func formatGroup(key string, firstHost, lastHost, firstCtr, lastCtr int32) string {
-	parts := strings.Split(key, "/")
-	groupType := parts[0]
-	var ip string
-	if len(parts) > 1 {
-		ip = parts[0]
-		groupType = parts[1]
-	}
-
-	group := func(first, last int32) string {
-		group := strconv.Itoa(int(first))
-		if first != last {
-			group = fmt.Sprintf("%s-%d", group, last)
-		}
-		return group
-	}
-	hostGroup := group(firstHost, lastHost)
-	ctrGroup := group(firstCtr, lastCtr)
-
-	return fmt.Sprintf("%s:%s->%s/%s", ip, hostGroup, ctrGroup, groupType)
+	display := sb.String()
+	// make sure to trim the last ", " of the string
+	return display[:len(display)-2]
 }

@@ -97,8 +97,10 @@ podman \$opts run    --name myfailedcontainer  --label mylabel=$LABEL_FAILED \
 podman \$opts run -d --name myrunningcontainer --label mylabel=$LABEL_RUNNING \
                                                --network bridge \
                                                -p $HOST_PORT:80 \
+                                               -p 127.0.0.1:8080-8082:8080-8082 \
                                                -v $pmroot/var/www:/var/www \
                                                -w /var/www \
+                                               --mac-address aa:bb:cc:dd:ee:ff \
                                                $IMAGE /bin/busybox-extras httpd -f -p 80
 
 podman \$opts pod create --name mypod
@@ -111,6 +113,7 @@ while :;do
         echo STOPPING
         podman \$opts stop -t 0 myrunningcontainer || true
         podman \$opts rm -f     myrunningcontainer || true
+        podman \$opts network rm -f mynetwork
         exit 0
     fi
     sleep 0.5
@@ -129,6 +132,9 @@ EOF
     # --mac-address is needed to create /run/cni, --network is needed to create /run/containers for dnsname
     $PODMAN run --rm --mac-address 78:28:a6:8d:24:8a --network $netname $OLD_PODMAN true
     $PODMAN network rm -f $netname
+
+    # Podman 4.0 might no longer use cni so /run/cni and /run/containers will no be created in this case
+    mkdir -p /run/cni /run/containers
 
 
     #
@@ -175,6 +181,13 @@ EOF
     :
 }
 
+@test "info" {
+    # check network backend, since this is a old version we should use CNI
+    # when we start testing from 4.0 we should have netavark as backend
+    run_podman info --format '{{.Host.NetworkBackend}}'
+    is "$output" "cni" "correct network backend"
+}
+
 @test "images" {
     run_podman images -a --format '{{.Names}}'
     is "$output" "\[$IMAGE\]" "podman images"
@@ -195,7 +208,7 @@ EOF
     is "${lines[1]}" "mycreatedcontainer--Created----$LABEL_CREATED" "created"
     is "${lines[2]}" "mydonecontainer--Exited (0).*----<no value>" "done"
     is "${lines[3]}" "myfailedcontainer--Exited (17) .*----$LABEL_FAILED" "fail"
-    is "${lines[4]}" "myrunningcontainer--Up .*--0.0.0.0:$HOST_PORT->80/tcp--$LABEL_RUNNING" "running"
+    is "${lines[4]}" "myrunningcontainer--Up .*--0\.0\.0\.0:$HOST_PORT->80\/tcp, 127\.0\.0\.1\:8080-8082->8080-8082\/tcp--$LABEL_RUNNING" "running"
 
     # For debugging: dump containers and IDs
     if [[ -n "$PODMAN_UPGRADE_TEST_DEBUG" ]]; then
@@ -210,7 +223,7 @@ EOF
 @test "inspect - all container status" {
     tests="
 running   | running    |  0
-created   | configured |  0
+created   | created    |  0
 done      | exited     |  0
 failed    | exited     | 17
 "
@@ -326,8 +339,6 @@ failed    | exited     | 17
 
     run_podman logs podman_parent
     run_podman rm -f podman_parent
-
-    run_podman network rm -f mynetwork
 
     umount $PODMAN_UPGRADE_WORKDIR/root/overlay || true
 

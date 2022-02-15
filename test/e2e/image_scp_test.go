@@ -5,7 +5,7 @@ import (
 	"os"
 
 	"github.com/containers/common/pkg/config"
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -22,6 +22,7 @@ var _ = Describe("podman image scp", func() {
 	)
 
 	BeforeEach(func() {
+
 		ConfPath.Value, ConfPath.IsSet = os.LookupEnv("CONTAINERS_CONF")
 		conf, err := ioutil.TempFile("", "containersconf")
 		if err != nil {
@@ -38,6 +39,7 @@ var _ = Describe("podman image scp", func() {
 
 	AfterEach(func() {
 		podmanTest.Cleanup()
+
 		os.Remove(os.Getenv("CONTAINERS_CONF"))
 		if ConfPath.IsSet {
 			os.Setenv("CONTAINERS_CONF", ConfPath.Value)
@@ -47,15 +49,6 @@ var _ = Describe("podman image scp", func() {
 		f := CurrentGinkgoTestDescription()
 		processTestResult(f)
 
-	})
-
-	It("podman image scp quiet flag", func() {
-		if IsRemote() {
-			Skip("this test is only for non-remote")
-		}
-		scp := podmanTest.Podman([]string{"image", "scp", "-q", ALPINE})
-		scp.WaitWithDefaultTimeout()
-		Expect(scp).To(Exit(0))
 	})
 
 	It("podman image scp bogus image", func() {
@@ -83,7 +76,7 @@ var _ = Describe("podman image scp", func() {
 		cfg, err := config.ReadCustomConfig()
 		Expect(err).ShouldNot(HaveOccurred())
 		Expect(cfg.Engine.ActiveService).To(Equal("QA"))
-		Expect(cfg.Engine.ServiceDestinations["QA"]).To(Equal(
+		Expect(cfg.Engine.ServiceDestinations).To(HaveKeyWithValue("QA",
 			config.Destination{
 				URI: "ssh://root@server.fubar.com:2222/run/podman/podman.sock",
 			},
@@ -93,11 +86,8 @@ var _ = Describe("podman image scp", func() {
 		scp.Wait(45)
 		// exit with error because we cannot make an actual ssh connection
 		// This tests that the input we are given is validated and prepared correctly
-		// Error: failed to connect: dial tcp: address foo: missing port in address
+		// The error given should either be a missing image (due to testing suite complications) or a i/o timeout on ssh
 		Expect(scp).To(ExitWithError())
-		Expect(scp.ErrorToString()).To(ContainSubstring(
-			"Error: failed to connect: dial tcp 66.151.147.142:2222: i/o timeout",
-		))
 
 	})
 

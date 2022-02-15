@@ -3,7 +3,7 @@ package integration
 import (
 	"os"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -51,7 +51,7 @@ var _ = Describe("Podman unshare", func() {
 	})
 
 	It("podman unshare --rootles-cni", func() {
-		session := podmanTest.Podman([]string{"unshare", "--rootless-cni", "ip", "addr"})
+		session := podmanTest.Podman([]string{"unshare", "--rootless-netns", "ip", "addr"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(session.OutputToString()).To(ContainSubstring("tap0"))

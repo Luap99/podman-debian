@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -17,9 +18,9 @@ import (
 	"strings"
 
 	"github.com/containers/buildah/define"
-	"github.com/containers/podman/v3/pkg/auth"
-	"github.com/containers/podman/v3/pkg/bindings"
-	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/auth"
+	"github.com/containers/podman/v4/pkg/bindings"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/containers/storage/pkg/fileutils"
 	"github.com/containers/storage/pkg/ioutils"
 	"github.com/docker/go-units"
@@ -61,6 +62,11 @@ func Build(ctx context.Context, containerFiles []string, options entities.BuildO
 		}
 		params.Set("annotations", l)
 	}
+
+	if options.AllPlatforms {
+		params.Add("allplatforms", "1")
+	}
+
 	params.Add("t", options.Output)
 	for _, tag := range options.AdditionalTags {
 		params.Add("t", tag)
@@ -288,18 +294,19 @@ func Build(ctx context.Context, containerFiles []string, options entities.BuildO
 		}
 		params.Set("ulimits", string(ulimitsJSON))
 	}
+
+	for _, uenv := range options.UnsetEnvs {
+		params.Add("unsetenv", uenv)
+	}
+
 	var (
-		headers map[string]string
+		headers http.Header
 		err     error
 	)
-	if options.SystemContext == nil {
-		headers, err = auth.Header(options.SystemContext, auth.XRegistryConfigHeader, "", "", "")
+	if options.SystemContext != nil && options.SystemContext.DockerAuthConfig != nil {
+		headers, err = auth.MakeXRegistryAuthHeader(options.SystemContext, options.SystemContext.DockerAuthConfig.Username, options.SystemContext.DockerAuthConfig.Password)
 	} else {
-		if options.SystemContext.DockerAuthConfig != nil {
-			headers, err = auth.Header(options.SystemContext, auth.XRegistryAuthHeader, options.SystemContext.AuthFilePath, options.SystemContext.DockerAuthConfig.Username, options.SystemContext.DockerAuthConfig.Password)
-		} else {
-			headers, err = auth.Header(options.SystemContext, auth.XRegistryConfigHeader, options.SystemContext.AuthFilePath, "", "")
-		}
+		headers, err = auth.MakeXRegistryConfigHeader(options.SystemContext, "", "")
 	}
 	if err != nil {
 		return nil, err
@@ -320,12 +327,12 @@ func Build(ctx context.Context, containerFiles []string, options entities.BuildO
 
 	contextDir, err := filepath.Abs(options.ContextDirectory)
 	if err != nil {
-		logrus.Errorf("cannot find absolute path of %v: %v", options.ContextDirectory, err)
+		logrus.Errorf("Cannot find absolute path of %v: %v", options.ContextDirectory, err)
 		return nil, err
 	}
 
 	tarContent := []string{options.ContextDirectory}
-	newContainerFiles := []string{}
+	newContainerFiles := []string{} // dockerfile paths, relative to context dir, ToSlash()ed
 
 	dontexcludes := []string{"!Dockerfile", "!Containerfile", "!.dockerignore", "!.containerignore"}
 	for _, c := range containerFiles {
@@ -352,7 +359,7 @@ func Build(ctx context.Context, containerFiles []string, options entities.BuildO
 		}
 		containerfile, err := filepath.Abs(c)
 		if err != nil {
-			logrus.Errorf("cannot find absolute path of %v: %v", c, err)
+			logrus.Errorf("Cannot find absolute path of %v: %v", c, err)
 			return nil, err
 		}
 
@@ -373,7 +380,7 @@ func Build(ctx context.Context, containerFiles []string, options entities.BuildO
 				tarContent = append(tarContent, containerfile)
 			}
 		}
-		newContainerFiles = append(newContainerFiles, containerfile)
+		newContainerFiles = append(newContainerFiles, filepath.ToSlash(containerfile))
 	}
 	if len(newContainerFiles) > 0 {
 		cFileJSON, err := json.Marshal(newContainerFiles)
@@ -382,9 +389,62 @@ func Build(ctx context.Context, containerFiles []string, options entities.BuildO
 		}
 		params.Set("dockerfile", string(cFileJSON))
 	}
+
+	// build secrets are usually absolute host path or relative to context dir on host
+	// in any case move secret to current context and ship the tar.
+	if secrets := options.CommonBuildOpts.Secrets; len(secrets) > 0 {
+		secretsForRemote := []string{}
+
+		for _, secret := range secrets {
+			secretOpt := strings.Split(secret, ",")
+			if len(secretOpt) > 0 {
+				modifiedOpt := []string{}
+				for _, token := range secretOpt {
+					arr := strings.SplitN(token, "=", 2)
+					if len(arr) > 1 {
+						if arr[0] == "src" {
+							// read specified secret into a tmp file
+							// move tmp file to tar and change secret source to relative tmp file
+							tmpSecretFile, err := ioutil.TempFile(options.ContextDirectory, "podman-build-secret")
+							if err != nil {
+								return nil, err
+							}
+							defer os.Remove(tmpSecretFile.Name()) // clean up
+							defer tmpSecretFile.Close()
+							srcSecretFile, err := os.Open(arr[1])
+							if err != nil {
+								return nil, err
+							}
+							defer srcSecretFile.Close()
+							_, err = io.Copy(tmpSecretFile, srcSecretFile)
+							if err != nil {
+								return nil, err
+							}
+
+							// add tmp file to context dir
+							tarContent = append(tarContent, tmpSecretFile.Name())
+
+							modifiedSrc := fmt.Sprintf("src=%s", filepath.Base(tmpSecretFile.Name()))
+							modifiedOpt = append(modifiedOpt, modifiedSrc)
+						} else {
+							modifiedOpt = append(modifiedOpt, token)
+						}
+					}
+				}
+				secretsForRemote = append(secretsForRemote, strings.Join(modifiedOpt[:], ","))
+			}
+		}
+
+		c, err := jsoniter.MarshalToString(secretsForRemote)
+		if err != nil {
+			return nil, err
+		}
+		params.Add("secrets", c)
+	}
+
 	tarfile, err := nTar(append(excludes, dontexcludes...), tarContent...)
 	if err != nil {
-		logrus.Errorf("cannot tar container entries %v error: %v", tarContent, err)
+		logrus.Errorf("Cannot tar container entries %v error: %v", tarContent, err)
 		return nil, err
 	}
 	defer func() {
@@ -397,7 +457,7 @@ func Build(ctx context.Context, containerFiles []string, options entities.BuildO
 	if err != nil {
 		return nil, err
 	}
-	response, err := conn.DoRequest(tarfile, http.MethodPost, "/build", params, headers)
+	response, err := conn.DoRequest(ctx, tarfile, http.MethodPost, "/build", params, headers)
 	if err != nil {
 		return nil, err
 	}
@@ -490,7 +550,7 @@ func nTar(excludes []string, sources ...string) (io.ReadCloser, error) {
 		for _, src := range sources {
 			s, err := filepath.Abs(src)
 			if err != nil {
-				logrus.Errorf("cannot stat one of source context: %v", err)
+				logrus.Errorf("Cannot stat one of source context: %v", err)
 				merr = multierror.Append(merr, err)
 				return
 			}
@@ -574,7 +634,7 @@ func nTar(excludes []string, sources ...string) (io.ReadCloser, error) {
 					if lerr := tw.WriteHeader(hdr); lerr != nil {
 						return lerr
 					}
-				} //skip other than file,folder and symlinks
+				} // skip other than file,folder and symlinks
 				return nil
 			})
 			merr = multierror.Append(merr, err)

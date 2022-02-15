@@ -4,7 +4,7 @@ package containers
 import (
 	"net/url"
 
-	"github.com/containers/podman/v3/pkg/bindings/internal/util"
+	"github.com/containers/podman/v4/pkg/bindings/internal/util"
 )
 
 // Changed returns true if named field has been set
@@ -30,6 +30,21 @@ func (o *RestoreOptions) GetIgnoreRootfs() bool {
 		return z
 	}
 	return *o.IgnoreRootfs
+}
+
+// WithIgnoreVolumes set field IgnoreVolumes to given value
+func (o *RestoreOptions) WithIgnoreVolumes(value bool) *RestoreOptions {
+	o.IgnoreVolumes = &value
+	return o
+}
+
+// GetIgnoreVolumes returns value of field IgnoreVolumes
+func (o *RestoreOptions) GetIgnoreVolumes() bool {
+	if o.IgnoreVolumes == nil {
+		var z bool
+		return z
+	}
+	return *o.IgnoreVolumes
 }
 
 // WithIgnoreStaticIP set field IgnoreStaticIP to given value
@@ -135,4 +150,49 @@ func (o *RestoreOptions) GetPod() string {
 		return z
 	}
 	return *o.Pod
+}
+
+// WithPrintStats set field PrintStats to given value
+func (o *RestoreOptions) WithPrintStats(value bool) *RestoreOptions {
+	o.PrintStats = &value
+	return o
+}
+
+// GetPrintStats returns value of field PrintStats
+func (o *RestoreOptions) GetPrintStats() bool {
+	if o.PrintStats == nil {
+		var z bool
+		return z
+	}
+	return *o.PrintStats
+}
+
+// WithPublishPorts set field PublishPorts to given value
+func (o *RestoreOptions) WithPublishPorts(value []string) *RestoreOptions {
+	o.PublishPorts = value
+	return o
+}
+
+// GetPublishPorts returns value of field PublishPorts
+func (o *RestoreOptions) GetPublishPorts() []string {
+	if o.PublishPorts == nil {
+		var z []string
+		return z
+	}
+	return o.PublishPorts
+}
+
+// WithFileLocks set field FileLocks to given value
+func (o *RestoreOptions) WithFileLocks(value bool) *RestoreOptions {
+	o.FileLocks = &value
+	return o
+}
+
+// GetFileLocks returns value of field FileLocks
+func (o *RestoreOptions) GetFileLocks() bool {
+	if o.FileLocks == nil {
+		var z bool
+		return z
+	}
+	return *o.FileLocks
 }

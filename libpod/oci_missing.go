@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v4/libpod/define"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -66,8 +66,8 @@ func (r *MissingRuntime) Path() string {
 }
 
 // CreateContainer is not available as the runtime is missing
-func (r *MissingRuntime) CreateContainer(ctr *Container, restoreOptions *ContainerCheckpointOptions) error {
-	return r.printError()
+func (r *MissingRuntime) CreateContainer(ctr *Container, restoreOptions *ContainerCheckpointOptions) (int64, error) {
+	return 0, r.printError()
 }
 
 // UpdateContainerStatus is not available as the runtime is missing
@@ -153,8 +153,8 @@ func (r *MissingRuntime) ExecUpdateStatus(ctr *Container, sessionID string) (boo
 }
 
 // CheckpointContainer is not available as the runtime is missing
-func (r *MissingRuntime) CheckpointContainer(ctr *Container, options ContainerCheckpointOptions) error {
-	return r.printError()
+func (r *MissingRuntime) CheckpointContainer(ctr *Container, options ContainerCheckpointOptions) (int64, error) {
+	return 0, r.printError()
 }
 
 // CheckConmonRunning is not available as the runtime is missing

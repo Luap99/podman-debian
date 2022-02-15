@@ -43,7 +43,7 @@ as the mount point could be removed without their knowledge.
 
 Instead of providing the container name or ID, use the last created container.
 If you use methods other than Podman to run containers such as CRI-O, the last
-started container could be from either of those methods. (This option is not available with the remote Podman client)
+started container could be from either of those methods. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
 
 ## EXAMPLE
 
@@ -54,4 +54,4 @@ podman unmount containerID1 containerID2 containerID3
 podman unmount --all
 
 ## SEE ALSO
-podman(1), podman-container-mount(1), podman-image-mount(1)
+**[podman(1)](podman.1.md)**, **[podman-container-mount(1)](podman-container-mount.1.md)**, **[podman-image-mount(1)](podman-image-mount.1.md)**

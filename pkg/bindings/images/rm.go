@@ -4,10 +4,10 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/containers/podman/v3/pkg/api/handlers/types"
-	"github.com/containers/podman/v3/pkg/bindings"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/errorhandling"
+	"github.com/containers/podman/v4/pkg/api/handlers/types"
+	"github.com/containers/podman/v4/pkg/bindings"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/errorhandling"
 )
 
 // Remove removes one or more images from the local storage.  Use optional force option to remove an
@@ -32,7 +32,7 @@ func Remove(ctx context.Context, images []string, options *RemoveOptions) (*enti
 	for _, image := range images {
 		params.Add("images", image)
 	}
-	response, err := conn.DoRequest(nil, http.MethodDelete, "/images/remove", params, nil)
+	response, err := conn.DoRequest(ctx, nil, http.MethodDelete, "/images/remove", params, nil)
 	if err != nil {
 		return nil, []error{err}
 	}

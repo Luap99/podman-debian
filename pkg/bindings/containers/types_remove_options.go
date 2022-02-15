@@ -4,7 +4,7 @@ package containers
 import (
 	"net/url"
 
-	"github.com/containers/podman/v3/pkg/bindings/internal/util"
+	"github.com/containers/podman/v4/pkg/bindings/internal/util"
 )
 
 // Changed returns true if named field has been set
@@ -15,6 +15,21 @@ func (o *RemoveOptions) Changed(fieldName string) bool {
 // ToParams formats struct fields to be passed to API service
 func (o *RemoveOptions) ToParams() (url.Values, error) {
 	return util.ToParams(o)
+}
+
+// WithDepend set field Depend to given value
+func (o *RemoveOptions) WithDepend(value bool) *RemoveOptions {
+	o.Depend = &value
+	return o
+}
+
+// GetDepend returns value of field Depend
+func (o *RemoveOptions) GetDepend() bool {
+	if o.Depend == nil {
+		var z bool
+		return z
+	}
+	return *o.Depend
 }
 
 // WithIgnore set field Ignore to given value
@@ -60,4 +75,19 @@ func (o *RemoveOptions) GetVolumes() bool {
 		return z
 	}
 	return *o.Volumes
+}
+
+// WithTimeout set field Timeout to given value
+func (o *RemoveOptions) WithTimeout(value uint) *RemoveOptions {
+	o.Timeout = &value
+	return o
+}
+
+// GetTimeout returns value of field Timeout
+func (o *RemoveOptions) GetTimeout() uint {
+	if o.Timeout == nil {
+		var z uint
+		return z
+	}
+	return *o.Timeout
 }

@@ -9,16 +9,17 @@ import (
 	"time"
 
 	"github.com/containers/common/libimage"
+	"github.com/containers/common/libnetwork/types"
 	"github.com/containers/common/pkg/parse"
 	"github.com/containers/common/pkg/secrets"
 	"github.com/containers/image/v5/manifest"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/libpod/network/types"
-	ann "github.com/containers/podman/v3/pkg/annotations"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/specgen"
-	"github.com/containers/podman/v3/pkg/specgen/generate"
-	"github.com/containers/podman/v3/pkg/util"
+	"github.com/containers/podman/v4/libpod/define"
+	ann "github.com/containers/podman/v4/pkg/annotations"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/specgen"
+	"github.com/containers/podman/v4/pkg/specgen/generate"
+	"github.com/containers/podman/v4/pkg/util"
+	"github.com/docker/go-units"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 	v1 "k8s.io/api/core/v1"
@@ -26,8 +27,8 @@ import (
 )
 
 func ToPodOpt(ctx context.Context, podName string, p entities.PodCreateOptions, podYAML *v1.PodTemplateSpec) (entities.PodCreateOptions, error) {
-	//	p := specgen.NewPodSpecGenerator()
-	p.Net = &entities.NetOptions{}
+	p.Net = &entities.NetOptions{NoHosts: p.Net.NoHosts}
+
 	p.Name = podName
 	p.Labels = podYAML.ObjectMeta.Labels
 	// Kube pods must share {ipc, net, uts} by default
@@ -47,6 +48,9 @@ func ToPodOpt(ctx context.Context, podName string, p entities.PodCreateOptions, 
 		p.Net.Network = specgen.Namespace{NSMode: "host"}
 	}
 	if podYAML.Spec.HostAliases != nil {
+		if p.Net.NoHosts {
+			return p, errors.New("HostAliases in yaml file will not work with --no-hosts")
+		}
 		hosts := make([]string, 0, len(podYAML.Spec.HostAliases))
 		for _, hostAlias := range podYAML.Spec.HostAliases {
 			for _, host := range hostAlias.Hostnames {
@@ -113,6 +117,8 @@ type CtrSpecGenOptions struct {
 	SecretsManager *secrets.SecretsManager
 	// LogDriver which should be used for the container
 	LogDriver string
+	// LogOptions log options which should be used for the container
+	LogOptions []string
 	// Labels define key-value pairs of metadata
 	Labels map[string]string
 	//
@@ -141,6 +147,27 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 		Driver: opts.LogDriver,
 	}
 
+	for _, o := range opts.LogOptions {
+		split := strings.SplitN(o, "=", 2)
+		if len(split) < 2 {
+			return nil, errors.Errorf("invalid log option %q", o)
+		}
+		switch strings.ToLower(split[0]) {
+		case "driver":
+			s.LogConfiguration.Driver = split[1]
+		case "path":
+			s.LogConfiguration.Path = split[1]
+		case "max-size":
+			logSize, err := units.FromHumanSize(split[1])
+			if err != nil {
+				return nil, err
+			}
+			s.LogConfiguration.Size = logSize
+		default:
+			s.LogConfiguration.Options[split[0]] = split[1]
+		}
+	}
+
 	s.InitContainerType = opts.InitContainerType
 
 	setupSecurityContext(s, opts.Container)
@@ -160,7 +187,7 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 		return nil, errors.Wrap(err, "Failed to set CPU quota")
 	}
 	if milliCPU > 0 {
-		period, quota := util.CoresToPeriodAndQuota(float64(milliCPU) / 1000)
+		period, quota := util.CoresToPeriodAndQuota(float64(milliCPU))
 		s.ResourceLimits.CPU = &spec.LinuxCPU{
 			Quota:  &quota,
 			Period: &period,
@@ -191,7 +218,7 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 
 	// TODO: We don't understand why specgen does not take of this, but
 	// integration tests clearly pointed out that it was required.
-	imageData, err := opts.Image.Inspect(ctx, false)
+	imageData, err := opts.Image.Inspect(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +291,10 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 			return nil, err
 		}
 
-		envs[env.Name] = value
+		// Only set the env if the value is not ""
+		if value != "" {
+			envs[env.Name] = value
+		}
 	}
 	for _, envFrom := range opts.Container.EnvFrom {
 		cmEnvs, err := envVarsFrom(envFrom, opts)
@@ -282,6 +312,11 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 		volumeSource, exists := opts.Volumes[volume.Name]
 		if !exists {
 			return nil, errors.Errorf("Volume mount %s specified for container but not configured in volumes", volume.Name)
+		}
+		// Skip if the volume is optional. This means that a configmap for a configmap volume was not found but it was
+		// optional so we can move on without throwing an error
+		if exists && volumeSource.Optional {
+			continue
 		}
 
 		dest, options, err := parseMountPath(volume.MountPath, volume.ReadOnly)
@@ -314,6 +349,13 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 				Options: options,
 			}
 			s.Volumes = append(s.Volumes, &namedVolume)
+		case KubeVolumeTypeConfigMap:
+			cmVolume := specgen.NamedVolume{
+				Dest:    volume.MountPath,
+				Name:    volumeSource.Source,
+				Options: options,
+			}
+			s.Volumes = append(s.Volumes, &cmVolume)
 		default:
 			return nil, errors.Errorf("Unsupported volume source type")
 		}

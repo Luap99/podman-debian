@@ -27,7 +27,11 @@ Note: `:` is a restricted character and cannot be part of the file name.
 #### **--compress**
 
 Compress tarball image layers when pushing to a directory using the 'dir' transport. (default is same compression type, compressed or uncompressed, as source)
-Note: This flag can only be set when using the **dir** transport i.e --format=oci-dir or --format=docker-dir
+Note: This flag can only be set with **--format=docker-dir**.
+
+#### **--uncompressed**
+
+Accept uncompressed layers when using one of the OCI formats.
 
 #### **--output**, **-o**=*file*
 
@@ -102,7 +106,7 @@ Storing signatures
 ```
 
 ## SEE ALSO
-podman(1), podman-load(1), containers.conf(5), containers-transports(5)
+**[podman(1)](podman.1.md)**, **[podman-load(1)](podman-load.1.md)**, **[containers.conf(5)](https://github.com/containers/common/blob/main/docs/containers.conf.5.md)**, **[containers-transports(5)](https://github.com/containers/image/blob/main/docs/containers-transports.5.md)**
 
 ## HISTORY
 July 2017, Originally compiled by Urvashi Mohnani <umohnani@redhat.com>

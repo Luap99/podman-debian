@@ -9,12 +9,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containers/podman/v3/libpod"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/domain/filters"
-	psdefine "github.com/containers/podman/v3/pkg/ps/define"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/domain/filters"
+	psdefine "github.com/containers/podman/v4/pkg/ps/define"
 	"github.com/containers/storage"
+	"github.com/containers/storage/types"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -63,13 +64,17 @@ func GetContainerLists(runtime *libpod.Runtime, options entities.ContainerListOp
 	}
 	for _, con := range cons {
 		listCon, err := ListContainerBatch(runtime, con, options)
-		if err != nil {
+		switch {
+		case errors.Cause(err) == define.ErrNoSuchCtr:
+			continue
+		case err != nil:
 			return nil, err
+		default:
+			pss = append(pss, listCon)
 		}
-		pss = append(pss, listCon)
 	}
 
-	if options.All && options.External {
+	if options.External {
 		listCon, err := GetExternalContainerLists(runtime)
 		if err != nil {
 			return nil, err
@@ -89,7 +94,7 @@ func GetContainerLists(runtime *libpod.Runtime, options entities.ContainerListOp
 	return pss, nil
 }
 
-// GetExternalContainerLists returns list of external containers for e.g created by buildah
+// GetExternalContainerLists returns list of external containers for e.g. created by buildah
 func GetExternalContainerLists(runtime *libpod.Runtime) ([]entities.ListContainer, error) {
 	var (
 		pss = []entities.ListContainer{}
@@ -102,15 +107,19 @@ func GetExternalContainerLists(runtime *libpod.Runtime) ([]entities.ListContaine
 
 	for _, con := range externCons {
 		listCon, err := ListStorageContainer(runtime, con)
-		if err != nil {
+		switch {
+		case errors.Cause(err) == types.ErrLoadError:
+			continue
+		case err != nil:
 			return nil, err
+		default:
+			pss = append(pss, listCon)
 		}
-		pss = append(pss, listCon)
 	}
 	return pss, nil
 }
 
-// BatchContainerOp is used in ps to reduce performance hits by "batching"
+// ListContainerBatch is used in ps to reduce performance hits by "batching"
 // locks.
 func ListContainerBatch(rt *libpod.Runtime, ctr *libpod.Container, opts entities.ContainerListOptions) (entities.ListContainer, error) {
 	var (
@@ -145,11 +154,11 @@ func ListContainerBatch(rt *libpod.Runtime, ctr *libpod.Container, opts entities
 		}
 		startedTime, err = c.StartedTime()
 		if err != nil {
-			logrus.Errorf("error getting started time for %q: %v", c.ID(), err)
+			logrus.Errorf("Getting started time for %q: %v", c.ID(), err)
 		}
 		exitedTime, err = c.FinishedTime()
 		if err != nil {
-			logrus.Errorf("error getting exited time for %q: %v", c.ID(), err)
+			logrus.Errorf("Getting exited time for %q: %v", c.ID(), err)
 		}
 
 		pid, err = c.PID()
@@ -176,12 +185,12 @@ func ListContainerBatch(rt *libpod.Runtime, ctr *libpod.Container, opts entities
 
 			rootFsSize, err := c.RootFsSize()
 			if err != nil {
-				logrus.Errorf("error getting root fs size for %q: %v", c.ID(), err)
+				logrus.Errorf("Getting root fs size for %q: %v", c.ID(), err)
 			}
 
 			rwSize, err := c.RWSize()
 			if err != nil {
-				logrus.Errorf("error getting rw size for %q: %v", c.ID(), err)
+				logrus.Errorf("Getting rw size for %q: %v", c.ID(), err)
 			}
 
 			size.RootFsSize = rootFsSize
@@ -198,7 +207,7 @@ func ListContainerBatch(rt *libpod.Runtime, ctr *libpod.Container, opts entities
 		return entities.ListContainer{}, err
 	}
 
-	networks, _, err := ctr.Networks()
+	networks, err := ctr.Networks()
 	if err != nil {
 		return entities.ListContainer{}, err
 	}

@@ -5,7 +5,7 @@ import (
 	"os"
 	"sort"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	"github.com/containers/storage/pkg/stringid"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -135,14 +135,14 @@ var _ = Describe("Podman ps", func() {
 		Expect(result).Should(Exit(0))
 
 		output := result.OutputToStringArray()
-		Expect(len(output)).To(Equal(2))
+		Expect(output).To(HaveLen(2))
 
 		result = podmanTest.Podman([]string{"pod", "ps", "-q", "--no-trunc", "--filter", "name=mypod$"})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
 
 		output = result.OutputToStringArray()
-		Expect(len(output)).To(Equal(1))
+		Expect(output).To(HaveLen(1))
 		Expect(output[0]).To(Equal(podid))
 	})
 
@@ -174,7 +174,7 @@ var _ = Describe("Podman ps", func() {
 	})
 
 	It("podman pod ps --ctr-names", func() {
-		SkipIfRootlessCgroupsV1("Not supported for rootless + CGroupsV1")
+		SkipIfRootlessCgroupsV1("Not supported for rootless + CgroupsV1")
 		_, ec, podid := podmanTest.CreatePod(nil)
 		Expect(ec).To(Equal(0))
 
@@ -368,7 +368,7 @@ var _ = Describe("Podman ps", func() {
 
 		infra := podmanTest.Podman([]string{"pod", "ps", "--format", "{{.InfraId}}"})
 		infra.WaitWithDefaultTimeout()
-		Expect(len(infra.OutputToString())).To(BeZero())
+		Expect(infra.OutputToString()).To(BeEmpty())
 	})
 
 	It("podman pod ps format with labels", func() {

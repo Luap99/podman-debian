@@ -10,9 +10,9 @@ import (
 	"github.com/containers/buildah/imagebuildah"
 	"github.com/containers/common/libimage"
 	"github.com/containers/image/v5/docker/reference"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/libpod/events"
-	"github.com/containers/podman/v3/pkg/util"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/libpod/events"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -36,9 +36,21 @@ func (r *Runtime) RemoveContainersForImageCallback(ctx context.Context) libimage
 			return err
 		}
 		for _, ctr := range ctrs {
-			if ctr.config.RootfsImageID == imageID {
-				if err := r.removeContainer(ctx, ctr, true, false, false); err != nil {
-					return errors.Wrapf(err, "error removing image %s: container %s using image could not be removed", imageID, ctr.ID())
+			if ctr.config.RootfsImageID != imageID {
+				continue
+			}
+			var timeout *uint
+			if ctr.config.IsInfra {
+				pod, err := r.state.Pod(ctr.config.Pod)
+				if err != nil {
+					return errors.Wrapf(err, "container %s is in pod %s, but pod cannot be retrieved", ctr.ID(), pod.ID())
+				}
+				if err := r.removePod(ctx, pod, true, true, timeout); err != nil {
+					return errors.Wrapf(err, "removing image %s: container %s using image could not be removed", imageID, ctr.ID())
+				}
+			} else {
+				if err := r.removeContainer(ctx, ctr, true, false, false, timeout); err != nil {
+					return errors.Wrapf(err, "removing image %s: container %s using image could not be removed", imageID, ctr.ID())
 				}
 			}
 		}
@@ -48,13 +60,34 @@ func (r *Runtime) RemoveContainersForImageCallback(ctx context.Context) libimage
 	}
 }
 
+// IsExternalContainerCallback returns a callback that be used in `libimage` to
+// figure out whether a given container is an external one.  A container is
+// considered external if it is not present in libpod's database.
+func (r *Runtime) IsExternalContainerCallback(_ context.Context) libimage.IsExternalContainerFunc {
+	// NOTE: pruning external containers is subject to race conditions
+	// (e.g., when a container gets removed). To address this and similar
+	// races, pruning had to happen inside c/storage.  Containers has to be
+	// labelled with "podman/libpod" along with callbacks similar to
+	// libimage.
+	return func(idOrName string) (bool, error) {
+		_, err := r.LookupContainer(idOrName)
+		if err == nil {
+			return false, nil
+		}
+		if errors.Is(err, define.ErrNoSuchCtr) {
+			return true, nil
+		}
+		return false, nil
+	}
+}
+
 // newBuildEvent creates a new event based on completion of a built image
 func (r *Runtime) newImageBuildCompleteEvent(idOrName string) {
 	e := events.NewEvent(events.Build)
 	e.Type = events.Image
 	e.Name = idOrName
 	if err := r.eventer.Write(e); err != nil {
-		logrus.Errorf("unable to write build event: %q", err)
+		logrus.Errorf("Unable to write build event: %q", err)
 	}
 }
 
@@ -63,6 +96,8 @@ func (r *Runtime) Build(ctx context.Context, options buildahDefine.BuildOptions,
 	if options.Runtime == "" {
 		options.Runtime = r.GetOCIRuntimePath()
 	}
+	// share the network interface between podman and buildah
+	options.NetworkInterface = r.network
 	id, ref, err := imagebuildah.BuildDockerfiles(ctx, r.store, options, dockerfiles...)
 	// Write event for build completion
 	r.newImageBuildCompleteEvent(id)

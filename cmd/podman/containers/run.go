@@ -6,15 +6,15 @@ import (
 	"strings"
 
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/cmd/podman/utils"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/errorhandling"
-	"github.com/containers/podman/v3/pkg/rootless"
-	"github.com/containers/podman/v3/pkg/specgen"
-	"github.com/containers/podman/v3/pkg/specgenutil"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/utils"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/errorhandling"
+	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/specgen"
+	"github.com/containers/podman/v4/pkg/specgenutil"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -83,6 +83,9 @@ func runFlags(cmd *cobra.Command) {
 	_ = cmd.RegisterFlagCompletionFunc(gpuFlagName, completion.AutocompleteNone)
 	_ = flags.MarkHidden("gpus")
 
+	passwdFlagName := "passwd"
+	flags.BoolVar(&runOpts.Passwd, passwdFlagName, true, "add entries to /etc/passwd and /etc/group")
+
 	if registry.IsRemote() {
 		_ = flags.MarkHidden("preserve-fds")
 		_ = flags.MarkHidden("conmon-pidfile")
@@ -120,7 +123,7 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 	flags := cmd.Flags()
-	cliVals.Net, err = common.NetFlagsToNetOptions(nil, *flags, cliVals.Pod == "" && cliVals.PodIDFile == "")
+	cliVals.Net, err = common.NetFlagsToNetOptions(nil, *flags)
 	if err != nil {
 		return err
 	}
@@ -158,8 +161,13 @@ func run(cmd *cobra.Command, args []string) error {
 		runOpts.InputStream = nil
 	}
 
+	passthrough := cliVals.LogDriver == define.PassthroughLogging
+
 	// If attach is set, clear stdin/stdout/stderr and only attach requested
 	if cmd.Flag("attach").Changed {
+		if passthrough {
+			return errors.Wrapf(define.ErrInvalidArg, "cannot specify --attach with --log-driver=passthrough")
+		}
 		runOpts.OutputStream = nil
 		runOpts.ErrorStream = nil
 		if !cliVals.Interactive {
@@ -179,15 +187,17 @@ func run(cmd *cobra.Command, args []string) error {
 			}
 		}
 	}
+
 	cliVals.PreserveFDs = runOpts.PreserveFDs
 	s := specgen.NewSpecGenerator(imageName, cliVals.RootFS)
 	if err := specgenutil.FillOutSpecGen(s, &cliVals, args); err != nil {
 		return err
 	}
 	s.RawImageName = rawImageName
+	s.Passwd = &runOpts.Passwd
 	runOpts.Spec = s
 
-	if _, err := createPodIfNecessary(s, cliVals.Net); err != nil {
+	if _, err := createPodIfNecessary(cmd, s, cliVals.Net); err != nil {
 		return err
 	}
 
@@ -200,7 +210,7 @@ func run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if runOpts.Detach {
+	if runOpts.Detach && !passthrough {
 		fmt.Println(report.Id)
 		return nil
 	}

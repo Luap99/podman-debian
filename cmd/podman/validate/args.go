@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/containers/podman/v3/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/registry"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
@@ -27,7 +27,8 @@ func SubCommandExists(cmd *cobra.Command, args []string) error {
 		}
 		return errors.Errorf("unrecognized command `%[1]s %[2]s`\n\nDid you mean this?\n\t%[3]s\n\nTry '%[1]s --help' for more information.", cmd.CommandPath(), args[0], strings.Join(suggestions, "\n\t"))
 	}
-	return errors.Errorf("missing command '%[1]s COMMAND'\nTry '%[1]s --help' for more information.", cmd.CommandPath())
+	cmd.Help()
+	return errors.Errorf("missing command '%[1]s COMMAND'", cmd.CommandPath())
 }
 
 // IDOrLatestArgs used to validate a nameOrId was provided or the "--latest" flag

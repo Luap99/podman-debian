@@ -20,12 +20,12 @@ Supported filters:
 
 | Filter             | Description                                                                 |
 | :----------------: | --------------------------------------------------------------------------- |
-| *until*            | Only remove containers and images created before given timestamp.           |
-| *label*            | Only remove containers and images, with (or without, in the case of label!=[...] is used) the specified labels.                  |
+| *label*            | Only remove containers, with (or without, in the case of label!=[...] is used) the specified labels.                  |
+| *until*            | Only remove containers created before given timestamp.           |
+
+The `label` *filter* accepts two formats. One is the `label`=*key* or `label`=*key*=*value*, which removes containers with the specified labels. The other format is the `label!`=*key* or `label!`=*key*=*value*, which removes containers without the specified labels.
 
 The `until` *filter* can be Unix timestamps, date formatted timestamps, or Go duration strings (e.g. 10m, 1h30m) computed relative to the machine’s time.
-
-The `label` *filter* accepts two formats. One is the `label`=*key*, `label`=*key*=*value*, which removes containers with the specified labels. The other format is the `label!`=*key*, or `label!`=*key*=*value*, which removes containers without the specified labels.
 
 #### **--force**, **-f**
 
@@ -71,7 +71,7 @@ Are you sure you want to continue? [y/N] y
 ```
 
 ## SEE ALSO
-**[podman(1)](podman.1.md)**, **[podman-ps](podman-ps.1.md)**
+**[podman(1)](podman.1.md)**, **[podman-ps(1)](podman-ps.1.md)**
 
 ## HISTORY
 December 2018, Originally compiled by Brent Baude <bbaude@redhat.com>\

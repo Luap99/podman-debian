@@ -27,7 +27,7 @@ type HostInfo struct {
 	Arch              string           `json:"arch"`
 	BuildahVersion    string           `json:"buildahVersion"`
 	CgroupManager     string           `json:"cgroupManager"`
-	CGroupsVersion    string           `json:"cgroupVersion"`
+	CgroupsVersion    string           `json:"cgroupVersion"`
 	CgroupControllers []string         `json:"cgroupControllers"`
 	Conmon            *ConmonInfo      `json:"conmon"`
 	CPUs              int              `json:"cpus"`
@@ -39,6 +39,7 @@ type HostInfo struct {
 	LogDriver         string           `json:"logDriver"`
 	MemFree           int64            `json:"memFree"`
 	MemTotal          int64            `json:"memTotal"`
+	NetworkBackend    string           `json:"networkBackend"`
 	OCIRuntime        *OCIRuntimeInfo  `json:"ociRuntime"`
 	OS                string           `json:"os"`
 	// RemoteSocket returns the UNIX domain socket the Podman service is listening on
@@ -108,6 +109,7 @@ type StoreInfo struct {
 	GraphOptions    map[string]interface{} `json:"graphOptions"`
 	GraphRoot       string                 `json:"graphRoot"`
 	GraphStatus     map[string]string      `json:"graphStatus"`
+	ImageCopyTmpDir string                 `json:"imageCopyTmpDir"`
 	ImageStore      ImageStore             `json:"imageStore"`
 	RunRoot         string                 `json:"runRoot"`
 	VolumePath      string                 `json:"volumePath"`

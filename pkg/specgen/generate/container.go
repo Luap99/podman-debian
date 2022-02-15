@@ -4,34 +4,60 @@ import (
 	"context"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/containers/common/libimage"
-	"github.com/containers/podman/v3/libpod"
-	"github.com/containers/podman/v3/libpod/define"
-	ann "github.com/containers/podman/v3/pkg/annotations"
-	envLib "github.com/containers/podman/v3/pkg/env"
-	"github.com/containers/podman/v3/pkg/signal"
-	"github.com/containers/podman/v3/pkg/specgen"
+	"github.com/containers/common/pkg/config"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/libpod/define"
+	ann "github.com/containers/podman/v4/pkg/annotations"
+	envLib "github.com/containers/podman/v4/pkg/env"
+	"github.com/containers/podman/v4/pkg/signal"
+	"github.com/containers/podman/v4/pkg/specgen"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 )
 
+func getImageFromSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerator) (*libimage.Image, string, *libimage.ImageData, error) {
+	if s.Image == "" || s.Rootfs != "" {
+		return nil, "", nil, nil
+	}
+
+	// Image may already have been set in the generator.
+	image, resolvedName := s.GetImage()
+	if image != nil {
+		inspectData, err := image.Inspect(ctx, nil)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		return image, resolvedName, inspectData, nil
+	}
+
+	// Need to look up image.
+	image, resolvedName, err := r.LibimageRuntime().LookupImage(s.Image, nil)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	s.SetImage(image, resolvedName)
+	inspectData, err := image.Inspect(ctx, nil)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	return image, resolvedName, inspectData, err
+}
+
 // Fill any missing parts of the spec generator (e.g. from the image).
 // Returns a set of warnings or any fatal error that occurred.
 func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerator) ([]string, error) {
 	// Only add image configuration if we have an image
-	var newImage *libimage.Image
-	var inspectData *libimage.ImageData
-	var err error
-	if s.Image != "" {
-		newImage, _, err = r.LibimageRuntime().LookupImage(s.Image, nil)
-		if err != nil {
-			return nil, err
-		}
-
-		inspectData, err = newImage.Inspect(ctx, false)
+	newImage, _, inspectData, err := getImageFromSpec(ctx, r, s)
+	if err != nil {
+		return nil, err
+	}
+	if inspectData != nil {
+		inspectData, err = newImage.Inspect(ctx, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -40,6 +66,13 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 			// NOTE: the health check is only set for Docker images
 			// but inspect will take care of it.
 			s.HealthConfig = inspectData.HealthCheck
+			if s.HealthConfig != nil && s.HealthConfig.Timeout == 0 {
+				hct, err := time.ParseDuration(define.DefaultHealthCheckTimeout)
+				if err != nil {
+					return nil, err
+				}
+				s.HealthConfig.Timeout = hct
+			}
 		}
 
 		// Image stop signal
@@ -54,7 +87,7 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 		}
 	}
 
-	rtc, err := r.GetConfig()
+	rtc, err := r.GetConfigNoCopy()
 	if err != nil {
 		return nil, err
 	}
@@ -63,9 +96,6 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 	defaultEnvs, err := envLib.ParseSlice(rtc.GetDefaultEnvEx(s.EnvHost, s.HTTPProxy))
 	if err != nil {
 		return nil, errors.Wrap(err, "error parsing fields in containers.conf")
-	}
-	if defaultEnvs["container"] == "" {
-		defaultEnvs["container"] = "podman"
 	}
 	var envs map[string]string
 
@@ -77,9 +107,16 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 		if err != nil {
 			return nil, errors.Wrap(err, "Env fields from image failed to parse")
 		}
-		defaultEnvs = envLib.Join(defaultEnvs, envs)
+		defaultEnvs = envLib.Join(envLib.DefaultEnvVariables(), envLib.Join(defaultEnvs, envs))
 	}
 
+	for _, e := range s.UnsetEnv {
+		delete(defaultEnvs, e)
+	}
+
+	if s.UnsetEnvAll {
+		defaultEnvs = make(map[string]string)
+	}
 	// First transform the os env into a map. We need it for the labels later in
 	// any case.
 	osEnv, err := envLib.ParseSlice(os.Environ())
@@ -90,16 +127,7 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 	if s.EnvHost {
 		defaultEnvs = envLib.Join(defaultEnvs, osEnv)
 	} else if s.HTTPProxy {
-		for _, envSpec := range []string{
-			"http_proxy",
-			"HTTP_PROXY",
-			"https_proxy",
-			"HTTPS_PROXY",
-			"ftp_proxy",
-			"FTP_PROXY",
-			"no_proxy",
-			"NO_PROXY",
-		} {
+		for _, envSpec := range config.ProxyEnv {
 			if v, ok := osEnv[envSpec]; ok {
 				defaultEnvs[envSpec] = v
 			}
@@ -128,7 +156,9 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 
 		// Add annotations from the image
 		for k, v := range inspectData.Annotations {
-			annotations[k] = v
+			if !define.IsReservedAnnotation(k) {
+				annotations[k] = v
+			}
 		}
 	}
 
@@ -191,15 +221,16 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 	if len(s.User) == 0 && inspectData != nil {
 		s.User = inspectData.Config.User
 	}
-	if err := finishThrottleDevices(s); err != nil {
-		return nil, err
-	}
 	// Unless already set via the CLI, check if we need to disable process
 	// labels or set the defaults.
 	if len(s.SelinuxOpts) == 0 {
 		if err := setLabelOpts(s, r, s.PidNS, s.IpcNS); err != nil {
 			return nil, err
 		}
+	}
+
+	if s.CgroupsMode == "" {
+		s.CgroupsMode = rtc.Cgroups()
 	}
 
 	// If caller did not specify Pids Limits load default
@@ -251,10 +282,10 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 	return warnings, nil
 }
 
-// finishThrottleDevices takes the temporary representation of the throttle
+// FinishThrottleDevices takes the temporary representation of the throttle
 // devices in the specgen and looks up the major and major minors. it then
 // sets the throttle devices proper in the specgen
-func finishThrottleDevices(s *specgen.SpecGenerator) error {
+func FinishThrottleDevices(s *specgen.SpecGenerator) error {
 	if bps := s.ThrottleReadBpsDevice; len(bps) > 0 {
 		for k, v := range bps {
 			statT := unix.Stat_t{}
@@ -263,6 +294,9 @@ func finishThrottleDevices(s *specgen.SpecGenerator) error {
 			}
 			v.Major = (int64(unix.Major(uint64(statT.Rdev))))
 			v.Minor = (int64(unix.Minor(uint64(statT.Rdev))))
+			if s.ResourceLimits.BlockIO == nil {
+				s.ResourceLimits.BlockIO = new(spec.LinuxBlockIO)
+			}
 			s.ResourceLimits.BlockIO.ThrottleReadBpsDevice = append(s.ResourceLimits.BlockIO.ThrottleReadBpsDevice, v)
 		}
 	}

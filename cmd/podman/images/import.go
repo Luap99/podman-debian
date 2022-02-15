@@ -9,10 +9,10 @@ import (
 	"strings"
 
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/parse"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/parse"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/hashicorp/go-multierror"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
@@ -77,8 +77,10 @@ func importFlags(cmd *cobra.Command) {
 	_ = cmd.RegisterFlagCompletionFunc(messageFlagName, completion.AutocompleteNone)
 
 	flags.BoolVarP(&importOpts.Quiet, "quiet", "q", false, "Suppress output")
-	flags.StringVar(&importOpts.SignaturePolicy, "signature-policy", "", "Path to a signature-policy file")
-	_ = flags.MarkHidden("signature-policy")
+	if !registry.IsRemote() {
+		flags.StringVar(&importOpts.SignaturePolicy, "signature-policy", "", "Path to a signature-policy file")
+		_ = flags.MarkHidden("signature-policy")
+	}
 }
 
 func importCon(cmd *cobra.Command, args []string) error {

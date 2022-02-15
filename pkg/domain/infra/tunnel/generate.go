@@ -3,19 +3,36 @@ package tunnel
 import (
 	"context"
 
-	"github.com/containers/podman/v3/pkg/bindings/generate"
-	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/bindings/generate"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 )
 
 func (ic *ContainerEngine) GenerateSystemd(ctx context.Context, nameOrID string, opts entities.GenerateSystemdOptions) (*entities.GenerateSystemdReport, error) {
-	options := new(generate.SystemdOptions).WithUseName(opts.Name).WithContainerPrefix(opts.ContainerPrefix).WithNew(opts.New).WithNoHeader(opts.NoHeader)
-	options.WithPodPrefix(opts.PodPrefix).WithSeparator(opts.Separator)
+	options := new(
+		generate.SystemdOptions).
+		WithUseName(opts.Name).
+		WithContainerPrefix(opts.ContainerPrefix).
+		WithNew(opts.New).WithNoHeader(opts.NoHeader).
+		WithTemplateUnitFile(opts.TemplateUnitFile).
+		WithPodPrefix(opts.PodPrefix).
+		WithSeparator(opts.Separator).
+		WithWants(opts.Wants).
+		WithAfter(opts.After).
+		WithRequires(opts.Requires)
+
+	if opts.StartTimeout != nil {
+		options.WithStartTimeout(*opts.StartTimeout)
+	}
+	if opts.StopTimeout != nil {
+		options.WithStopTimeout(*opts.StopTimeout)
+	}
 	if opts.RestartPolicy != nil {
 		options.WithRestartPolicy(*opts.RestartPolicy)
 	}
-	if to := opts.StopTimeout; to != nil {
-		options.WithStopTimeout(*opts.StopTimeout)
+	if opts.RestartSec != nil {
+		options.WithRestartSec(*opts.RestartSec)
 	}
+
 	return generate.Systemd(ic.ClientCtx, nameOrID, options)
 }
 

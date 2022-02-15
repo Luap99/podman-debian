@@ -2,6 +2,7 @@ package libpod
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -9,15 +10,16 @@ import (
 	"time"
 
 	"github.com/containers/buildah"
+	"github.com/containers/common/libnetwork/types"
+	"github.com/containers/common/pkg/cgroups"
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/libpod/events"
-	"github.com/containers/podman/v3/libpod/network"
-	"github.com/containers/podman/v3/libpod/shutdown"
-	"github.com/containers/podman/v3/pkg/cgroups"
-	"github.com/containers/podman/v3/pkg/domain/entities/reports"
-	"github.com/containers/podman/v3/pkg/rootless"
-	"github.com/containers/podman/v3/pkg/specgen"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/libpod/events"
+	"github.com/containers/podman/v4/libpod/shutdown"
+	"github.com/containers/podman/v4/pkg/domain/entities/reports"
+	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/specgen"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/containers/storage"
 	"github.com/containers/storage/pkg/stringid"
 	"github.com/docker/go-units"
@@ -60,7 +62,7 @@ func (r *Runtime) PrepareVolumeOnCreateContainer(ctx context.Context, ctr *Conta
 
 	defer func() {
 		if err := ctr.cleanupStorage(); err != nil {
-			logrus.Errorf("error cleaning up container storage %s: %v", ctr.ID(), err)
+			logrus.Errorf("Cleaning up container storage %s: %v", ctr.ID(), err)
 		}
 	}()
 
@@ -70,7 +72,7 @@ func (r *Runtime) PrepareVolumeOnCreateContainer(ctx context.Context, ctr *Conta
 		ctr.state.Mounted = true
 		ctr.state.Mountpoint = mountPoint
 		if err = ctr.save(); err != nil {
-			logrus.Errorf("Error saving container %s state: %v", ctr.ID(), err)
+			logrus.Errorf("Saving container %s state: %v", ctr.ID(), err)
 		}
 	}
 
@@ -187,17 +189,12 @@ func (r *Runtime) initContainerVariables(rSpec *spec.Spec, config *ContainerConf
 		// If the ID is empty a new name for the restored container was requested
 		if ctr.config.ID == "" {
 			ctr.config.ID = stringid.GenerateNonCryptoID()
-			// Fixup ExitCommand with new ID
-			ctr.config.ExitCommand[len(ctr.config.ExitCommand)-1] = ctr.config.ID
 		}
 		// Reset the log path to point to the default
 		ctr.config.LogPath = ""
 	}
 
-	ctr.config.Spec = new(spec.Spec)
-	if err := JSONDeepCopy(rSpec, ctr.config.Spec); err != nil {
-		return nil, errors.Wrapf(err, "error copying runtime spec while creating container")
-	}
+	ctr.config.Spec = rSpec
 	ctr.config.CreatedTime = time.Now()
 
 	ctr.state.BindMounts = make(map[string]string)
@@ -235,40 +232,56 @@ func (r *Runtime) newContainer(ctx context.Context, rSpec *spec.Spec, options ..
 }
 
 func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Container, retErr error) {
+	// normalize the networks to names
+	// the db backend only knows about network names so we have to make
+	// sure we do not use ids internally
+	if len(ctr.config.Networks) > 0 {
+		normalizeNetworks := make(map[string]types.PerNetworkOptions, len(ctr.config.Networks))
+		// first get the already used interface names so we do not conflict
+		usedIfNames := make([]string, 0, len(ctr.config.Networks))
+		for _, opts := range ctr.config.Networks {
+			if opts.InterfaceName != "" {
+				// check that no name is assigned to more than network
+				if util.StringInSlice(opts.InterfaceName, usedIfNames) {
+					return nil, errors.Errorf("network interface name %q is already assigned to another network", opts.InterfaceName)
+				}
+				usedIfNames = append(usedIfNames, opts.InterfaceName)
+			}
+		}
+		i := 0
+		for nameOrID, opts := range ctr.config.Networks {
+			netName, err := r.normalizeNetworkName(nameOrID)
+			if err != nil {
+				return nil, err
+			}
+			// assign interface name if empty
+			if opts.InterfaceName == "" {
+				for i < 100000 {
+					ifName := fmt.Sprintf("eth%d", i)
+					if !util.StringInSlice(ifName, usedIfNames) {
+						opts.InterfaceName = ifName
+						usedIfNames = append(usedIfNames, ifName)
+						break
+					}
+					i++
+				}
+				// if still empty we did not find a free name
+				if opts.InterfaceName == "" {
+					return nil, errors.New("failed to find free network interface name")
+				}
+			}
+
+			normalizeNetworks[netName] = opts
+		}
+		ctr.config.Networks = normalizeNetworks
+	}
+
 	// Validate the container
 	if err := ctr.validate(); err != nil {
 		return nil, err
 	}
 	if ctr.config.IsInfra {
 		ctr.config.StopTimeout = 10
-	}
-	// normalize the networks to names
-	// ocicni only knows about cni names so we have to make
-	// sure we do not use ids internally
-	if len(ctr.config.Networks) > 0 {
-		netNames := make([]string, 0, len(ctr.config.Networks))
-		for _, nameOrID := range ctr.config.Networks {
-			netName, err := network.NormalizeName(r.config, nameOrID)
-			if err != nil {
-				return nil, err
-			}
-			netNames = append(netNames, netName)
-		}
-		ctr.config.Networks = netNames
-	}
-
-	// https://github.com/containers/podman/issues/11285
-	// normalize the networks aliases to use network names and never ids
-	if len(ctr.config.NetworkAliases) > 0 {
-		netAliases := make(map[string][]string, len(ctr.config.NetworkAliases))
-		for nameOrID, aliases := range ctr.config.NetworkAliases {
-			netName, err := network.NormalizeName(r.config, nameOrID)
-			if err != nil {
-				return nil, err
-			}
-			netAliases[netName] = aliases
-		}
-		ctr.config.NetworkAliases = netAliases
 	}
 
 	// Inhibit shutdown until creation succeeds
@@ -287,7 +300,7 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 	defer func() {
 		if retErr != nil {
 			if err := ctr.lock.Free(); err != nil {
-				logrus.Errorf("Error freeing lock for container after creation failed: %v", err)
+				logrus.Errorf("Freeing lock for container after creation failed: %v", err)
 			}
 		}
 	}()
@@ -322,8 +335,8 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 		}
 	}
 
-	// Check CGroup parent sanity, and set it if it was not set.
-	// Only if we're actually configuring CGroups.
+	// Check Cgroup parent sanity, and set it if it was not set.
+	// Only if we're actually configuring Cgroups.
 	if !ctr.config.NoCgroups {
 		ctr.config.CgroupManager = r.config.Engine.CgroupManager
 		switch r.config.Engine.CgroupManager {
@@ -334,7 +347,11 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 					if err != nil {
 						return nil, errors.Wrapf(err, "error retrieving pod %s cgroup", pod.ID())
 					}
-					if podCgroup == "" {
+					expectPodCgroup, err := ctr.expectPodCgroup()
+					if err != nil {
+						return nil, err
+					}
+					if expectPodCgroup && podCgroup == "" {
 						return nil, errors.Wrapf(define.ErrInternal, "pod %s cgroup is not set", pod.ID())
 					}
 					canUseCgroup := !rootless.IsRootless() || isRootlessCgroupSet(podCgroup)
@@ -365,7 +382,7 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 				return nil, errors.Wrapf(define.ErrInvalidArg, "did not receive systemd slice as cgroup parent when using systemd to manage cgroups")
 			}
 		default:
-			return nil, errors.Wrapf(define.ErrInvalidArg, "unsupported CGroup manager: %s - cannot validate cgroup parent", r.config.Engine.CgroupManager)
+			return nil, errors.Wrapf(define.ErrInvalidArg, "unsupported Cgroup manager: %s - cannot validate cgroup parent", r.config.Engine.CgroupManager)
 		}
 	}
 
@@ -376,7 +393,7 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 	if ctr.restoreFromCheckpoint {
 		// Remove information about bind mount
 		// for new container from imported checkpoint
-		g := generate.Generator{Config: ctr.config.Spec}
+		g := generate.NewFromSpec(ctr.config.Spec)
 		g.RemoveMount("/dev/shm")
 		ctr.config.ShmDir = ""
 		g.RemoveMount("/etc/resolv.conf")
@@ -385,7 +402,7 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 		g.RemoveMount("/run/.containerenv")
 		g.RemoveMount("/run/secrets")
 
-		// Regenerate CGroup paths so they don't point to the old
+		// Regenerate Cgroup paths so they don't point to the old
 		// container ID.
 		cgroupPath, err := ctr.getOCICgroupPath()
 		if err != nil {
@@ -401,13 +418,13 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 	defer func() {
 		if retErr != nil {
 			if err := ctr.teardownStorage(); err != nil {
-				logrus.Errorf("Error removing partially-created container root filesystem: %s", err)
+				logrus.Errorf("Removing partially-created container root filesystem: %s", err)
 			}
 		}
 	}()
 
 	ctr.config.SecretsPath = filepath.Join(ctr.config.StaticDir, "secrets")
-	err = os.MkdirAll(ctr.config.SecretsPath, 0644)
+	err = os.MkdirAll(ctr.config.SecretsPath, 0755)
 	if err != nil {
 		return nil, err
 	}
@@ -465,7 +482,7 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 	}
 
 	switch ctr.config.LogDriver {
-	case define.NoLogging:
+	case define.NoLogging, define.PassthroughLogging:
 		break
 	case define.JournaldLogging:
 		ctr.initializeJournal(ctx)
@@ -522,10 +539,10 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 // If removeVolume is specified, named volumes used by the container will
 // be removed also if and only if the container is the sole user
 // Otherwise, RemoveContainer will return an error if the container is running
-func (r *Runtime) RemoveContainer(ctx context.Context, c *Container, force bool, removeVolume bool) error {
+func (r *Runtime) RemoveContainer(ctx context.Context, c *Container, force bool, removeVolume bool, timeout *uint) error {
 	r.lock.Lock()
 	defer r.lock.Unlock()
-	return r.removeContainer(ctx, c, force, removeVolume, false)
+	return r.removeContainer(ctx, c, force, removeVolume, false, timeout)
 }
 
 // Internal function to remove a container.
@@ -533,7 +550,7 @@ func (r *Runtime) RemoveContainer(ctx context.Context, c *Container, force bool,
 // removePod is used only when removing pods. It instructs Podman to ignore
 // infra container protections, and *not* remove from the database (as pod
 // remove will handle that).
-func (r *Runtime) removeContainer(ctx context.Context, c *Container, force, removeVolume, removePod bool) error {
+func (r *Runtime) removeContainer(ctx context.Context, c *Container, force, removeVolume, removePod bool, timeout *uint) error {
 	if !c.valid {
 		if ok, _ := r.state.HasContainer(c.ID()); !ok {
 			// Container probably already removed
@@ -627,29 +644,6 @@ func (r *Runtime) removeContainer(ctx context.Context, c *Container, force, remo
 		}
 	}
 
-	// Check that the container's in a good state to be removed.
-	if c.state.State == define.ContainerStateRunning {
-		// Ignore ErrConmonDead - we couldn't retrieve the container's
-		// exit code properly, but it's still stopped.
-		if err := c.stop(c.StopTimeout()); err != nil && errors.Cause(err) != define.ErrConmonDead {
-			return errors.Wrapf(err, "cannot remove container %s as it could not be stopped", c.ID())
-		}
-
-		// We unlocked as part of stop() above - there's a chance someone
-		// else got in and removed the container before we reacquired the
-		// lock.
-		// Do a quick ping of the database to check if the container
-		// still exists.
-		if ok, _ := r.state.HasContainer(c.ID()); !ok {
-			return nil
-		}
-	}
-
-	// Remove all active exec sessions
-	if err := c.removeAllExecSessions(); err != nil {
-		return err
-	}
-
 	// Check that no other containers depend on the container.
 	// Only used if not removing a pod - pods guarantee that all
 	// deps will be evicted at the same time.
@@ -661,6 +655,28 @@ func (r *Runtime) removeContainer(ctx context.Context, c *Container, force, remo
 		if len(deps) != 0 {
 			depsStr := strings.Join(deps, ", ")
 			return errors.Wrapf(define.ErrCtrExists, "container %s has dependent containers which must be removed before it: %s", c.ID(), depsStr)
+		}
+	}
+
+	// Check that the container's in a good state to be removed.
+	if c.state.State == define.ContainerStateRunning {
+		time := c.StopTimeout()
+		if timeout != nil {
+			time = *timeout
+		}
+		// Ignore ErrConmonDead - we couldn't retrieve the container's
+		// exit code properly, but it's still stopped.
+		if err := c.stop(time); err != nil && errors.Cause(err) != define.ErrConmonDead {
+			return errors.Wrapf(err, "cannot remove container %s as it could not be stopped", c.ID())
+		}
+
+		// We unlocked as part of stop() above - there's a chance someone
+		// else got in and removed the container before we reacquired the
+		// lock.
+		// Do a quick ping of the database to check if the container
+		// still exists.
+		if ok, _ := r.state.HasContainer(c.ID()); !ok {
+			return nil
 		}
 	}
 
@@ -683,12 +699,20 @@ func (r *Runtime) removeContainer(ctx context.Context, c *Container, force, remo
 		return errors.Wrapf(err, "unable to set container %s removing state in database", c.ID())
 	}
 
+	// Remove all active exec sessions
+	// removing the exec sessions might temporarily unlock the container's lock.  Using it
+	// after setting the state to ContainerStateRemoving will prevent that the container is
+	// restarted
+	if err := c.removeAllExecSessions(); err != nil {
+		return err
+	}
+
 	// Stop the container's storage
 	if err := c.teardownStorage(); err != nil {
 		if cleanupErr == nil {
 			cleanupErr = err
 		} else {
-			logrus.Errorf("cleanup storage: %v", err)
+			logrus.Errorf("Cleanup storage: %v", err)
 		}
 	}
 
@@ -701,7 +725,7 @@ func (r *Runtime) removeContainer(ctx context.Context, c *Container, force, remo
 				if cleanupErr == nil {
 					cleanupErr = err
 				} else {
-					logrus.Errorf("Error removing container %s from database: %v", c.ID(), err)
+					logrus.Errorf("Removing container %s from database: %v", c.ID(), err)
 				}
 			}
 		}
@@ -710,7 +734,7 @@ func (r *Runtime) removeContainer(ctx context.Context, c *Container, force, remo
 			if cleanupErr == nil {
 				cleanupErr = err
 			} else {
-				logrus.Errorf("Error removing container %s from database: %v", c.ID(), err)
+				logrus.Errorf("Removing container %s from database: %v", c.ID(), err)
 			}
 		}
 	}
@@ -720,7 +744,7 @@ func (r *Runtime) removeContainer(ctx context.Context, c *Container, force, remo
 		if cleanupErr == nil {
 			cleanupErr = errors.Wrapf(err, "error freeing lock for container %s", c.ID())
 		} else {
-			logrus.Errorf("free container lock: %v", err)
+			logrus.Errorf("Free container lock: %v", err)
 		}
 	}
 
@@ -738,8 +762,8 @@ func (r *Runtime) removeContainer(ctx context.Context, c *Container, force, remo
 			if !volume.Anonymous() {
 				continue
 			}
-			if err := runtime.removeVolume(ctx, volume, false); err != nil && errors.Cause(err) != define.ErrNoSuchVolume {
-				logrus.Errorf("cleanup volume (%s): %v", v, err)
+			if err := runtime.removeVolume(ctx, volume, false, timeout); err != nil && errors.Cause(err) != define.ErrNoSuchVolume {
+				logrus.Errorf("Cleanup volume (%s): %v", v, err)
 			}
 		}
 	}
@@ -769,6 +793,7 @@ func (r *Runtime) EvictContainer(ctx context.Context, idOrName string, removeVol
 // remove will handle that).
 func (r *Runtime) evictContainer(ctx context.Context, idOrName string, removeVolume bool) (string, error) {
 	var err error
+	var timeout *uint
 
 	if !r.valid {
 		return "", define.ErrRuntimeStopped
@@ -784,7 +809,7 @@ func (r *Runtime) evictContainer(ctx context.Context, idOrName string, removeVol
 	if err == nil {
 		logrus.Infof("Container %s successfully retrieved from state, attempting normal removal", id)
 		// Assume force = true for the evict case
-		err = r.removeContainer(ctx, tmpCtr, true, removeVolume, false)
+		err = r.removeContainer(ctx, tmpCtr, true, removeVolume, false, timeout)
 		if !tmpCtr.valid {
 			// If the container is marked invalid, remove succeeded
 			// in kicking it out of the state - no need to continue.
@@ -879,13 +904,65 @@ func (r *Runtime) evictContainer(ctx context.Context, idOrName string, removeVol
 			if !volume.Anonymous() {
 				continue
 			}
-			if err := r.removeVolume(ctx, volume, false); err != nil && err != define.ErrNoSuchVolume && err != define.ErrVolumeBeingUsed {
-				logrus.Errorf("cleanup volume (%s): %v", v, err)
+			if err := r.removeVolume(ctx, volume, false, timeout); err != nil && err != define.ErrNoSuchVolume && err != define.ErrVolumeBeingUsed {
+				logrus.Errorf("Cleanup volume (%s): %v", v, err)
 			}
 		}
 	}
 
 	return id, cleanupErr
+}
+
+// RemoveDepend removes all dependencies for a container.
+// If the container is an infra container, the entire pod gets removed.
+func (r *Runtime) RemoveDepend(ctx context.Context, rmCtr *Container, force bool, removeVolume bool, timeout *uint) ([]*reports.RmReport, error) {
+	logrus.Debugf("Removing container %s and all dependent containers", rmCtr.ID())
+	rmReports := make([]*reports.RmReport, 0)
+	if rmCtr.IsInfra() {
+		pod, err := r.GetPod(rmCtr.PodID())
+		if err != nil {
+			return nil, err
+		}
+		logrus.Debugf("Removing pod %s: depends on infra container %s", pod.ID(), rmCtr.ID())
+		podContainerIDS, err := pod.AllContainersByID()
+		if err != nil {
+			return nil, err
+		}
+		if err := r.RemovePod(ctx, pod, true, force, timeout); err != nil {
+			return nil, err
+		}
+		for _, cID := range podContainerIDS {
+			rmReports = append(rmReports, &reports.RmReport{Id: cID})
+		}
+		return rmReports, nil
+	}
+
+	deps, err := r.state.ContainerInUse(rmCtr)
+	if err != nil {
+		if err == define.ErrCtrRemoved {
+			return rmReports, nil
+		}
+		return rmReports, err
+	}
+	for _, cid := range deps {
+		ctr, err := r.state.Container(cid)
+		if err != nil {
+			if err == define.ErrNoSuchCtr {
+				continue
+			}
+			return rmReports, err
+		}
+
+		reports, err := r.RemoveDepend(ctx, ctr, force, removeVolume, timeout)
+		if err != nil {
+			return rmReports, err
+		}
+		rmReports = append(rmReports, reports...)
+	}
+
+	report := reports.RmReport{Id: rmCtr.ID()}
+	report.Err = r.removeContainer(ctx, rmCtr, force, removeVolume, false, timeout)
+	return append(rmReports, &report), nil
 }
 
 // GetContainer retrieves a container by its ID
@@ -1076,7 +1153,8 @@ func (r *Runtime) PruneContainers(filterFuncs []ContainerFilter) ([]*reports.Pru
 			preports = append(preports, report)
 			continue
 		}
-		err = r.RemoveContainer(context.Background(), c, false, false)
+		var time *uint
+		err = r.RemoveContainer(context.Background(), c, false, false, time)
 		if err != nil {
 			report.Err = err
 		} else {

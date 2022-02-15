@@ -19,6 +19,15 @@
 #include <sys/select.h>
 #include <stdio.h>
 
+#ifndef TEMP_FAILURE_RETRY
+#define TEMP_FAILURE_RETRY(expression) \
+  (__extension__                                                              \
+    ({ long int __result;                                                     \
+       do __result = (long int) (expression);                                 \
+       while (__result == -1L && errno == EINTR);                             \
+       __result; }))
+#endif
+
 #define cleanup_free __attribute__ ((cleanup (cleanup_freep)))
 #define cleanup_close __attribute__ ((cleanup (cleanup_closep)))
 #define cleanup_dir __attribute__ ((cleanup (cleanup_dirp)))
@@ -72,15 +81,6 @@ int rename_noreplace (int olddirfd, const char *oldpath, int newdirfd, const cha
   return rename (oldpath, newpath);
 }
 
-#ifndef TEMP_FAILURE_RETRY
-#define TEMP_FAILURE_RETRY(expression) \
-  (__extension__                                                              \
-    ({ long int __result;                                                     \
-       do __result = (long int) (expression);                                 \
-       while (__result == -1L && errno == EINTR);                             \
-       __result; }))
-#endif
-
 static const char *_max_user_namespaces = "/proc/sys/user/max_user_namespaces";
 static const char *_unprivileged_user_namespaces = "/proc/sys/kernel/unprivileged_userns_clone";
 
@@ -132,6 +132,11 @@ do_pause ()
 
   for (i = 0; sig[i]; i++)
     sigaction (sig[i], &act, NULL);
+
+  /* Attempt to execv catatonit to keep the pause process alive.  */
+  execl ("/usr/libexec/podman/catatonit", "catatonit", "-P", NULL);
+  execl ("/usr/bin/catatonit", "catatonit", "-P", NULL);
+  /* and if the catatonit executable could not be found, fallback here... */
 
   prctl (PR_SET_NAME, "podman pause", NULL, NULL, NULL);
   while (1)
@@ -239,7 +244,7 @@ can_use_shortcut ()
 
       if (argv[argc+1] != NULL && (strcmp (argv[argc], "container") == 0 ||
 	   strcmp (argv[argc], "image") == 0) &&
-	   strcmp (argv[argc+1], "mount") == 0)
+     (strcmp (argv[argc+1], "mount") == 0  || strcmp (argv[argc+1], "scp") == 0))
         {
           ret = false;
           break;

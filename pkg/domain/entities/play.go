@@ -17,12 +17,17 @@ type PlayKubeOptions struct {
 	// Down indicates whether to bring contents of a yaml file "down"
 	// as in stop
 	Down bool
+	// Replace indicates whether to delete and recreate a yaml file
+	Replace bool
+	// Do not create /etc/hosts within the pod's containers,
+	// instead use the version from the image
+	NoHosts bool
 	// Username for authenticating against the registry.
 	Username string
 	// Password for authenticating against the registry.
 	Password string
-	// Network - name of the CNI network to connect to.
-	Network string
+	// Networks - name of the network to connect to.
+	Networks []string
 	// Quiet - suppress output when pulling images.
 	Quiet bool
 	// SignaturePolicy - path to a signature-policy file.
@@ -41,6 +46,8 @@ type PlayKubeOptions struct {
 	ConfigMaps []string
 	// LogDriver for the container. For example: journald
 	LogDriver string
+	// LogOptions for the log driver for the container.
+	LogOptions []string
 	// Start - don't start the pod if false
 	Start types.OptionalBool
 }

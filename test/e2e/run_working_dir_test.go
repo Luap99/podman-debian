@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -60,7 +60,7 @@ WORKDIR  /etc/foobar`, ALPINE)
 
 		session = podmanTest.Podman([]string{"run", "test", "ls", "-ld", "."})
 		session.WaitWithDefaultTimeout()
-		Expect(session.LineInOutputContains("bin")).To(BeTrue())
+		Expect(session.OutputToString()).To(ContainSubstring("bin"))
 
 		session = podmanTest.Podman([]string{"run", "--workdir", "/home/foobar", "test", "pwd"})
 		session.WaitWithDefaultTimeout()

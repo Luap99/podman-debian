@@ -12,10 +12,10 @@ import (
 
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/cmd/podman/system"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/pkg/terminal"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/system"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/terminal"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -226,12 +226,7 @@ func getUDS(cmd *cobra.Command, uri *url.URL, iden string) (string, error) {
 	if v, found := os.LookupEnv("PODMAN_BINARY"); found {
 		podman = v
 	}
-	run := podman + " info --format=json"
-	out, err := ExecRemoteCommand(dial, run)
-	if err != nil {
-		return "", err
-	}
-	infoJSON, err := json.Marshal(out)
+	infoJSON, err := ExecRemoteCommand(dial, podman+" info --format=json")
 	if err != nil {
 		return "", err
 	}

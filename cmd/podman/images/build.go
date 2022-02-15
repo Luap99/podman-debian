@@ -1,9 +1,11 @@
 package images
 
 import (
+	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -17,10 +19,10 @@ import (
 	"github.com/containers/common/pkg/config"
 	encconfig "github.com/containers/ocicrypt/config"
 	enchelpers "github.com/containers/ocicrypt/helpers"
-	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/cmd/podman/utils"
-	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/utils"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -131,7 +133,7 @@ func buildFlags(cmd *cobra.Command) {
 	// --pull flag
 	flag := budFlags.Lookup("pull")
 	if err := flag.Value.Set("true"); err != nil {
-		logrus.Errorf("unable to set --pull to true: %v", err)
+		logrus.Errorf("Unable to set --pull to true: %v", err)
 	}
 	flag.DefValue = "true"
 	flag.Usage = "Always attempt to pull the image (errors are fatal)"
@@ -148,13 +150,13 @@ func buildFlags(cmd *cobra.Command) {
 	useLayersVal := useLayers()
 	buildOpts.Layers = useLayersVal == "true"
 	if err := flag.Value.Set(useLayersVal); err != nil {
-		logrus.Errorf("unable to set --layers to %v: %v", useLayersVal, err)
+		logrus.Errorf("Unable to set --layers to %v: %v", useLayersVal, err)
 	}
 	flag.DefValue = useLayersVal
 	// --force-rm flag
 	flag = layerFlags.Lookup("force-rm")
 	if err := flag.Value.Set("true"); err != nil {
-		logrus.Errorf("unable to set --force-rm to true: %v", err)
+		logrus.Errorf("Unable to set --force-rm to true: %v", err)
 	}
 	flag.DefValue = "true"
 	flags.AddFlagSet(&layerFlags)
@@ -162,7 +164,7 @@ func buildFlags(cmd *cobra.Command) {
 	// FromAndBud flags
 	fromAndBudFlags, err := buildahCLI.GetFromAndBudFlags(&buildOpts.FromAndBudResults, &buildOpts.UserNSResults, &buildOpts.NameSpaceResults)
 	if err != nil {
-		logrus.Errorf("error setting up build flags: %v", err)
+		logrus.Errorf("Setting up build flags: %v", err)
 		os.Exit(1)
 	}
 	// --http-proxy flag
@@ -171,7 +173,7 @@ func buildFlags(cmd *cobra.Command) {
 		flag = fromAndBudFlags.Lookup("http-proxy")
 		buildOpts.HTTPProxy = false
 		if err := flag.Value.Set("false"); err != nil {
-			logrus.Errorf("unable to set --https-proxy to %v: %v", false, err)
+			logrus.Errorf("Unable to set --https-proxy to %v: %v", false, err)
 		}
 		flag.DefValue = "false"
 	}
@@ -181,12 +183,6 @@ func buildFlags(cmd *cobra.Command) {
 	completion.CompleteCommandFlags(cmd, fromAndBudFlagsCompletions)
 	flags.SetNormalizeFunc(buildahCLI.AliasFlags)
 	if registry.IsRemote() {
-		flag = flags.Lookup("isolation")
-		buildOpts.Isolation = buildahDefine.OCI
-		if err := flag.Value.Set(buildahDefine.OCI); err != nil {
-			logrus.Errorf("unable to set --isolation to %v: %v", buildahDefine.OCI, err)
-		}
-		flag.DefValue = buildahDefine.OCI
 		_ = flags.MarkHidden("disable-content-trust")
 		_ = flags.MarkHidden("cache-from")
 		_ = flags.MarkHidden("sign-by")
@@ -228,7 +224,7 @@ func build(cmd *cobra.Command, args []string) error {
 			// Delete it later.
 			defer func() {
 				if err = os.RemoveAll(tempDir); err != nil {
-					logrus.Errorf("error removing temporary directory %q: %v", contextDir, err)
+					logrus.Errorf("Removing temporary directory %q: %v", contextDir, err)
 				}
 			}()
 			contextDir = filepath.Join(tempDir, subDir)
@@ -255,6 +251,7 @@ func build(cmd *cobra.Command, args []string) error {
 				return errors.Wrapf(err, "error determining path to file %q", containerFiles[i])
 			}
 			contextDir = filepath.Dir(absFile)
+			containerFiles[i] = absFile
 			break
 		}
 	}
@@ -287,9 +284,24 @@ func build(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-
 	report, err := registry.ImageEngine().Build(registry.GetContext(), containerFiles, *apiBuildOpts)
+
 	if err != nil {
+		exitCode := buildahCLI.ExecErrorCodeGeneric
+		if registry.IsRemote() {
+			// errors from server does not contain ExitCode
+			// so parse exit code from error message
+			remoteExitCode, parseErr := utils.ExitCodeFromBuildError(fmt.Sprint(errors.Cause(err)))
+			if parseErr == nil {
+				exitCode = remoteExitCode
+			}
+		}
+
+		if ee, ok := (errors.Cause(err)).(*exec.ExitError); ok {
+			exitCode = ee.ExitCode()
+		}
+
+		registry.SetExitCode(exitCode)
 		return err
 	}
 
@@ -342,15 +354,18 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 		return nil, errors.Errorf("can only set one of 'pull' or 'pull-always' or 'pull-never'")
 	}
 
+	// Allow for --pull, --pull=true, --pull=false, --pull=never, --pull=always
+	// --pull-always and --pull-never.  The --pull-never and --pull-always options
+	// will not be documented.
 	pullPolicy := buildahDefine.PullIfMissing
-	if c.Flags().Changed("pull") && flags.Pull {
+	if c.Flags().Changed("pull") && strings.EqualFold(strings.TrimSpace(flags.Pull), "true") {
 		pullPolicy = buildahDefine.PullAlways
 	}
-	if flags.PullAlways {
+	if flags.PullAlways || strings.EqualFold(strings.TrimSpace(flags.Pull), "always") {
 		pullPolicy = buildahDefine.PullAlways
 	}
 
-	if flags.PullNever {
+	if flags.PullNever || strings.EqualFold(strings.TrimSpace(flags.Pull), "never") {
 		pullPolicy = buildahDefine.PullNever
 	}
 
@@ -496,11 +511,10 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 	opts := buildahDefine.BuildOptions{
 		AddCapabilities:         flags.CapAdd,
 		AdditionalTags:          tags,
+		AllPlatforms:            flags.AllPlatforms,
 		Annotations:             flags.Annotation,
 		Args:                    args,
 		BlobDirectory:           flags.BlobCache,
-		CNIConfigDir:            flags.CNIConfigDir,
-		CNIPluginPath:           flags.CNIPlugInPath,
 		CommonBuildOpts:         commonOpts,
 		Compression:             compression,
 		ConfigureNetwork:        networkPolicy,
@@ -541,6 +555,7 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 		SystemContext:           systemContext,
 		Target:                  flags.Target,
 		TransientMounts:         flags.Volumes,
+		UnsetEnvs:               flags.UnsetEnvs,
 	}
 
 	if flags.IgnoreFile != "" {

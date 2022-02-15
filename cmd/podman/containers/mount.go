@@ -5,11 +5,11 @@ import (
 	"os"
 
 	"github.com/containers/common/pkg/report"
-	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/cmd/podman/utils"
-	"github.com/containers/podman/v3/cmd/podman/validate"
-	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/utils"
+	"github.com/containers/podman/v4/cmd/podman/validate"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
@@ -62,7 +62,8 @@ func mountFlags(cmd *cobra.Command) {
 	flags.StringVar(&mountOpts.Format, formatFlagName, "", "Print the mounted containers in specified format (json)")
 	_ = cmd.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteFormat(nil))
 
-	flags.BoolVar(&mountOpts.NoTruncate, "notruncate", false, "Do not truncate output")
+	flags.BoolVar(&mountOpts.NoTruncate, "no-trunc", false, "Do not truncate output")
+	flags.SetNormalizeFunc(utils.AliasFlags)
 }
 
 func init() {
@@ -80,7 +81,7 @@ func init() {
 	validate.AddLatestFlag(containerMountCommand, &mountOpts.Latest)
 }
 
-func mount(_ *cobra.Command, args []string) error {
+func mount(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 && mountOpts.Latest {
 		return errors.Errorf("--latest and containers cannot be used together")
 	}
@@ -115,18 +116,14 @@ func mount(_ *cobra.Command, args []string) error {
 		mrs = append(mrs, mountReporter{r})
 	}
 
-	format := "{{range . }}{{.ID}}\t{{.Path}}\n{{end -}}"
-	tmpl, err := report.NewTemplate("mounts").Parse(format)
-	if err != nil {
-		return err
-	}
+	rpt := report.New(os.Stdout, cmd.Name())
+	defer rpt.Flush()
 
-	w, err := report.NewWriterDefault(os.Stdout)
+	rpt, err = rpt.Parse(report.OriginPodman, "{{range . }}{{.ID}}\t{{.Path}}\n{{end -}}")
 	if err != nil {
 		return err
 	}
-	defer w.Flush()
-	return tmpl.Execute(w, mrs)
+	return rpt.Execute(mrs)
 }
 
 func printJSON(reports []*entities.ContainerMountReport) error {

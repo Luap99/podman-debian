@@ -4,7 +4,7 @@ import (
 	"io/ioutil"
 	"os"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -82,7 +82,7 @@ var _ = Describe("Podman rm", func() {
 		Expect(session).Should(Exit(0))
 		cid := session.OutputToString()
 
-		result := podmanTest.Podman([]string{"rm", "-f", cid})
+		result := podmanTest.Podman([]string{"rm", "-t", "0", "-f", cid})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
 	})
@@ -275,7 +275,7 @@ var _ = Describe("Podman rm", func() {
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
-		session = podmanTest.Podman([]string{"rm", "--force", "--ignore", "bogus", "test1"})
+		session = podmanTest.Podman([]string{"rm", "-t", "0", "--force", "--ignore", "bogus", "test1"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 

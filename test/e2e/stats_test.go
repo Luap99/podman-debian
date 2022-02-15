@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"time"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -148,7 +148,7 @@ var _ = Describe("Podman stats", func() {
 		stats := podmanTest.Podman([]string{"stats", "--all", "--no-stream", "--format", "json"})
 		stats.WaitWithDefaultTimeout()
 		Expect(stats).Should(Exit(0))
-		Expect(stats.IsJSONOutputValid()).To(BeTrue())
+		Expect(stats.OutputToString()).To(BeValidJSON())
 	})
 
 	It("podman stats on a container with no net ns", func() {
@@ -185,6 +185,19 @@ var _ = Describe("Podman stats", func() {
 		Expect(session).Should(Exit(0))
 	})
 
+	It("podman reads slirp4netns network stats", func() {
+		session := podmanTest.Podman([]string{"run", "-d", "--network", "slirp4netns", ALPINE, "top"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		cid := session.OutputToString()
+
+		stats := podmanTest.Podman([]string{"stats", "--format", "'{{.NetIO}}'", "--no-stream", cid})
+		stats.WaitWithDefaultTimeout()
+		Expect(stats).Should(Exit(0))
+		Expect(stats.OutputToString()).To(Not(ContainSubstring("-- / --")))
+	})
+
 	// Regression test for #8265
 	It("podman stats with custom memory limits", func() {
 		// Run three containers. One with a memory limit.  Make sure
@@ -213,7 +226,7 @@ var _ = Describe("Podman stats", func() {
 		// We have three containers.  The unlimited ones need to have
 		// the same limit, the limited one a lower one.
 		limits := session.OutputToStringArray()
-		Expect(len(limits)).To(BeNumerically("==", 3))
+		Expect(limits).To(HaveLen(3))
 		Expect(limits[0]).To(Equal(limits[1]))
 		Expect(limits[0]).ToNot(Equal(limits[2]))
 

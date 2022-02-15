@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -168,7 +168,7 @@ var _ = Describe("Podman pause", func() {
 		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(0))
 		Expect(strings.ToLower(podmanTest.GetContainerStatus())).To(ContainSubstring(pausedState))
 
-		result = podmanTest.Podman([]string{"rm", "--force", cid})
+		result = podmanTest.Podman([]string{"rm", "-t", "0", "--force", cid})
 		result.WaitWithDefaultTimeout()
 
 		Expect(result).Should(Exit(0))
@@ -205,7 +205,7 @@ var _ = Describe("Podman pause", func() {
 		Expect(result).Should(Exit(2))
 		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(1))
 
-		result = podmanTest.Podman([]string{"rm", "-f", cid})
+		result = podmanTest.Podman([]string{"rm", "-t", "0", "-f", cid})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
 		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(0))
@@ -282,7 +282,7 @@ var _ = Describe("Podman pause", func() {
 		running := podmanTest.Podman([]string{"ps", "-q"})
 		running.WaitWithDefaultTimeout()
 		Expect(running).Should(Exit(0))
-		Expect(len(running.OutputToStringArray())).To(Equal(3))
+		Expect(running.OutputToStringArray()).To(HaveLen(3))
 
 		pause := podmanTest.Podman([]string{"pause", "--all"})
 		pause.WaitWithDefaultTimeout()
@@ -291,7 +291,7 @@ var _ = Describe("Podman pause", func() {
 		running = podmanTest.Podman([]string{"ps", "-q"})
 		running.WaitWithDefaultTimeout()
 		Expect(running).Should(Exit(0))
-		Expect(len(running.OutputToStringArray())).To(Equal(0))
+		Expect(running.OutputToStringArray()).To(BeEmpty())
 
 		unpause := podmanTest.Podman([]string{"unpause", "--all"})
 		unpause.WaitWithDefaultTimeout()
@@ -317,7 +317,7 @@ var _ = Describe("Podman pause", func() {
 		running := podmanTest.Podman([]string{"ps", "-q"})
 		running.WaitWithDefaultTimeout()
 		Expect(running).Should(Exit(0))
-		Expect(len(running.OutputToStringArray())).To(Equal(3))
+		Expect(running.OutputToStringArray()).To(HaveLen(3))
 	})
 
 })

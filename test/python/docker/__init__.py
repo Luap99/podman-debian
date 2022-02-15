@@ -42,22 +42,25 @@ class Podman(object):
         os.environ["CONTAINERS_REGISTRIES_CONF"] = os.path.join(
             self.anchor_directory, "registry.conf"
         )
-        p = configparser.ConfigParser()
-        p.read_dict(
-            {
-                "registries.search": {"registries": "['quay.io', 'docker.io']"},
-                "registries.insecure": {"registries": "[]"},
-                "registries.block": {"registries": "[]"},
-            }
-        )
+        conf = """unqualified-search-registries = ["docker.io", "quay.io"]
+
+[[registry]]
+location="localhost:5000"
+insecure=true
+
+[[registry.mirror]]
+location = "mirror.localhost:5000"
+
+"""
+
         with open(os.environ["CONTAINERS_REGISTRIES_CONF"], "w") as w:
-            p.write(w)
+            w.write(conf)
 
         os.environ["CNI_CONFIG_PATH"] = os.path.join(
             self.anchor_directory, "cni", "net.d"
         )
         os.makedirs(os.environ["CNI_CONFIG_PATH"], exist_ok=True)
-        self.cmd.append("--cni-config-dir=" + os.environ["CNI_CONFIG_PATH"])
+        self.cmd.append("--network-config-dir=" + os.environ["CNI_CONFIG_PATH"])
         cni_cfg = os.path.join(
             os.environ["CNI_CONFIG_PATH"], "87-podman-bridge.conflist"
         )

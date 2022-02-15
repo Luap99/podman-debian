@@ -15,10 +15,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/pkg/bindings"
-	sig "github.com/containers/podman/v3/pkg/signal"
-	"github.com/containers/podman/v3/utils"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/bindings"
+	sig "github.com/containers/podman/v4/pkg/signal"
+	"github.com/containers/podman/v4/utils"
 	"github.com/moby/term"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -102,15 +102,15 @@ func Attach(ctx context.Context, nameOrID string, stdin io.Reader, stdout io.Wri
 		}
 		defer func() {
 			if err := terminal.Restore(int(file.Fd()), state); err != nil {
-				logrus.Errorf("unable to restore terminal: %q", err)
+				logrus.Errorf("Unable to restore terminal: %q", err)
 			}
 			logrus.SetFormatter(&logrus.TextFormatter{})
 		}()
 	}
 
-	headers := make(map[string]string)
-	headers["Connection"] = "Upgrade"
-	headers["Upgrade"] = "tcp"
+	headers := make(http.Header)
+	headers.Add("Connection", "Upgrade")
+	headers.Add("Upgrade", "tcp")
 
 	var socket net.Conn
 	socketSet := false
@@ -130,7 +130,7 @@ func Attach(ctx context.Context, nameOrID string, stdin io.Reader, stdout io.Wri
 		IdleConnTimeout: time.Duration(0),
 	}
 	conn.Client.Transport = t
-	response, err := conn.DoRequest(nil, http.MethodPost, "/containers/%s/attach", params, headers, nameOrID)
+	response, err := conn.DoRequest(ctx, nil, http.MethodPost, "/containers/%s/attach", params, headers, nameOrID)
 	if err != nil {
 		return err
 	}
@@ -157,7 +157,7 @@ func Attach(ctx context.Context, nameOrID string, stdin io.Reader, stdout io.Wri
 	}
 
 	stdoutChan := make(chan error)
-	stdinChan := make(chan error, 1) //stdin channel should not block
+	stdinChan := make(chan error, 1) // stdin channel should not block
 
 	if isSet.stdin {
 		go func() {
@@ -165,7 +165,7 @@ func Attach(ctx context.Context, nameOrID string, stdin io.Reader, stdout io.Wri
 
 			_, err := utils.CopyDetachable(socket, stdin, detachKeysInBytes)
 			if err != nil && err != define.ErrDetach {
-				logrus.Error("failed to write input to service: " + err.Error())
+				logrus.Errorf("Failed to write input to service: %v", err)
 			}
 			if err == nil {
 				if closeWrite, ok := socket.(CloseWriter); ok {
@@ -322,7 +322,7 @@ func resizeTTY(ctx context.Context, endpoint string, height *int, width *int) er
 		params.Set("w", strconv.Itoa(*width))
 	}
 	params.Set("running", "true")
-	rsp, err := conn.DoRequest(nil, http.MethodPost, endpoint, params, nil)
+	rsp, err := conn.DoRequest(ctx, nil, http.MethodPost, endpoint, params, nil)
 	if err != nil {
 		return err
 	}
@@ -349,7 +349,7 @@ func attachHandleResize(ctx, winCtx context.Context, winChange chan os.Signal, i
 	resize := func() {
 		w, h, err := terminal.GetSize(int(file.Fd()))
 		if err != nil {
-			logrus.Warnf("failed to obtain TTY size: %v", err)
+			logrus.Warnf("Failed to obtain TTY size: %v", err)
 		}
 
 		var resizeErr error
@@ -359,7 +359,7 @@ func attachHandleResize(ctx, winCtx context.Context, winChange chan os.Signal, i
 			resizeErr = ResizeContainerTTY(ctx, id, new(ResizeTTYOptions).WithHeight(h).WithWidth(w))
 		}
 		if resizeErr != nil {
-			logrus.Infof("failed to resize TTY: %v", resizeErr)
+			logrus.Infof("Failed to resize TTY: %v", resizeErr)
 		}
 	}
 
@@ -407,7 +407,7 @@ func ExecStartAndAttach(ctx context.Context, sessionID string, options *ExecStar
 
 	// We need to inspect the exec session first to determine whether to use
 	// -t.
-	resp, err := conn.DoRequest(nil, http.MethodGet, "/exec/%s/json", nil, nil, sessionID)
+	resp, err := conn.DoRequest(ctx, nil, http.MethodGet, "/exec/%s/json", nil, nil, sessionID)
 	if err != nil {
 		return err
 	}
@@ -443,13 +443,13 @@ func ExecStartAndAttach(ctx context.Context, sessionID string, options *ExecStar
 		}
 		defer func() {
 			if err := terminal.Restore(int(terminalFile.Fd()), state); err != nil {
-				logrus.Errorf("unable to restore terminal: %q", err)
+				logrus.Errorf("Unable to restore terminal: %q", err)
 			}
 			logrus.SetFormatter(&logrus.TextFormatter{})
 		}()
 		w, h, err := terminal.GetSize(int(terminalFile.Fd()))
 		if err != nil {
-			logrus.Warnf("failed to obtain TTY size: %v", err)
+			logrus.Warnf("Failed to obtain TTY size: %v", err)
 		}
 		body.Width = uint16(w)
 		body.Height = uint16(h)
@@ -478,7 +478,7 @@ func ExecStartAndAttach(ctx context.Context, sessionID string, options *ExecStar
 		IdleConnTimeout: time.Duration(0),
 	}
 	conn.Client.Transport = t
-	response, err := conn.DoRequest(bytes.NewReader(bodyJSON), http.MethodPost, "/exec/%s/start", nil, nil, sessionID)
+	response, err := conn.DoRequest(ctx, bytes.NewReader(bodyJSON), http.MethodPost, "/exec/%s/start", nil, nil, sessionID)
 	if err != nil {
 		return err
 	}
@@ -502,7 +502,7 @@ func ExecStartAndAttach(ctx context.Context, sessionID string, options *ExecStar
 			logrus.Debugf("Copying STDIN to socket")
 			_, err := utils.CopyDetachable(socket, options.InputStream, []byte{})
 			if err != nil {
-				logrus.Error("failed to write input to service: " + err.Error())
+				logrus.Errorf("Failed to write input to service: %v", err)
 			}
 
 			if closeWrite, ok := socket.(CloseWriter); ok {

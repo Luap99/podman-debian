@@ -25,7 +25,7 @@ Initialize all containers. Containers that have already initialized (including c
 #### **--latest**, **-l**
 
 Instead of providing the container name or ID, use the last created container. If you use methods other than Podman
-to run containers such as CRI-O, the last started container could be from either of those methods. (This option is not available with the remote Podman client)
+to run containers such as CRI-O, the last started container could be from either of those methods. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
 
 ## EXAMPLE
 
@@ -36,7 +36,7 @@ podman init test1
 podman init --latest
 
 ## SEE ALSO
-podman(1), podman-start(1)
+**[podman(1)](podman.1.md)**, **[podman-start(1)](podman-start.1.md)**
 
 ## HISTORY
 April 2019, Originally compiled by Matthew Heon <mheon@redhat.com>

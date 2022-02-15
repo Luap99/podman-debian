@@ -9,9 +9,9 @@ import (
 	"github.com/containers/common/libimage"
 	is "github.com/containers/image/v5/storage"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/libpod/events"
-	libpodutil "github.com/containers/podman/v3/pkg/util"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/libpod/events"
+	libpodutil "github.com/containers/podman/v4/pkg/util"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -51,7 +51,7 @@ func (c *Container) Commit(ctx context.Context, destImage string, options Contai
 		}
 		defer func() {
 			if err := c.unpause(); err != nil {
-				logrus.Errorf("error unpausing container %q: %v", c.ID(), err)
+				logrus.Errorf("Unpausing container %q: %v", c.ID(), err)
 			}
 		}()
 	}

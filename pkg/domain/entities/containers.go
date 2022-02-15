@@ -6,12 +6,11 @@ import (
 	"os"
 	"time"
 
+	nettypes "github.com/containers/common/libnetwork/types"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v3/libpod/define"
-	nettypes "github.com/containers/podman/v3/libpod/network/types"
-	"github.com/containers/podman/v3/pkg/specgen"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/specgen"
 	"github.com/containers/storage/pkg/archive"
-	"github.com/cri-o/ocicni/pkg/ocicni"
 )
 
 // ContainerRunlabelOptions are the options to execute container-runlabel.
@@ -130,15 +129,12 @@ type RestartReport struct {
 
 type RmOptions struct {
 	All     bool
+	Depend  bool
 	Force   bool
 	Ignore  bool
 	Latest  bool
+	Timeout *uint
 	Volumes bool
-}
-
-type RmReport struct {
-	Err error
-	Id  string //nolint
 }
 
 type ContainerInspectReport struct {
@@ -190,11 +186,15 @@ type CheckpointOptions struct {
 	PreCheckPoint  bool
 	WithPrevious   bool
 	Compression    archive.Compression
+	PrintStats     bool
+	FileLocks      bool
 }
 
 type CheckpointReport struct {
-	Err error
-	Id  string //nolint
+	Err             error                                   `json:"-"`
+	Id              string                                  `json:"Id` //nolint
+	RuntimeDuration int64                                   `json:"runtime_checkpoint_duration"`
+	CRIUStatistics  *define.CRIUCheckpointRestoreStatistics `json:"criu_statistics"`
 }
 
 type RestoreOptions struct {
@@ -209,13 +209,17 @@ type RestoreOptions struct {
 	Name            string
 	TCPEstablished  bool
 	ImportPrevious  string
-	PublishPorts    []nettypes.PortMapping
+	PublishPorts    []string
 	Pod             string
+	PrintStats      bool
+	FileLocks       bool
 }
 
 type RestoreReport struct {
-	Err error
-	Id  string //nolint
+	Err             error                                   `json:"-"`
+	Id              string                                  `json:"Id` //nolint
+	RuntimeDuration int64                                   `json:"runtime_restore_duration"`
+	CRIUStatistics  *define.CRIUCheckpointRestoreStatistics `json:"criu_statistics"`
 }
 
 type ContainerCreateReport struct {
@@ -333,6 +337,7 @@ type ContainerRunOptions struct {
 	Rm           bool
 	SigProxy     bool
 	Spec         *specgen.SpecGenerator
+	Passwd       bool
 }
 
 // ContainerRunReport describes the results of running
@@ -422,7 +427,7 @@ type ContainerPortOptions struct {
 // the CLI to output ports
 type ContainerPortReport struct {
 	Id    string //nolint
-	Ports []ocicni.PortMapping
+	Ports []nettypes.PortMapping
 }
 
 // ContainerCpOptions describes input options for cp.

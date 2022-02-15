@@ -4,15 +4,21 @@ package qemu
 
 import "time"
 
+type Provider struct{}
+
 type MachineVM struct {
 	// CPUs to be assigned to the VM
 	CPUs uint64
 	// The command line representation of the qemu command
 	CmdLine []string
+	// Mounts is the list of remote filesystems to mount
+	Mounts []Mount
 	// IdentityPath is the fq path to the ssh priv key
 	IdentityPath string
 	// IgnitionFilePath is the fq path to the .ign file
 	IgnitionFilePath string
+	// ImageStream is the update stream for the image
+	ImageStream string
 	// ImagePath is the fq path to
 	ImagePath string
 	// Memory in megabytes assigned to the vm
@@ -29,6 +35,14 @@ type MachineVM struct {
 	RemoteUsername string
 }
 
+type Mount struct {
+	Type     string
+	Tag      string
+	Source   string
+	Target   string
+	ReadOnly bool
+}
+
 type Monitor struct {
 	//	Address portion of the qmp monitor (/tmp/tmp.sock)
 	Address string
@@ -42,6 +56,4 @@ var (
 	// defaultQMPTimeout is the timeout duration for the
 	// qmp monitor interactions
 	defaultQMPTimeout time.Duration = 2 * time.Second
-	// defaultRemoteUser describes the ssh username default
-	defaultRemoteUser = "core"
 )

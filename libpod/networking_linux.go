@@ -4,6 +4,7 @@ package libpod
 
 import (
 	"crypto/rand"
+	"crypto/sha1"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -17,19 +18,18 @@ import (
 	"syscall"
 	"time"
 
-	cnitypes "github.com/containernetworking/cni/pkg/types/current"
 	"github.com/containernetworking/plugins/pkg/ns"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/libpod/events"
-	"github.com/containers/podman/v3/libpod/network"
-	"github.com/containers/podman/v3/pkg/errorhandling"
-	"github.com/containers/podman/v3/pkg/namespaces"
-	"github.com/containers/podman/v3/pkg/netns"
-	"github.com/containers/podman/v3/pkg/resolvconf"
-	"github.com/containers/podman/v3/pkg/rootless"
-	"github.com/containers/podman/v3/pkg/util"
+	"github.com/containers/common/libnetwork/types"
+	"github.com/containers/common/pkg/netns"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/libpod/events"
+	"github.com/containers/podman/v4/pkg/errorhandling"
+	"github.com/containers/podman/v4/pkg/namespaces"
+	"github.com/containers/podman/v4/pkg/resolvconf"
+	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v4/utils"
 	"github.com/containers/storage/pkg/lockfile"
-	"github.com/cri-o/ocicni/pkg/ocicni"
 	"github.com/opencontainers/selinux/go-selinux/label"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -44,82 +44,64 @@ const (
 	// default slirp4ns subnet
 	defaultSlirp4netnsSubnet = "10.0.2.0/24"
 
-	// rootlessCNINSName is the file name for the rootless network namespace bind mount
-	rootlessCNINSName = "rootless-cni-ns"
+	// rootlessNetNsName is the file name for the rootless network namespace bind mount
+	rootlessNetNsName = "rootless-netns"
+
+	// rootlessNetNsSilrp4netnsPidFile is the name of the rootless netns slirp4netns pid file
+	rootlessNetNsSilrp4netnsPidFile = "rootless-netns-slirp4netns.pid"
 
 	// persistentCNIDir is the directory where the CNI files are stored
 	persistentCNIDir = "/var/lib/cni"
 )
 
-// Get an OCICNI network config
-func (r *Runtime) getPodNetwork(id, name, nsPath string, networks []string, ports []ocicni.PortMapping, staticIP net.IP, staticMAC net.HardwareAddr, netDescriptions ContainerNetworkDescriptions) ocicni.PodNetwork {
-	var networkKey string
-	if len(networks) > 0 {
-		// This is inconsistent for >1 ctrNetwork, but it's probably the
-		// best we can do.
-		networkKey = networks[0]
-	} else {
-		networkKey = r.netPlugin.GetDefaultNetworkName()
+// convertPortMappings will remove the HostIP part from the ports when running inside podman machine.
+// This is need because a HostIP of 127.0.0.1 would now allow the gvproxy forwarder to reach to open ports.
+// For machine the HostIP must only be used by gvproxy and never in the VM.
+func (c *Container) convertPortMappings() []types.PortMapping {
+	if !c.runtime.config.Engine.MachineEnabled || len(c.config.PortMappings) == 0 {
+		return c.config.PortMappings
 	}
-	ctrNetwork := ocicni.PodNetwork{
-		Name:      name,
-		Namespace: name, // TODO is there something else we should put here? We don't know about Kube namespaces
-		ID:        id,
-		NetNS:     nsPath,
-		RuntimeConfig: map[string]ocicni.RuntimeConfig{
-			networkKey: {PortMappings: ports},
-		},
+	// if we run in a machine VM we have to ignore the host IP part
+	newPorts := make([]types.PortMapping, 0, len(c.config.PortMappings))
+	for _, port := range c.config.PortMappings {
+		port.HostIP = ""
+		newPorts = append(newPorts, port)
 	}
-
-	// If we have extra networks, add them
-	if len(networks) > 0 {
-		ctrNetwork.Networks = make([]ocicni.NetAttachment, len(networks))
-		for i, netName := range networks {
-			ctrNetwork.Networks[i].Name = netName
-			if eth, exists := netDescriptions.getInterfaceByName(netName); exists {
-				ctrNetwork.Networks[i].Ifname = eth
-			}
-		}
-	}
-
-	if staticIP != nil || staticMAC != nil {
-		// For static IP or MAC, we need to populate networks even if
-		// it's just the default.
-		if len(networks) == 0 {
-			// If len(networks) == 0 this is guaranteed to be the
-			// default ctrNetwork.
-			ctrNetwork.Networks = []ocicni.NetAttachment{{Name: networkKey}}
-		}
-		var rt ocicni.RuntimeConfig = ocicni.RuntimeConfig{PortMappings: ports}
-		if staticIP != nil {
-			rt.IP = staticIP.String()
-		}
-		if staticMAC != nil {
-			rt.MAC = staticMAC.String()
-		}
-		ctrNetwork.RuntimeConfig = map[string]ocicni.RuntimeConfig{
-			networkKey: rt,
-		}
-	}
-
-	return ctrNetwork
+	return newPorts
 }
 
-type RootlessCNI struct {
+func (c *Container) getNetworkOptions(networkOpts map[string]types.PerNetworkOptions) (types.NetworkOptions, error) {
+	opts := types.NetworkOptions{
+		ContainerID:   c.config.ID,
+		ContainerName: getCNIPodName(c),
+	}
+	opts.PortMappings = c.convertPortMappings()
+
+	// If the container requested special network options use this instead of the config.
+	// This is the case for container restore or network reload.
+	if c.perNetworkOpts != nil {
+		opts.Networks = c.perNetworkOpts
+	} else {
+		opts.Networks = networkOpts
+	}
+	return opts, nil
+}
+
+type RootlessNetNS struct {
 	ns   ns.NetNS
 	dir  string
 	Lock lockfile.Locker
 }
 
-// getPath will join the given path to the rootless cni dir
-func (r *RootlessCNI) getPath(path string) string {
+// getPath will join the given path to the rootless netns dir
+func (r *RootlessNetNS) getPath(path string) string {
 	return filepath.Join(r.dir, path)
 }
 
-// Do - run the given function in the rootless cni ns.
+// Do - run the given function in the rootless netns.
 // It does not lock the rootlessCNI lock, the caller
 // should only lock when needed, e.g. for cni operations.
-func (r *RootlessCNI) Do(toRun func() error) error {
+func (r *RootlessNetNS) Do(toRun func() error) error {
 	err := r.ns.Do(func(_ ns.NetNS) error {
 		// Before we can run the given function,
 		// we have to setup all mounts correctly.
@@ -130,11 +112,11 @@ func (r *RootlessCNI) Do(toRun func() error) error {
 		// Because the plugins also need access to XDG_RUNTIME_DIR/netns some special setup is needed.
 
 		// The following bind mounts are needed
-		// 1. XDG_RUNTIME_DIR/netns -> XDG_RUNTIME_DIR/rootless-cni/XDG_RUNTIME_DIR/netns
-		// 2. /run/systemd -> XDG_RUNTIME_DIR/rootless-cni/run/systemd (only if it exists)
-		// 3. XDG_RUNTIME_DIR/rootless-cni/resolv.conf -> /etc/resolv.conf or XDG_RUNTIME_DIR/rootless-cni/run/symlink/target
-		// 4. XDG_RUNTIME_DIR/rootless-cni/var/lib/cni -> /var/lib/cni (if /var/lib/cni does not exists use the parent dir)
-		// 5. XDG_RUNTIME_DIR/rootless-cni/run -> /run
+		// 1. XDG_RUNTIME_DIR -> XDG_RUNTIME_DIR/rootless-netns/XDG_RUNTIME_DIR
+		// 2. /run/systemd -> XDG_RUNTIME_DIR/rootless-netns/run/systemd (only if it exists)
+		// 3. XDG_RUNTIME_DIR/rootless-netns/resolv.conf -> /etc/resolv.conf or XDG_RUNTIME_DIR/rootless-netns/run/symlink/target
+		// 4. XDG_RUNTIME_DIR/rootless-netns/var/lib/cni -> /var/lib/cni (if /var/lib/cni does not exists use the parent dir)
+		// 5. XDG_RUNTIME_DIR/rootless-netns/run -> /run
 
 		// Create a new mount namespace,
 		// this must happen inside the netns thread.
@@ -143,16 +125,16 @@ func (r *RootlessCNI) Do(toRun func() error) error {
 			return errors.Wrapf(err, "cannot create a new mount namespace")
 		}
 
-		netNsDir, err := netns.GetNSRunDir()
+		xdgRuntimeDir, err := util.GetRuntimeDir()
 		if err != nil {
-			return errors.Wrap(err, "could not get network namespace directory")
+			return errors.Wrap(err, "could not get runtime directory")
 		}
-		newNetNsDir := r.getPath(netNsDir)
+		newXDGRuntimeDir := r.getPath(xdgRuntimeDir)
 		// 1. Mount the netns into the new run to keep them accessible.
 		// Otherwise cni setup will fail because it cannot access the netns files.
-		err = unix.Mount(netNsDir, newNetNsDir, "none", unix.MS_BIND|unix.MS_SHARED|unix.MS_REC, "")
+		err = unix.Mount(xdgRuntimeDir, newXDGRuntimeDir, "none", unix.MS_BIND|unix.MS_SHARED|unix.MS_REC, "")
 		if err != nil {
-			return errors.Wrap(err, "failed to mount netns directory for rootless cni")
+			return errors.Wrap(err, "failed to mount runtime directory for rootless netns")
 		}
 
 		// 2. Also keep /run/systemd if it exists.
@@ -163,7 +145,7 @@ func (r *RootlessCNI) Do(toRun func() error) error {
 			newRunSystemd := r.getPath(runSystemd)
 			err = unix.Mount(runSystemd, newRunSystemd, "none", unix.MS_BIND|unix.MS_REC, "")
 			if err != nil {
-				return errors.Wrap(err, "failed to mount /run/systemd directory for rootless cni")
+				return errors.Wrap(err, "failed to mount /run/systemd directory for rootless netns")
 			}
 		}
 
@@ -173,29 +155,62 @@ func (r *RootlessCNI) Do(toRun func() error) error {
 		// the link target will be available in the mount ns.
 		// see: https://github.com/containers/podman/issues/10855
 		resolvePath := "/etc/resolv.conf"
-		for i := 0; i < 255; i++ {
+		linkCount := 0
+		for i := 1; i < len(resolvePath); i++ {
 			// Do not use filepath.EvalSymlinks, we only want the first symlink under /run.
 			// If /etc/resolv.conf has more than one symlink under /run, e.g.
 			// -> /run/systemd/resolve/stub-resolv.conf -> /run/systemd/resolve/resolv.conf
 			// we would put the netns resolv.conf file to the last path. However this will
 			// break dns because the second link does not exists in the mount ns.
 			// see https://github.com/containers/podman/issues/11222
-			link, err := os.Readlink(resolvePath)
-			if err != nil {
-				// if there is no symlink exit
-				break
+			//
+			// We also need to resolve all path components not just the last file.
+			// see https://github.com/containers/podman/issues/12461
+
+			if resolvePath[i] != '/' {
+				// if we are at the last char we need to inc i by one because there is no final slash
+				if i == len(resolvePath)-1 {
+					i++
+				} else {
+					// not the end of path, keep going
+					continue
+				}
 			}
+			path := resolvePath[:i]
+
+			fi, err := os.Lstat(path)
+			if err != nil {
+				return errors.Wrap(err, "failed to stat resolv.conf path")
+			}
+
+			// no link, just continue
+			if fi.Mode()&os.ModeSymlink == 0 {
+				continue
+			}
+
+			link, err := os.Readlink(path)
+			if err != nil {
+				return errors.Wrap(err, "failed to read resolv.conf symlink")
+			}
+			linkCount++
 			if filepath.IsAbs(link) {
 				// link is as an absolute path
-				resolvePath = link
+				resolvePath = filepath.Join(link, resolvePath[i:])
 			} else {
 				// link is as a relative, join it with the previous path
-				resolvePath = filepath.Join(filepath.Dir(resolvePath), link)
+				base := filepath.Dir(path)
+				resolvePath = filepath.Join(base, link, resolvePath[i:])
 			}
+			// set i back to zero since we now have a new base path
+			i = 0
+
+			// we have to stop at the first path under /run because we will have an empty /run and will create the path anyway
+			// if we would continue we would need to recreate all links under /run
 			if strings.HasPrefix(resolvePath, "/run/") {
 				break
 			}
-			if i == 254 {
+			// make sure wo do not loop forever
+			if linkCount == 255 {
 				return errors.New("too many symlinks while resolving /etc/resolv.conf")
 			}
 		}
@@ -211,25 +226,25 @@ func (r *RootlessCNI) Do(toRun func() error) error {
 			rsr := r.getPath("/run/systemd/resolve")
 			err = unix.Mount("", rsr, "tmpfs", unix.MS_NOEXEC|unix.MS_NOSUID|unix.MS_NODEV, "")
 			if err != nil {
-				return errors.Wrapf(err, "failed to mount tmpfs on %q for rootless cni", rsr)
+				return errors.Wrapf(err, "failed to mount tmpfs on %q for rootless netns", rsr)
 			}
 		}
 		if strings.HasPrefix(resolvePath, "/run/") {
 			resolvePath = r.getPath(resolvePath)
 			err = os.MkdirAll(filepath.Dir(resolvePath), 0700)
 			if err != nil {
-				return errors.Wrap(err, "failed to create rootless-cni resolv.conf directory")
+				return errors.Wrap(err, "failed to create rootless-netns resolv.conf directory")
 			}
 			// we want to bind mount on this file so we have to create the file first
 			_, err = os.OpenFile(resolvePath, os.O_CREATE|os.O_RDONLY, 0700)
 			if err != nil {
-				return errors.Wrap(err, "failed to create rootless-cni resolv.conf file")
+				return errors.Wrap(err, "failed to create rootless-netns resolv.conf file")
 			}
 		}
 		// mount resolv.conf to make use of the host dns
 		err = unix.Mount(r.getPath("resolv.conf"), resolvePath, "none", unix.MS_BIND, "")
 		if err != nil {
-			return errors.Wrap(err, "failed to mount resolv.conf for rootless cni")
+			return errors.Wrap(err, "failed to mount resolv.conf for rootless netns")
 		}
 
 		// 4. CNI plugins need access to /var/lib/cni and /run
@@ -254,14 +269,14 @@ func (r *RootlessCNI) Do(toRun func() error) error {
 		// make sure to mount var first
 		err = unix.Mount(varDir, varTarget, "none", unix.MS_BIND, "")
 		if err != nil {
-			return errors.Wrapf(err, "failed to mount %s for rootless cni", varTarget)
+			return errors.Wrapf(err, "failed to mount %s for rootless netns", varTarget)
 		}
 
 		// 5. Mount the new prepared run dir to /run, it has to be recursive to keep the other bind mounts.
 		runDir := r.getPath("run")
 		err = unix.Mount(runDir, "/run", "none", unix.MS_BIND|unix.MS_REC, "")
 		if err != nil {
-			return errors.Wrap(err, "failed to mount /run for rootless cni")
+			return errors.Wrap(err, "failed to mount /run for rootless netns")
 		}
 
 		// run the given function in the correct namespace
@@ -271,122 +286,133 @@ func (r *RootlessCNI) Do(toRun func() error) error {
 	return err
 }
 
-// Cleanup the rootless cni namespace if needed.
+// Cleanup the rootless network namespace if needed.
 // It checks if we have running containers with the bridge network mode.
-// Cleanup() will try to lock RootlessCNI, therefore you have to call it with an unlocked
-func (r *RootlessCNI) Cleanup(runtime *Runtime) error {
+// Cleanup() expects that r.Lock is locked
+func (r *RootlessNetNS) Cleanup(runtime *Runtime) error {
 	_, err := os.Stat(r.dir)
 	if os.IsNotExist(err) {
 		// the directory does not exists no need for cleanup
 		return nil
 	}
-	r.Lock.Lock()
-	defer r.Lock.Unlock()
-	running := func(c *Container) bool {
+	activeNetns := func(c *Container) bool {
+		// no bridge => no need to check
+		if !c.config.NetMode.IsBridge() {
+			return false
+		}
+
 		// we cannot use c.state() because it will try to lock the container
-		// using c.state.State directly should be good enough for this use case
-		state := c.state.State
-		return state == define.ContainerStateRunning
+		// locking is a problem because cleanup is called after net teardown
+		// at this stage the container is already locked.
+		// also do not try to lock only containers which are not currently in net
+		// teardown because this will result in an ABBA deadlock between the rootless
+		// cni lock and the container lock
+		// because we need to get the state we have to sync otherwise this will not
+		// work because the state is empty by default
+		// I do not like this but I do not see a better way at moment
+		err := c.syncContainer()
+		if err != nil {
+			return false
+		}
+
+		// only check for an active netns, we cannot use the container state
+		// because not running does not mean that the netns does not need cleanup
+		// only if the netns is empty we know that we do not need cleanup
+		return c.state.NetNS != nil
 	}
-	ctrs, err := runtime.GetContainersWithoutLock(running)
+	ctrs, err := runtime.GetContainersWithoutLock(activeNetns)
 	if err != nil {
 		return err
 	}
-	cleanup := true
-	for _, ctr := range ctrs {
-		if ctr.config.NetMode.IsBridge() {
-			cleanup = false
+	// no cleanup if we found no other containers with a netns
+	// we will always find one container (the container cleanup that is currently calling us)
+	if len(ctrs) > 1 {
+		return nil
+	}
+	logrus.Debug("Cleaning up rootless network namespace")
+	err = netns.UnmountNS(r.ns)
+	if err != nil {
+		return err
+	}
+	// make the following errors not fatal
+	err = r.ns.Close()
+	if err != nil {
+		logrus.Error(err)
+	}
+	b, err := ioutil.ReadFile(r.getPath(rootlessNetNsSilrp4netnsPidFile))
+	if err == nil {
+		var i int
+		i, err = strconv.Atoi(string(b))
+		if err == nil {
+			// kill the slirp process so we do not leak it
+			err = syscall.Kill(i, syscall.SIGTERM)
 		}
 	}
-	if cleanup {
-		// make sure the the cni results (cache) dir is empty
-		// libpod instances with another root dir are not covered by the check above
-		// this allows several libpod instances to use the same rootless cni ns
-		contents, err := ioutil.ReadDir(r.getPath("var/lib/cni/results"))
-		if (err == nil && len(contents) == 0) || os.IsNotExist(err) {
-			logrus.Debug("Cleaning up rootless cni namespace")
-			err = netns.UnmountNS(r.ns)
-			if err != nil {
-				return err
-			}
-			// make the following errors not fatal
-			err = r.ns.Close()
-			if err != nil {
-				logrus.Error(err)
-			}
-			b, err := ioutil.ReadFile(r.getPath("rootless-cni-slirp4netns.pid"))
-			if err == nil {
-				var i int
-				i, err = strconv.Atoi(string(b))
-				if err == nil {
-					// kill the slirp process so we do not leak it
-					err = syscall.Kill(i, syscall.SIGTERM)
-				}
-			}
-			if err != nil {
-				logrus.Errorf("failed to kill slirp4netns process: %s", err)
-			}
-			err = os.RemoveAll(r.dir)
-			if err != nil {
-				logrus.Error(err)
-			}
-		} else if err != nil && !os.IsNotExist(err) {
-			logrus.Errorf("could not read rootless cni directory, skipping cleanup: %s", err)
-		}
+	if err != nil {
+		logrus.Errorf("Failed to kill slirp4netns process: %s", err)
+	}
+	err = os.RemoveAll(r.dir)
+	if err != nil {
+		logrus.Error(err)
 	}
 	return nil
 }
 
-// GetRootlessCNINetNs returns the rootless cni object. If create is set to true
-// the rootless cni namespace will be created if it does not exists already.
+// GetRootlessNetNs returns the rootless netns object. If create is set to true
+// the rootless network namespace will be created if it does not exists already.
 // If called as root it returns always nil.
 // On success the returned RootlessCNI lock is locked and must be unlocked by the caller.
-func (r *Runtime) GetRootlessCNINetNs(new bool) (*RootlessCNI, error) {
+func (r *Runtime) GetRootlessNetNs(new bool) (*RootlessNetNS, error) {
 	if !rootless.IsRootless() {
 		return nil, nil
 	}
-	var rootlessCNINS *RootlessCNI
-	runDir, err := util.GetRuntimeDir()
-	if err != nil {
-		return nil, err
-	}
+	var rootlessNetNS *RootlessNetNS
+	runDir := r.config.Engine.TmpDir
 
-	lfile := filepath.Join(runDir, "rootless-cni.lock")
+	lfile := filepath.Join(runDir, "rootless-netns.lock")
 	lock, err := lockfile.GetLockfile(lfile)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get rootless-cni lockfile")
+		return nil, errors.Wrap(err, "failed to get rootless-netns lockfile")
 	}
 	lock.Lock()
 	defer func() {
-		// In case of an error (early exit) rootlessCNINS will be nil.
+		// In case of an error (early exit) rootlessNetNS will be nil.
 		// Make sure to unlock otherwise we could deadlock.
-		if rootlessCNINS == nil {
+		if rootlessNetNS == nil {
 			lock.Unlock()
 		}
 	}()
 
-	cniDir := filepath.Join(runDir, "rootless-cni")
-	err = os.MkdirAll(cniDir, 0700)
+	rootlessNetNsDir := filepath.Join(runDir, rootlessNetNsName)
+	err = os.MkdirAll(rootlessNetNsDir, 0700)
 	if err != nil {
-		return nil, errors.Wrap(err, "could not create rootless-cni directory")
+		return nil, errors.Wrap(err, "could not create rootless-netns directory")
 	}
 
 	nsDir, err := netns.GetNSRunDir()
 	if err != nil {
 		return nil, err
 	}
-	path := filepath.Join(nsDir, rootlessCNINSName)
+
+	// create a hash from the static dir
+	// the cleanup will check if there are running containers
+	// if you run a several libpod instances with different root/runroot directories this check will fail
+	// we want one netns for each libpod static dir so we use the hash to prevent name collisions
+	hash := sha1.Sum([]byte(r.config.Engine.StaticDir))
+	netnsName := fmt.Sprintf("%s-%x", rootlessNetNsName, hash[:10])
+
+	path := filepath.Join(nsDir, netnsName)
 	ns, err := ns.GetNS(path)
 	if err != nil {
 		if !new {
 			// return a error if we could not get the namespace and should no create one
-			return nil, errors.Wrap(err, "error getting rootless cni network namespace")
+			return nil, errors.Wrap(err, "error getting rootless network namespace")
 		}
 		// create a new namespace
-		logrus.Debug("creating rootless cni network namespace")
-		ns, err = netns.NewNSWithName(rootlessCNINSName)
+		logrus.Debugf("creating rootless network namespace with name %q", netnsName)
+		ns, err = netns.NewNSWithName(netnsName)
 		if err != nil {
-			return nil, errors.Wrap(err, "error creating rootless cni network namespace")
+			return nil, errors.Wrap(err, "error creating rootless network namespace")
 		}
 		// setup slirp4netns here
 		path := r.config.Engine.NetworkCmdPath
@@ -436,7 +462,7 @@ func (r *Runtime) GetRootlessCNINetNs(new bool) (*RootlessCNI, error) {
 		// Leak one end of the pipe in slirp4netns
 		cmd.ExtraFiles = append(cmd.ExtraFiles, syncW)
 
-		logPath := filepath.Join(r.config.Engine.TmpDir, "slirp4netns-rootless-cni.log")
+		logPath := filepath.Join(r.config.Engine.TmpDir, "slirp4netns-rootless-netns.log")
 		logFile, err := os.Create(logPath)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to open slirp4netns log file %s", logPath)
@@ -455,19 +481,25 @@ func (r *Runtime) GetRootlessCNINetNs(new bool) (*RootlessCNI, error) {
 		// create pid file for the slirp4netns process
 		// this is need to kill the process in the cleanup
 		pid := strconv.Itoa(cmd.Process.Pid)
-		err = ioutil.WriteFile(filepath.Join(cniDir, "rootless-cni-slirp4netns.pid"), []byte(pid), 0700)
+		err = ioutil.WriteFile(filepath.Join(rootlessNetNsDir, rootlessNetNsSilrp4netnsPidFile), []byte(pid), 0700)
 		if err != nil {
-			errors.Wrap(err, "unable to write rootless-cni slirp4netns pid file")
+			errors.Wrap(err, "unable to write rootless-netns slirp4netns pid file")
 		}
 
 		defer func() {
 			if err := cmd.Process.Release(); err != nil {
-				logrus.Errorf("unable to release command process: %q", err)
+				logrus.Errorf("Unable to release command process: %q", err)
 			}
 		}()
 
 		if err := waitForSync(syncR, cmd, logFile, 1*time.Second); err != nil {
 			return nil, err
+		}
+
+		// move to systemd scope to prevent systemd from killing it
+		err = utils.MoveRootlessNetnsSlirpProcessToUserSlice(cmd.Process.Pid)
+		if err != nil {
+			logrus.Errorf("failed to move the rootless netns slirp4netns process to the systemd user.slice: %v", err)
 		}
 
 		// build a new resolv.conf file which uses the slirp4netns dns server address
@@ -498,43 +530,43 @@ func (r *Runtime) GetRootlessCNINetNs(new bool) (*RootlessCNI, error) {
 		dnsOptions := resolvconf.GetOptions(conf.Content)
 		nameServers := resolvconf.GetNameservers(conf.Content)
 
-		_, err = resolvconf.Build(filepath.Join(cniDir, "resolv.conf"), append([]string{resolveIP.String()}, nameServers...), searchDomains, dnsOptions)
+		_, err = resolvconf.Build(filepath.Join(rootlessNetNsDir, "resolv.conf"), append([]string{resolveIP.String()}, nameServers...), searchDomains, dnsOptions)
 		if err != nil {
-			return nil, errors.Wrap(err, "failed to create rootless cni resolv.conf")
+			return nil, errors.Wrap(err, "failed to create rootless netns resolv.conf")
 		}
 
 		// create cni directories to store files
 		// they will be bind mounted to the correct location in a extra mount ns
-		err = os.MkdirAll(filepath.Join(cniDir, strings.TrimPrefix(persistentCNIDir, "/")), 0700)
+		err = os.MkdirAll(filepath.Join(rootlessNetNsDir, persistentCNIDir), 0700)
 		if err != nil {
-			return nil, errors.Wrap(err, "could not create rootless-cni var directory")
+			return nil, errors.Wrap(err, "could not create rootless-netns var directory")
 		}
-		runDir := filepath.Join(cniDir, "run")
+		runDir := filepath.Join(rootlessNetNsDir, "run")
 		err = os.MkdirAll(runDir, 0700)
 		if err != nil {
-			return nil, errors.Wrap(err, "could not create rootless-cni run directory")
+			return nil, errors.Wrap(err, "could not create rootless-netns run directory")
 		}
 		// relabel the new run directory to the iptables /run label
 		// this is important, otherwise the iptables command will fail
 		err = label.Relabel(runDir, "system_u:object_r:iptables_var_run_t:s0", false)
 		if err != nil {
-			return nil, errors.Wrap(err, "could not create relabel rootless-cni run directory")
+			return nil, errors.Wrap(err, "could not create relabel rootless-netns run directory")
 		}
 		// create systemd run directory
 		err = os.MkdirAll(filepath.Join(runDir, "systemd"), 0700)
 		if err != nil {
-			return nil, errors.Wrap(err, "could not create rootless-cni systemd directory")
+			return nil, errors.Wrap(err, "could not create rootless-netns systemd directory")
 		}
 		// create the directory for the netns files at the same location
-		// relative to the rootless-cni location
-		err = os.MkdirAll(filepath.Join(cniDir, nsDir), 0700)
+		// relative to the rootless-netns location
+		err = os.MkdirAll(filepath.Join(rootlessNetNsDir, nsDir), 0700)
 		if err != nil {
-			return nil, errors.Wrap(err, "could not create rootless-cni netns directory")
+			return nil, errors.Wrap(err, "could not create rootless-netns netns directory")
 		}
 	}
 
-	// The CNI plugins need access to iptables in $PATH. As it turns out debian doesn't put
-	// /usr/sbin in $PATH for rootless users. This will break rootless cni completely.
+	// The CNI plugins and netavark need access to iptables in $PATH. As it turns out debian doesn't put
+	// /usr/sbin in $PATH for rootless users. This will break rootless networking completely.
 	// We might break existing users and we cannot expect everyone to change their $PATH so
 	// lets add /usr/sbin to $PATH ourselves.
 	path = os.Getenv("PATH")
@@ -543,62 +575,33 @@ func (r *Runtime) GetRootlessCNINetNs(new bool) (*RootlessCNI, error) {
 		os.Setenv("PATH", path)
 	}
 
-	// Important set rootlessCNINS as last step.
+	// Important set rootlessNetNS as last step.
 	// Do not return any errors after this.
-	rootlessCNINS = &RootlessCNI{
+	rootlessNetNS = &RootlessNetNS{
 		ns:   ns,
-		dir:  cniDir,
+		dir:  rootlessNetNsDir,
 		Lock: lock,
 	}
-	return rootlessCNINS, nil
+	return rootlessNetNS, nil
 }
 
-// setPrimaryMachineIP is used for podman-machine and it sets
-// and environment variable with the IP address of the podman-machine
-// host.
-func setPrimaryMachineIP() error {
-	// no connection is actually made here
-	conn, err := net.Dial("udp", "8.8.8.8:80")
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := conn.Close(); err != nil {
-			logrus.Error(err)
-		}
-	}()
-	addr := conn.LocalAddr().(*net.UDPAddr)
-	return os.Setenv("PODMAN_MACHINE_HOST", addr.IP.String())
-}
-
-// setUpOCICNIPod will set up the cni networks, on error it will also tear down the cni
-// networks. If rootless it will join/create the rootless cni namespace.
-func (r *Runtime) setUpOCICNIPod(podNetwork ocicni.PodNetwork) ([]ocicni.NetResult, error) {
-	if r.config.MachineEnabled() {
-		if err := setPrimaryMachineIP(); err != nil {
-			return nil, err
-		}
-	}
-	rootlessCNINS, err := r.GetRootlessCNINetNs(true)
+// setUpNetwork will set up the the networks, on error it will also tear down the cni
+// networks. If rootless it will join/create the rootless network namespace.
+func (r *Runtime) setUpNetwork(ns string, opts types.NetworkOptions) (map[string]types.StatusBlock, error) {
+	rootlessNetNS, err := r.GetRootlessNetNs(true)
 	if err != nil {
 		return nil, err
 	}
-	var results []ocicni.NetResult
+	var results map[string]types.StatusBlock
 	setUpPod := func() error {
-		results, err = r.netPlugin.SetUpPod(podNetwork)
-		if err != nil {
-			if err2 := r.netPlugin.TearDownPod(podNetwork); err2 != nil {
-				logrus.Errorf("Error tearing down partially created network namespace for container %s: %v", podNetwork.ID, err2)
-			}
-			return errors.Wrapf(err, "error configuring network namespace for container %s", podNetwork.ID)
-		}
-		return nil
+		results, err = r.network.Setup(ns, types.SetupOptions{NetworkOptions: opts})
+		return err
 	}
-	// rootlessCNINS is nil if we are root
-	if rootlessCNINS != nil {
-		// execute the cni setup in the rootless net ns
-		err = rootlessCNINS.Do(setUpPod)
-		rootlessCNINS.Lock.Unlock()
+	// rootlessNetNS is nil if we are root
+	if rootlessNetNS != nil {
+		// execute the setup in the rootless net ns
+		err = rootlessNetNS.Do(setUpPod)
+		rootlessNetNS.Lock.Unlock()
 	} else {
 		err = setUpPod()
 	}
@@ -609,7 +612,7 @@ func (r *Runtime) setUpOCICNIPod(podNetwork ocicni.PodNetwork) ([]ocicni.NetResu
 // If we are in the pod network namespace use the pod name otherwise the container name
 func getCNIPodName(c *Container) string {
 	if c.config.NetMode.IsPod() || c.IsInfra() {
-		pod, err := c.runtime.GetPod(c.PodID())
+		pod, err := c.runtime.state.Pod(c.PodID())
 		if err == nil {
 			return pod.Name()
 		}
@@ -618,27 +621,22 @@ func getCNIPodName(c *Container) string {
 }
 
 // Create and configure a new network namespace for a container
-func (r *Runtime) configureNetNS(ctr *Container, ctrNS ns.NetNS) ([]*cnitypes.Result, error) {
-	var requestedIP net.IP
-	if ctr.requestedIP != nil {
-		requestedIP = ctr.requestedIP
-		// cancel request for a specific IP in case the container is reused later
-		ctr.requestedIP = nil
-	} else {
-		requestedIP = ctr.config.StaticIP
+func (r *Runtime) configureNetNS(ctr *Container, ctrNS ns.NetNS) (status map[string]types.StatusBlock, rerr error) {
+	if err := r.exposeMachinePorts(ctr.config.PortMappings); err != nil {
+		return nil, err
 	}
-
-	var requestedMAC net.HardwareAddr
-	if ctr.requestedMAC != nil {
-		requestedMAC = ctr.requestedMAC
-		// cancel request for a specific MAC in case the container is reused later
-		ctr.requestedMAC = nil
-	} else {
-		requestedMAC = ctr.config.StaticMAC
+	defer func() {
+		// make sure to unexpose the gvproxy ports when an error happens
+		if rerr != nil {
+			if err := r.unexposeMachinePorts(ctr.config.PortMappings); err != nil {
+				logrus.Errorf("failed to free gvproxy machine ports: %v", err)
+			}
+		}
+	}()
+	if ctr.config.NetMode.IsSlirp4netns() {
+		return nil, r.setupSlirp4netns(ctr, ctrNS)
 	}
-
-	podName := getCNIPodName(ctr)
-	networks, _, err := ctr.networks()
+	networks, err := ctr.networks()
 	if err != nil {
 		return nil, err
 	}
@@ -648,39 +646,32 @@ func (r *Runtime) configureNetNS(ctr *Container, ctrNS ns.NetNS) ([]*cnitypes.Re
 		return nil, nil
 	}
 
-	// Update container map of interface descriptions
-	if err := ctr.setupNetworkDescriptions(networks); err != nil {
-		return nil, err
-	}
-	podNetwork := r.getPodNetwork(ctr.ID(), podName, ctrNS.Path(), networks, ctr.config.PortMappings, requestedIP, requestedMAC, ctr.state.NetInterfaceDescriptions)
-	aliases, err := ctr.runtime.state.GetAllNetworkAliases(ctr)
+	netOpts, err := ctr.getNetworkOptions(networks)
 	if err != nil {
 		return nil, err
 	}
-	if len(aliases) > 0 {
-		podNetwork.Aliases = aliases
-	}
-
-	results, err := r.setUpOCICNIPod(podNetwork)
+	netStatus, err := r.setUpNetwork(ctrNS.Path(), netOpts)
 	if err != nil {
 		return nil, err
 	}
 
-	networkStatus := make([]*cnitypes.Result, 0)
-	for idx, r := range results {
-		logrus.Debugf("[%d] CNI result: %v", idx, r.Result)
-		resultCurrent, err := cnitypes.GetResult(r.Result)
-		if err != nil {
-			return nil, errors.Wrapf(err, "error parsing CNI plugin result %q: %v", r.Result, err)
-		}
-		networkStatus = append(networkStatus, resultCurrent)
+	// setup rootless port forwarder when rootless with ports and the network status is empty,
+	// if this is called from network reload the network status will not be empty and we should
+	// not setup port because they are still active
+	if rootless.IsRootless() && len(ctr.config.PortMappings) > 0 && ctr.getNetworkStatus() == nil {
+		// set up port forwarder for rootless netns
+		netnsPath := ctrNS.Path()
+		// TODO: support slirp4netns port forwarder as well
+		// make sure to fix this in container.handleRestartPolicy() as well
+		// Important we have to call this after r.setUpNetwork() so that
+		// we can use the proper netStatus
+		err = r.setupRootlessPortMappingViaRLK(ctr, netnsPath, netStatus)
 	}
-
-	return networkStatus, nil
+	return netStatus, err
 }
 
 // Create and configure a new network namespace for a container
-func (r *Runtime) createNetNS(ctr *Container) (n ns.NetNS, q []*cnitypes.Result, retErr error) {
+func (r *Runtime) createNetNS(ctr *Container) (n ns.NetNS, q map[string]types.StatusBlock, retErr error) {
 	ctrNS, err := netns.NewNS()
 	if err != nil {
 		return nil, nil, errors.Wrapf(err, "error creating network namespace for container %s", ctr.ID())
@@ -688,40 +679,19 @@ func (r *Runtime) createNetNS(ctr *Container) (n ns.NetNS, q []*cnitypes.Result,
 	defer func() {
 		if retErr != nil {
 			if err := netns.UnmountNS(ctrNS); err != nil {
-				logrus.Errorf("Error unmounting partially created network namespace for container %s: %v", ctr.ID(), err)
+				logrus.Errorf("Unmounting partially created network namespace for container %s: %v", ctr.ID(), err)
 			}
 			if err := ctrNS.Close(); err != nil {
-				logrus.Errorf("Error closing partially created network namespace for container %s: %v", ctr.ID(), err)
+				logrus.Errorf("Closing partially created network namespace for container %s: %v", ctr.ID(), err)
 			}
 		}
 	}()
 
 	logrus.Debugf("Made network namespace at %s for container %s", ctrNS.Path(), ctr.ID())
 
-	networkStatus := []*cnitypes.Result{}
-	if !ctr.config.NetMode.IsSlirp4netns() {
-		networkStatus, err = r.configureNetNS(ctr, ctrNS)
-	}
+	var networkStatus map[string]types.StatusBlock
+	networkStatus, err = r.configureNetNS(ctr, ctrNS)
 	return ctrNS, networkStatus, err
-}
-
-// Configure the network namespace for a rootless container
-func (r *Runtime) setupRootlessNetNS(ctr *Container) error {
-	if ctr.config.NetMode.IsSlirp4netns() {
-		return r.setupSlirp4netns(ctr)
-	}
-	networks, _, err := ctr.networks()
-	if err != nil {
-		return err
-	}
-	if len(networks) > 0 && len(ctr.config.PortMappings) > 0 {
-		// set up port forwarder for CNI-in-slirp4netns
-		netnsPath := ctr.state.NetNS.Path()
-		// TODO: support slirp4netns port forwarder as well
-		// make sure to fix this container.handleRestartPolicy() as well
-		return r.setupRootlessPortMappingViaRLK(ctr, netnsPath)
-	}
-	return nil
 }
 
 // Configure the network namespace using the container process
@@ -737,7 +707,7 @@ func (r *Runtime) setupNetNS(ctr *Container) error {
 	if err != nil {
 		return err
 	}
-	nsPath = filepath.Join(nsPath, fmt.Sprintf("cni-%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:]))
+	nsPath = filepath.Join(nsPath, fmt.Sprintf("netns-%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:]))
 
 	if err := os.MkdirAll(filepath.Dir(nsPath), 0711); err != nil {
 		return err
@@ -795,26 +765,26 @@ func (r *Runtime) closeNetNS(ctr *Container) error {
 	return nil
 }
 
-// Tear down a container's CNI network configuration and joins the
+// Tear down a container's network configuration and joins the
 // rootless net ns as rootless user
-func (r *Runtime) teardownOCICNIPod(podNetwork ocicni.PodNetwork) error {
-	rootlessCNINS, err := r.GetRootlessCNINetNs(false)
+func (r *Runtime) teardownNetwork(ns string, opts types.NetworkOptions) error {
+	rootlessNetNS, err := r.GetRootlessNetNs(false)
 	if err != nil {
 		return err
 	}
 	tearDownPod := func() error {
-		err := r.netPlugin.TearDownPod(podNetwork)
-		return errors.Wrapf(err, "error tearing down CNI namespace configuration for container %s", podNetwork.ID)
+		err := r.network.Teardown(ns, types.TeardownOptions{NetworkOptions: opts})
+		return errors.Wrapf(err, "error tearing down network namespace configuration for container %s", opts.ContainerID)
 	}
 
-	// rootlessCNINS is nil if we are root
-	if rootlessCNINS != nil {
+	// rootlessNetNS is nil if we are root
+	if rootlessNetNS != nil {
 		// execute the cni setup in the rootless net ns
-		err = rootlessCNINS.Do(tearDownPod)
-		rootlessCNINS.Lock.Unlock()
-		if err == nil {
-			err = rootlessCNINS.Cleanup(r)
+		err = rootlessNetNS.Do(tearDownPod)
+		if cerr := rootlessNetNS.Cleanup(r); cerr != nil {
+			logrus.WithError(err).Error("failed to cleanup rootless netns")
 		}
+		rootlessNetNS.Lock.Unlock()
 	} else {
 		err = tearDownPod()
 	}
@@ -831,39 +801,27 @@ func (r *Runtime) teardownCNI(ctr *Container) error {
 
 	logrus.Debugf("Tearing down network namespace at %s for container %s", ctr.state.NetNS.Path(), ctr.ID())
 
-	networks, _, err := ctr.networks()
+	networks, err := ctr.networks()
 	if err != nil {
 		return err
 	}
 
 	if !ctr.config.NetMode.IsSlirp4netns() && len(networks) > 0 {
-		var requestedIP net.IP
-		if ctr.requestedIP != nil {
-			requestedIP = ctr.requestedIP
-			// cancel request for a specific IP in case the container is reused later
-			ctr.requestedIP = nil
-		} else {
-			requestedIP = ctr.config.StaticIP
+		netOpts, err := ctr.getNetworkOptions(networks)
+		if err != nil {
+			return err
 		}
-
-		var requestedMAC net.HardwareAddr
-		if ctr.requestedMAC != nil {
-			requestedMAC = ctr.requestedMAC
-			// cancel request for a specific MAC in case the container is reused later
-			ctr.requestedMAC = nil
-		} else {
-			requestedMAC = ctr.config.StaticMAC
-		}
-
-		podNetwork := r.getPodNetwork(ctr.ID(), ctr.Name(), ctr.state.NetNS.Path(), networks, ctr.config.PortMappings, requestedIP, requestedMAC, ctr.state.NetInterfaceDescriptions)
-		err = r.teardownOCICNIPod(podNetwork)
-		return err
+		return r.teardownNetwork(ctr.state.NetNS.Path(), netOpts)
 	}
 	return nil
 }
 
 // Tear down a network namespace, undoing all state associated with it.
 func (r *Runtime) teardownNetNS(ctr *Container) error {
+	if err := r.unexposeMachinePorts(ctr.config.PortMappings); err != nil {
+		// do not return an error otherwise we would prevent network cleanup
+		logrus.Errorf("failed to free gvproxy machine ports: %v", err)
+	}
 	if err := r.teardownCNI(ctr); err != nil {
 		return err
 	}
@@ -883,21 +841,25 @@ func (r *Runtime) teardownNetNS(ctr *Container) error {
 	return nil
 }
 
-func getContainerNetNS(ctr *Container) (string, error) {
+func getContainerNetNS(ctr *Container) (string, *Container, error) {
 	if ctr.state.NetNS != nil {
-		return ctr.state.NetNS.Path(), nil
+		return ctr.state.NetNS.Path(), nil, nil
 	}
 	if ctr.config.NetNsCtr != "" {
 		c, err := ctr.runtime.GetContainer(ctr.config.NetNsCtr)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		if err = c.syncContainer(); err != nil {
-			return "", err
+			return "", c, err
 		}
-		return getContainerNetNS(c)
+		netNs, c2, err := getContainerNetNS(c)
+		if c2 != nil {
+			c = c2
+		}
+		return netNs, c, err
 	}
-	return "", nil
+	return "", nil, nil
 }
 
 // isBridgeNetMode checks if the given network mode is bridge.
@@ -918,39 +880,14 @@ func isBridgeNetMode(n namespaces.NetworkMode) error {
 // single MAC or IP.
 // Only works on root containers at present, though in the future we could
 // extend this to stop + restart slirp4netns
-func (r *Runtime) reloadContainerNetwork(ctr *Container) ([]*cnitypes.Result, error) {
+func (r *Runtime) reloadContainerNetwork(ctr *Container) (map[string]types.StatusBlock, error) {
 	if ctr.state.NetNS == nil {
 		return nil, errors.Wrapf(define.ErrCtrStateInvalid, "container %s network is not configured, refusing to reload", ctr.ID())
 	}
 	if err := isBridgeNetMode(ctr.config.NetMode); err != nil {
 		return nil, err
 	}
-
 	logrus.Infof("Going to reload container %s network", ctr.ID())
-
-	var requestedIP net.IP
-	var requestedMAC net.HardwareAddr
-	// Set requested IP and MAC address, if possible.
-	if len(ctr.state.NetworkStatus) == 1 {
-		result := ctr.state.NetworkStatus[0]
-		if len(result.IPs) == 1 {
-			resIP := result.IPs[0]
-
-			requestedIP = resIP.Address.IP
-			ctr.requestedIP = requestedIP
-			logrus.Debugf("Going to preserve container %s IP address %s", ctr.ID(), ctr.requestedIP.String())
-
-			if resIP.Interface != nil && *resIP.Interface < len(result.Interfaces) && *resIP.Interface >= 0 {
-				var err error
-				requestedMAC, err = net.ParseMAC(result.Interfaces[*resIP.Interface].Mac)
-				if err != nil {
-					return nil, errors.Wrapf(err, "error parsing container %s MAC address %s", ctr.ID(), result.Interfaces[*resIP.Interface].Mac)
-				}
-				ctr.requestedMAC = requestedMAC
-				logrus.Debugf("Going to preserve container %s MAC address %s", ctr.ID(), ctr.requestedMAC.String())
-			}
-		}
-	}
 
 	err := r.teardownCNI(ctr)
 	if err != nil {
@@ -966,20 +903,35 @@ func (r *Runtime) reloadContainerNetwork(ctr *Container) ([]*cnitypes.Result, er
 		}
 	}
 
-	// teardownCNI will clean the requested IP and MAC so we need to set them again
-	ctr.requestedIP = requestedIP
-	ctr.requestedMAC = requestedMAC
+	networkOpts, err := ctr.networks()
+	if err != nil {
+		return nil, err
+	}
+
+	// Set the same network settings as before..
+	netStatus := ctr.getNetworkStatus()
+	for network, perNetOpts := range networkOpts {
+		for name, netInt := range netStatus[network].Interfaces {
+			perNetOpts.InterfaceName = name
+			perNetOpts.StaticMAC = netInt.MacAddress
+			for _, netAddress := range netInt.Subnets {
+				perNetOpts.StaticIPs = append(perNetOpts.StaticIPs, netAddress.IPNet.IP)
+			}
+			// Normally interfaces have a length of 1, only for some special cni configs we could get more.
+			// For now just use the first interface to get the ips this should be good enough for most cases.
+			break
+		}
+		networkOpts[network] = perNetOpts
+	}
+	ctr.perNetworkOpts = networkOpts
+
 	return r.configureNetNS(ctr, ctr.state.NetNS)
 }
 
 func getContainerNetIO(ctr *Container) (*netlink.LinkStatistics, error) {
 	var netStats *netlink.LinkStatistics
-	// With slirp4netns, we can't collect statistics at present.
-	// For now, we allow stats to at least run by returning nil
-	if rootless.IsRootless() || ctr.config.NetMode.IsSlirp4netns() {
-		return netStats, nil
-	}
-	netNSPath, netPathErr := getContainerNetNS(ctr)
+
+	netNSPath, otherCtr, netPathErr := getContainerNetNS(ctr)
 	if netPathErr != nil {
 		return nil, netPathErr
 	}
@@ -988,8 +940,18 @@ func getContainerNetIO(ctr *Container) (*netlink.LinkStatistics, error) {
 		// this is a valid state and thus return no error, nor any statistics
 		return nil, nil
 	}
+
+	// FIXME get the interface from the container netstatus
+	dev := "eth0"
+	netMode := ctr.config.NetMode
+	if otherCtr != nil {
+		netMode = otherCtr.config.NetMode
+	}
+	if netMode.IsSlirp4netns() {
+		dev = "tap0"
+	}
 	err := ns.WithNetNSPath(netNSPath, func(_ ns.NetNS) error {
-		link, err := netlink.LinkByName(ocicni.DefaultInterfaceName)
+		link, err := netlink.LinkByName(dev)
 		if err != nil {
 			return err
 		}
@@ -1023,7 +985,7 @@ func (c *Container) getContainerNetworkInfo() (*define.InspectNetworkSettings, e
 	settings := new(define.InspectNetworkSettings)
 	settings.Ports = makeInspectPortBindings(c.config.PortMappings, c.config.ExposedPorts)
 
-	networks, isDefault, err := c.networks()
+	networks, err := c.networks()
 	if err != nil {
 		return nil, err
 	}
@@ -1034,9 +996,10 @@ func (c *Container) getContainerNetworkInfo() (*define.InspectNetworkSettings, e
 		// the container joined.
 		if len(networks) > 0 {
 			settings.Networks = make(map[string]*define.InspectAdditionalNetwork, len(networks))
-			for _, net := range networks {
+			for net, opts := range networks {
 				cniNet := new(define.InspectAdditionalNetwork)
 				cniNet.NetworkID = net
+				cniNet.Aliases = opts.Aliases
 				settings.Networks[net] = cniNet
 			}
 		}
@@ -1047,126 +1010,95 @@ func (c *Container) getContainerNetworkInfo() (*define.InspectNetworkSettings, e
 	// Set network namespace path
 	settings.SandboxKey = c.state.NetNS.Path()
 
+	netStatus := c.getNetworkStatus()
 	// If this is empty, we're probably slirp4netns
-	if len(c.state.NetworkStatus) == 0 {
+	if len(netStatus) == 0 {
 		return settings, nil
 	}
 
-	// If we have CNI networks - handle that here
+	// If we have networks - handle that here
 	if len(networks) > 0 {
-		if len(networks) != len(c.state.NetworkStatus) {
-			return nil, errors.Wrapf(define.ErrInternal, "network inspection mismatch: asked to join %d CNI network(s) %v, but have information on %d network(s)", len(networks), networks, len(c.state.NetworkStatus))
+		if len(networks) != len(netStatus) {
+			return nil, errors.Wrapf(define.ErrInternal, "network inspection mismatch: asked to join %d network(s) %v, but have information on %d network(s)", len(networks), networks, len(netStatus))
 		}
 
 		settings.Networks = make(map[string]*define.InspectAdditionalNetwork)
 
-		// CNI results should be in the same order as the list of
-		// networks we pass into CNI.
-		for index, name := range networks {
-			cniResult := c.state.NetworkStatus[index]
+		for name, opts := range networks {
+			result := netStatus[name]
 			addedNet := new(define.InspectAdditionalNetwork)
 			addedNet.NetworkID = name
 
-			basicConfig, err := resultToBasicNetworkConfig(cniResult)
+			basicConfig, err := resultToBasicNetworkConfig(result)
 			if err != nil {
 				return nil, err
 			}
-
-			aliases, err := c.runtime.state.GetNetworkAliases(c, name)
-			if err != nil {
-				return nil, err
-			}
-			addedNet.Aliases = aliases
+			addedNet.Aliases = opts.Aliases
 
 			addedNet.InspectBasicNetworkConfig = basicConfig
 
 			settings.Networks[name] = addedNet
 		}
 
-		if !isDefault {
+		// if not only the default network is connected we can return here
+		// otherwise we have to populate the InspectBasicNetworkConfig settings
+		_, isDefaultNet := networks[c.runtime.config.Network.DefaultNetwork]
+		if !(len(networks) == 1 && isDefaultNet) {
 			return settings, nil
 		}
 	}
 
 	// If not joining networks, we should have at most 1 result
-	if len(c.state.NetworkStatus) > 1 {
-		return nil, errors.Wrapf(define.ErrInternal, "should have at most 1 CNI result if not joining networks, instead got %d", len(c.state.NetworkStatus))
+	if len(netStatus) > 1 {
+		return nil, errors.Wrapf(define.ErrInternal, "should have at most 1 network status result if not joining networks, instead got %d", len(netStatus))
 	}
 
-	if len(c.state.NetworkStatus) == 1 {
-		basicConfig, err := resultToBasicNetworkConfig(c.state.NetworkStatus[0])
-		if err != nil {
-			return nil, err
+	if len(netStatus) == 1 {
+		for _, status := range netStatus {
+			basicConfig, err := resultToBasicNetworkConfig(status)
+			if err != nil {
+				return nil, err
+			}
+			settings.InspectBasicNetworkConfig = basicConfig
 		}
-
-		settings.InspectBasicNetworkConfig = basicConfig
 	}
-
 	return settings, nil
-}
-
-// setupNetworkDescriptions adds networks and eth values to the container's
-// network descriptions
-func (c *Container) setupNetworkDescriptions(networks []string) error {
-	// if the map is nil and we have networks
-	if c.state.NetInterfaceDescriptions == nil && len(networks) > 0 {
-		c.state.NetInterfaceDescriptions = make(ContainerNetworkDescriptions)
-	}
-	origLen := len(c.state.NetInterfaceDescriptions)
-	for _, n := range networks {
-		// if the network is not in the map, add it
-		if _, exists := c.state.NetInterfaceDescriptions[n]; !exists {
-			c.state.NetInterfaceDescriptions.add(n)
-		}
-	}
-	// if the map changed, we need to save the container state
-	if origLen != len(c.state.NetInterfaceDescriptions) {
-		if err := c.save(); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // resultToBasicNetworkConfig produces an InspectBasicNetworkConfig from a CNI
 // result
-func resultToBasicNetworkConfig(result *cnitypes.Result) (define.InspectBasicNetworkConfig, error) {
+func resultToBasicNetworkConfig(result types.StatusBlock) (define.InspectBasicNetworkConfig, error) {
 	config := define.InspectBasicNetworkConfig{}
-
-	for _, ctrIP := range result.IPs {
-		size, _ := ctrIP.Address.Mask.Size()
-		switch {
-		case ctrIP.Version == "4" && config.IPAddress == "":
-			config.IPAddress = ctrIP.Address.IP.String()
-			config.IPPrefixLen = size
-			config.Gateway = ctrIP.Gateway.String()
-			if ctrIP.Interface != nil && *ctrIP.Interface < len(result.Interfaces) && *ctrIP.Interface >= 0 {
-				config.MacAddress = result.Interfaces[*ctrIP.Interface].Mac
+	for _, netInt := range result.Interfaces {
+		for _, netAddress := range netInt.Subnets {
+			size, _ := netAddress.IPNet.Mask.Size()
+			if netAddress.IPNet.IP.To4() != nil {
+				//ipv4
+				if config.IPAddress == "" {
+					config.IPAddress = netAddress.IPNet.IP.String()
+					config.IPPrefixLen = size
+					config.Gateway = netAddress.Gateway.String()
+				} else {
+					config.SecondaryIPAddresses = append(config.SecondaryIPAddresses, define.Address{Addr: netAddress.IPNet.IP.String(), PrefixLength: size})
+				}
+			} else {
+				//ipv6
+				if config.GlobalIPv6Address == "" {
+					config.GlobalIPv6Address = netAddress.IPNet.IP.String()
+					config.GlobalIPv6PrefixLen = size
+					config.IPv6Gateway = netAddress.Gateway.String()
+				} else {
+					config.SecondaryIPv6Addresses = append(config.SecondaryIPv6Addresses, define.Address{Addr: netAddress.IPNet.IP.String(), PrefixLength: size})
+				}
 			}
-		case ctrIP.Version == "4" && config.IPAddress != "":
-			config.SecondaryIPAddresses = append(config.SecondaryIPAddresses, ctrIP.Address.String())
-			if ctrIP.Interface != nil && *ctrIP.Interface < len(result.Interfaces) && *ctrIP.Interface >= 0 {
-				config.AdditionalMacAddresses = append(config.AdditionalMacAddresses, result.Interfaces[*ctrIP.Interface].Mac)
-			}
-		case ctrIP.Version == "6" && config.IPAddress == "":
-			config.GlobalIPv6Address = ctrIP.Address.IP.String()
-			config.GlobalIPv6PrefixLen = size
-			config.IPv6Gateway = ctrIP.Gateway.String()
-		case ctrIP.Version == "6" && config.IPAddress != "":
-			config.SecondaryIPv6Addresses = append(config.SecondaryIPv6Addresses, ctrIP.Address.String())
-		default:
-			return config, errors.Wrapf(define.ErrInternal, "unrecognized IP version %q", ctrIP.Version)
+		}
+		if config.MacAddress == "" {
+			config.MacAddress = netInt.MacAddress.String()
+		} else {
+			config.AdditionalMacAddresses = append(config.AdditionalMacAddresses, netInt.MacAddress.String())
 		}
 	}
-
 	return config, nil
-}
-
-// This is a horrible hack, necessary because CNI does not properly clean up
-// after itself on an unclean reboot. Return what we're pretty sure is the path
-// to CNI's internal files (it's not really exposed to us).
-func getCNINetworksDir() (string, error) {
-	return filepath.Join(persistentCNIDir, "networks"), nil
 }
 
 type logrusDebugWriter struct {
@@ -1185,28 +1117,31 @@ func (c *Container) NetworkDisconnect(nameOrID, netName string, force bool) erro
 		return err
 	}
 
-	networks, err := c.networksByNameIndex()
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	networks, err := c.networks()
 	if err != nil {
 		return err
 	}
 
 	// check if network exists and if the input is a ID we get the name
-	// ocicni only uses names so it is important that we only use the name
-	netName, err = network.NormalizeName(c.runtime.config, netName)
+	// CNI only uses names so it is important that we only use the name
+	netName, err = c.runtime.normalizeNetworkName(netName)
 	if err != nil {
 		return err
 	}
 
-	index, nameExists := networks[netName]
+	_, nameExists := networks[netName]
 	if !nameExists && len(networks) > 0 {
 		return errors.Errorf("container %s is not connected to network %s", nameOrID, netName)
 	}
 
-	c.lock.Lock()
-	defer c.lock.Unlock()
 	if err := c.syncContainer(); err != nil {
 		return err
 	}
+	// get network status before we disconnect
+	networkStatus := c.getNetworkStatus()
 
 	if err := c.runtime.state.NetworkDisconnect(c, netName); err != nil {
 		return err
@@ -1221,72 +1156,94 @@ func (c *Container) NetworkDisconnect(nameOrID, netName string, force bool) erro
 		return errors.Wrapf(define.ErrNoNetwork, "unable to disconnect %s from %s", nameOrID, netName)
 	}
 
-	podConfig := c.runtime.getPodNetwork(c.ID(), c.Name(), c.state.NetNS.Path(), []string{netName}, c.config.PortMappings, nil, nil, c.state.NetInterfaceDescriptions)
-	if err := c.runtime.teardownOCICNIPod(podConfig); err != nil {
+	opts := types.NetworkOptions{
+		ContainerID:   c.config.ID,
+		ContainerName: getCNIPodName(c),
+	}
+	opts.PortMappings = c.convertPortMappings()
+	opts.Networks = map[string]types.PerNetworkOptions{
+		netName: networks[netName],
+	}
+
+	if err := c.runtime.teardownNetwork(c.state.NetNS.Path(), opts); err != nil {
 		return err
 	}
 
-	// update network status if container is not running
-	networkStatus := c.state.NetworkStatus
-	// clip out the index of the network
-	tmpNetworkStatus := make([]*cnitypes.Result, 0, len(networkStatus)-1)
-	for k, v := range networkStatus {
-		if index != k {
-			tmpNetworkStatus = append(tmpNetworkStatus, v)
-		}
-	}
-	c.state.NetworkStatus = tmpNetworkStatus
+	// update network status if container is running
+	oldStatus, statusExist := networkStatus[netName]
+	delete(networkStatus, netName)
+	c.state.NetworkStatus = networkStatus
 	err = c.save()
 	if err != nil {
 		return err
 	}
 
-	// OCICNI will set the loopback adapter down on teardown so we should set it up again
-	err = c.state.NetNS.Do(func(_ ns.NetNS) error {
-		link, err := netlink.LinkByName("lo")
-		if err != nil {
-			return err
-		}
-		err = netlink.LinkSetUp(link)
-		return err
-	})
-	if err != nil {
-		logrus.Warnf("failed to set loopback adapter up in the container: %v", err)
-	}
 	// Reload ports when there are still connected networks, maybe we removed the network interface with the child ip.
 	// Reloading without connected networks does not make sense, so we can skip this step.
-	if rootless.IsRootless() && len(tmpNetworkStatus) > 0 {
-		return c.reloadRootlessRLKPortMapping()
+	if rootless.IsRootless() && len(networkStatus) > 0 {
+		if err := c.reloadRootlessRLKPortMapping(); err != nil {
+			return err
+		}
 	}
+
+	// Update resolv.conf if required
+	if statusExist {
+		stringIPs := make([]string, 0, len(oldStatus.DNSServerIPs))
+		for _, ip := range oldStatus.DNSServerIPs {
+			stringIPs = append(stringIPs, ip.String())
+		}
+		if len(stringIPs) == 0 {
+			return nil
+		}
+		logrus.Debugf("Removing DNS Servers %v from resolv.conf", stringIPs)
+		if err := c.removeNameserver(stringIPs); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
 // ConnectNetwork connects a container to a given network
-func (c *Container) NetworkConnect(nameOrID, netName string, aliases []string) error {
+func (c *Container) NetworkConnect(nameOrID, netName string, netOpts types.PerNetworkOptions) error {
 	// only the bridge mode supports cni networks
 	if err := isBridgeNetMode(c.config.NetMode); err != nil {
 		return err
 	}
 
-	networks, err := c.networksByNameIndex()
+	c.lock.Lock()
+	defer c.lock.Unlock()
+
+	networks, err := c.networks()
 	if err != nil {
 		return err
 	}
 
 	// check if network exists and if the input is a ID we get the name
-	// ocicni only uses names so it is important that we only use the name
-	netName, err = network.NormalizeName(c.runtime.config, netName)
+	// CNI only uses names so it is important that we only use the name
+	netName, err = c.runtime.normalizeNetworkName(netName)
 	if err != nil {
 		return err
 	}
 
-	c.lock.Lock()
-	defer c.lock.Unlock()
 	if err := c.syncContainer(); err != nil {
 		return err
 	}
 
-	if err := c.runtime.state.NetworkConnect(c, netName, aliases); err != nil {
+	// get network status before we connect
+	networkStatus := c.getNetworkStatus()
+
+	// always add the short id as alias for docker compat
+	netOpts.Aliases = append(netOpts.Aliases, c.config.ID[:12])
+
+	if netOpts.InterfaceName == "" {
+		netOpts.InterfaceName = getFreeInterfaceName(networks)
+		if netOpts.InterfaceName == "" {
+			return errors.New("could not find free network interface name")
+		}
+	}
+
+	if err := c.runtime.state.NetworkConnect(c, netName, netOpts); err != nil {
 		return err
 	}
 	c.newNetworkEvent(events.NetworkConnect, netName)
@@ -1297,18 +1254,16 @@ func (c *Container) NetworkConnect(nameOrID, netName string, aliases []string) e
 		return errors.Wrapf(define.ErrNoNetwork, "unable to connect %s to %s", nameOrID, netName)
 	}
 
-	ctrNetworks, _, err := c.networks()
-	if err != nil {
-		return err
+	opts := types.NetworkOptions{
+		ContainerID:   c.config.ID,
+		ContainerName: getCNIPodName(c),
 	}
-	// Update network descriptions
-	if err := c.setupNetworkDescriptions(ctrNetworks); err != nil {
-		return err
+	opts.PortMappings = c.convertPortMappings()
+	opts.Networks = map[string]types.PerNetworkOptions{
+		netName: netOpts,
 	}
-	podConfig := c.runtime.getPodNetwork(c.ID(), c.Name(), c.state.NetNS.Path(), []string{netName}, c.config.PortMappings, nil, nil, c.state.NetInterfaceDescriptions)
-	podConfig.Aliases = make(map[string][]string, 1)
-	podConfig.Aliases[netName] = aliases
-	results, err := c.runtime.setUpOCICNIPod(podConfig)
+
+	results, err := c.runtime.setUpNetwork(c.state.NetNS.Path(), opts)
 	if err != nil {
 		return err
 	}
@@ -1316,50 +1271,64 @@ func (c *Container) NetworkConnect(nameOrID, netName string, aliases []string) e
 		return errors.New("when adding aliases, results must be of length 1")
 	}
 
-	networkResults := make([]*cnitypes.Result, 0)
-	for _, r := range results {
-		resultCurrent, err := cnitypes.GetResult(r.Result)
-		if err != nil {
-			return errors.Wrapf(err, "error parsing CNI plugin result %q: %v", r.Result, err)
-		}
-		networkResults = append(networkResults, resultCurrent)
-	}
-
 	// update network status
-	networkStatus := c.state.NetworkStatus
-	// if len is one and we confirmed earlier that the container is in
-	// fact connected to the network, then just return an empty slice
-	if len(networkStatus) == 0 {
-		c.state.NetworkStatus = append(c.state.NetworkStatus, networkResults...)
-	} else {
-		// build a list of network names so we can sort and
-		// get the new name's index
-		var networkNames []string
-		for name := range networks {
-			networkNames = append(networkNames, name)
-		}
-		networkNames = append(networkNames, netName)
-		// sort
-		sort.Strings(networkNames)
-		// get index of new network name
-		index := sort.SearchStrings(networkNames, netName)
-		// Append a zero value to to the slice
-		networkStatus = append(networkStatus, &cnitypes.Result{})
-		// populate network status
-		copy(networkStatus[index+1:], networkStatus[index:])
-		networkStatus[index] = networkResults[0]
-		c.state.NetworkStatus = networkStatus
+	if networkStatus == nil {
+		networkStatus = make(map[string]types.StatusBlock, 1)
 	}
+	networkStatus[netName] = results[netName]
+	c.state.NetworkStatus = networkStatus
+
 	err = c.save()
 	if err != nil {
 		return err
 	}
+
 	// The first network needs a port reload to set the correct child ip for the rootlessport process.
 	// Adding a second network does not require a port reload because the child ip is still valid.
 	if rootless.IsRootless() && len(networks) == 0 {
-		return c.reloadRootlessRLKPortMapping()
+		if err := c.reloadRootlessRLKPortMapping(); err != nil {
+			return err
+		}
 	}
+
+	ipv6, err := c.checkForIPv6(networkStatus)
+	if err != nil {
+		return err
+	}
+
+	// Update resolv.conf if required
+	stringIPs := make([]string, 0, len(results[netName].DNSServerIPs))
+	for _, ip := range results[netName].DNSServerIPs {
+		if (ip.To4() == nil) && !ipv6 {
+			continue
+		}
+		stringIPs = append(stringIPs, ip.String())
+	}
+	if len(stringIPs) == 0 {
+		return nil
+	}
+	logrus.Debugf("Adding DNS Servers %v to resolv.conf", stringIPs)
+	if err := c.addNameserver(stringIPs); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// get a free interface name for a new network
+// return an empty string if no free name was found
+func getFreeInterfaceName(networks map[string]types.PerNetworkOptions) string {
+	ifNames := make([]string, 0, len(networks))
+	for _, opts := range networks {
+		ifNames = append(ifNames, opts.InterfaceName)
+	}
+	for i := 0; i < 100000; i++ {
+		ifName := fmt.Sprintf("eth%d", i)
+		if !util.StringInSlice(ifName, ifNames) {
+			return ifName
+		}
+	}
+	return ""
 }
 
 // DisconnectContainerFromNetwork removes a container from its CNI network
@@ -1372,10 +1341,85 @@ func (r *Runtime) DisconnectContainerFromNetwork(nameOrID, netName string, force
 }
 
 // ConnectContainerToNetwork connects a container to a CNI network
-func (r *Runtime) ConnectContainerToNetwork(nameOrID, netName string, aliases []string) error {
+func (r *Runtime) ConnectContainerToNetwork(nameOrID, netName string, netOpts types.PerNetworkOptions) error {
 	ctr, err := r.LookupContainer(nameOrID)
 	if err != nil {
 		return err
 	}
-	return ctr.NetworkConnect(nameOrID, netName, aliases)
+	return ctr.NetworkConnect(nameOrID, netName, netOpts)
+}
+
+// normalizeNetworkName takes a network name, a partial or a full network ID and returns the network name.
+// If the network is not found a errors is returned.
+func (r *Runtime) normalizeNetworkName(nameOrID string) (string, error) {
+	net, err := r.network.NetworkInspect(nameOrID)
+	if err != nil {
+		return "", err
+	}
+	return net.Name, nil
+}
+
+// ocicniPortsToNetTypesPorts convert the old port format to the new one
+// while deduplicating ports into ranges
+func ocicniPortsToNetTypesPorts(ports []types.OCICNIPortMapping) []types.PortMapping {
+	if len(ports) == 0 {
+		return nil
+	}
+
+	newPorts := make([]types.PortMapping, 0, len(ports))
+
+	// first sort the ports
+	sort.Slice(ports, func(i, j int) bool {
+		return compareOCICNIPorts(ports[i], ports[j])
+	})
+
+	// we already check if the slice is empty so we can use the first element
+	currentPort := types.PortMapping{
+		HostIP:        ports[0].HostIP,
+		HostPort:      uint16(ports[0].HostPort),
+		ContainerPort: uint16(ports[0].ContainerPort),
+		Protocol:      ports[0].Protocol,
+		Range:         1,
+	}
+
+	for i := 1; i < len(ports); i++ {
+		if ports[i].HostIP == currentPort.HostIP &&
+			ports[i].Protocol == currentPort.Protocol &&
+			ports[i].HostPort-int32(currentPort.Range) == int32(currentPort.HostPort) &&
+			ports[i].ContainerPort-int32(currentPort.Range) == int32(currentPort.ContainerPort) {
+			currentPort.Range = currentPort.Range + 1
+		} else {
+			newPorts = append(newPorts, currentPort)
+			currentPort = types.PortMapping{
+				HostIP:        ports[i].HostIP,
+				HostPort:      uint16(ports[i].HostPort),
+				ContainerPort: uint16(ports[i].ContainerPort),
+				Protocol:      ports[i].Protocol,
+				Range:         1,
+			}
+		}
+	}
+	newPorts = append(newPorts, currentPort)
+	return newPorts
+}
+
+// compareOCICNIPorts will sort the ocicni ports by
+// 1) host ip
+// 2) protocol
+// 3) hostPort
+// 4) container port
+func compareOCICNIPorts(i, j types.OCICNIPortMapping) bool {
+	if i.HostIP != j.HostIP {
+		return i.HostIP < j.HostIP
+	}
+
+	if i.Protocol != j.Protocol {
+		return i.Protocol < j.Protocol
+	}
+
+	if i.HostPort != j.HostPort {
+		return i.HostPort < j.HostPort
+	}
+
+	return i.ContainerPort < j.ContainerPort
 }

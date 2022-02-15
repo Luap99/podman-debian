@@ -10,10 +10,10 @@ import (
 	"path/filepath"
 
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/pkg/errorhandling"
-	"github.com/containers/podman/v3/pkg/kubeutils"
-	"github.com/containers/podman/v3/utils"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/errorhandling"
+	"github.com/containers/podman/v4/pkg/kubeutils"
+	"github.com/containers/podman/v4/utils"
 	"github.com/moby/term"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -40,7 +40,9 @@ func openUnixSocket(path string) (*net.UnixConn, error) {
 // Does not check if state is appropriate
 // started is only required if startContainer is true
 func (c *Container) attach(streams *define.AttachStreams, keys string, resize <-chan define.TerminalSize, startContainer bool, started chan bool, attachRdy chan<- bool) error {
-	if !streams.AttachOutput && !streams.AttachError && !streams.AttachInput {
+	passthrough := c.LogDriver() == define.PassthroughLogging
+
+	if !streams.AttachOutput && !streams.AttachError && !streams.AttachInput && !passthrough {
 		return errors.Wrapf(define.ErrInvalidArg, "must provide at least one stream to attach to")
 	}
 	if startContainer && started == nil {
@@ -52,24 +54,27 @@ func (c *Container) attach(streams *define.AttachStreams, keys string, resize <-
 		return err
 	}
 
-	logrus.Debugf("Attaching to container %s", c.ID())
+	var conn *net.UnixConn
+	if !passthrough {
+		logrus.Debugf("Attaching to container %s", c.ID())
 
-	registerResizeFunc(resize, c.bundlePath())
+		registerResizeFunc(resize, c.bundlePath())
 
-	attachSock, err := c.AttachSocketPath()
-	if err != nil {
-		return err
-	}
-
-	conn, err := openUnixSocket(attachSock)
-	if err != nil {
-		return errors.Wrapf(err, "failed to connect to container's attach socket: %v", attachSock)
-	}
-	defer func() {
-		if err := conn.Close(); err != nil {
-			logrus.Errorf("unable to close socket: %q", err)
+		attachSock, err := c.AttachSocketPath()
+		if err != nil {
+			return err
 		}
-	}()
+
+		conn, err = openUnixSocket(attachSock)
+		if err != nil {
+			return errors.Wrapf(err, "failed to connect to container's attach socket: %v", attachSock)
+		}
+		defer func() {
+			if err := conn.Close(); err != nil {
+				logrus.Errorf("unable to close socket: %q", err)
+			}
+		}()
+	}
 
 	// If starting was requested, start the container and notify when that's
 	// done.
@@ -78,6 +83,10 @@ func (c *Container) attach(streams *define.AttachStreams, keys string, resize <-
 			return err
 		}
 		started <- true
+	}
+
+	if passthrough {
+		return nil
 	}
 
 	receiveStdoutError, stdinDone := setupStdioChannels(streams, conn, detachKeys)
@@ -134,7 +143,7 @@ func (c *Container) attachToExec(streams *define.AttachStreams, keys *string, se
 	}
 
 	// 2: read from attachFd that the parent process has set up the console socket
-	if _, err := readConmonPipeData(attachFd, ""); err != nil {
+	if _, err := readConmonPipeData(c.ociRuntime.Name(), attachFd, ""); err != nil {
 		return err
 	}
 
@@ -142,7 +151,7 @@ func (c *Container) attachToExec(streams *define.AttachStreams, keys *string, se
 	if newSize != nil {
 		err = c.ociRuntime.ExecAttachResize(c, sessionID, *newSize)
 		if err != nil {
-			logrus.Warn("resize failed", err)
+			logrus.Warnf("Resize failed: %v", err)
 		}
 	}
 
@@ -153,7 +162,7 @@ func (c *Container) attachToExec(streams *define.AttachStreams, keys *string, se
 	}
 	defer func() {
 		if err := conn.Close(); err != nil {
-			logrus.Errorf("unable to close socket: %q", err)
+			logrus.Errorf("Unable to close socket: %q", err)
 		}
 	}()
 
@@ -264,9 +273,11 @@ func readStdio(conn *net.UnixConn, streams *define.AttachStreams, receiveStdoutE
 	var err error
 	select {
 	case err = <-receiveStdoutError:
+		conn.CloseWrite()
 		return err
 	case err = <-stdinDone:
 		if err == define.ErrDetach {
+			conn.CloseWrite()
 			return err
 		}
 		if err == nil {

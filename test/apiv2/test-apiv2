@@ -45,8 +45,38 @@ echo 0 >$failures_file
 # Where the tests live
 TESTS_DIR=$(realpath $(dirname $0))
 
+# As of 2021-11 podman has one external helper binary, rootlessport, needed
+# for rootless networking.
+if [[ -z "$CONTAINERS_HELPER_BINARY_DIR" ]]; then
+    export CONTAINERS_HELPER_BINARY_DIR=$(realpath ${TESTS_DIR}/../../bin)
+fi
+
 # Path to podman binary
-PODMAN_BIN=${PODMAN:-${TESTS_DIR}/../../bin/podman}
+PODMAN_BIN=${PODMAN:-${CONTAINERS_HELPER_BINARY_DIR}/podman}
+
+# Cleanup handlers
+clean_up_server() {
+    if [ -n "$service_pid" ]; then
+        # Remove any containers and images; this prevents the following warning:
+        #  'rm: cannot remove '/.../overlay': Device or resource busy
+        podman rm -a
+        podman rmi -af
+
+        stop_registry
+        stop_service
+    fi
+}
+
+# Any non-test-related error, be it syntax or podman-command, fails here.
+err_handler() {
+    echo "Fatal error in ${BASH_SOURCE[1]}:${BASH_LINENO[0]}"
+    echo "Log:"
+    sed -e 's/^/  >/' <$WORKDIR/output.log
+    echo "Bailing."
+    clean_up_server
+}
+
+trap err_handler ERR
 
 # END   setup
 ###############################################################################
@@ -182,6 +212,7 @@ function t() {
     local method=$1; shift
     local path=$1; shift
     local curl_args
+    local content_type="application/json"
 
     local testname="$method $path"
     # POST requests may be followed by one or more key=value pairs.
@@ -190,13 +221,21 @@ function t() {
         local -a post_args
         for arg; do
             case "$arg" in
-                *=*)              post_args+=("$arg"); shift ;;
+                *=*)              post_args+=("$arg");
+                                  shift;;
+                *.tar)            curl_args="--data-binary @$arg" ;
+                                  content_type="application/x-tar";
+                                  shift;;
+                application/*)    content_type="$arg";
+                                  shift;;
                 [1-9][0-9][0-9])  break;;
                 *)                die "Internal error: invalid POST arg '$arg'" ;;
             esac
         done
-        curl_args="-d $(jsonify ${post_args[@]})"
-        testname="$testname [$curl_args]"
+        if [[ -z "$curl_args" ]]; then
+            curl_args="-d $(jsonify ${post_args[@]})"
+            testname="$testname [$curl_args]"
+        fi
     fi
 
     # entrypoint path can include a descriptive comment; strip it off
@@ -217,25 +256,26 @@ function t() {
 
     # If given path begins with /, use it as-is; otherwise prepend /version/
     local url=http://$HOST:$PORT
-    if expr "$path" : "/" >/dev/null; then
-        url="$url$path"
-    else
-        url="$url/v1.40/$path"
-    fi
+    case "$path" in
+        /*) url="$url$path" ;;
+        libpod/*) url="$url/v4.0.0/$path" ;;
+        *)  url="$url/v1.41/$path" ;;
+    esac
 
     # Log every action we do
     echo "-------------------------------------------------------------" >>$LOG
     echo "\$ $testname"                                                  >>$LOG
     rm -f $WORKDIR/curl.*
     # -s = silent, but --write-out 'format' gives us important response data
-    response=$(curl -s -X $method ${curl_args}                   \
-                    -H 'Content-type: application/json'          \
-                    --dump-header $WORKDIR/curl.headers.out       \
+    # The hairy "{ ...;rc=$?; } || :" lets us capture curl's exit code and
+    # give a helpful diagnostic if it fails.
+    { response=$(curl -s -X $method ${curl_args}                 \
+                    -H "Content-type: $content_type"             \
+                    --dump-header $WORKDIR/curl.headers.out      \
                     --write-out '%{http_code}^%{content_type}^%{time_total}' \
-                    -o $WORKDIR/curl.result.out "$url")
+                    -o $WORKDIR/curl.result.out "$url"); rc=$?; } || :
 
     # Any error from curl is instant bad news, from which we can't recover
-    rc=$?
     if [[ $rc -ne 0 ]]; then
         echo "FATAL: curl failure ($rc) on $url - cannot continue" >&2
         exit 1
@@ -255,7 +295,8 @@ function t() {
         output="[$(file --brief $WORKDIR/curl.result.out)]"
         echo "$output" >>$LOG
     elif [[ -e $WORKDIR/curl.result.out ]]; then
-        output=$(< $WORKDIR/curl.result.out)
+        # Output from /logs sometimes includes NULs. Strip them.
+        output=$(tr -d '\0' < $WORKDIR/curl.result.out)
 
         if [[ $content_type =~ application/json ]] && [[ $method != "HEAD" ]]; then
             jq . <<<"$output" >>$LOG
@@ -328,10 +369,15 @@ function start_service() {
     fi
 
     echo $WORKDIR
-    $PODMAN_BIN --root $WORKDIR/server_root --syslog=true \
-                system service \
-                --time 15 \
-                tcp:127.0.0.1:$PORT \
+    # Some tests use shortnames; force registry override to work around
+    # docker.io throttling.
+#    FIXME esm revisit pulling expected images re: shortnames caused tests to fail
+#    env CONTAINERS_REGISTRIES_CONF=$TESTS_DIR/../registries.conf
+    $PODMAN_BIN \
+        --root $WORKDIR/server_root --syslog=true \
+        system service \
+        --time 15 \
+        tcp:127.0.0.1:$PORT \
         &> $WORKDIR/server.log &
     service_pid=$!
 
@@ -341,8 +387,8 @@ function start_service() {
 function stop_service() {
     # Stop the server
     if [[ -n $service_pid ]]; then
-        kill $service_pid
-        wait $service_pid
+        kill $service_pid || :
+        wait $service_pid || :
     fi
 }
 
@@ -459,8 +505,9 @@ function wait_for_port() {
 #  podman  #  Needed by some test scripts to invoke the actual podman binary
 ############
 function podman() {
-    echo "\$ $PODMAN_BIN $*"                       >>$WORKDIR/output.log
-    $PODMAN_BIN --root $WORKDIR/server_root "$@"   >>$WORKDIR/output.log 2>&1
+    echo "\$ $PODMAN_BIN $*"                           >>$WORKDIR/output.log
+#    env CONTAINERS_REGISTRIES_CONF=$TESTS_DIR/../registries.conf \
+        $PODMAN_BIN --root $WORKDIR/server_root "$@"   >>$WORKDIR/output.log 2>&1
 }
 
 ####################
@@ -516,23 +563,17 @@ start_service
 
 for i in ${tests_to_run[@]}; do
     TEST_CONTEXT="[$(basename $i .at)]"
+
+    # Clear output from 'podman' helper
+    >| $WORKDIR/output.log
+
     source $i
 done
 
 # END   entry handler
 ###############################################################################
 
-# Clean up
-
-if [ -n "$service_pid" ]; then
-    # Remove any containers and images; this prevents the following warning:
-    #  'rm: cannot remove '/.../overlay': Device or resource busy
-    podman rm -a
-    podman rmi -af
-
-    stop_registry
-    stop_service
-fi
+clean_up_server
 
 test_count=$(<$testcounter_file)
 failure_count=$(<$failures_file)

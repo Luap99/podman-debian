@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -179,6 +179,18 @@ var _ = Describe("Podman stop", func() {
 		finalCtrs.WaitWithDefaultTimeout()
 		Expect(finalCtrs).Should(Exit(0))
 		Expect(strings.TrimSpace(finalCtrs.OutputToString())).To(Equal(""))
+	})
+
+	It("podman stop container --timeout Warning", func() {
+		SkipIfRemote("warning will happen only on server side")
+		session := podmanTest.Podman([]string{"run", "-d", "--name", "test5", ALPINE, "sleep", "100"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		session = podmanTest.Podman([]string{"stop", "--timeout", "1", "test5"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		warning := session.ErrorToString()
+		Expect(warning).To(ContainSubstring("StopSignal SIGTERM failed to stop container test5 in 1 seconds, resorting to SIGKILL"))
 	})
 
 	It("podman stop latest containers", func() {

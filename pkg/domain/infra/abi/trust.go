@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/trust"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/trust"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -165,7 +165,7 @@ var typeDescription = map[string]string{"insecureAcceptAnything": "accept", "sig
 func trustTypeDescription(trustType string) string {
 	trustDescription, exist := typeDescription[trustType]
 	if !exist {
-		logrus.Warnf("invalid trust type %s", trustType)
+		logrus.Warnf("Invalid trust type %s", trustType)
 	}
 	return trustDescription
 }

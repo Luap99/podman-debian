@@ -21,7 +21,7 @@ Reload network configuration of all containers.
 #### **--latest**, **-l**
 
 Instead of providing the container name or ID, use the last created container. If you use methods other than Podman
-to run containers such as CRI-O, the last started container could be from either of those methods. (This option is not available with the remote Podman client)
+to run containers such as CRI-O, the last started container could be from either of those methods. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
 
 ## EXAMPLE
 
@@ -52,7 +52,7 @@ fe7e8eca56f844ec33af10f0aa3b31b44a172776e3277b9550a623ed5d96e72b
 
 
 ## SEE ALSO
-podman(1), podman-network(1)
+**[podman(1)](podman.1.md)**, **[podman-network(1)](podman-network.1.md)**
 
 ## HISTORY
 December 2020, Originally compiled by Paul Holzinger <paul.holzinger@web.de>

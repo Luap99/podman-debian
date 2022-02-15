@@ -8,14 +8,13 @@ import (
 	metadata "github.com/checkpoint-restore/checkpointctl/lib"
 	"github.com/containers/common/libimage"
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v3/libpod"
-	ann "github.com/containers/podman/v3/pkg/annotations"
-	"github.com/containers/podman/v3/pkg/checkpoint/crutils"
-	"github.com/containers/podman/v3/pkg/criu"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/errorhandling"
-	"github.com/containers/podman/v3/pkg/specgen/generate"
-	"github.com/containers/storage/pkg/archive"
+	"github.com/containers/podman/v4/libpod"
+	ann "github.com/containers/podman/v4/pkg/annotations"
+	"github.com/containers/podman/v4/pkg/checkpoint/crutils"
+	"github.com/containers/podman/v4/pkg/criu"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/specgen/generate"
+	"github.com/containers/podman/v4/pkg/specgenutil"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -28,35 +27,17 @@ import (
 func CRImportCheckpoint(ctx context.Context, runtime *libpod.Runtime, restoreOptions entities.RestoreOptions) ([]*libpod.Container, error) {
 	// First get the container definition from the
 	// tarball to a temporary directory
-	archiveFile, err := os.Open(restoreOptions.Import)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to open checkpoint archive for import")
-	}
-	defer errorhandling.CloseQuiet(archiveFile)
-	options := &archive.TarOptions{
-		// Here we only need the files config.dump and spec.dump
-		ExcludePatterns: []string{
-			"volumes",
-			"ctr.log",
-			"artifacts",
-			metadata.RootFsDiffTar,
-			metadata.DeletedFilesFile,
-			metadata.NetworkStatusFile,
-			metadata.CheckpointDirectory,
-		},
-	}
 	dir, err := ioutil.TempDir("", "checkpoint")
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
 		if err := os.RemoveAll(dir); err != nil {
-			logrus.Errorf("could not recursively remove %s: %q", dir, err)
+			logrus.Errorf("Could not recursively remove %s: %q", dir, err)
 		}
 	}()
-	err = archive.Untar(archiveFile, dir, options)
-	if err != nil {
-		return nil, errors.Wrapf(err, "Unpacking of checkpoint archive %s failed", restoreOptions.Import)
+	if err := crutils.CRImportCheckpointConfigOnly(dir, restoreOptions.Import); err != nil {
+		return nil, err
 	}
 
 	// Load spec.dump from temporary directory
@@ -94,6 +75,18 @@ func CRImportCheckpoint(ctx context.Context, runtime *libpod.Runtime, restoreOpt
 			if exists {
 				return nil, errors.Errorf("volume with name %s already exists. Use --ignore-volumes to not restore content of volumes", vol.Name)
 			}
+		}
+	}
+
+	if restoreOptions.IgnoreStaticIP || restoreOptions.IgnoreStaticMAC {
+		for net, opts := range ctrConfig.Networks {
+			if restoreOptions.IgnoreStaticIP {
+				opts.StaticIPs = nil
+			}
+			if restoreOptions.IgnoreStaticMAC {
+				opts.StaticMAC = nil
+			}
+			ctrConfig.Networks[net] = opts
 		}
 	}
 
@@ -193,7 +186,12 @@ func CRImportCheckpoint(ctx context.Context, runtime *libpod.Runtime, restoreOpt
 	}
 
 	if len(restoreOptions.PublishPorts) > 0 {
-		ports, _, _, err := generate.ParsePortMapping(restoreOptions.PublishPorts)
+		pubPorts, err := specgenutil.CreatePortBindings(restoreOptions.PublishPorts)
+		if err != nil {
+			return nil, err
+		}
+
+		ports, err := generate.ParsePortMapping(pubPorts, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -229,11 +227,6 @@ func CRImportCheckpoint(ctx context.Context, runtime *libpod.Runtime, restoreOpt
 		if containerConfig.ID != ctrID {
 			return nil, errors.Errorf("ID of restored container (%s) does not match requested ID (%s)", containerConfig.ID, ctrID)
 		}
-	}
-
-	// Check if the ExitCommand points to the correct container ID
-	if containerConfig.ExitCommand[len(containerConfig.ExitCommand)-1] != containerConfig.ID {
-		return nil, errors.Errorf("'ExitCommandID' uses ID %s instead of container ID %s", containerConfig.ExitCommand[len(containerConfig.ExitCommand)-1], containerConfig.ID)
 	}
 
 	containers = append(containers, container)

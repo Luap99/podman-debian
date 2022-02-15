@@ -8,16 +8,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/containers/common/pkg/config"
 	"github.com/containers/image/v5/manifest"
-	"github.com/containers/podman/v3/cmd/podman/parse"
-	"github.com/containers/podman/v3/libpod/define"
-	ann "github.com/containers/podman/v3/pkg/annotations"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	envLib "github.com/containers/podman/v3/pkg/env"
-	"github.com/containers/podman/v3/pkg/namespaces"
-	"github.com/containers/podman/v3/pkg/specgen"
-	systemdDefine "github.com/containers/podman/v3/pkg/systemd/define"
-	"github.com/containers/podman/v3/pkg/util"
+	"github.com/containers/podman/v4/cmd/podman/parse"
+	"github.com/containers/podman/v4/libpod/define"
+	ann "github.com/containers/podman/v4/pkg/annotations"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	envLib "github.com/containers/podman/v4/pkg/env"
+	"github.com/containers/podman/v4/pkg/namespaces"
+	"github.com/containers/podman/v4/pkg/specgen"
+	systemdDefine "github.com/containers/podman/v4/pkg/systemd/define"
+	"github.com/containers/podman/v4/pkg/util"
+	"github.com/docker/docker/opts"
 	"github.com/docker/go-units"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
@@ -84,7 +86,7 @@ func getIOLimits(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions) (
 	}
 
 	if len(c.BlkIOWeightDevice) > 0 {
-		if err := parseWeightDevices(s, c.BlkIOWeightDevice); err != nil {
+		if s.WeightDevice, err = parseWeightDevices(c.BlkIOWeightDevice); err != nil {
 			return nil, err
 		}
 		hasLimits = true
@@ -163,15 +165,7 @@ func getMemoryLimits(s *specgen.SpecGenerator, c *entities.ContainerCreateOption
 			hasLimits = true
 		}
 	}
-	if m := c.KernelMemory; len(m) > 0 {
-		mk, err := units.RAMInBytes(m)
-		if err != nil {
-			return nil, errors.Wrapf(err, "invalid value for kernel-memory")
-		}
-		memory.Kernel = &mk
-		hasLimits = true
-	}
-	if c.MemorySwappiness > 0 {
+	if c.MemorySwappiness >= 0 {
 		swappiness := uint64(c.MemorySwappiness)
 		memory.Swappiness = &swappiness
 		hasLimits = true
@@ -213,9 +207,13 @@ func setNamespaces(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions)
 			return err
 		}
 	}
-	// userns must be treated differently
+	userns := os.Getenv("PODMAN_USERNS")
 	if c.UserNS != "" {
-		s.UserNS, err = specgen.ParseUserNamespace(c.UserNS)
+		userns = c.UserNS
+	}
+	// userns must be treated differently
+	if userns != "" {
+		s.UserNS, err = specgen.ParseUserNamespace(userns)
 		if err != nil {
 			return err
 		}
@@ -313,7 +311,7 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 		s.Pod = podID
 	}
 
-	expose, err := createExpose(c.Expose)
+	expose, err := CreateExpose(c.Expose)
 	if err != nil {
 		return err
 	}
@@ -394,6 +392,17 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 	}
 	s.Annotations = annotations
 
+	if len(c.StorageOpts) > 0 {
+		opts := make(map[string]string, len(c.StorageOpts))
+		for _, opt := range c.StorageOpts {
+			split := strings.SplitN(opt, "=", 2)
+			if len(split) != 2 {
+				return errors.Errorf("storage-opt must be formatted KEY=VALUE")
+			}
+			opts[split[0]] = split[1]
+		}
+		s.StorageOpts = opts
+	}
 	s.WorkDir = c.Workdir
 	if c.Entrypoint != nil {
 		entrypoint := []string{}
@@ -414,27 +423,16 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 
 	// SHM Size
 	if c.ShmSize != "" {
-		shmSize, err := units.FromHumanSize(c.ShmSize)
-		if err != nil {
+		var m opts.MemBytes
+		if err := m.Set(c.ShmSize); err != nil {
 			return errors.Wrapf(err, "unable to translate --shm-size")
 		}
-		s.ShmSize = &shmSize
+		val := m.Value()
+		s.ShmSize = &val
 	}
 
 	if c.Net != nil {
-		s.CNINetworks = c.Net.CNINetworks
-	}
-
-	// Network aliases
-	if c.Net != nil {
-		if len(c.Net.Aliases) > 0 {
-			// build a map of aliases where key=cniName
-			aliases := make(map[string][]string, len(s.CNINetworks))
-			for _, cniNetwork := range s.CNINetworks {
-				aliases[cniNetwork] = c.Net.Aliases
-			}
-			s.Aliases = aliases
-		}
+		s.Networks = c.Net.Networks
 	}
 
 	if c.Net != nil {
@@ -443,11 +441,10 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 		s.DNSServers = c.Net.DNSServers
 		s.DNSSearch = c.Net.DNSSearch
 		s.DNSOptions = c.Net.DNSOptions
-		s.StaticIP = c.Net.StaticIP
-		s.StaticMAC = c.Net.StaticMAC
 		s.NetworkOptions = c.Net.NetworkOptions
 		s.UseImageHosts = c.Net.NoHosts
 	}
+	s.HostUsers = c.HostUsers
 	s.ImageVolumeMode = c.ImageVolume
 	if s.ImageVolumeMode == "bind" {
 		s.ImageVolumeMode = "anonymous"
@@ -498,8 +495,17 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 	if ld := c.LogDriver; len(ld) > 0 {
 		s.LogConfiguration.Driver = ld
 	}
-	s.CgroupParent = c.CGroupParent
-	s.CgroupsMode = c.CGroupsMode
+	s.CgroupParent = c.CgroupParent
+	s.CgroupsMode = c.CgroupsMode
+	if s.CgroupsMode == "" {
+		rtc, err := config.Default()
+		if err != nil {
+			return err
+		}
+
+		s.CgroupsMode = rtc.Cgroups()
+	}
+
 	s.Groups = c.GroupAdd
 
 	s.Hostname = c.Hostname
@@ -597,12 +603,12 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 		s.Devices = append(s.Devices, specs.LinuxDevice{Path: dev})
 	}
 
-	for _, rule := range c.DeviceCGroupRule {
+	for _, rule := range c.DeviceCgroupRule {
 		dev, err := parseLinuxResourcesDeviceAccess(rule)
 		if err != nil {
 			return err
 		}
-		s.DeviceCGroupRule = append(s.DeviceCGroupRule, dev)
+		s.DeviceCgroupRule = append(s.DeviceCgroupRule, dev)
 	}
 
 	s.Init = c.Init
@@ -696,9 +702,14 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 	s.Umask = c.Umask
 	s.PidFile = c.PidFile
 	s.Volatile = c.Rm
+	s.UnsetEnv = c.UnsetEnv
+	s.UnsetEnvAll = c.UnsetEnvAll
 
 	// Initcontainers
 	s.InitContainerType = c.InitContainerType
+
+	t := true
+	s.Passwd = &t
 	return nil
 }
 
@@ -774,29 +785,30 @@ func makeHealthCheckFromCli(inCmd, interval string, retries uint, timeout, start
 	return &hc, nil
 }
 
-func parseWeightDevices(s *specgen.SpecGenerator, weightDevs []string) error {
+func parseWeightDevices(weightDevs []string) (map[string]specs.LinuxWeightDevice, error) {
+	wd := make(map[string]specs.LinuxWeightDevice)
 	for _, val := range weightDevs {
 		split := strings.SplitN(val, ":", 2)
 		if len(split) != 2 {
-			return fmt.Errorf("bad format: %s", val)
+			return nil, fmt.Errorf("bad format: %s", val)
 		}
 		if !strings.HasPrefix(split[0], "/dev/") {
-			return fmt.Errorf("bad format for device path: %s", val)
+			return nil, fmt.Errorf("bad format for device path: %s", val)
 		}
 		weight, err := strconv.ParseUint(split[1], 10, 0)
 		if err != nil {
-			return fmt.Errorf("invalid weight for device: %s", val)
+			return nil, fmt.Errorf("invalid weight for device: %s", val)
 		}
 		if weight > 0 && (weight < 10 || weight > 1000) {
-			return fmt.Errorf("invalid weight for device: %s", val)
+			return nil, fmt.Errorf("invalid weight for device: %s", val)
 		}
 		w := uint16(weight)
-		s.WeightDevice[split[0]] = specs.LinuxWeightDevice{
+		wd[split[0]] = specs.LinuxWeightDevice{
 			Weight:     &w,
 			LeafWeight: nil,
 		}
 	}
-	return nil
+	return wd, nil
 }
 
 func parseThrottleBPSDevices(bpsDevices []string) (map[string]specs.LinuxThrottleDevice, error) {
@@ -883,7 +895,7 @@ func parseSecrets(secrets []string) ([]specgen.Secret, map[string]string, error)
 				source = kv[1]
 			case "type":
 				if secretType != "" {
-					return nil, nil, errors.Wrap(secretParseError, "cannot set more tha one secret type")
+					return nil, nil, errors.Wrap(secretParseError, "cannot set more than one secret type")
 				}
 				if kv[1] != "mount" && kv[1] != "env" {
 					return nil, nil, errors.Wrapf(secretParseError, "type %s is invalid", kv[1])

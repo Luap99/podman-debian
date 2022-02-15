@@ -17,10 +17,11 @@ import (
 	"time"
 
 	"github.com/containernetworking/plugins/pkg/ns"
-	"github.com/containers/podman/v3/pkg/errorhandling"
-	"github.com/containers/podman/v3/pkg/rootless"
-	"github.com/containers/podman/v3/pkg/rootlessport"
-	"github.com/containers/podman/v3/pkg/servicereaper"
+	"github.com/containers/common/libnetwork/types"
+	"github.com/containers/podman/v4/pkg/errorhandling"
+	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/rootlessport"
+	"github.com/containers/podman/v4/pkg/servicereaper"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -38,9 +39,9 @@ type slirpFeatures struct {
 type slirp4netnsCmdArg struct {
 	Proto     string `json:"proto,omitempty"`
 	HostAddr  string `json:"host_addr"`
-	HostPort  int32  `json:"host_port"`
+	HostPort  uint16 `json:"host_port"`
 	GuestAddr string `json:"guest_addr"`
-	GuestPort int32  `json:"guest_port"`
+	GuestPort uint16 `json:"guest_port"`
 }
 
 type slirp4netnsCmd struct {
@@ -207,13 +208,13 @@ func createBasicSlirp4netnsCmdArgs(options *slirp4netnsNetworkOptions, features 
 }
 
 // setupSlirp4netns can be called in rootful as well as in rootless
-func (r *Runtime) setupSlirp4netns(ctr *Container) error {
+func (r *Runtime) setupSlirp4netns(ctr *Container, netns ns.NetNS) error {
 	path := r.config.Engine.NetworkCmdPath
 	if path == "" {
 		var err error
 		path, err = exec.LookPath("slirp4netns")
 		if err != nil {
-			logrus.Errorf("could not find slirp4netns, the network namespace won't be configured: %v", err)
+			logrus.Errorf("Could not find slirp4netns, the network namespace won't be configured: %v", err)
 			return nil
 		}
 	}
@@ -263,7 +264,7 @@ func (r *Runtime) setupSlirp4netns(ctr *Container) error {
 		if err != nil {
 			return errors.Wrapf(err, "failed to create rootless network sync pipe")
 		}
-		netnsPath = ctr.state.NetNS.Path()
+		netnsPath = netns.Path()
 		cmdArgs = append(cmdArgs, "--netns-type=path", netnsPath, "tap0")
 	} else {
 		defer errorhandling.CloseQuiet(ctr.rootlessSlirpSyncR)
@@ -339,7 +340,7 @@ func (r *Runtime) setupSlirp4netns(ctr *Container) error {
 	defer func() {
 		servicereaper.AddPID(cmd.Process.Pid)
 		if err := cmd.Process.Release(); err != nil {
-			logrus.Errorf("unable to release command process: %q", err)
+			logrus.Errorf("Unable to release command process: %q", err)
 		}
 	}()
 
@@ -366,7 +367,7 @@ func (r *Runtime) setupSlirp4netns(ctr *Container) error {
 		if netOptions.isSlirpHostForward {
 			return r.setupRootlessPortMappingViaSlirp(ctr, cmd, apiSocket)
 		}
-		return r.setupRootlessPortMappingViaRLK(ctr, netnsPath)
+		return r.setupRootlessPortMappingViaRLK(ctr, netnsPath, nil)
 	}
 
 	return nil
@@ -460,7 +461,7 @@ func waitForSync(syncR *os.File, cmd *exec.Cmd, logFile io.ReadSeeker, timeout t
 				if status.Exited() {
 					// Seek at the beginning of the file and read all its content
 					if _, err := logFile.Seek(0, 0); err != nil {
-						logrus.Errorf("could not seek log file: %q", err)
+						logrus.Errorf("Could not seek log file: %q", err)
 					}
 					logContent, err := ioutil.ReadAll(logFile)
 					if err != nil {
@@ -479,7 +480,7 @@ func waitForSync(syncR *os.File, cmd *exec.Cmd, logFile io.ReadSeeker, timeout t
 	return nil
 }
 
-func (r *Runtime) setupRootlessPortMappingViaRLK(ctr *Container, netnsPath string) error {
+func (r *Runtime) setupRootlessPortMappingViaRLK(ctr *Container, netnsPath string, netStatus map[string]types.StatusBlock) error {
 	syncR, syncW, err := os.Pipe()
 	if err != nil {
 		return errors.Wrapf(err, "failed to open pipe")
@@ -506,9 +507,9 @@ func (r *Runtime) setupRootlessPortMappingViaRLK(ctr *Container, netnsPath strin
 		}
 	}
 
-	childIP := getRootlessPortChildIP(ctr)
+	childIP := getRootlessPortChildIP(ctr, netStatus)
 	cfg := rootlessport.Config{
-		Mappings:    ctr.config.PortMappings,
+		Mappings:    ctr.convertPortMappings(),
 		NetNSPath:   netnsPath,
 		ExitFD:      3,
 		ReadyFD:     4,
@@ -523,13 +524,15 @@ func (r *Runtime) setupRootlessPortMappingViaRLK(ctr *Container, netnsPath strin
 	}
 	cfgR := bytes.NewReader(cfgJSON)
 	var stdout bytes.Buffer
-	cmd := exec.Command(fmt.Sprintf("/proc/%d/exe", os.Getpid()))
-	cmd.Args = []string{rootlessport.ReexecKey}
-	// Leak one end of the pipe in rootlessport process, the other will be sent to conmon
-
-	if ctr.rootlessPortSyncR != nil {
-		defer errorhandling.CloseQuiet(ctr.rootlessPortSyncR)
+	path, err := r.config.FindHelperBinary(rootlessport.BinaryName, false)
+	if err != nil {
+		return err
 	}
+	cmd := exec.Command(path)
+	cmd.Args = []string{rootlessport.BinaryName}
+
+	// Leak one end of the pipe in rootlessport process, the other will be sent to conmon
+	defer errorhandling.CloseQuiet(ctr.rootlessPortSyncR)
 
 	cmd.ExtraFiles = append(cmd.ExtraFiles, ctr.rootlessPortSyncR, syncW)
 	cmd.Stdin = cfgR
@@ -545,7 +548,7 @@ func (r *Runtime) setupRootlessPortMappingViaRLK(ctr *Container, netnsPath strin
 	defer func() {
 		servicereaper.AddPID(cmd.Process.Pid)
 		if err := cmd.Process.Release(); err != nil {
-			logrus.Errorf("unable to release rootlessport process: %q", err)
+			logrus.Errorf("Unable to release rootlessport process: %q", err)
 		}
 	}()
 	if err := waitForSync(syncR, cmd, logFile, 3*time.Second); err != nil {
@@ -591,14 +594,14 @@ func (r *Runtime) setupRootlessPortMappingViaSlirp(ctr *Container, cmd *exec.Cmd
 
 	// for each port we want to add we need to open a connection to the slirp4netns control socket
 	// and send the add_hostfwd command.
-	for _, i := range ctr.config.PortMappings {
+	for _, i := range ctr.convertPortMappings() {
 		conn, err := net.Dial("unix", apiSocket)
 		if err != nil {
 			return errors.Wrapf(err, "cannot open connection to %s", apiSocket)
 		}
 		defer func() {
 			if err := conn.Close(); err != nil {
-				logrus.Errorf("unable to close connection: %q", err)
+				logrus.Errorf("Unable to close connection: %q", err)
 			}
 		}()
 		hostIP := i.HostIP
@@ -645,7 +648,7 @@ func (r *Runtime) setupRootlessPortMappingViaSlirp(ctr *Container, cmd *exec.Cmd
 	return nil
 }
 
-func getRootlessPortChildIP(c *Container) string {
+func getRootlessPortChildIP(c *Container, netStatus map[string]types.StatusBlock) string {
 	if c.config.NetMode.IsSlirp4netns() {
 		slirp4netnsIP, err := GetSlirp4netnsIP(c.slirp4netnsSubnet)
 		if err != nil {
@@ -654,13 +657,20 @@ func getRootlessPortChildIP(c *Container) string {
 		return slirp4netnsIP.String()
 	}
 
-	for _, r := range c.state.NetworkStatus {
-		for _, i := range r.IPs {
-			ipv4 := i.Address.IP.To4()
-			if ipv4 != nil {
-				return ipv4.String()
+	var ipv6 net.IP
+	for _, status := range netStatus {
+		for _, netInt := range status.Interfaces {
+			for _, netAddress := range netInt.Subnets {
+				ipv4 := netAddress.IPNet.IP.To4()
+				if ipv4 != nil {
+					return ipv4.String()
+				}
+				ipv6 = netAddress.IPNet.IP
 			}
 		}
+	}
+	if ipv6 != nil {
+		return ipv6.String()
 	}
 	return ""
 }
@@ -671,15 +681,12 @@ func (c *Container) reloadRootlessRLKPortMapping() error {
 	if len(c.config.PortMappings) == 0 {
 		return nil
 	}
-	childIP := getRootlessPortChildIP(c)
+	childIP := getRootlessPortChildIP(c, c.state.NetworkStatus)
 	logrus.Debugf("reloading rootless ports for container %s, childIP is %s", c.config.ID, childIP)
 
 	conn, err := openUnixSocket(filepath.Join(c.runtime.config.Engine.TmpDir, "rp", c.config.ID))
 	if err != nil {
-		// This is not a hard error for backwards compatibility. A container started
-		// with an old version did not created the rootlessport socket.
-		logrus.Warnf("Could not reload rootless port mappings, port forwarding may no longer work correctly: %v", err)
-		return nil
+		return errors.Wrap(err, "could not reload rootless port mappings, port forwarding may no longer work correctly")
 	}
 	defer conn.Close()
 	enc := json.NewEncoder(conn)

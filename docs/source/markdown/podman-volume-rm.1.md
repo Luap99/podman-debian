@@ -28,6 +28,9 @@ If it is being used by containers, the containers will be removed first.
 
 Print usage statement
 
+#### **--time**, **-t**=*seconds*
+
+Seconds to wait before forcibly stopping running containers that are using the specified volume. The --force option must be specified to use the --time option.
 
 ## EXAMPLES
 
@@ -49,7 +52,7 @@ $ podman volume rm --force myvol
   **125** The command fails for any other reason
 
 ## SEE ALSO
-podman-volume(1)
+**[podman(1)](podman.1.md)**, **[podman-volume(1)](podman-volume.1.md)**
 
 ## HISTORY
 November 2018, Originally compiled by Urvashi Mohnani <umohnani@redhat.com>

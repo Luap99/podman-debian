@@ -3,11 +3,11 @@ package libpod
 import (
 	"context"
 
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/libpod/events"
-	"github.com/containers/podman/v3/pkg/cgroups"
-	"github.com/containers/podman/v3/pkg/parallel"
-	"github.com/containers/podman/v3/pkg/rootless"
+	"github.com/containers/common/pkg/cgroups"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/libpod/events"
+	"github.com/containers/podman/v4/pkg/parallel"
+	"github.com/containers/podman/v4/pkg/rootless"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -37,13 +37,14 @@ func (p *Pod) startInitContainers(ctx context.Context) error {
 		if initCon.config.InitContainerType == define.OneShotInitContainer {
 			icLock := initCon.lock
 			icLock.Lock()
-			if err := p.runtime.removeContainer(ctx, initCon, false, false, true); err != nil {
+			var time *uint
+			if err := p.runtime.removeContainer(ctx, initCon, false, false, true, time); err != nil {
 				icLock.Unlock()
 				return errors.Wrapf(err, "failed to remove once init container %s", initCon.ID())
 			}
 			// Removing a container this way requires an explicit call to clean up the db
 			if err := p.runtime.state.RemoveContainerFromPod(p, initCon); err != nil {
-				logrus.Errorf("Error removing container %s from database: %v", initCon.ID(), err)
+				logrus.Errorf("Removing container %s from database: %v", initCon.ID(), err)
 			}
 			icLock.Unlock()
 		}
@@ -582,6 +583,10 @@ func (p *Pod) Inspect() (*define.InspectPodData, error) {
 	// Infra config contains detailed information on the pod's infra
 	// container.
 	var infraConfig *define.InspectPodInfraConfig
+	var inspectMounts []define.InspectMount
+	var devices []define.InspectDevice
+	var deviceLimits []define.InspectBlkioThrottleDevice
+	var infraSecurity []string
 	if p.state.InfraContainerID != "" {
 		infra, err := p.runtime.GetContainer(p.state.InfraContainerID)
 		if err != nil {
@@ -592,8 +597,29 @@ func (p *Pod) Inspect() (*define.InspectPodData, error) {
 		infraConfig.StaticIP = infra.config.ContainerNetworkConfig.StaticIP
 		infraConfig.NoManageResolvConf = infra.config.UseImageResolvConf
 		infraConfig.NoManageHosts = infra.config.UseImageHosts
+		infraConfig.CPUPeriod = p.CPUPeriod()
+		infraConfig.CPUQuota = p.CPUQuota()
+		infraConfig.CPUSetCPUs = p.ResourceLim().CPU.Cpus
 		infraConfig.PidNS = p.PidMode()
 		infraConfig.UserNS = p.UserNSMode()
+		namedVolumes, mounts := infra.sortUserVolumes(infra.config.Spec)
+		inspectMounts, err = infra.GetInspectMounts(namedVolumes, infra.config.ImageVolumes, mounts)
+		infraSecurity = infra.GetSecurityOptions()
+		if err != nil {
+			return nil, err
+		}
+		var nodes map[string]string
+		devices, err = infra.GetDevices(false, *infra.config.Spec, nodes)
+		if err != nil {
+			return nil, err
+		}
+		spec := infra.config.Spec
+		if spec.Linux != nil && spec.Linux.Resources != nil && spec.Linux.Resources.BlockIO != nil {
+			deviceLimits, err = blkioDeviceThrottle(nodes, spec.Linux.Resources.BlockIO.ThrottleReadBpsDevice)
+			if err != nil {
+				return nil, err
+			}
+		}
 
 		if len(infra.config.ContainerNetworkConfig.DNSServer) > 0 {
 			infraConfig.DNSServer = make([]string, 0, len(infra.config.ContainerNetworkConfig.DNSServer))
@@ -613,32 +639,48 @@ func (p *Pod) Inspect() (*define.InspectPodData, error) {
 			infraConfig.HostAdd = make([]string, 0, len(infra.config.HostAdd))
 			infraConfig.HostAdd = append(infraConfig.HostAdd, infra.config.HostAdd...)
 		}
-		if len(infra.config.ContainerNetworkConfig.Networks) > 0 {
-			infraConfig.Networks = make([]string, 0, len(infra.config.ContainerNetworkConfig.Networks))
-			infraConfig.Networks = append(infraConfig.Networks, infra.config.ContainerNetworkConfig.Networks...)
+
+		networks, err := infra.networks()
+		if err != nil {
+			return nil, err
+		}
+		netNames := make([]string, 0, len(networks))
+		for name := range networks {
+			netNames = append(netNames, name)
+		}
+		if len(netNames) > 0 {
+			infraConfig.Networks = netNames
 		}
 		infraConfig.NetworkOptions = infra.config.ContainerNetworkConfig.NetworkOptions
 		infraConfig.PortBindings = makeInspectPortBindings(infra.config.ContainerNetworkConfig.PortMappings, nil)
 	}
 
 	inspectData := define.InspectPodData{
-		ID:               p.ID(),
-		Name:             p.Name(),
-		Namespace:        p.Namespace(),
-		Created:          p.CreatedTime(),
-		CreateCommand:    p.config.CreateCommand,
-		State:            podState,
-		Hostname:         p.config.Hostname,
-		Labels:           p.Labels(),
-		CreateCgroup:     p.config.UsePodCgroup,
-		CgroupParent:     p.CgroupParent(),
-		CgroupPath:       p.state.CgroupPath,
-		CreateInfra:      infraConfig != nil,
-		InfraContainerID: p.state.InfraContainerID,
-		InfraConfig:      infraConfig,
-		SharedNamespaces: sharesNS,
-		NumContainers:    uint(len(containers)),
-		Containers:       ctrs,
+		ID:                 p.ID(),
+		Name:               p.Name(),
+		Namespace:          p.Namespace(),
+		Created:            p.CreatedTime(),
+		CreateCommand:      p.config.CreateCommand,
+		State:              podState,
+		Hostname:           p.config.Hostname,
+		Labels:             p.Labels(),
+		CreateCgroup:       p.config.UsePodCgroup,
+		CgroupParent:       p.CgroupParent(),
+		CgroupPath:         p.state.CgroupPath,
+		CreateInfra:        infraConfig != nil,
+		InfraContainerID:   p.state.InfraContainerID,
+		InfraConfig:        infraConfig,
+		SharedNamespaces:   sharesNS,
+		NumContainers:      uint(len(containers)),
+		Containers:         ctrs,
+		CPUSetCPUs:         p.ResourceLim().CPU.Cpus,
+		CPUPeriod:          p.CPUPeriod(),
+		CPUQuota:           p.CPUQuota(),
+		Mounts:             inspectMounts,
+		Devices:            devices,
+		BlkioDeviceReadBps: deviceLimits,
+		VolumesFrom:        p.VolumesFrom(),
+		SecurityOpts:       infraSecurity,
 	}
 
 	return &inspectData, nil

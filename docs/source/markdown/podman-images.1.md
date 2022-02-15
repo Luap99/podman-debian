@@ -25,27 +25,32 @@ Show image digests
 
 #### **--filter**=*filter*, **-f**
 
-Filter output based on conditions provided
+Provide filter values.
 
-  Filters:
+The *filters* argument format is of `key=value`. If there is more than one *filter*, then pass multiple OPTIONS: **--filter** *foo=bar* **--filter** *bif=baz*.
 
-  **since=IMAGE**
-    Filter on images created after the given IMAGE (name or tag).
+Supported filters:
 
-  **before=IMAGE**
-    Filter on images created before the given IMAGE (name or tag).
+| Filter             | Description                                                                                   |
+| :----------------: | --------------------------------------------------------------------------------------------- |
+| *before*           | Filter by images created before the given IMAGE (name or tag).                                |
+| *dangling*         | Filter by dangling (unused) images.                                                           |
+| *label*            | Filter by images with (or without, in the case of label!=[...] is used) the specified labels. |
+| *readonly*         | Filter by read-only or read/write images.                                                     |
+| *reference*        | Filter by image name.                                                                         |
+| *since*            | Filter by images created after the given IMAGE (name or tag).                                 |
 
-  **dangling=true|false**
-    Show dangling images. Dangling images are a file system layer that was used in a previous build of an image and is no longer referenced by any image. They are denoted with the `<none>` tag, consume disk space and serve no active purpose.
+The `before` *filter* accepts formats: `<image-name>[:<tag>]`, `<image id>` or `<image@digest>`.
 
-  **label**
-    Filter by images labels key and/or value.
+The `dangling` *filter* shows images that are taking up disk space and serve no purpose. Dangling image is a file system layer that was used in a previous build of an image and is no longer referenced by any image. They are denoted with the `<none>` tag, consume disk space and serve no active purpose.
 
-  **readonly=true|false**
-     Show only read only images or Read/Write images. The default is to show both.  Read/Only images can be configured by modifying the  "additionalimagestores" in the /etc/containers/storage.conf file.
+The `label` *filter* accepts two formats. One is the `label`=*key* or `label`=*key*=*value*, which shows images with the specified labels. The other format is the `label!`=*key* or `label!`=*key*=*value*, which shows images without the specified labels.
 
-  **reference=**
-     Filter by image name, specified as regular expressions.
+The `readonly` *filter* shows, as a default, both read-only and read/write images. Read-only images can be configured by modifying the  `additionalimagestores` in the `/etc/containers/storage.conf` file.
+
+The `reference` *filter* accepts the pattern of an image reference `<image-name>[:<tag>]`.
+
+The `since` *filter* accepts formats: `<image-name>[:<tag>]`, `<image id>` or `<image@digest>`.
 
 #### **--format**=*format*
 
@@ -74,13 +79,13 @@ Omit the table headings from the listing of images.
 
 #### **--no-trunc**
 
-Do not truncate output.
+Do not truncate the output (default *false*).
 
 #### **--quiet**, **-q**
 
 Lists only the image IDs.
 
-#### **--sort**=*sort*
+#### **--sort**=*sort*=*created*
 
 Sort by created, id, repository, size or tag (default: created)
 
@@ -188,7 +193,7 @@ docker.io/library/alpine   latest   3fd9065eaf02   5 months ago    4.41 MB
 ```
 
 ## SEE ALSO
-podman(1), containers-storage.conf(5)
+**[podman(1)](podman.1.md)**, **[containers-storage.conf(5)](https://github.com/containers/storage/blob/main/docs/containers-storage.conf.5.md)**
 
 ## HISTORY
 March 2017, Originally compiled by Dan Walsh `<dwalsh@redhat.com>`

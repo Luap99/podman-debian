@@ -4,10 +4,11 @@ import (
 	"context"
 	"io"
 
+	"github.com/containers/common/libnetwork/types"
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/pkg/domain/entities/reports"
-	"github.com/containers/podman/v3/pkg/specgen"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/domain/entities/reports"
+	"github.com/containers/podman/v4/pkg/specgen"
 )
 
 type ContainerCopyFunc func() error
@@ -39,7 +40,7 @@ type ContainerEngine interface {
 	ContainerRename(ctr context.Context, nameOrID string, options ContainerRenameOptions) error
 	ContainerRestart(ctx context.Context, namesOrIds []string, options RestartOptions) ([]*RestartReport, error)
 	ContainerRestore(ctx context.Context, namesOrIds []string, options RestoreOptions) ([]*RestoreReport, error)
-	ContainerRm(ctx context.Context, namesOrIds []string, options RmOptions) ([]*RmReport, error)
+	ContainerRm(ctx context.Context, namesOrIds []string, options RmOptions) ([]*reports.RmReport, error)
 	ContainerRun(ctx context.Context, opts ContainerRunOptions) (*ContainerRunReport, error)
 	ContainerRunlabel(ctx context.Context, label string, image string, args []string, opts ContainerRunlabelOptions) error
 	ContainerStart(ctx context.Context, namesOrIds []string, options ContainerStartOptions) ([]*ContainerStartReport, error)
@@ -58,11 +59,11 @@ type ContainerEngine interface {
 	HealthCheckRun(ctx context.Context, nameOrID string, options HealthCheckOptions) (*define.HealthCheckResults, error)
 	Info(ctx context.Context) (*define.Info, error)
 	NetworkConnect(ctx context.Context, networkname string, options NetworkConnectOptions) error
-	NetworkCreate(ctx context.Context, name string, options NetworkCreateOptions) (*NetworkCreateReport, error)
+	NetworkCreate(ctx context.Context, network types.Network) (*types.Network, error)
 	NetworkDisconnect(ctx context.Context, networkname string, options NetworkDisconnectOptions) error
 	NetworkExists(ctx context.Context, networkname string) (*BoolReport, error)
-	NetworkInspect(ctx context.Context, namesOrIds []string, options InspectOptions) ([]NetworkInspectReport, []error, error)
-	NetworkList(ctx context.Context, options NetworkListOptions) ([]*NetworkListReport, error)
+	NetworkInspect(ctx context.Context, namesOrIds []string, options InspectOptions) ([]types.Network, []error, error)
+	NetworkList(ctx context.Context, options NetworkListOptions) ([]types.Network, error)
 	NetworkPrune(ctx context.Context, options NetworkPruneOptions) ([]*NetworkPruneReport, error)
 	NetworkReload(ctx context.Context, names []string, options NetworkReloadOptions) ([]*NetworkReloadReport, error)
 	NetworkRm(ctx context.Context, namesOrIds []string, options NetworkRmOptions) ([]*NetworkRmReport, error)

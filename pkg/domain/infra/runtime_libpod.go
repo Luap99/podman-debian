@@ -9,12 +9,12 @@ import (
 	"os/signal"
 	"sync"
 
-	"github.com/containers/podman/v3/cmd/podman/utils"
-	"github.com/containers/podman/v3/libpod"
-	"github.com/containers/podman/v3/pkg/cgroups"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/namespaces"
-	"github.com/containers/podman/v3/pkg/rootless"
+	"github.com/containers/common/pkg/cgroups"
+	"github.com/containers/podman/v4/cmd/podman/utils"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/namespaces"
+	"github.com/containers/podman/v4/pkg/rootless"
 	"github.com/containers/storage/pkg/idtools"
 	"github.com/containers/storage/types"
 	"github.com/pkg/errors"
@@ -200,6 +200,9 @@ func getRuntime(ctx context.Context, fs *flag.FlagSet, opts *engineOpts) (*libpo
 	if fs.Changed("network-cmd-path") {
 		options = append(options, libpod.WithNetworkCmdPath(cfg.Engine.NetworkCmdPath))
 	}
+	if fs.Changed("network-backend") {
+		options = append(options, libpod.WithNetworkBackend(cfg.Network.NetworkBackend))
+	}
 
 	if fs.Changed("events-backend") {
 		options = append(options, libpod.WithEventsLogger(cfg.Engine.EventsLogger))
@@ -220,7 +223,7 @@ func getRuntime(ctx context.Context, fs *flag.FlagSet, opts *engineOpts) (*libpo
 	// TODO flag to set libpod static dir?
 	// TODO flag to set libpod tmp dir?
 
-	if fs.Changed("cni-config-dir") {
+	if fs.Changed("network-config-dir") {
 		options = append(options, libpod.WithCNIConfigDir(cfg.Network.NetworkConfigDir))
 	}
 	if fs.Changed("default-mounts-file") {
@@ -231,6 +234,11 @@ func getRuntime(ctx context.Context, fs *flag.FlagSet, opts *engineOpts) (*libpo
 	}
 	if fs.Changed("registries-conf") {
 		options = append(options, libpod.WithRegistriesConf(cfg.RegistriesConf))
+	}
+
+	// no need to handle the error, it will return false anyway
+	if syslog, _ := fs.GetBool("syslog"); syslog {
+		options = append(options, libpod.WithSyslog())
 	}
 
 	// TODO flag to set CNI plugins dir?
@@ -369,7 +377,7 @@ func StartWatcher(rt *libpod.Runtime) {
 			logrus.Debugf("waiting for SIGHUP to reload configuration")
 			<-ch
 			if err := rt.Reload(); err != nil {
-				logrus.Errorf("unable to reload configuration: %v", err)
+				logrus.Errorf("Unable to reload configuration: %v", err)
 				continue
 			}
 		}

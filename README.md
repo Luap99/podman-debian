@@ -5,7 +5,7 @@
 Podman (the POD MANager) is a tool for managing containers and images, volumes mounted into those containers, and pods made from groups of containers.
 Podman is based on libpod, a library for container lifecycle management that is also contained in this repository. The libpod library provides APIs for managing containers, pods, container images, and volumes.
 
-* [Latest Version: 3.3.1](https://github.com/containers/podman/releases/latest)
+* [Latest Version: 3.4.0](https://github.com/containers/podman/releases/latest)
   * Latest Remote client for Windows
   * Latest Remote client for macOS
   * Latest Static Remote client for Linux
@@ -41,8 +41,8 @@ Podman presently only supports running containers on Linux. However, we are buil
 If you think you've identified a security issue in the project, please *DO NOT* report the issue publicly via the GitHub issue tracker, mailing list, or IRC.
 Instead, send an email with as many details as possible to `security@lists.podman.io`. This is a private mailing list for the core maintainers.
 
-For general questions and discussion, please use the
-IRC `#podman` channel on `irc.libera.chat`.
+For general questions and discussion, please use Podman's
+[channels](https://podman.io/community/#slack-irc-matrix-and-discord).
 
 For discussions around issues/bugs and features, you can use the GitHub
 [issues](https://github.com/containers/podman/issues)
@@ -60,10 +60,10 @@ Rootless Podman runs locked-down containers with no privileges that the user run
 Some of these restrictions can be lifted (via `--privileged`, for example), but rootless containers will never have more privileges than the user that launched them.
 If you run Podman as your user and mount in `/etc/passwd` from the host, you still won't be able to change it, since your user doesn't have permission to do so.
 
-Almost all normal Podman functionality is available, though there are some [shortcomings](https://github.com/containers/podman/blob/master/rootless.md).
-Any recent Podman release should be able to run rootless without any additional configuration, though your operating system may require some additional configuration detailed in the [install guide](https://github.com/containers/podman/blob/master/install.md).
+Almost all normal Podman functionality is available, though there are some [shortcomings](https://github.com/containers/podman/blob/main/rootless.md).
+Any recent Podman release should be able to run rootless without any additional configuration, though your operating system may require some additional configuration detailed in the [install guide](https://github.com/containers/podman/blob/main/install.md).
 
-A little configuration by an administrator is required before rootless Podman can be used, the necessary setup is documented [here](https://github.com/containers/podman/blob/master/docs/tutorials/rootless_tutorial.md).
+A little configuration by an administrator is required before rootless Podman can be used, the necessary setup is documented [here](https://github.com/containers/podman/blob/main/docs/tutorials/rootless_tutorial.md).
 
 ## Out of scope
 
@@ -110,10 +110,10 @@ includes tables showing Docker commands and their Podman equivalent commands.
 **[Tutorials](docs/tutorials)**
 Tutorials on using Podman.
 
-**[Remote Client](https://github.com/containers/podman/blob/master/docs/tutorials/remote_client.md)**
+**[Remote Client](https://github.com/containers/podman/blob/main/docs/tutorials/remote_client.md)**
 A brief how-to on using the Podman remote-client.
 
-**[Basic Setup and Use of Podman in a Rootless environment](https://github.com/containers/podman/blob/master/docs/tutorials/rootless_tutorial.md)**
+**[Basic Setup and Use of Podman in a Rootless environment](https://github.com/containers/podman/blob/main/docs/tutorials/rootless_tutorial.md)**
 A tutorial showing the setup and configuration necessary to run Rootless Podman.
 
 **[Release Notes](RELEASE_NOTES.md)**
@@ -166,9 +166,3 @@ familiar container cli commands.  For more details, see the
 Podman formerly offered a Varlink-based API for remote management of containers. However, this API
 was replaced by the REST API. Varlink support has been removed as of the 3.0 release.
 For more details, you can see [this blog](https://podman.io/blogs/2020/01/17/podman-new-api.html).
-
-## Static Binary Builds
-The Cirrus CI integration within this repository contains a `static_build` job
-which produces a static Podman binary for testing purposes. Please note that
-this binary is not officially supported with respect to feature-completeness
-and functionality and should be only used for testing.

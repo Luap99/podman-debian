@@ -6,9 +6,10 @@ import (
 	"strings"
 
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/libpod/driver"
-	"github.com/containers/podman/v3/pkg/util"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/libpod/driver"
+	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/storage/types"
 	units "github.com/docker/go-units"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/runtime-tools/generate"
@@ -92,7 +93,7 @@ func (c *Container) getContainerInspectData(size bool, driverData *define.Driver
 	}
 
 	namedVolumes, mounts := c.sortUserVolumes(ctrSpec)
-	inspectMounts, err := c.getInspectMounts(namedVolumes, c.config.ImageVolumes, mounts)
+	inspectMounts, err := c.GetInspectMounts(namedVolumes, c.config.ImageVolumes, mounts)
 	if err != nil {
 		return nil, err
 	}
@@ -113,24 +114,29 @@ func (c *Container) getContainerInspectData(size bool, driverData *define.Driver
 		Path:    path,
 		Args:    args,
 		State: &define.InspectContainerState{
-			OciVersion:   ctrSpec.Version,
-			Status:       runtimeInfo.State.String(),
-			Running:      runtimeInfo.State == define.ContainerStateRunning,
-			Paused:       runtimeInfo.State == define.ContainerStatePaused,
-			OOMKilled:    runtimeInfo.OOMKilled,
-			Dead:         runtimeInfo.State.String() == "bad state",
-			Pid:          runtimeInfo.PID,
-			ConmonPid:    runtimeInfo.ConmonPID,
-			ExitCode:     runtimeInfo.ExitCode,
-			Error:        "", // can't get yet
-			StartedAt:    runtimeInfo.StartedTime,
-			FinishedAt:   runtimeInfo.FinishedTime,
-			Checkpointed: runtimeInfo.Checkpointed,
-			CgroupPath:   cgroupPath,
+			OciVersion:     ctrSpec.Version,
+			Status:         runtimeInfo.State.String(),
+			Running:        runtimeInfo.State == define.ContainerStateRunning,
+			Paused:         runtimeInfo.State == define.ContainerStatePaused,
+			OOMKilled:      runtimeInfo.OOMKilled,
+			Dead:           runtimeInfo.State.String() == "bad state",
+			Pid:            runtimeInfo.PID,
+			ConmonPid:      runtimeInfo.ConmonPID,
+			ExitCode:       runtimeInfo.ExitCode,
+			Error:          "", // can't get yet
+			StartedAt:      runtimeInfo.StartedTime,
+			FinishedAt:     runtimeInfo.FinishedTime,
+			Checkpointed:   runtimeInfo.Checkpointed,
+			CgroupPath:     cgroupPath,
+			RestoredAt:     runtimeInfo.RestoredTime,
+			CheckpointedAt: runtimeInfo.CheckpointedTime,
+			Restored:       runtimeInfo.Restored,
+			CheckpointPath: runtimeInfo.CheckpointPath,
+			CheckpointLog:  runtimeInfo.CheckpointLog,
+			RestoreLog:     runtimeInfo.RestoreLog,
 		},
 		Image:           config.RootfsImageID,
 		ImageName:       config.RootfsImageName,
-		ExitCommand:     config.ExitCommand,
 		Namespace:       config.Namespace,
 		Rootfs:          config.Rootfs,
 		Pod:             config.Pod,
@@ -167,7 +173,7 @@ func (c *Container) getContainerInspectData(size bool, driverData *define.Driver
 			// An error here is not considered fatal; no health state will be displayed
 			logrus.Error(err)
 		} else {
-			data.State.Healthcheck = healthCheckState
+			data.State.Health = healthCheckState
 		}
 	}
 
@@ -189,13 +195,13 @@ func (c *Container) getContainerInspectData(size bool, driverData *define.Driver
 	if size {
 		rootFsSize, err := c.rootFsSize()
 		if err != nil {
-			logrus.Errorf("error getting rootfs size %q: %v", config.ID, err)
+			logrus.Errorf("Getting rootfs size %q: %v", config.ID, err)
 		}
 		data.SizeRootFs = rootFsSize
 
 		rwSize, err := c.rwSize()
 		if err != nil {
-			logrus.Errorf("error getting rw size %q: %v", config.ID, err)
+			logrus.Errorf("Getting rw size %q: %v", config.ID, err)
 		}
 		data.SizeRw = &rwSize
 	}
@@ -205,7 +211,7 @@ func (c *Container) getContainerInspectData(size bool, driverData *define.Driver
 // Get inspect-formatted mounts list.
 // Only includes user-specified mounts. Only includes bind mounts and named
 // volumes, not tmpfs volumes.
-func (c *Container) getInspectMounts(namedVolumes []*ContainerNamedVolume, imageVolumes []*ContainerImageVolume, mounts []spec.Mount) ([]define.InspectMount, error) {
+func (c *Container) GetInspectMounts(namedVolumes []*ContainerNamedVolume, imageVolumes []*ContainerImageVolume, mounts []spec.Mount) ([]define.InspectMount, error) {
 	inspectMounts := []define.InspectMount{}
 
 	// No mounts, return early
@@ -268,6 +274,27 @@ func (c *Container) getInspectMounts(namedVolumes []*ContainerNamedVolume, image
 	return inspectMounts, nil
 }
 
+// GetSecurityOptions retrieves and returns the security related annotations and process information upon inspection
+func (c *Container) GetSecurityOptions() []string {
+	ctrSpec := c.config.Spec
+	SecurityOpt := []string{}
+	if ctrSpec.Process != nil {
+		if ctrSpec.Process.NoNewPrivileges {
+			SecurityOpt = append(SecurityOpt, "no-new-privileges")
+		}
+	}
+	if label, ok := ctrSpec.Annotations[define.InspectAnnotationLabel]; ok {
+		SecurityOpt = append(SecurityOpt, fmt.Sprintf("label=%s", label))
+	}
+	if seccomp, ok := ctrSpec.Annotations[define.InspectAnnotationSeccomp]; ok {
+		SecurityOpt = append(SecurityOpt, fmt.Sprintf("seccomp=%s", seccomp))
+	}
+	if apparmor, ok := ctrSpec.Annotations[define.InspectAnnotationApparmor]; ok {
+		SecurityOpt = append(SecurityOpt, fmt.Sprintf("apparmor=%s", apparmor))
+	}
+	return SecurityOpt
+}
+
 // Parse mount options so we can populate them in the mount structure.
 // The mount passed in will be modified.
 func parseMountOptionsForInspect(options []string, mount *define.InspectMount) {
@@ -311,8 +338,7 @@ func (c *Container) generateInspectContainerConfig(spec *spec.Spec) *define.Insp
 	ctrConfig.User = c.config.User
 	if spec.Process != nil {
 		ctrConfig.Tty = spec.Process.Terminal
-		ctrConfig.Env = []string{}
-		ctrConfig.Env = append(ctrConfig.Env, spec.Process.Env...)
+		ctrConfig.Env = append([]string{}, spec.Process.Env...)
 		ctrConfig.WorkingDir = spec.Process.Cwd
 	}
 
@@ -373,7 +399,20 @@ func (c *Container) generateInspectContainerConfig(spec *spec.Spec) *define.Insp
 		ctrConfig.Umask = c.config.Umask
 	}
 
+	ctrConfig.Passwd = c.config.Passwd
+
 	return ctrConfig
+}
+
+func generateIDMappings(idMappings types.IDMappingOptions) *define.InspectIDMappings {
+	var inspectMappings define.InspectIDMappings
+	for _, uid := range idMappings.UIDMap {
+		inspectMappings.UIDMap = append(inspectMappings.UIDMap, fmt.Sprintf("%d:%d:%d", uid.ContainerID, uid.HostID, uid.Size))
+	}
+	for _, gid := range idMappings.GIDMap {
+		inspectMappings.GIDMap = append(inspectMappings.GIDMap, fmt.Sprintf("%d:%d:%d", gid.ContainerID, gid.HostID, gid.Size))
+	}
+	return &inspectMappings
 }
 
 // Generate the InspectContainerHostConfig struct for the HostConfig field of
@@ -416,15 +455,13 @@ func (c *Container) generateInspectContainerHostConfig(ctrSpec *spec.Spec, named
 	hostConfig.GroupAdd = make([]string, 0, len(c.config.Groups))
 	hostConfig.GroupAdd = append(hostConfig.GroupAdd, c.config.Groups...)
 
-	hostConfig.SecurityOpt = []string{}
 	if ctrSpec.Process != nil {
 		if ctrSpec.Process.OOMScoreAdj != nil {
 			hostConfig.OomScoreAdj = *ctrSpec.Process.OOMScoreAdj
 		}
-		if ctrSpec.Process.NoNewPrivileges {
-			hostConfig.SecurityOpt = append(hostConfig.SecurityOpt, "no-new-privileges")
-		}
 	}
+
+	hostConfig.SecurityOpt = c.GetSecurityOptions()
 
 	hostConfig.ReadonlyRootfs = ctrSpec.Root.Readonly
 	hostConfig.ShmSize = c.config.ShmSize
@@ -449,15 +486,6 @@ func (c *Container) generateInspectContainerHostConfig(ctrSpec *spec.Spec, named
 		}
 		if ctrSpec.Annotations[define.InspectAnnotationInit] == define.InspectResponseTrue {
 			hostConfig.Init = true
-		}
-		if label, ok := ctrSpec.Annotations[define.InspectAnnotationLabel]; ok {
-			hostConfig.SecurityOpt = append(hostConfig.SecurityOpt, fmt.Sprintf("label=%s", label))
-		}
-		if seccomp, ok := ctrSpec.Annotations[define.InspectAnnotationSeccomp]; ok {
-			hostConfig.SecurityOpt = append(hostConfig.SecurityOpt, fmt.Sprintf("seccomp=%s", seccomp))
-		}
-		if apparmor, ok := ctrSpec.Annotations[define.InspectAnnotationApparmor]; ok {
-			hostConfig.SecurityOpt = append(hostConfig.SecurityOpt, fmt.Sprintf("apparmor=%s", apparmor))
 		}
 	}
 
@@ -486,9 +514,6 @@ func (c *Container) generateInspectContainerHostConfig(ctrSpec *spec.Spec, named
 			if ctrSpec.Linux.Resources.Memory != nil {
 				if ctrSpec.Linux.Resources.Memory.Limit != nil {
 					hostConfig.Memory = *ctrSpec.Linux.Resources.Memory.Limit
-				}
-				if ctrSpec.Linux.Resources.Memory.Kernel != nil {
-					hostConfig.KernelMemory = *ctrSpec.Linux.Resources.Memory.Kernel
 				}
 				if ctrSpec.Linux.Resources.Memory.Reservation != nil {
 					hostConfig.MemoryReservation = *ctrSpec.Linux.Resources.Memory.Reservation
@@ -542,49 +567,25 @@ func (c *Container) generateInspectContainerHostConfig(ctrSpec *spec.Spec, named
 					hostConfig.BlkioWeightDevice = append(hostConfig.BlkioWeightDevice, weightDev)
 				}
 
-				handleThrottleDevice := func(devs []spec.LinuxThrottleDevice) ([]define.InspectBlkioThrottleDevice, error) {
-					out := []define.InspectBlkioThrottleDevice{}
-					for _, dev := range devs {
-						key := fmt.Sprintf("%d:%d", dev.Major, dev.Minor)
-						if deviceNodes == nil {
-							nodes, err := util.FindDeviceNodes()
-							if err != nil {
-								return nil, err
-							}
-							deviceNodes = nodes
-						}
-						path, ok := deviceNodes[key]
-						if !ok {
-							logrus.Infof("Could not locate throttle device %s in system devices", key)
-							continue
-						}
-						throttleDev := define.InspectBlkioThrottleDevice{}
-						throttleDev.Path = path
-						throttleDev.Rate = dev.Rate
-						out = append(out, throttleDev)
-					}
-					return out, nil
-				}
-
-				readBps, err := handleThrottleDevice(ctrSpec.Linux.Resources.BlockIO.ThrottleReadBpsDevice)
+				readBps, err := blkioDeviceThrottle(deviceNodes, ctrSpec.Linux.Resources.BlockIO.ThrottleReadBpsDevice)
 				if err != nil {
 					return nil, err
 				}
 				hostConfig.BlkioDeviceReadBps = readBps
 
-				writeBps, err := handleThrottleDevice(ctrSpec.Linux.Resources.BlockIO.ThrottleWriteBpsDevice)
+				writeBps, err := blkioDeviceThrottle(deviceNodes, ctrSpec.Linux.Resources.BlockIO.ThrottleWriteBpsDevice)
 				if err != nil {
 					return nil, err
 				}
 				hostConfig.BlkioDeviceWriteBps = writeBps
 
-				readIops, err := handleThrottleDevice(ctrSpec.Linux.Resources.BlockIO.ThrottleReadIOPSDevice)
+				readIops, err := blkioDeviceThrottle(deviceNodes, ctrSpec.Linux.Resources.BlockIO.ThrottleReadIOPSDevice)
 				if err != nil {
 					return nil, err
 				}
 				hostConfig.BlkioDeviceReadIOps = readIops
 
-				writeIops, err := handleThrottleDevice(ctrSpec.Linux.Resources.BlockIO.ThrottleWriteIOPSDevice)
+				writeIops, err := blkioDeviceThrottle(deviceNodes, ctrSpec.Linux.Resources.BlockIO.ThrottleWriteIOPSDevice)
 				if err != nil {
 					return nil, err
 				}
@@ -741,7 +742,7 @@ func (c *Container) generateInspectContainerHostConfig(ctrSpec *spec.Spec, named
 	}
 	hostConfig.CgroupMode = cgroupMode
 
-	// CGroup parent
+	// Cgroup parent
 	// Need to check if it's the default, and not print if so.
 	defaultCgroupParent := ""
 	switch c.CgroupManager() {
@@ -826,31 +827,16 @@ func (c *Container) generateInspectContainerHostConfig(ctrSpec *spec.Spec, named
 		}
 	}
 	hostConfig.UsernsMode = usernsMode
-
+	if c.config.IDMappings.UIDMap != nil && c.config.IDMappings.GIDMap != nil {
+		hostConfig.IDMappings = generateIDMappings(c.config.IDMappings)
+	}
 	// Devices
 	// Do not include if privileged - assumed that all devices will be
 	// included.
-	hostConfig.Devices = []define.InspectDevice{}
-	if ctrSpec.Linux != nil && !hostConfig.Privileged {
-		for _, dev := range ctrSpec.Linux.Devices {
-			key := fmt.Sprintf("%d:%d", dev.Major, dev.Minor)
-			if deviceNodes == nil {
-				nodes, err := util.FindDeviceNodes()
-				if err != nil {
-					return nil, err
-				}
-				deviceNodes = nodes
-			}
-			path, ok := deviceNodes[key]
-			if !ok {
-				logrus.Warnf("Could not locate device %s on host", key)
-				continue
-			}
-			newDev := define.InspectDevice{}
-			newDev.PathOnHost = path
-			newDev.PathInContainer = dev.Path
-			hostConfig.Devices = append(hostConfig.Devices, newDev)
-		}
+	var err error
+	hostConfig.Devices, err = c.GetDevices(*&hostConfig.Privileged, *ctrSpec, deviceNodes)
+	if err != nil {
+		return nil, err
 	}
 
 	// Ulimits
@@ -895,4 +881,54 @@ func (c *Container) inHostPidNS() (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+func (c *Container) GetDevices(priv bool, ctrSpec spec.Spec, deviceNodes map[string]string) ([]define.InspectDevice, error) {
+	devices := []define.InspectDevice{}
+	if ctrSpec.Linux != nil && !priv {
+		for _, dev := range ctrSpec.Linux.Devices {
+			key := fmt.Sprintf("%d:%d", dev.Major, dev.Minor)
+			if deviceNodes == nil {
+				nodes, err := util.FindDeviceNodes()
+				if err != nil {
+					return nil, err
+				}
+				deviceNodes = nodes
+			}
+			path, ok := deviceNodes[key]
+			if !ok {
+				logrus.Warnf("Could not locate device %s on host", key)
+				continue
+			}
+			newDev := define.InspectDevice{}
+			newDev.PathOnHost = path
+			newDev.PathInContainer = dev.Path
+			devices = append(devices, newDev)
+		}
+	}
+	return devices, nil
+}
+
+func blkioDeviceThrottle(deviceNodes map[string]string, devs []spec.LinuxThrottleDevice) ([]define.InspectBlkioThrottleDevice, error) {
+	out := []define.InspectBlkioThrottleDevice{}
+	for _, dev := range devs {
+		key := fmt.Sprintf("%d:%d", dev.Major, dev.Minor)
+		if deviceNodes == nil {
+			nodes, err := util.FindDeviceNodes()
+			if err != nil {
+				return nil, err
+			}
+			deviceNodes = nodes
+		}
+		path, ok := deviceNodes[key]
+		if !ok {
+			logrus.Infof("Could not locate throttle device %s in system devices", key)
+			continue
+		}
+		throttleDev := define.InspectBlkioThrottleDevice{}
+		throttleDev.Path = path
+		throttleDev.Rate = dev.Rate
+		out = append(out, throttleDev)
+	}
+	return out, nil
 }

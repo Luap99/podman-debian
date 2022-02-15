@@ -11,14 +11,15 @@ import (
 
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/cmd/podman/validate"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/parallel"
-	"github.com/containers/podman/v3/pkg/rootless"
-	"github.com/containers/podman/v3/version"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/validate"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/checkpoint/crutils"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/parallel"
+	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/version"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -84,6 +85,14 @@ func init() {
 	)
 
 	rootFlags(rootCmd, registry.PodmanConfig())
+
+	// backwards compat still allow --cni-config-dir
+	rootCmd.Flags().SetNormalizeFunc(func(f *pflag.FlagSet, name string) pflag.NormalizedName {
+		if name == "cni-config-dir" {
+			name = "network-config-dir"
+		}
+		return pflag.NormalizedName(name)
+	})
 	rootCmd.SetUsageTemplate(usageTemplate)
 }
 
@@ -113,6 +122,52 @@ func persistentPreRunE(cmd *cobra.Command, args []string) error {
 	}
 
 	cfg := registry.PodmanConfig()
+	if cfg.NoOut {
+		null, _ := os.Open(os.DevNull)
+		os.Stdout = null
+	}
+
+	// Currently it is only possible to restore a container with the same runtime
+	// as used for checkpointing. It should be possible to make crun and runc
+	// compatible to restore a container with another runtime then checkpointed.
+	// Currently that does not work.
+	// To make it easier for users we will look into the checkpoint archive and
+	// set the runtime to the one used during checkpointing.
+	if !registry.IsRemote() && cmd.Name() == "restore" {
+		if cmd.Flag("import").Changed {
+			runtime, err := crutils.CRGetRuntimeFromArchive(cmd.Flag("import").Value.String())
+			if err != nil {
+				return errors.Wrapf(
+					err,
+					"failed extracting runtime information from %s",
+					cmd.Flag("import").Value.String(),
+				)
+			}
+			if cfg.RuntimePath == "" {
+				// If the user did not select a runtime, this takes the one from
+				// the checkpoint archives and tells Podman to use it for the restore.
+				runtimeFlag := cmd.Root().Flags().Lookup("runtime")
+				if runtimeFlag == nil {
+					return errors.Errorf(
+						"setting runtime to '%s' for restore",
+						*runtime,
+					)
+				}
+				runtimeFlag.Value.Set(*runtime)
+				runtimeFlag.Changed = true
+				logrus.Debugf("Checkpoint was created using '%s'. Restore will use the same runtime", *runtime)
+			} else if cfg.RuntimePath != *runtime {
+				// If the user selected a runtime on the command-line this checks if
+				// it is the same then during checkpointing and errors out if not.
+				return errors.Errorf(
+					"checkpoint archive %s was created with runtime '%s' and cannot be restored with runtime '%s'",
+					cmd.Flag("import").Value.String(),
+					*runtime,
+					cfg.RuntimePath,
+				)
+			}
+		}
+	}
 
 	// --connection is not as "special" as --remote so we can wait and process it here
 	conn := cmd.Root().LocalFlags().Lookup("connection")
@@ -163,28 +218,18 @@ func persistentPreRunE(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	for _, env := range cfg.Engine.Env {
-		splitEnv := strings.SplitN(env, "=", 2)
-		if len(splitEnv) != 2 {
-			return fmt.Errorf("invalid environment variable for engine %s, valid configuration is KEY=value pair", env)
-		}
-		// skip if the env is already defined
-		if _, ok := os.LookupEnv(splitEnv[0]); ok {
-			logrus.Debugf("environment variable %s is already defined, skip the settings from containers.conf", splitEnv[0])
-			continue
-		}
-		if err := os.Setenv(splitEnv[0], splitEnv[1]); err != nil {
-			return err
-		}
-	}
 	// Hard code TMPDIR functions to use /var/tmp, if user did not override
 	if _, ok := os.LookupEnv("TMPDIR"); !ok {
-		os.Setenv("TMPDIR", "/var/tmp")
+		if tmpdir, err := cfg.ImageCopyTmpDir(); err != nil {
+			logrus.Warnf("Failed to retrieve default tmp dir: %s", err.Error())
+		} else {
+			os.Setenv("TMPDIR", tmpdir)
+		}
 	}
 
 	context := cmd.Root().LocalFlags().Lookup("context")
 	if context.Value.String() != "default" {
-		return errors.New("Podman does not support swarm, the only --context value allowed is \"default\"")
+		return errors.New("podman does not support swarm, the only --context value allowed is \"default\"")
 	}
 	if !registry.IsRemote() {
 		if cmd.Flag("cpu-profile").Changed {
@@ -310,11 +355,12 @@ func rootFlags(cmd *cobra.Command, opts *entities.PodmanConfig) {
 	lFlags.StringVar(&opts.Identity, identityFlagName, ident, "path to SSH identity file, (CONTAINER_SSHKEY)")
 	_ = cmd.RegisterFlagCompletionFunc(identityFlagName, completion.AutocompleteDefault)
 
-	lFlags.BoolVarP(&opts.Remote, "remote", "r", false, "Access remote Podman service (default false)")
+	lFlags.BoolVar(&opts.NoOut, "noout", false, "do not output to stdout")
+	lFlags.BoolVarP(&opts.Remote, "remote", "r", registry.IsRemote(), "Access remote Podman service")
 	pFlags := cmd.PersistentFlags()
 	if registry.IsRemote() {
 		if err := lFlags.MarkHidden("remote"); err != nil {
-			logrus.Warnf("unable to mark --remote flag as hidden: %s", err.Error())
+			logrus.Warnf("Unable to mark --remote flag as hidden: %s", err.Error())
 		}
 		opts.Remote = true
 	} else {
@@ -333,9 +379,9 @@ func rootFlags(cmd *cobra.Command, opts *entities.PodmanConfig) {
 		pFlags.StringVar(&cfg.Engine.NetworkCmdPath, networkCmdPathFlagName, cfg.Engine.NetworkCmdPath, "Path to the command for configuring the network")
 		_ = cmd.RegisterFlagCompletionFunc(networkCmdPathFlagName, completion.AutocompleteDefault)
 
-		cniConfigDirFlagName := "cni-config-dir"
-		pFlags.StringVar(&cfg.Network.NetworkConfigDir, cniConfigDirFlagName, cfg.Network.NetworkConfigDir, "Path of the configuration directory for CNI networks")
-		_ = cmd.RegisterFlagCompletionFunc(cniConfigDirFlagName, completion.AutocompleteDefault)
+		networkConfigDirFlagName := "network-config-dir"
+		pFlags.StringVar(&cfg.Network.NetworkConfigDir, networkConfigDirFlagName, cfg.Network.NetworkConfigDir, "Path of the configuration directory for networks")
+		_ = cmd.RegisterFlagCompletionFunc(networkConfigDirFlagName, completion.AutocompleteDefault)
 
 		pFlags.StringVar(&cfg.Containers.DefaultMountsFile, "default-mounts-file", cfg.Containers.DefaultMountsFile, "Path to default mounts file")
 
@@ -353,6 +399,11 @@ func rootFlags(cmd *cobra.Command, opts *entities.PodmanConfig) {
 		pFlags.StringVar(&cfg.Engine.Namespace, namespaceFlagName, cfg.Engine.Namespace, "Set the libpod namespace, used to create separate views of the containers and pods on the system")
 		_ = cmd.RegisterFlagCompletionFunc(namespaceFlagName, completion.AutocompleteNone)
 
+		networkBackendFlagName := "network-backend"
+		pFlags.StringVar(&cfg.Network.NetworkBackend, networkBackendFlagName, cfg.Network.NetworkBackend, `Network backend to use ("cni"|"netavark")`)
+		_ = cmd.RegisterFlagCompletionFunc(networkBackendFlagName, common.AutocompleteNetworkBackend)
+		pFlags.MarkHidden(networkBackendFlagName)
+
 		rootFlagName := "root"
 		pFlags.StringVar(&cfg.Engine.StaticDir, rootFlagName, "", "Path to the root directory in which data, including images, is stored")
 		_ = cmd.RegisterFlagCompletionFunc(rootFlagName, completion.AutocompleteDefault)
@@ -364,12 +415,12 @@ func rootFlags(cmd *cobra.Command, opts *entities.PodmanConfig) {
 		_ = cmd.RegisterFlagCompletionFunc(runrootFlagName, completion.AutocompleteDefault)
 
 		runtimeFlagName := "runtime"
-		pFlags.StringVar(&opts.RuntimePath, runtimeFlagName, "", "Path to the OCI-compatible binary used to run containers, default is /usr/bin/runc")
+		pFlags.StringVar(&opts.RuntimePath, runtimeFlagName, cfg.Engine.OCIRuntime, "Path to the OCI-compatible binary used to run containers.")
 		_ = cmd.RegisterFlagCompletionFunc(runtimeFlagName, completion.AutocompleteDefault)
 
 		// -s is deprecated due to conflict with -s on subcommands
 		storageDriverFlagName := "storage-driver"
-		pFlags.StringVar(&opts.StorageDriver, storageDriverFlagName, "", "Select which storage driver is used to manage storage of images and containers (default is overlay)")
+		pFlags.StringVar(&opts.StorageDriver, storageDriverFlagName, "", "Select which storage driver is used to manage storage of images and containers")
 		_ = cmd.RegisterFlagCompletionFunc(storageDriverFlagName, completion.AutocompleteNone) //TODO: what can we recommend here?
 
 		tmpdirFlagName := "tmpdir"
@@ -388,7 +439,7 @@ func rootFlags(cmd *cobra.Command, opts *entities.PodmanConfig) {
 			"trace",
 		} {
 			if err := pFlags.MarkHidden(f); err != nil {
-				logrus.Warnf("unable to mark %s flag as hidden: %s", f, err.Error())
+				logrus.Warnf("Unable to mark %s flag as hidden: %s", f, err.Error())
 			}
 		}
 	}

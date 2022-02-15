@@ -39,6 +39,7 @@ EOF
     cat >$dockerfile <<EOF
 FROM $IMAGE
 RUN echo $rand_content > /$rand_filename
+VOLUME /a/b/c
 VOLUME ['/etc/foo', '/etc/bar']
 EOF
 
@@ -55,6 +56,25 @@ EOF
 /\[/etc
 /\[/etc/foo,
 /etc/bar]" "weird VOLUME gets converted to directories with brackets and comma"
+
+    # Now confirm that each volume got a unique device ID
+    run_podman run --rm build_test stat -c '%D' / /a /a/b /a/b/c /\[ /\[/etc /\[/etc/foo, /etc /etc/bar\]
+    # First, the non-volumes should all be the same...
+    is "${lines[0]}" "${lines[1]}" "devnum( / ) = devnum( /a )"
+    is "${lines[0]}" "${lines[2]}" "devnum( / ) = devnum( /a/b )"
+    is "${lines[0]}" "${lines[4]}" "devnum( / ) = devnum( /[ )"
+    is "${lines[0]}" "${lines[5]}" "devnum( / ) = devnum( /[etc )"
+    is "${lines[0]}" "${lines[7]}" "devnum( / ) = devnum( /etc )"
+    is "${lines[6]}" "${lines[8]}" "devnum( /[etc/foo, ) = devnum( /etc/bar] )"
+    # ...then, each volume should be different
+    if [[ "${lines[0]}" = "${lines[3]}" ]]; then
+        die "devnum( / ) (${lines[0]}) = devnum( volume0 ) (${lines[3]}) -- they should differ"
+    fi
+    if [[ "${lines[0]}" = "${lines[6]}" ]]; then
+        die "devnum( / ) (${lines[0]}) = devnum( volume1 ) (${lines[6]}) -- they should differ"
+    fi
+    # FIXME: is this expected? I thought /a/b/c and /[etc/foo, would differ
+    is "${lines[3]}" "${lines[6]}" "devnum( volume0 ) = devnum( volume1 )"
 
     run_podman rmi -f build_test
 }
@@ -95,7 +115,7 @@ FROM $IMAGE
 RUN echo $rand_content
 EOF
 
-    run_podman 125 --runtime-flag invalidflag build -t build_test $tmpdir
+    run_podman 1 --runtime-flag invalidflag build -t build_test $tmpdir
     is "$output" ".*invalidflag" "failed when passing undefined flags to the runtime"
 }
 
@@ -174,7 +194,7 @@ EOF
 
     cat >$tmpdir/Dockerfile <<EOF
 FROM $IMAGE
-ADD https://github.com/containers/podman/blob/master/README.md /tmp/
+ADD https://github.com/containers/podman/blob/main/README.md /tmp/
 EOF
     run_podman build -t add_url $tmpdir
     run_podman run --rm add_url stat /tmp/README.md
@@ -978,7 +998,7 @@ function teardown() {
     # A timeout or other error in 'build' can leave behind stale images
     # that podman can't even see and which will cascade into subsequent
     # test failures. Try a last-ditch force-rm in cleanup, ignoring errors.
-    run_podman '?' rm -a -f
+    run_podman '?' rm -t 0 -a -f
     run_podman '?' rmi -f build_test
 
     # Many of the tests above leave interim layers behind. Clean them up.

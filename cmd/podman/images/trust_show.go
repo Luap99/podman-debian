@@ -5,9 +5,9 @@ import (
 	"os"
 
 	"github.com/containers/common/pkg/report"
-	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/spf13/cobra"
 )
 
@@ -48,11 +48,12 @@ func showTrust(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if showTrustOptions.Raw {
+
+	switch {
+	case showTrustOptions.Raw:
 		fmt.Println(string(trust.Raw))
 		return nil
-	}
-	if showTrustOptions.JSON {
+	case showTrustOptions.JSON:
 		b, err := json.MarshalIndent(trust.Policies, "", "  ")
 		if err != nil {
 			return err
@@ -60,23 +61,13 @@ func showTrust(cmd *cobra.Command, args []string) error {
 		fmt.Println(string(b))
 		return nil
 	}
+	rpt := report.New(os.Stdout, cmd.Name())
+	defer rpt.Flush()
 
-	format := "{{range . }}{{.RepoName}}\t{{.Type}}\t{{.GPGId}}\t{{.SignatureStore}}\n{{end -}}"
-	tmpl, err := report.NewTemplate("list").Parse(format)
+	rpt, err = rpt.Parse(report.OriginPodman,
+		"{{range . }}{{.RepoName}}\t{{.Type}}\t{{.GPGId}}\t{{.SignatureStore}}\n{{end -}}")
 	if err != nil {
 		return err
 	}
-
-	w, err := report.NewWriterDefault(os.Stdout)
-	if err != nil {
-		return err
-	}
-
-	if err := tmpl.Execute(w, trust.Policies); err != nil {
-		return err
-	}
-	if err := w.Flush(); err != nil {
-		return err
-	}
-	return nil
+	return rpt.Execute(trust.Policies)
 }

@@ -14,7 +14,7 @@ that belong to the pod.
 #### **--latest**, **-l**
 
 Instead of providing the pod name or ID, use the last created pod. If you use methods other than Podman
-to run pods such as CRI-O, the last started pod could be from either of those methods. (This option is not available with the remote Podman client)
+to run pods such as CRI-O, the last started pod could be from either of those methods. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
 
 #### **--format**=*format*, **-f**
 
@@ -70,7 +70,7 @@ Valid placeholders for the Go template are listed below:
 ```
 
 ## SEE ALSO
-**[podman(1)](podman.1.md)**,**[podman-pod(1)](podman-pod.1.md)**, **[podman-inspect(1)](podman-inspect.1.md)**
+**[podman(1)](podman.1.md)**, **[podman-pod(1)](podman-pod.1.md)**, **[podman-inspect(1)](podman-inspect.1.md)**
 
 ## HISTORY
 August 2018, Originally compiled by Brent Baude <bbaude@redhat.com>

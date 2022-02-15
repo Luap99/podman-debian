@@ -12,15 +12,15 @@ import (
 
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/image/v5/docker/reference"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/libpod/events"
-	"github.com/containers/podman/v3/pkg/api/handlers"
-	"github.com/containers/podman/v3/pkg/bindings/containers"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/domain/entities/reports"
-	"github.com/containers/podman/v3/pkg/errorhandling"
-	"github.com/containers/podman/v3/pkg/specgen"
-	"github.com/containers/podman/v3/pkg/util"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/libpod/events"
+	"github.com/containers/podman/v4/pkg/api/handlers"
+	"github.com/containers/podman/v4/pkg/bindings/containers"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/domain/entities/reports"
+	"github.com/containers/podman/v4/pkg/errorhandling"
+	"github.com/containers/podman/v4/pkg/specgen"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/containers/storage/types"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -182,34 +182,60 @@ func (ic *ContainerEngine) ContainerRestart(ctx context.Context, namesOrIds []st
 	return reports, nil
 }
 
-func (ic *ContainerEngine) ContainerRm(ctx context.Context, namesOrIds []string, opts entities.RmOptions) ([]*entities.RmReport, error) {
+func (ic *ContainerEngine) ContainerRm(ctx context.Context, namesOrIds []string, opts entities.RmOptions) ([]*reports.RmReport, error) {
 	// TODO there is no endpoint for container eviction.  Need to discuss
-	options := new(containers.RemoveOptions).WithForce(opts.Force).WithVolumes(opts.Volumes).WithIgnore(opts.Ignore)
+	options := new(containers.RemoveOptions).WithForce(opts.Force).WithVolumes(opts.Volumes).WithIgnore(opts.Ignore).WithDepend(opts.Depend)
+	if opts.Timeout != nil {
+		options = options.WithTimeout(*opts.Timeout)
+	}
 
+	toRemove := []string{}
+	alreadyRemoved := make(map[string]bool) // Avoids trying to remove already removed containers
 	if opts.All {
-		ctrs, err := getContainersByContext(ic.ClientCtx, opts.All, opts.Ignore, namesOrIds)
+		ctrs, err := getContainersByContext(ic.ClientCtx, opts.All, opts.Ignore, nil)
 		if err != nil {
 			return nil, err
 		}
-		reports := make([]*entities.RmReport, 0, len(ctrs))
 		for _, c := range ctrs {
-			reports = append(reports, &entities.RmReport{
-				Id:  c.ID,
-				Err: containers.Remove(ic.ClientCtx, c.ID, options),
-			})
+			toRemove = append(toRemove, c.ID)
 		}
-		return reports, nil
+	} else {
+		for _, ctr := range namesOrIds {
+			// NOTE that we set ignore=true here to support
+			// removing external containers (e.g., Buildah
+			// containers). If we don't find the container,
+			// we'll use the raw input provided by the user
+			// instead of the ID. Since this can only happen
+			// with external containers, it poses no threat
+			// to the `alreadyRemoved` checks below.
+			ctrs, err := getContainersByContext(ic.ClientCtx, false, true, []string{ctr})
+			if err != nil {
+				return nil, err
+			}
+			id := ctr
+			if len(ctrs) == 1 {
+				id = ctrs[0].ID
+			}
+			toRemove = append(toRemove, id)
+		}
 	}
 
-	reports := make([]*entities.RmReport, 0, len(namesOrIds))
-	for _, name := range namesOrIds {
-		reports = append(reports, &entities.RmReport{
-			Id:  name,
-			Err: containers.Remove(ic.ClientCtx, name, options),
-		})
+	rmReports := make([]*reports.RmReport, 0, len(toRemove))
+	for _, nameOrID := range toRemove {
+		if alreadyRemoved[nameOrID] {
+			continue
+		}
+		newReports, err := containers.Remove(ic.ClientCtx, nameOrID, options)
+		if err != nil {
+			rmReports = append(rmReports, &reports.RmReport{Id: nameOrID, Err: err})
+			continue
+		}
+		for i := range newReports {
+			alreadyRemoved[newReports[i].Id] = true
+			rmReports = append(rmReports, newReports[i])
+		}
 	}
-
-	return reports, nil
+	return rmReports, nil
 }
 
 func (ic *ContainerEngine) ContainerPrune(ctx context.Context, opts entities.ContainerPruneOptions) ([]*reports.PruneReport, error) {
@@ -300,6 +326,17 @@ func (ic *ContainerEngine) ContainerExport(ctx context.Context, nameOrID string,
 }
 
 func (ic *ContainerEngine) ContainerCheckpoint(ctx context.Context, namesOrIds []string, opts entities.CheckpointOptions) ([]*entities.CheckpointReport, error) {
+	options := new(containers.CheckpointOptions)
+	options.WithFileLocks(opts.FileLocks)
+	options.WithIgnoreRootfs(opts.IgnoreRootFS)
+	options.WithKeep(opts.Keep)
+	options.WithExport(opts.Export)
+	options.WithTCPEstablished(opts.TCPEstablished)
+	options.WithPrintStats(opts.PrintStats)
+	options.WithPreCheckpoint(opts.PreCheckPoint)
+	options.WithLeaveRunning(opts.LeaveRunning)
+	options.WithWithPrevious(opts.WithPrevious)
+
 	var (
 		err  error
 		ctrs = []entities.ListContainer{}
@@ -323,19 +360,41 @@ func (ic *ContainerEngine) ContainerCheckpoint(ctx context.Context, namesOrIds [
 		}
 	}
 	reports := make([]*entities.CheckpointReport, 0, len(ctrs))
-	options := new(containers.CheckpointOptions).WithExport(opts.Export).WithIgnoreRootfs(opts.IgnoreRootFS).WithKeep(opts.Keep)
-	options.WithLeaveRunning(opts.LeaveRunning).WithTCPEstablished(opts.TCPEstablished)
 	for _, c := range ctrs {
 		report, err := containers.Checkpoint(ic.ClientCtx, c.ID, options)
 		if err != nil {
 			reports = append(reports, &entities.CheckpointReport{Id: c.ID, Err: err})
+		} else {
+			reports = append(reports, report)
 		}
-		reports = append(reports, report)
 	}
 	return reports, nil
 }
 
 func (ic *ContainerEngine) ContainerRestore(ctx context.Context, namesOrIds []string, opts entities.RestoreOptions) ([]*entities.RestoreReport, error) {
+	if opts.ImportPrevious != "" {
+		return nil, fmt.Errorf("--import-previous is not supported on the remote client")
+	}
+
+	options := new(containers.RestoreOptions)
+	options.WithFileLocks(opts.FileLocks)
+	options.WithIgnoreRootfs(opts.IgnoreRootFS)
+	options.WithIgnoreVolumes(opts.IgnoreVolumes)
+	options.WithIgnoreStaticIP(opts.IgnoreStaticIP)
+	options.WithIgnoreStaticMAC(opts.IgnoreStaticMAC)
+	options.WithKeep(opts.Keep)
+	options.WithName(opts.Name)
+	options.WithTCPEstablished(opts.TCPEstablished)
+	options.WithPod(opts.Pod)
+	options.WithPrintStats(opts.PrintStats)
+	options.WithPublishPorts(opts.PublishPorts)
+
+	if opts.Import != "" {
+		options.WithImportAchive(opts.Import)
+		report, err := containers.Restore(ic.ClientCtx, "", options)
+		return []*entities.RestoreReport{report}, err
+	}
+
 	var (
 		err  error
 		ctrs = []entities.ListContainer{}
@@ -358,7 +417,6 @@ func (ic *ContainerEngine) ContainerRestore(ctx context.Context, namesOrIds []st
 		}
 	}
 	reports := make([]*entities.RestoreReport, 0, len(ctrs))
-	options := new(containers.RestoreOptions)
 	for _, c := range ctrs {
 		report, err := containers.Restore(ic.ClientCtx, c.ID, options)
 		if err != nil {
@@ -518,6 +576,27 @@ func startAndAttach(ic *ContainerEngine, name string, detachKeys *string, input,
 	return <-attachErr
 }
 
+func logIfRmError(id string, err error, reports []*reports.RmReport) {
+	logError := func(id string, err error) {
+		if errorhandling.Contains(err, define.ErrNoSuchCtr) ||
+			errorhandling.Contains(err, define.ErrCtrRemoved) ||
+			errorhandling.Contains(err, types.ErrLayerUnknown) {
+			logrus.Debugf("Container %s does not exist: %v", id, err)
+		} else {
+			logrus.Errorf("Removing container %s: %v", id, err)
+		}
+	}
+	if err != nil {
+		logError(id, err)
+	} else {
+		for _, report := range reports {
+			if report.Err != nil {
+				logError(report.Id, report.Err)
+			}
+		}
+	}
+}
+
 func (ic *ContainerEngine) ContainerStart(ctx context.Context, namesOrIds []string, options entities.ContainerStartOptions) ([]*entities.ContainerStartReport, error) {
 	reports := []*entities.ContainerStartReport{}
 	var exitCode = define.ExecErrorCodeGeneric
@@ -556,14 +635,8 @@ func (ic *ContainerEngine) ContainerStart(ctx context.Context, namesOrIds []stri
 	}
 	removeOptions := new(containers.RemoveOptions).WithVolumes(true).WithForce(false)
 	removeContainer := func(id string) {
-		if err := containers.Remove(ic.ClientCtx, id, removeOptions); err != nil {
-			if errorhandling.Contains(err, define.ErrNoSuchCtr) ||
-				errorhandling.Contains(err, define.ErrCtrRemoved) {
-				logrus.Debugf("Container %s does not exist: %v", id, err)
-			} else {
-				logrus.Errorf("Error removing container %s: %v", id, err)
-			}
-		}
+		reports, err := containers.Remove(ic.ClientCtx, id, removeOptions)
+		logIfRmError(id, err, reports)
 	}
 
 	// There can only be one container if attach was used
@@ -640,15 +713,8 @@ func (ic *ContainerEngine) ContainerStart(ctx context.Context, namesOrIds []stri
 			if err != nil {
 				if ctr.AutoRemove {
 					rmOptions := new(containers.RemoveOptions).WithForce(false).WithVolumes(true)
-					if err := containers.Remove(ic.ClientCtx, ctr.ID, rmOptions); err != nil {
-						if errorhandling.Contains(err, define.ErrNoSuchCtr) ||
-							errorhandling.Contains(err, define.ErrCtrRemoved) ||
-							errorhandling.Contains(err, types.ErrLayerUnknown) {
-							logrus.Debugf("Container %s does not exist: %v", ctr.ID, err)
-						} else {
-							logrus.Errorf("Error removing container %s: %v", ctr.ID, err)
-						}
-					}
+					reports, err := containers.Remove(ic.ClientCtx, ctr.ID, rmOptions)
+					logIfRmError(ctr.ID, err, reports)
 				}
 				report.Err = errors.Wrapf(err, "unable to start container %q", name)
 				report.ExitCode = define.ExitCode(err)
@@ -707,7 +773,8 @@ func (ic *ContainerEngine) ContainerRun(ctx context.Context, opts entities.Conta
 
 		report.ExitCode = define.ExitCode(err)
 		if opts.Rm {
-			if rmErr := containers.Remove(ic.ClientCtx, con.ID, new(containers.RemoveOptions).WithForce(false).WithVolumes(true)); rmErr != nil {
+			reports, rmErr := containers.Remove(ic.ClientCtx, con.ID, new(containers.RemoveOptions).WithForce(false).WithVolumes(true))
+			if rmErr != nil || reports[0].Err != nil {
 				logrus.Debugf("unable to remove container %s after failing to start and attach to it", con.ID)
 			}
 		}
@@ -725,15 +792,8 @@ func (ic *ContainerEngine) ContainerRun(ctx context.Context, opts entities.Conta
 			}
 
 			if !shouldRestart {
-				if err := containers.Remove(ic.ClientCtx, con.ID, new(containers.RemoveOptions).WithForce(false).WithVolumes(true)); err != nil {
-					if errorhandling.Contains(err, define.ErrNoSuchCtr) ||
-						errorhandling.Contains(err, define.ErrCtrRemoved) ||
-						errorhandling.Contains(err, types.ErrLayerUnknown) {
-						logrus.Debugf("Container %s does not exist: %v", con.ID, err)
-					} else {
-						logrus.Errorf("Error removing container %s: %v", con.ID, err)
-					}
-				}
+				reports, err := containers.Remove(ic.ClientCtx, con.ID, new(containers.RemoveOptions).WithForce(false).WithVolumes(true))
+				logIfRmError(con.ID, err, reports)
 			}
 		}()
 	}

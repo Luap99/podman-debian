@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -73,6 +73,6 @@ var _ = Describe("Podman image sign", func() {
 		Expect(session).Should(Exit(0))
 		fInfos, err := ioutil.ReadDir(filepath.Join(sigDir, "library"))
 		Expect(err).To(BeNil())
-		Expect(len(fInfos) > 1).To(BeTrue())
+		Expect(len(fInfos)).To(BeNumerically(">", 1), "len(fInfos)")
 	})
 })

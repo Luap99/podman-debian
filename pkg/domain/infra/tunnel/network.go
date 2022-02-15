@@ -3,20 +3,22 @@ package tunnel
 import (
 	"context"
 
-	"github.com/containers/podman/v3/pkg/bindings/network"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/errorhandling"
+	"github.com/containers/common/libnetwork/types"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/bindings/network"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/errorhandling"
 	"github.com/pkg/errors"
 )
 
-func (ic *ContainerEngine) NetworkList(ctx context.Context, opts entities.NetworkListOptions) ([]*entities.NetworkListReport, error) {
+func (ic *ContainerEngine) NetworkList(ctx context.Context, opts entities.NetworkListOptions) ([]types.Network, error) {
 	options := new(network.ListOptions).WithFilters(opts.Filters)
 	return network.List(ic.ClientCtx, options)
 }
 
-func (ic *ContainerEngine) NetworkInspect(ctx context.Context, namesOrIds []string, opts entities.InspectOptions) ([]entities.NetworkInspectReport, []error, error) {
+func (ic *ContainerEngine) NetworkInspect(ctx context.Context, namesOrIds []string, opts entities.InspectOptions) ([]types.Network, []error, error) {
 	var (
-		reports = make([]entities.NetworkInspectReport, 0, len(namesOrIds))
+		reports = make([]types.Network, 0, len(namesOrIds))
 		errs    = []error{}
 	)
 	options := new(network.InspectOptions)
@@ -28,12 +30,12 @@ func (ic *ContainerEngine) NetworkInspect(ctx context.Context, namesOrIds []stri
 				return nil, nil, err
 			}
 			if errModel.ResponseCode == 404 {
-				errs = append(errs, errors.Errorf("no such network %q", name))
+				errs = append(errs, errors.Wrapf(define.ErrNoSuchNetwork, "network %s", name))
 				continue
 			}
 			return nil, nil, err
 		}
-		reports = append(reports, report...)
+		reports = append(reports, report)
 	}
 	return reports, errs, nil
 }
@@ -45,6 +47,9 @@ func (ic *ContainerEngine) NetworkReload(ctx context.Context, names []string, op
 func (ic *ContainerEngine) NetworkRm(ctx context.Context, namesOrIds []string, opts entities.NetworkRmOptions) ([]*entities.NetworkRmReport, error) {
 	reports := make([]*entities.NetworkRmReport, 0, len(namesOrIds))
 	options := new(network.RemoveOptions).WithForce(opts.Force)
+	if opts.Timeout != nil {
+		options = options.WithTimeout(*opts.Timeout)
+	}
 	for _, name := range namesOrIds {
 		response, err := network.Remove(ic.ClientCtx, name, options)
 		if err != nil {
@@ -60,11 +65,12 @@ func (ic *ContainerEngine) NetworkRm(ctx context.Context, namesOrIds []string, o
 	return reports, nil
 }
 
-func (ic *ContainerEngine) NetworkCreate(ctx context.Context, name string, opts entities.NetworkCreateOptions) (*entities.NetworkCreateReport, error) {
-	options := new(network.CreateOptions).WithName(name).WithDisableDNS(opts.DisableDNS).WithDriver(opts.Driver).WithGateway(opts.Gateway)
-	options.WithInternal(opts.Internal).WithIPRange(opts.Range).WithIPv6(opts.IPv6).WithLabels(opts.Labels).WithIPv6(opts.IPv6)
-	options.WithMacVLAN(opts.MacVLAN).WithOptions(opts.Options).WithSubnet(opts.Subnet)
-	return network.Create(ic.ClientCtx, options)
+func (ic *ContainerEngine) NetworkCreate(ctx context.Context, net types.Network) (*types.Network, error) {
+	net, err := network.Create(ic.ClientCtx, &net)
+	if err != nil {
+		return nil, err
+	}
+	return &net, nil
 }
 
 // NetworkDisconnect removes a container from a given network
@@ -75,8 +81,7 @@ func (ic *ContainerEngine) NetworkDisconnect(ctx context.Context, networkname st
 
 // NetworkConnect removes a container from a given network
 func (ic *ContainerEngine) NetworkConnect(ctx context.Context, networkname string, opts entities.NetworkConnectOptions) error {
-	options := new(network.ConnectOptions).WithAliases(opts.Aliases)
-	return network.Connect(ic.ClientCtx, networkname, opts.Container, options)
+	return network.Connect(ic.ClientCtx, networkname, opts.Container, &opts.PerNetworkOptions)
 }
 
 // NetworkExists checks if the given network exists

@@ -8,12 +8,12 @@ import (
 	"strings"
 
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v3/libpod"
-	"github.com/containers/podman/v3/pkg/api/handlers/utils"
-	api "github.com/containers/podman/v3/pkg/api/types"
-	"github.com/containers/podman/v3/pkg/auth"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/domain/infra/abi"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v4/pkg/api/types"
+	"github.com/containers/podman/v4/pkg/auth"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/domain/infra/abi"
 	"github.com/containers/storage"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/gorilla/schema"
@@ -28,7 +28,7 @@ func PushImage(w http.ResponseWriter, r *http.Request) {
 
 	digestFile, err := ioutil.TempFile("", "digest.txt")
 	if err != nil {
-		utils.Error(w, "unable to create digest tempfile", http.StatusInternalServerError, errors.Wrap(err, "unable to create tempfile"))
+		utils.Error(w, http.StatusInternalServerError, errors.Wrap(err, "unable to create tempfile"))
 		return
 	}
 	defer digestFile.Close()
@@ -50,7 +50,7 @@ func PushImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := decoder.Decode(&query, r.URL.Query()); err != nil {
-		utils.Error(w, "Something went wrong.", http.StatusBadRequest, errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
+		utils.Error(w, http.StatusBadRequest, errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
 		return
 	}
 
@@ -61,15 +61,32 @@ func PushImage(w http.ResponseWriter, r *http.Request) {
 	if query.Tag != "" {
 		imageName += ":" + query.Tag
 	}
+
 	if _, err := utils.ParseStorageReference(imageName); err != nil {
-		utils.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest,
-			errors.Wrapf(err, "image source %q is not a containers-storage-transport reference", imageName))
+		utils.Error(w, http.StatusBadRequest, errors.Wrapf(err, "image source %q is not a containers-storage-transport reference", imageName))
 		return
 	}
 
-	authconf, authfile, key, err := auth.GetCredentials(r)
+	possiblyNormalizedName, err := utils.NormalizeToDockerHub(r, imageName)
 	if err != nil {
-		utils.Error(w, "Something went wrong.", http.StatusBadRequest, errors.Wrapf(err, "failed to parse %q header for %s", key, r.URL.String()))
+		utils.Error(w, http.StatusInternalServerError, errors.Wrap(err, "error normalizing image"))
+		return
+	}
+	imageName = possiblyNormalizedName
+	localImage, _, err := runtime.LibimageRuntime().LookupImage(possiblyNormalizedName, nil)
+	if err != nil {
+		utils.ImageNotFound(w, imageName, errors.Wrapf(err, "failed to find image %s", imageName))
+		return
+	}
+	rawManifest, _, err := localImage.Manifest(r.Context())
+	if err != nil {
+		utils.Error(w, http.StatusBadRequest, err)
+		return
+	}
+
+	authconf, authfile, err := auth.GetCredentials(r)
+	if err != nil {
+		utils.Error(w, http.StatusBadRequest, err)
 		return
 	}
 	defer auth.RemoveAuthfile(authfile)
@@ -184,7 +201,7 @@ loop: // break out of for/select infinite loop
 			if tag == "" {
 				tag = "latest"
 			}
-			report.Status = fmt.Sprintf("%s: digest: %s", tag, string(digestBytes))
+			report.Status = fmt.Sprintf("%s: digest: %s size: %d", tag, string(digestBytes), len(rawManifest))
 			if err := enc.Encode(report); err != nil {
 				logrus.Warnf("Failed to json encode error %q", err.Error())
 			}

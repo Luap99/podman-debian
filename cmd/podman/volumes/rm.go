@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/cmd/podman/utils"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/common/pkg/completion"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/utils"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
@@ -32,7 +33,8 @@ var (
 )
 
 var (
-	rmOptions = entities.VolumeRmOptions{}
+	rmOptions   = entities.VolumeRmOptions{}
+	stopTimeout uint
 )
 
 func init() {
@@ -43,6 +45,9 @@ func init() {
 	flags := rmCommand.Flags()
 	flags.BoolVarP(&rmOptions.All, "all", "a", false, "Remove all volumes")
 	flags.BoolVarP(&rmOptions.Force, "force", "f", false, "Remove a volume by force, even if it is being used by a container")
+	timeFlagName := "time"
+	flags.UintVarP(&stopTimeout, timeFlagName, "t", containerConfig.Engine.StopTimeout, "Seconds to wait for running containers to stop before killing the container")
+	_ = rmCommand.RegisterFlagCompletionFunc(timeFlagName, completion.AutocompleteNone)
 }
 
 func rm(cmd *cobra.Command, args []string) error {
@@ -51,6 +56,12 @@ func rm(cmd *cobra.Command, args []string) error {
 	)
 	if (len(args) > 0 && rmOptions.All) || (len(args) < 1 && !rmOptions.All) {
 		return errors.New("choose either one or more volumes or all")
+	}
+	if cmd.Flag("time").Changed {
+		if !rmOptions.Force {
+			return errors.New("--force option must be specified to use the --time option")
+		}
+		rmOptions.Timeout = &stopTimeout
 	}
 	responses, err := registry.ContainerEngine().VolumeRm(context.Background(), args, rmOptions)
 	if err != nil {

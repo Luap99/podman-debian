@@ -25,6 +25,23 @@ load helpers
     is "$output" "$expect" "filtering just by label"
 }
 
+@test "truncate events" {
+    cname=test-$(random_string 30 | tr A-Z a-z)
+    labelname=$(random_string 10)
+    labelvalue=$(random_string 15)
+
+    run_podman run -d --name=$cname --rm $IMAGE echo hi
+    id="$output"
+
+    expect="$id"
+    run_podman events --filter container=$cname --filter event=start --stream=false
+    is "$output" ".* $id " "filtering by container name full id"
+
+    truncID=$(expr substr "$id" 1 12)
+    run_podman events --filter container=$cname --filter event=start --stream=false --no-trunc=false
+    is "$output" ".* $truncID " "filtering by container name trunc id"
+}
+
 @test "image events" {
     skip_if_remote "remote does not support --events-backend"
     pushedDir=$PODMAN_TMPDIR/dir
@@ -98,4 +115,17 @@ function _events_disjunctive_filters() {
 
 @test "events with disjunctive filters - default" {
     _events_disjunctive_filters ""
+}
+
+@test "events with events_logfile_path in containers.conf" {
+    skip_if_remote "remote does not support --events-backend"
+    events_file=$PODMAN_TMPDIR/events.log
+    containersconf=$PODMAN_TMPDIR/containers.conf
+    cat >$containersconf <<EOF
+[engine]
+events_logfile_path="$events_file"
+EOF
+    CONTAINERS_CONF="$containersconf" run_podman --events-backend=file pull $IMAGE
+    run cat $events_file
+    is "$output" ".*\"Name\":\"$IMAGE" "test"
 }

@@ -4,7 +4,7 @@ package generate
 import (
 	"net/url"
 
-	"github.com/containers/podman/v3/pkg/bindings/internal/util"
+	"github.com/containers/podman/v4/pkg/bindings/internal/util"
 )
 
 // Changed returns true if named field has been set
@@ -62,6 +62,21 @@ func (o *SystemdOptions) GetNoHeader() bool {
 	return *o.NoHeader
 }
 
+// WithTemplateUnitFile set field TemplateUnitFile to given value
+func (o *SystemdOptions) WithTemplateUnitFile(value bool) *SystemdOptions {
+	o.TemplateUnitFile = &value
+	return o
+}
+
+// GetTemplateUnitFile returns value of field TemplateUnitFile
+func (o *SystemdOptions) GetTemplateUnitFile() bool {
+	if o.TemplateUnitFile == nil {
+		var z bool
+		return z
+	}
+	return *o.TemplateUnitFile
+}
+
 // WithRestartPolicy set field RestartPolicy to given value
 func (o *SystemdOptions) WithRestartPolicy(value string) *SystemdOptions {
 	o.RestartPolicy = &value
@@ -75,6 +90,36 @@ func (o *SystemdOptions) GetRestartPolicy() string {
 		return z
 	}
 	return *o.RestartPolicy
+}
+
+// WithRestartSec set field RestartSec to given value
+func (o *SystemdOptions) WithRestartSec(value uint) *SystemdOptions {
+	o.RestartSec = &value
+	return o
+}
+
+// GetRestartSec returns value of field RestartSec
+func (o *SystemdOptions) GetRestartSec() uint {
+	if o.RestartSec == nil {
+		var z uint
+		return z
+	}
+	return *o.RestartSec
+}
+
+// WithStartTimeout set field StartTimeout to given value
+func (o *SystemdOptions) WithStartTimeout(value uint) *SystemdOptions {
+	o.StartTimeout = &value
+	return o
+}
+
+// GetStartTimeout returns value of field StartTimeout
+func (o *SystemdOptions) GetStartTimeout() uint {
+	if o.StartTimeout == nil {
+		var z uint
+		return z
+	}
+	return *o.StartTimeout
 }
 
 // WithStopTimeout set field StopTimeout to given value
@@ -135,4 +180,49 @@ func (o *SystemdOptions) GetSeparator() string {
 		return z
 	}
 	return *o.Separator
+}
+
+// WithWants set field Wants to given value
+func (o *SystemdOptions) WithWants(value []string) *SystemdOptions {
+	o.Wants = &value
+	return o
+}
+
+// GetWants returns value of field Wants
+func (o *SystemdOptions) GetWants() []string {
+	if o.Wants == nil {
+		var z []string
+		return z
+	}
+	return *o.Wants
+}
+
+// WithAfter set field After to given value
+func (o *SystemdOptions) WithAfter(value []string) *SystemdOptions {
+	o.After = &value
+	return o
+}
+
+// GetAfter returns value of field After
+func (o *SystemdOptions) GetAfter() []string {
+	if o.After == nil {
+		var z []string
+		return z
+	}
+	return *o.After
+}
+
+// WithRequires set field Requires to given value
+func (o *SystemdOptions) WithRequires(value []string) *SystemdOptions {
+	o.Requires = &value
+	return o
+}
+
+// GetRequires returns value of field Requires
+func (o *SystemdOptions) GetRequires() []string {
+	if o.Requires == nil {
+		var z []string
+		return z
+	}
+	return *o.Requires
 }

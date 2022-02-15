@@ -51,6 +51,30 @@ Defaults to `testing`.
 
 Memory (in MB).
 
+#### **--now**
+
+Start the virtual machine immediately after it has been initialized.
+
+#### **--timezone**
+
+Set the timezone for the machine and containers.  Valid values are `local` or
+a `timezone` such as `America/Chicago`.  A value of `local`, which is the default,
+means to use the timezone of the machine host.
+
+#### **--volume**, **-v**=*source:target*
+
+Mounts a volume from source to target.
+
+Create a mount. If /host-dir:/machine-dir is specified as the `*source:target*`,
+Podman mounts _host-dir_ in the host to _machine-dir_ in the Podman machine.
+
+The root filesystem is mounted read-only in the default operating system,
+so mounts must be created under the /mnt directory.
+
+#### **--volume-driver**
+
+Driver to use for mounting volumes from the host, such as `virtfs`.
+
 #### **--help**
 
 Print usage statement.
@@ -62,10 +86,11 @@ $ podman machine init
 $ podman machine init myvm
 $ podman machine init --disk-size 50
 $ podman machine init --memory=1024 myvm
+$ podman machine init -v /Users:/mnt/Users
 ```
 
 ## SEE ALSO
-podman-machine(1)
+**[podman(1)](podman.1.md)**, **[podman-machine(1)](podman-machine.1.md)**
 
 ## HISTORY
 March 2021, Originally compiled by Ashley Cui <acui@redhat.com>

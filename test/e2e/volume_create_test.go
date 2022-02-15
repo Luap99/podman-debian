@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -42,9 +42,8 @@ var _ = Describe("Podman volume create", func() {
 
 		check := podmanTest.Podman([]string{"volume", "ls", "-q"})
 		check.WaitWithDefaultTimeout()
-		match, _ := check.GrepString(volName)
-		Expect(match).To(BeTrue())
-		Expect(len(check.OutputToStringArray())).To(Equal(1))
+		Expect(check.OutputToString()).To(ContainSubstring(volName))
+		Expect(check.OutputToStringArray()).To(HaveLen(1))
 	})
 
 	It("podman create volume with name", func() {
@@ -55,9 +54,8 @@ var _ = Describe("Podman volume create", func() {
 
 		check := podmanTest.Podman([]string{"volume", "ls", "-q"})
 		check.WaitWithDefaultTimeout()
-		match, _ := check.GrepString(volName)
-		Expect(match).To(BeTrue())
-		Expect(len(check.OutputToStringArray())).To(Equal(1))
+		Expect(check.OutputToString()).To(ContainSubstring(volName))
+		Expect(check.OutputToStringArray()).To(HaveLen(1))
 	})
 
 	It("podman create and export volume", func() {
@@ -99,13 +97,12 @@ var _ = Describe("Podman volume create", func() {
 
 		session = podmanTest.Podman([]string{"volume", "create", "my_vol2"})
 		session.WaitWithDefaultTimeout()
-		volName = session.OutputToString()
 		Expect(session).Should(Exit(0))
 
 		session = podmanTest.Podman([]string{"volume", "import", "my_vol2", "hello.tar"})
 		session.WaitWithDefaultTimeout()
-		volName = session.OutputToString()
 		Expect(session).Should(Exit(0))
+		Expect(session.OutputToString()).To(Equal(""), "output of volume import")
 
 		session = podmanTest.Podman([]string{"run", "--volume", "my_vol2:/data", ALPINE, "cat", "/data/test"})
 		session.WaitWithDefaultTimeout()
@@ -147,7 +144,7 @@ var _ = Describe("Podman volume create", func() {
 		Expect(inspectGID).Should(Exit(0))
 		Expect(inspectGID.OutputToString()).To(Equal(gid))
 
-		// options should containt `uid=3000,gid=4000:3000:4000`
+		// options should contain `uid=3000,gid=4000:3000:4000`
 		optionFormat := `{{ .Options.o }}:{{ .Options.UID }}:{{ .Options.GID }}`
 		optionStrFormatExpect := fmt.Sprintf(`uid=%s,gid=%s:%s:%s`, uid, gid, uid, gid)
 		inspectOpts := podmanTest.Podman([]string{"volume", "inspect", "--format", optionFormat, volName})

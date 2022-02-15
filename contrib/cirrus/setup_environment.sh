@@ -119,12 +119,6 @@ case "$OS_RELEASE_ID" in
     ubuntu) ;;
     fedora)
         if ((CONTAINER==0)); then
-            msg "Configuring / Expanding host storage."
-            # VM is setup to allow flexibility in testing alternate storage.
-            # For general use, simply make use of all available space.
-            bash "$SCRIPT_BASE/add_second_partition.sh"
-            $SCRIPT_BASE/logcollector.sh df
-
             # All SELinux distros need this for systemd-in-a-container
             msg "Enabling container_manage_cgroup"
             setsebool container_manage_cgroup true
@@ -164,6 +158,18 @@ case "$TEST_ENVIRON" in
             # affected/related tests are sensitive to this variable.
             warn "Disabling usernamespace integration testing"
             echo "SKIP_USERNS=1" >> /etc/ci_environment
+
+            # In F35 the hard-coded default
+            # (from containers-common-1-32.fc35.noarch) is 'journald' despite
+            # the upstream repository having this line commented-out.
+            # Containerized integration tests cannot run with 'journald'
+            # as there is no daemon/process there to receive them.
+            cconf="/usr/share/containers/containers.conf"
+            note="- commented-out by setup_environment.sh"
+            if grep -Eq '^log_driver.+journald' "$cconf"; then
+                warn "Patching out $cconf journald log_driver"
+                sed -r -i -e "s/^log_driver(.*)/# log_driver\1 $note/" "$cconf"
+            fi
         fi
         ;;
     *) die_unknown TEST_ENVIRON
@@ -171,15 +177,25 @@ esac
 
 # Required to be defined by caller: Are we testing as root or a regular user
 case "$PRIV_NAME" in
-    root) ;;
+    root)
+        if [[ "$TEST_FLAVOR" = "sys" ]]; then
+            # Used in local image-scp testing
+            setup_rootless
+            echo "PODMAN_ROOTLESS_USER=$ROOTLESS_USER" >> /etc/ci_environment
+        fi
+        ;;
     rootless)
-        # Needs to exist for setup_rootless()
-        ROOTLESS_USER="${ROOTLESS_USER:-some${RANDOM}dude}"
-        echo "ROOTLESS_USER=$ROOTLESS_USER" >> /etc/ci_environment
+        # load kernel modules since the rootless user has no permission to do so
+        modprobe ip6_tables || :
+        modprobe ip6table_nat || :
         setup_rootless
         ;;
     *) die_unknown PRIV_NAME
 esac
+
+if [[ -n "$ROOTLESS_USER" ]]; then
+    echo "ROOTLESS_USER=$ROOTLESS_USER" >> /etc/ci_environment
+fi
 
 # Required to be defined by caller: Are we testing podman or podman-remote client
 # shellcheck disable=SC2154
@@ -202,17 +218,15 @@ case "$TEST_FLAVOR" in
         # Defined in .cirrus.yml
         # shellcheck disable=SC2154
         if [[ "$ALT_NAME" =~ RPM ]]; then
-            bigto dnf install -y glibc-minimal-langpack rpm-build
+            bigto dnf install -y glibc-minimal-langpack go-rpm-macros rpkg rpm-build shadow-utils-subid-devel
         fi
         ;&
     docker-py)
         remove_packaged_podman_files
         make install PREFIX=/usr ETCDIR=/etc
 
-        # TODO: Don't install stuff at test runtime!  Do this from
-        # cache_images/fedora_packaging.sh in containers/automation_images
-        # and STRONGLY prefer installing RPMs vs pip packages in venv
-        dnf install -y python3-virtualenv python3-pytest4
+        msg "Installing previously downloaded/cached packages"
+        dnf install -y $PACKAGE_DOWNLOAD_DIR/python3*.rpm
         virtualenv venv
         source venv/bin/activate
         pip install --upgrade pip
@@ -233,12 +247,60 @@ case "$TEST_FLAVOR" in
         # Use existing host bits when testing is to happen inside a container
         # since this script will run again in that environment.
         # shellcheck disable=SC2154
-        if ((CONTAINER==0)) && [[ "$TEST_ENVIRON" == "host" ]]; then
+        if [[ "$TEST_ENVIRON" == "host" ]]; then
+            if ((CONTAINER)); then
+                die "Refusing to config. host-test in container";
+            fi
             remove_packaged_podman_files
             make install PREFIX=/usr ETCDIR=/etc
+        elif [[ "$TEST_ENVIRON" == "container" ]]; then
+            if ((CONTAINER)); then
+                remove_packaged_podman_files
+                make install PREFIX=/usr ETCDIR=/etc
+            fi
+        else
+            die "Invalid value for $$TEST_ENVIRON=$TEST_ENVIRON"
         fi
 
         install_test_configs
+        ;;
+    gitlab)
+        # This only runs on Ubuntu for now
+        if [[ "$OS_RELEASE_ID" != "ubuntu" ]]; then
+            die "This test only runs on Ubuntu due to sheer laziness"
+        fi
+
+        # Ref: https://gitlab.com/gitlab-org/gitlab-runner/-/issues/27270#note_499585550
+
+        remove_packaged_podman_files
+        make install PREFIX=/usr ETCDIR=/etc
+
+        msg "Installing docker and containerd"
+        # N/B: Tests check/expect `docker info` output, and this `!= podman info`
+        ooe.sh dpkg -i \
+            $PACKAGE_DOWNLOAD_DIR/containerd.io*.deb \
+            $PACKAGE_DOWNLOAD_DIR/docker-ce*.deb
+
+        msg "Disabling docker service and socket activation"
+        systemctl stop docker.service docker.socket
+        systemctl disable docker.service docker.socket
+        rm -rf /run/docker*
+        # Guarantee the docker daemon can't be started, even by accident
+        rm -vf $(type -P dockerd)
+
+        msg "Obtaining necessary gitlab-runner testing bits"
+        slug="gitlab.com/gitlab-org/gitlab-runner"
+        helper_fqin="registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-latest-pwsh"
+        ssh="ssh $ROOTLESS_USER@localhost -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o CheckHostIP=no env GOPATH=$GOPATH"
+        showrun $ssh go get -u github.com/jstemmer/go-junit-report
+        showrun $ssh git clone https://$slug $GOPATH/src/$slug
+        showrun $ssh make -C $GOPATH/src/$slug development_setup
+        showrun $ssh bash -c "'cd $GOPATH/src/$slug && GOPATH=$GOPATH go get .'"
+
+        showrun $ssh podman pull $helper_fqin
+        # Tests expect image with this exact name
+        showrun $ssh podman tag $helper_fqin \
+            docker.io/gitlab/gitlab-runner-helper:x86_64-latest-pwsh
         ;;
     swagger) ;&  # use next item
     consistency) make clean ;;

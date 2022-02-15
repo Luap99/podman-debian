@@ -3,7 +3,7 @@ package integration
 import (
 	"os"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -45,7 +45,7 @@ var _ = Describe("Podman volume rm", func() {
 		session = podmanTest.Podman([]string{"volume", "ls"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(len(session.OutputToStringArray())).To(Equal(0))
+		Expect(session.OutputToStringArray()).To(BeEmpty())
 	})
 
 	It("podman volume rm with --force flag", func() {
@@ -59,14 +59,14 @@ var _ = Describe("Podman volume rm", func() {
 		Expect(session).Should(Exit(2))
 		Expect(session.ErrorToString()).To(ContainSubstring(cid))
 
-		session = podmanTest.Podman([]string{"volume", "rm", "-f", "myvol"})
+		session = podmanTest.Podman([]string{"volume", "rm", "-t", "0", "-f", "myvol"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
 		session = podmanTest.Podman([]string{"volume", "ls"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(len(session.OutputToStringArray())).To(Equal(0))
+		Expect(session.OutputToStringArray()).To(BeEmpty())
 
 		podmanTest.Cleanup()
 	})
@@ -93,7 +93,7 @@ var _ = Describe("Podman volume rm", func() {
 		session = podmanTest.Podman([]string{"volume", "ls"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(len(session.OutputToStringArray())).To(Equal(0))
+		Expect(session.OutputToStringArray()).To(BeEmpty())
 	})
 
 	It("podman volume rm by partial name", func() {
@@ -108,7 +108,7 @@ var _ = Describe("Podman volume rm", func() {
 		session = podmanTest.Podman([]string{"volume", "ls"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(len(session.OutputToStringArray())).To(Equal(0))
+		Expect(session.OutputToStringArray()).To(BeEmpty())
 	})
 
 	It("podman volume rm by nonunique partial name", func() {
@@ -127,6 +127,6 @@ var _ = Describe("Podman volume rm", func() {
 		session = podmanTest.Podman([]string{"volume", "ls"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(len(session.OutputToStringArray()) >= 2).To(BeTrue())
+		Expect(len(session.OutputToStringArray())).To(BeNumerically(">=", 2))
 	})
 })

@@ -7,17 +7,17 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/containers/podman/v3/libpod/events"
-	api "github.com/containers/podman/v3/pkg/api/types"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/domain/infra/abi"
+	"github.com/containers/podman/v4/libpod/events"
+	api "github.com/containers/podman/v4/pkg/api/types"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/domain/infra/abi"
 
-	"github.com/containers/podman/v3/pkg/api/handlers"
+	"github.com/containers/podman/v4/pkg/api/handlers"
 	"github.com/sirupsen/logrus"
 
-	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v4/libpod/define"
 
-	"github.com/containers/podman/v3/libpod"
+	"github.com/containers/podman/v4/libpod"
 	"github.com/gorilla/schema"
 	"github.com/pkg/errors"
 )
@@ -39,7 +39,7 @@ func WaitContainerDocker(w http.ResponseWriter, r *http.Request) {
 
 	decoder := ctx.Value(api.DecoderKey).(*schema.Decoder)
 	if err = decoder.Decode(&query, r.URL.Query()); err != nil {
-		Error(w, "Something went wrong.", http.StatusBadRequest, errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
+		Error(w, http.StatusBadRequest, errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
 		return
 	}
 
@@ -78,7 +78,7 @@ func WaitContainerDocker(w http.ResponseWriter, r *http.Request) {
 	exitCode, err := waitDockerCondition(ctx, name, interval, condition)
 	var errStruct *struct{ Message string }
 	if err != nil {
-		logrus.Errorf("error while waiting on condition: %q", err)
+		logrus.Errorf("While waiting on condition: %q", err)
 		errStruct = &struct {
 			Message string
 		}{
@@ -94,7 +94,7 @@ func WaitContainerDocker(w http.ResponseWriter, r *http.Request) {
 	enc.SetEscapeHTML(true)
 	err = enc.Encode(&responseData)
 	if err != nil {
-		logrus.Errorf("unable to write json: %q", err)
+		logrus.Errorf("Unable to write json: %q", err)
 	}
 }
 
@@ -107,7 +107,7 @@ func WaitContainerLibpod(w http.ResponseWriter, r *http.Request) {
 	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	query := waitQueryLibpod{}
 	if err := decoder.Decode(&query, r.URL.Query()); err != nil {
-		Error(w, "Something went wrong.", http.StatusBadRequest, errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
+		Error(w, http.StatusBadRequest, errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
 		return
 	}
 

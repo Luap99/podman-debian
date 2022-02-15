@@ -13,7 +13,7 @@ function setup() {
 
 function teardown() {
     run_podman '?' rm -a --volumes
-    run_podman '?' volume rm -a -f
+    run_podman '?' volume rm -t 0 -a -f
 
     basic_teardown
 }
@@ -97,6 +97,14 @@ Labels.l       | $mylabel
     run_podman volume rm $myvolume
 }
 
+# Removing volumes with --force
+@test "podman volume rm --force" {
+    run_podman run -d --volume myvol:/myvol $IMAGE top
+    cid=$output
+    run_podman 2 volume rm myvol
+    is "$output" "Error: volume myvol is being used by the following container(s): $cid: volume is being used" "should error since container is running"
+    run_podman volume rm myvol --force
+}
 
 # Running scripts (executables) from a volume
 @test "podman volume: exec/noexec" {
@@ -202,6 +210,38 @@ EOF
     run_podman volume rm my_vol2
 }
 
+# Podman volume user test
+@test "podman volume user test" {
+    is_rootless || skip "only meaningful when run rootless"
+    skip_if_remote "not applicable on podman-remote"
+
+    user="1000:2000"
+    newuser="100:200"
+    tmpdir=${PODMAN_TMPDIR}/volume_$(random_string)
+    mkdir $tmpdir
+    touch $tmpdir/test1
+
+    run_podman run --name user --user $user -v $tmpdir:/data:U $IMAGE stat -c "%u:%g" /data
+    is "$output" "$user" "user should be changed"
+
+    # Now chown the source directory and make sure recursive chown happens
+    run_podman unshare chown -R $newuser $tmpdir
+    run_podman start --attach user
+    is "$output" "$user" "user should be the same"
+
+    # Now chown the file in source directory and make sure recursive chown
+    # doesn't happen
+    run_podman unshare chown -R $newuser $tmpdir/test1
+    run_podman start --attach user
+    is "$output" "$user" "user should be the same"
+    # test1 should still be chowned to $newuser
+    run_podman unshare stat -c "%u:%g" $tmpdir/test1
+    is "$output" "$newuser" "user should not be changed"
+
+    run_podman unshare rm $tmpdir/test1
+    run_podman rm user
+}
+
 
 # Confirm that container sees the correct id
 @test "podman volume with --userns=keep-id" {
@@ -261,7 +301,8 @@ EOF
 
     # prune should remove v4
     run_podman volume prune --force
-    is "$output" "${v[4]}" "volume prune, with 1, 2, 3 in use, deletes only 4"
+    is "$(echo $(sort <<<$output))" "${v[4]} ${v[5]} ${v[6]}" \
+       "volume prune, with 1, 2, 3 in use, deletes only 4, 5, 6"
 
     # Remove the container using v2 and v3. Prune should now remove those.
     # The 'echo sort' is to get the output sorted and in one line.
@@ -280,5 +321,70 @@ EOF
     is "$output"  "" "no more volumes to prune"
 }
 
+@test "podman volume type=bind" {
+    myvoldir=${PODMAN_TMPDIR}/volume_$(random_string)
+    mkdir $myvoldir
+    touch $myvoldir/myfile
+
+    myvolume=myvol$(random_string)
+    run_podman 125 volume create -o type=bind -o device=/bogus $myvolume
+    is "$output" "Error: invalid volume option device for driver 'local': stat /bogus: no such file or directory" "should fail with bogus directory not existing"
+
+    run_podman volume create -o type=bind -o device=/$myvoldir $myvolume
+    is "$output" "$myvolume" "should successfully create myvolume"
+
+    run_podman run --rm -v $myvolume:/vol:z $IMAGE \
+               stat -c "%u:%s" /vol/myfile
+    is "$output" "0:0" "w/o keep-id: stat(file in container) == root"
+}
+
+@test "podman volume type=tmpfs" {
+    myvolume=myvol$(random_string)
+    run_podman volume create -o type=tmpfs -o device=tmpfs $myvolume
+    is "$output" "$myvolume" "should successfully create myvolume"
+
+    run_podman run --rm -v $myvolume:/vol $IMAGE stat -f -c "%T" /vol
+    is "$output" "tmpfs" "volume should be tmpfs"
+}
+
+# Named volumes copyup
+@test "podman volume create copyup" {
+    myvolume=myvol$(random_string)
+    mylabel=$(random_string)
+
+    # Create a named volume
+    run_podman volume create $myvolume
+    is "$output" "$myvolume" "output from volume create"
+
+    # Confirm that it shows up in 'volume ls', and confirm values
+    run_podman volume ls --format json
+    tests="
+Name           | $myvolume
+Driver         | local
+NeedsCopyUp    | true
+NeedsChown    | true
+"
+    parse_table "$tests" | while read field expect; do
+        actual=$(jq -r ".[0].$field" <<<"$output")
+        is "$actual" "$expect" "volume ls .$field"
+    done
+
+    run_podman run --rm --volume $myvolume:/vol $IMAGE true
+    run_podman volume inspect --format '{{ .NeedsCopyUp }}' $myvolume
+    is "${output}" "true" "If content in dest '/vol' empty NeedsCopyUP should still be true"
+    run_podman volume inspect --format '{{ .NeedsChown }}' $myvolume
+    is "${output}" "false" "After first use within a container NeedsChown should still be false"
+
+    run_podman run --rm --volume $myvolume:/etc $IMAGE ls /etc/passwd
+    run_podman volume inspect --format '{{ .NeedsCopyUp }}' $myvolume
+    is "${output}" "false" "If content in dest '/etc' non-empty NeedsCopyUP should still have happened and be false"
+
+    run_podman volume inspect --format '{{.Mountpoint}}' $myvolume
+    mountpoint="$output"
+    test -e "$mountpoint/passwd"
+
+    # Clean up
+    run_podman volume rm $myvolume
+}
 
 # vim: filetype=sh

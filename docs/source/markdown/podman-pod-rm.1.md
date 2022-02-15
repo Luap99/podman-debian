@@ -23,7 +23,7 @@ ExecStop directive of a systemd service referencing that pod.
 
 #### **--latest**, **-l**
 
-Instead of providing the pod name or ID, remove the last created pod. (This option is not available with the remote Podman client)
+Instead of providing the pod name or ID, remove the last created pod. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
 
 #### **--force**, **-f**
 
@@ -32,6 +32,10 @@ Stop running containers and delete all stopped containers before removal of pod.
 #### **--pod-id-file**
 
 Read pod ID from the specified file and remove the pod.  Can be specified multiple times.
+
+#### **--time**, **-t**=*seconds*
+
+Seconds to wait before forcibly stopping running containers within the pod. The --force option must be specified to use the --time option.
 
 ## EXAMPLE
 
@@ -57,7 +61,7 @@ podman pod rm --pod-id-file /path/to/id/file
   **125** The command fails for any other reason
 
 ## SEE ALSO
-podman-pod(1)
+**[podman(1)](podman.1.md)**, **[podman-pod(1)](podman-pod.1.md)**
 
 ## HISTORY
 July 2018, Originally compiled by Peter Hunt <pehunt@redhat.com>

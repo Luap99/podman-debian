@@ -56,14 +56,14 @@ fi
 # Setup helper: establish a test environment with exactly the images needed
 function basic_setup() {
     # Clean up all containers
-    run_podman rm --all --force
+    run_podman rm -t 0 --all --force --ignore
 
     # ...including external (buildah) ones
     run_podman ps --all --external --format '{{.ID}} {{.Names}}'
     for line in "${lines[@]}"; do
         set $line
         echo "# setup(): removing stray external container $1 ($2)" >&3
-        run_podman rm $1
+        run_podman rm -f $1
     done
 
     # Clean up all images except those desired
@@ -109,8 +109,8 @@ function basic_setup() {
 # Basic teardown: remove all pods and containers
 function basic_teardown() {
     echo "# [teardown]" >&2
-    run_podman '?' pod rm --all --force
-    run_podman '?'     rm --all --force
+    run_podman '?' pod rm -t 0 --all --force --ignore
+    run_podman '?'     rm -t 0 --all --force --ignore
 
     command rm -rf $PODMAN_TMPDIR
 }
@@ -318,6 +318,10 @@ function wait_for_port() {
 # BEGIN miscellaneous tools
 
 # Shortcuts for common needs:
+function is_ubuntu() {
+    grep -qiw ubuntu /etc/os-release
+}
+
 function is_rootless() {
     [ "$(id -u)" -ne 0 ]
 }
@@ -398,6 +402,16 @@ function skip_if_rootless() {
     fi
 }
 
+######################
+#  skip_if_not_rootless  #  ...with an optional message
+######################
+function skip_if_not_rootless() {
+    if ! is_rootless; then
+        local msg=$(_add_label_if_missing "$1" "rootfull")
+        skip "${msg:-not applicable under rootlfull podman}"
+    fi
+}
+
 ####################
 #  skip_if_remote  #  ...with an optional message
 ####################
@@ -428,12 +442,34 @@ function skip_if_cgroupsv1() {
     fi
 }
 
+######################
+#  skip_if_rootless_cgroupsv1  #  ...with an optional message
+######################
+function skip_if_rootless_cgroupsv1() {
+    if is_rootless; then
+        if ! is_cgroupsv2; then
+            local msg=$(_add_label_if_missing "$1" "rootless cgroupvs1")
+            skip "${msg:-not supported as rootless under cgroupsv1}"
+        fi
+    fi
+}
+
 ##################################
 #  skip_if_journald_unavailable  #  rhbz#1895105: rootless journald permissions
 ##################################
 function skip_if_journald_unavailable {
     if journald_unavailable; then
         skip "Cannot use rootless journald on this system"
+    fi
+}
+
+function skip_if_root_ubuntu {
+    if is_ubuntu; then
+        if ! is_remote; then
+            if ! is_rootless; then
+                 skip "Cannot run this test on rootful ubuntu, usually due to user errors"
+            fi
+        fi
     fi
 }
 
@@ -466,13 +502,30 @@ function is() {
     local expect="$2"
     local testname="${3:-${MOST_RECENT_PODMAN_COMMAND:-[no test name given]}}"
 
+    local is_expr=
     if [ -z "$expect" ]; then
         if [ -z "$actual" ]; then
+            # Both strings are empty.
             return
         fi
         expect='[no output]'
-    elif expr "$actual" : "$expect" >/dev/null; then
+    elif [[ "$actual" = "$expect" ]]; then
+        # Strings are identical.
         return
+    else
+        # Strings are not identical. Are there wild cards in our expect string?
+        if expr "$expect" : ".*[^\\][\*\[]" >/dev/null; then
+            # There is a '[' or '*' without a preceding backslash.
+            is_expr=' (using expr)'
+        elif [[ "${expect:0:1}" = '[' ]]; then
+            # String starts with '[', e.g. checking seconds like '[345]'
+            is_expr=' (using expr)'
+        fi
+        if [[ -n "$is_expr" ]]; then
+            if expr "$actual" : "$expect" >/dev/null; then
+                return
+            fi
+        fi
     fi
 
     # This is a multi-line message, which may in turn contain multi-line
@@ -481,7 +534,7 @@ function is() {
     readarray -t actual_split <<<"$actual"
     printf "#/vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv\n" >&2
     printf "#|     FAIL: $testname\n"                          >&2
-    printf "#| expected: '%s'\n" "$expect"                     >&2
+    printf "#| expected: '%s'%s\n" "$expect" "$is_expr"        >&2
     printf "#|   actual: '%s'\n" "${actual_split[0]}"          >&2
     local line
     for line in "${actual_split[@]:1}"; do

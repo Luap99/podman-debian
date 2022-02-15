@@ -8,11 +8,13 @@ import (
 	"github.com/containers/common/pkg/auth"
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/cmd/podman/utils"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/util"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/utils"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/errorhandling"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
@@ -67,7 +69,7 @@ func init() {
 	_ = kubeCmd.RegisterFlagCompletionFunc(staticMACFlagName, completion.AutocompleteNone)
 
 	networkFlagName := "network"
-	flags.StringVar(&kubeOptions.Network, networkFlagName, "", "Connect pod to CNI network(s)")
+	flags.StringArrayVar(&kubeOptions.Networks, networkFlagName, nil, "Connect pod to network(s) or network mode")
 	_ = kubeCmd.RegisterFlagCompletionFunc(networkFlagName, common.AutocompleteNetworkFlag)
 
 	staticIPFlagName := "ip"
@@ -78,6 +80,15 @@ func init() {
 	flags.StringVar(&kubeOptions.LogDriver, logDriverFlagName, "", "Logging driver for the container")
 	_ = kubeCmd.RegisterFlagCompletionFunc(logDriverFlagName, common.AutocompleteLogDriver)
 
+	logOptFlagName := "log-opt"
+	flags.StringSliceVar(
+		&kubeOptions.LogOptions,
+		logOptFlagName, []string{},
+		"Logging driver options",
+	)
+	_ = kubeCmd.RegisterFlagCompletionFunc(logOptFlagName, common.AutocompleteLogOpt)
+
+	flags.BoolVar(&kubeOptions.NoHosts, "no-hosts", false, "Do not create /etc/hosts within the pod's containers, instead use the version from the image")
 	flags.BoolVarP(&kubeOptions.Quiet, "quiet", "q", false, "Suppress output information when pulling images")
 	flags.BoolVar(&kubeOptions.TLSVerifyCLI, "tls-verify", true, "Require HTTPS and verify certificates when contacting registries")
 	flags.BoolVar(&kubeOptions.StartCLI, "start", true, "Start the pod after creating it")
@@ -89,12 +100,13 @@ func init() {
 	downFlagName := "down"
 	flags.BoolVar(&kubeOptions.Down, downFlagName, false, "Stop pods defined in the YAML file")
 
+	replaceFlagName := "replace"
+	flags.BoolVar(&kubeOptions.Replace, replaceFlagName, false, "Delete and recreate pods defined in the YAML file")
+
 	if !registry.IsRemote() {
 		certDirFlagName := "cert-dir"
 		flags.StringVar(&kubeOptions.CertDir, certDirFlagName, "", "`Pathname` of a directory containing TLS certificates and keys")
 		_ = kubeCmd.RegisterFlagCompletionFunc(certDirFlagName, completion.AutocompleteDefault)
-
-		flags.StringVar(&kubeOptions.SignaturePolicy, "signature-policy", "", "`Pathname` of signature policy file (not usually used)")
 
 		seccompProfileRootFlagName := "seccomp-profile-root"
 		flags.StringVar(&kubeOptions.SeccompProfileRoot, seccompProfileRootFlagName, defaultSeccompRoot, "Directory path for seccomp profiles")
@@ -107,7 +119,12 @@ func init() {
 		buildFlagName := "build"
 		flags.BoolVar(&kubeOptions.Build, buildFlagName, false, "Build all images in a YAML (given Containerfiles exist)")
 	}
-	_ = flags.MarkHidden("signature-policy")
+
+	if !registry.IsRemote() {
+		flags.StringVar(&kubeOptions.SignaturePolicy, "signature-policy", "", "`Pathname` of signature policy file (not usually used)")
+
+		_ = flags.MarkHidden("signature-policy")
+	}
 }
 
 func kube(cmd *cobra.Command, args []string) error {
@@ -149,6 +166,11 @@ func kube(cmd *cobra.Command, args []string) error {
 	}
 	if kubeOptions.Down {
 		return teardown(yamlfile)
+	}
+	if kubeOptions.Replace {
+		if err := teardown(yamlfile); err != nil && !errorhandling.Contains(err, define.ErrNoSuchPod) {
+			return err
+		}
 	}
 	return playkube(yamlfile)
 }

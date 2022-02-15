@@ -5,10 +5,10 @@ import (
 	"os"
 
 	"github.com/containers/common/pkg/report"
-	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/cmd/podman/utils"
-	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/utils"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
@@ -87,7 +87,7 @@ func mount(cmd *cobra.Command, args []string) error {
 	case report.IsJSON(mountOpts.Format):
 		return printJSON(reports)
 	case mountOpts.Format == "":
-		break // default format
+		break // see default format below
 	default:
 		return errors.Errorf("unknown --format argument: %q", mountOpts.Format)
 	}
@@ -97,19 +97,12 @@ func mount(cmd *cobra.Command, args []string) error {
 		mrs = append(mrs, mountReporter{r})
 	}
 
-	row := "{{range . }}{{.ID}}\t{{.Path}}\n{{end -}}"
-	tmpl, err := report.NewTemplate("mounts").Parse(row)
+	rpt, err := report.New(os.Stdout, cmd.Name()).Parse(report.OriginPodman, "{{range . }}{{.ID}}\t{{.Path}}\n{{end -}}")
 	if err != nil {
 		return err
 	}
-
-	w, err := report.NewWriterDefault(os.Stdout)
-	if err != nil {
-		return err
-	}
-	defer w.Flush()
-
-	return tmpl.Execute(w, mrs)
+	defer rpt.Flush()
+	return rpt.Execute(mrs)
 }
 
 func printJSON(reports []*entities.ImageMountReport) error {

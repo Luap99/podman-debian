@@ -3,7 +3,7 @@ package registry
 import (
 	"strings"
 
-	"github.com/containers/podman/v3/utils"
+	"github.com/containers/podman/v4/utils"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
@@ -61,7 +61,7 @@ func Start() (*Registry, error) {
 		case portKey:
 			registry.Port = val
 		default:
-			logrus.Errorf("unexpected podman-registry output: %q", s)
+			logrus.Errorf("Unexpected podman-registry output: %q", s)
 		}
 	}
 

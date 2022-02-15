@@ -78,7 +78,7 @@ function generate_service() {
 
     (cd $UNIT_DIR; run_podman generate systemd --new --files --name $cname)
     echo "container-$cname" >> $SNAME_FILE
-    run_podman rm -f $cname
+    run_podman rm -t 0 -f $cname
 
     systemctl daemon-reload
     systemctl start container-$cname
@@ -373,8 +373,10 @@ EOF
     systemctl enable --now podman-auto-update-$cname.timer
     systemctl list-timers --all
 
-    # While systemd v245 and later uses 'Finished', older versions uses 'Started' for oneshot services
-    local expect='(Finished|Started) Podman auto-update testing service'
+    # systemd       <245 displays 'Started Podman auto-update ...'
+    # systemd 245 - <250 displays 'Finished Podman auto-update ...'
+    # systemd 250 - ???? displays 'Finished <unit name> - Podman auto-...'
+    local expect='(Started|Finished.*) Podman auto-update testing service'
     local failed_start=failed
     local count=0
     while [ $count -lt 120 ]; do

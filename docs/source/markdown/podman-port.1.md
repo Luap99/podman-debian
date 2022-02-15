@@ -21,7 +21,7 @@ or private ports/protocols as filters.
 #### **--latest**, **-l**
 
 Instead of providing the container name or ID, use the last created container. If you use methods other than Podman
-to run containers such as CRI-O, the last started container could be from either of those methods. (This option is not available with the remote Podman client)
+to run containers such as CRI-O, the last started container could be from either of those methods. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
 
 ## EXAMPLE
 
@@ -55,7 +55,7 @@ List the port mappings for a specific container for port 80 and the tcp protocol
 #
 ```
 ## SEE ALSO
-podman(1), podman-inspect(1)
+**[podman(1)](podman.1.md)**, **[podman-inspect(1)](podman-inspect.1.md)**
 
 ## HISTORY
 January 2018, Originally compiled by Brent Baude <bbaude@redhat.com>

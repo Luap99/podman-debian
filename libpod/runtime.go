@@ -19,25 +19,25 @@ import (
 
 	"github.com/containers/buildah/pkg/parse"
 	"github.com/containers/common/libimage"
+	"github.com/containers/common/libnetwork/network"
+	nettypes "github.com/containers/common/libnetwork/types"
+	"github.com/containers/common/pkg/cgroups"
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/common/pkg/defaultnet"
 	"github.com/containers/common/pkg/secrets"
 	"github.com/containers/image/v5/pkg/sysregistriesv2"
 	is "github.com/containers/image/v5/storage"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/libpod/events"
-	"github.com/containers/podman/v3/libpod/lock"
-	"github.com/containers/podman/v3/libpod/plugin"
-	"github.com/containers/podman/v3/libpod/shutdown"
-	"github.com/containers/podman/v3/pkg/cgroups"
-	"github.com/containers/podman/v3/pkg/rootless"
-	"github.com/containers/podman/v3/pkg/systemd"
-	"github.com/containers/podman/v3/pkg/util"
-	"github.com/containers/podman/v3/utils"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/libpod/events"
+	"github.com/containers/podman/v4/libpod/lock"
+	"github.com/containers/podman/v4/libpod/plugin"
+	"github.com/containers/podman/v4/libpod/shutdown"
+	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/systemd"
+	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v4/utils"
 	"github.com/containers/storage"
 	"github.com/containers/storage/pkg/unshare"
-	"github.com/cri-o/ocicni/pkg/ocicni"
 	"github.com/docker/docker/pkg/namesgenerator"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
@@ -81,11 +81,16 @@ type Runtime struct {
 	defaultOCIRuntime      OCIRuntime
 	ociRuntimes            map[string]OCIRuntime
 	runtimeFlags           []string
-	netPlugin              ocicni.CNIPlugin
+	network                nettypes.ContainerNetwork
 	conmonPath             string
 	libimageRuntime        *libimage.Runtime
 	libimageEventsShutdown chan bool
 	lockManager            lock.Manager
+
+	// syslog describes whenever logrus should log to the syslog as well.
+	// Note that the syslog hook will be enabled early in cmd/podman/syslog_linux.go
+	// This bool is just needed so that we can set it for netavark interface.
+	syslog bool
 
 	// doRenumber indicates that the runtime should perform a lock renumber
 	// during initialization.
@@ -164,7 +169,6 @@ func NewRuntime(ctx context.Context, options ...RuntimeOption) (*Runtime, error)
 	if err != nil {
 		return nil, err
 	}
-	conf.CheckCgroupsAndAdjustConfig()
 	return newRuntimeFromConfig(ctx, conf, options...)
 }
 
@@ -211,7 +215,7 @@ func newRuntimeFromConfig(ctx context.Context, conf *config.Config, options ...R
 		os.Exit(1)
 		return nil
 	}); err != nil && errors.Cause(err) != shutdown.ErrHandlerExists {
-		logrus.Errorf("Error registering shutdown handler for libpod: %v", err)
+		logrus.Errorf("Registering shutdown handler for libpod: %v", err)
 	}
 
 	if err := shutdown.Start(); err != nil {
@@ -221,6 +225,8 @@ func newRuntimeFromConfig(ctx context.Context, conf *config.Config, options ...R
 	if err := makeRuntime(ctx, runtime); err != nil {
 		return nil, err
 	}
+
+	runtime.config.CheckCgroupsAndAdjustConfig()
 
 	return runtime, nil
 }
@@ -344,7 +350,7 @@ func makeRuntime(ctx context.Context, runtime *Runtime) (retErr error) {
 					logrus.Warn(msg)
 				}
 			} else {
-				logrus.Warn(msg)
+				logrus.Warnf("%s: %v", msg, err)
 			}
 		}
 	}
@@ -388,7 +394,7 @@ func makeRuntime(ctx context.Context, runtime *Runtime) (retErr error) {
 			// Don't forcibly shut down
 			// We could be opening a store in use by another libpod
 			if _, err := store.Shutdown(false); err != nil {
-				logrus.Errorf("Error removing store for partially-created runtime: %s", err)
+				logrus.Errorf("Removing store for partially-created runtime: %s", err)
 			}
 		}
 	}()
@@ -436,7 +442,7 @@ func makeRuntime(ctx context.Context, runtime *Runtime) (retErr error) {
 			// This will allow us to ship configs including optional
 			// runtimes that might not be installed (crun, kata).
 			// Only a infof so default configs don't spec errors.
-			logrus.Debugf("configured OCI runtime %s initialization failed: %v", name, err)
+			logrus.Debugf("Configured OCI runtime %s initialization failed: %v", name, err)
 			continue
 		}
 
@@ -483,17 +489,15 @@ func makeRuntime(ctx context.Context, runtime *Runtime) (retErr error) {
 		}
 	}
 
-	// If we need to make a default network - do so now.
-	if err := defaultnet.Create(runtime.config.Network.DefaultNetwork, runtime.config.Network.DefaultSubnet, runtime.config.Network.NetworkConfigDir, runtime.config.Engine.StaticDir, runtime.config.Engine.MachineEnabled); err != nil {
-		logrus.Errorf("Failed to created default CNI network: %v", err)
+	// the store is only setup when we are in the userns so we do the same for the network interface
+	if !needsUserns {
+		netBackend, netInterface, err := network.NetworkBackend(runtime.store, runtime.config, runtime.syslog)
+		if err != nil {
+			return err
+		}
+		runtime.config.Network.NetworkBackend = string(netBackend)
+		runtime.network = netInterface
 	}
-
-	// Set up the CNI net plugin
-	netPlugin, err := ocicni.InitCNINoInotify(runtime.config.Network.DefaultNetwork, runtime.config.Network.NetworkConfigDir, "", runtime.config.Network.CNIPluginDirs...)
-	if err != nil {
-		return errors.Wrapf(err, "error configuring CNI network plugin")
-	}
-	runtime.netPlugin = netPlugin
 
 	// We now need to see if the system has restarted
 	// We check for the presence of a file in our tmp directory to verify this
@@ -705,19 +709,32 @@ func (r *Runtime) TmpDir() (string, error) {
 	return r.config.Engine.TmpDir, nil
 }
 
-// GetConfig returns a copy of the configuration used by the runtime
-func (r *Runtime) GetConfig() (*config.Config, error) {
+// GetConfig returns the configuration used by the runtime.
+// Note that the returned value is not a copy and must hence
+// only be used in a reading fashion.
+func (r *Runtime) GetConfigNoCopy() (*config.Config, error) {
 	r.lock.RLock()
 	defer r.lock.RUnlock()
 
 	if !r.valid {
 		return nil, define.ErrRuntimeStopped
 	}
+	return r.config, nil
+}
+
+// GetConfig returns a copy of the configuration used by the runtime.
+// Please use GetConfigNoCopy() in case you only want to read from
+// but not write to the returned config.
+func (r *Runtime) GetConfig() (*config.Config, error) {
+	rtConfig, err := r.GetConfigNoCopy()
+	if err != nil {
+		return nil, err
+	}
 
 	config := new(config.Config)
 
 	// Copy so the caller won't be able to modify the actual config
-	if err := JSONDeepCopy(r.config, config); err != nil {
+	if err := JSONDeepCopy(rtConfig, config); err != nil {
 		return nil, errors.Wrapf(err, "error copying config")
 	}
 
@@ -766,7 +783,7 @@ func (r *Runtime) libimageEvents() {
 					Type:   events.Image,
 				}
 				if err := r.eventer.Write(e); err != nil {
-					logrus.Errorf("unable to write image event: %q", err)
+					logrus.Errorf("Unable to write image event: %q", err)
 				}
 			}
 
@@ -806,11 +823,11 @@ func (r *Runtime) Shutdown(force bool) error {
 	if force {
 		ctrs, err := r.state.AllContainers()
 		if err != nil {
-			logrus.Errorf("Error retrieving containers from database: %v", err)
+			logrus.Errorf("Retrieving containers from database: %v", err)
 		} else {
 			for _, ctr := range ctrs {
 				if err := ctr.StopWithTimeout(r.config.Engine.StopTimeout); err != nil {
-					logrus.Errorf("Error stopping container %s: %v", ctr.ID(), err)
+					logrus.Errorf("Stopping container %s: %v", ctr.ID(), err)
 				}
 			}
 		}
@@ -832,7 +849,7 @@ func (r *Runtime) Shutdown(force bool) error {
 	}
 	if err := r.state.Close(); err != nil {
 		if lastError != nil {
-			logrus.Errorf("%v", lastError)
+			logrus.Error(lastError)
 		}
 		lastError = err
 	}
@@ -878,17 +895,17 @@ func (r *Runtime) refresh(alivePath string) error {
 	// until this has run.
 	for _, ctr := range ctrs {
 		if err := ctr.refresh(); err != nil {
-			logrus.Errorf("Error refreshing container %s: %v", ctr.ID(), err)
+			logrus.Errorf("Refreshing container %s: %v", ctr.ID(), err)
 		}
 	}
 	for _, pod := range pods {
 		if err := pod.refresh(); err != nil {
-			logrus.Errorf("Error refreshing pod %s: %v", pod.ID(), err)
+			logrus.Errorf("Refreshing pod %s: %v", pod.ID(), err)
 		}
 	}
 	for _, vol := range vols {
 		if err := vol.refresh(); err != nil {
-			logrus.Errorf("Error refreshing volume %s: %v", vol.Name(), err)
+			logrus.Errorf("Refreshing volume %s: %v", vol.Name(), err)
 		}
 	}
 
@@ -1062,7 +1079,9 @@ func (r *Runtime) mergeDBConfig(dbConfig *DBConfig) {
 			logrus.Debugf("Overriding tmp dir %q with %q from database", c.TmpDir, dbConfig.LibpodTmp)
 		}
 		c.TmpDir = dbConfig.LibpodTmp
-		c.EventsLogFilePath = filepath.Join(dbConfig.LibpodTmp, "events", "events.log")
+		if c.EventsLogFilePath == "" {
+			c.EventsLogFilePath = filepath.Join(dbConfig.LibpodTmp, "events", "events.log")
+		}
 	}
 
 	if !r.storageSet.VolumePathSet && dbConfig.VolumePath != "" {
@@ -1098,7 +1117,7 @@ func (r *Runtime) reloadContainersConf() error {
 		return err
 	}
 	r.config = config
-	logrus.Infof("applied new containers configuration: %v", config)
+	logrus.Infof("Applied new containers configuration: %v", config)
 	return nil
 }
 
@@ -1109,7 +1128,7 @@ func (r *Runtime) reloadStorageConf() error {
 		return err
 	}
 	storage.ReloadConfigurationFile(configFile, &r.storageConfig)
-	logrus.Infof("applied new storage configuration: %v", r.storageConfig)
+	logrus.Infof("Applied new storage configuration: %v", r.storageConfig)
 	return nil
 }
 
@@ -1169,4 +1188,14 @@ func (r *Runtime) graphRootMountedFlag(mounts []spec.Mount) string {
 		}
 	}
 	return ""
+}
+
+// Network returns the network interface which is used by the runtime
+func (r *Runtime) Network() nettypes.ContainerNetwork {
+	return r.network
+}
+
+// Network returns the network interface which is used by the runtime
+func (r *Runtime) GetDefaultNetworkName() string {
+	return r.config.Network.DefaultNetwork
 }

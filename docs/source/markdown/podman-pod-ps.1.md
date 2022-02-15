@@ -42,7 +42,7 @@ Display the container statuses
 
 #### **--latest**, **-l**
 
-Show the latest pod created (all states) (This option is not available with the remote Podman client)
+Show the latest pod created (all states) (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
 
 #### **--noheading**
 
@@ -50,7 +50,7 @@ Omit the table headings from the listing of pods.
 
 #### **--no-trunc**
 
-Display the extended information
+Do not truncate the output (default *false*).
 
 #### **--ns**
 
@@ -169,7 +169,7 @@ POD ID         NAME   STATUS    CREATED        INFRA ID       NAMES
 Print a list of pods
 
 ## SEE ALSO
-podman-pod(1)
+**[podman(1)](podman.1.md)**, **[podman-pod(1)](podman-pod.1.md)**
 
 ## HISTORY
 July 2018, Originally compiled by Peter Hunt <pehunt@redhat.com>

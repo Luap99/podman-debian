@@ -3,7 +3,7 @@ package server
 import (
 	"net/http"
 
-	"github.com/containers/podman/v3/pkg/api/handlers/libpod"
+	"github.com/containers/podman/v4/pkg/api/handlers/libpod"
 	"github.com/gorilla/mux"
 )
 
@@ -37,10 +37,15 @@ func (s *APIServer) registerGenerateHandlers(r *mux.Router) error {
 	//    default: false
 	//    description: Do not generate the header including the Podman version and the timestamp.
 	//  - in: query
-	//    name: time
+	//    name: startTimeout
+	//    type: integer
+	//    default: 0
+	//    description: Start timeout in seconds.
+	//  - in: query
+	//    name: stopTimeout
 	//    type: integer
 	//    default: 10
-	//    description: Stop timeout override.
+	//    description: Stop timeout in seconds.
 	//  - in: query
 	//    name: restartPolicy
 	//    default: on-failure
@@ -62,6 +67,32 @@ func (s *APIServer) registerGenerateHandlers(r *mux.Router) error {
 	//    type: string
 	//    default: "-"
 	//    description: Systemd unit name separator between name/id and prefix.
+	//  - in: query
+	//    name: restartSec
+	//    type: integer
+	//    default: 0
+	//    description: Configures the time to sleep before restarting a service.
+	//  - in: query
+	//    name: wants
+	//    type: array
+	//    items:
+	//        type: string
+	//    default: []
+	//    description: Systemd Wants list for the container or pods.
+	//  - in: query
+	//    name: after
+	//    type: array
+	//    items:
+	//        type: string
+	//    default: []
+	//    description: Systemd After list for the container or pods.
+	//  - in: query
+	//    name: requires
+	//    type: array
+	//    items:
+	//        type: string
+	//    default: []
+	//    description: Systemd Requires list for the container or pods.
 	// produces:
 	// - application/json
 	// responses:

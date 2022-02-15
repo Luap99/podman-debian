@@ -7,8 +7,8 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/pkg/rootless"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/rootless"
 	"github.com/containers/storage"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -259,7 +259,7 @@ func (s *BoltState) getDBCon() (*bolt.DB, error) {
 // of a defer statement only
 func (s *BoltState) deferredCloseDBCon(db *bolt.DB) {
 	if err := s.closeDBCon(db); err != nil {
-		logrus.Errorf("failed to close libpod db: %q", err)
+		logrus.Errorf("Failed to close libpod db: %q", err)
 	}
 }
 
@@ -382,6 +382,15 @@ func (s *BoltState) getContainerConfigFromDB(id []byte, config *ContainerConfig,
 
 	if err := json.Unmarshal(configBytes, config); err != nil {
 		return errors.Wrapf(err, "error unmarshalling container %s config", string(id))
+	}
+
+	// convert ports to the new format if needed
+	if len(config.ContainerNetworkConfig.OldPortMappings) > 0 && len(config.ContainerNetworkConfig.PortMappings) == 0 {
+		config.ContainerNetworkConfig.PortMappings = ocicniPortsToNetTypesPorts(config.ContainerNetworkConfig.OldPortMappings)
+		// keep the OldPortMappings in case an user has to downgrade podman
+
+		// indicate the the config was modified and should be written back to the db when possible
+		config.rewrite = true
 	}
 
 	return nil
@@ -554,6 +563,28 @@ func (s *BoltState) addContainer(ctr *Container, pod *Pod) error {
 		ctrNamespace = []byte(ctr.config.Namespace)
 	}
 
+	// make sure to marshal the network options before we get the db lock
+	networks := make(map[string][]byte, len(ctr.config.Networks))
+	for net, opts := range ctr.config.Networks {
+		// Check that we don't have any empty network names
+		if net == "" {
+			return errors.Wrapf(define.ErrInvalidArg, "network names cannot be an empty string")
+		}
+		if opts.InterfaceName == "" {
+			return errors.Wrapf(define.ErrInvalidArg, "network interface name cannot be an empty string")
+		}
+		// always add the short id as alias for docker compat
+		opts.Aliases = append(opts.Aliases, ctr.config.ID[:12])
+		optBytes, err := json.Marshal(opts)
+		if err != nil {
+			return errors.Wrapf(err, "error marshalling network options JSON for container %s", ctr.ID())
+		}
+		networks[net] = optBytes
+	}
+	// Set the original value to nil. We can safe some space by not storing it in the config
+	// since we store it in a different mutable bucket anyway.
+	ctr.config.Networks = nil
+
 	db, err := s.getDBCon()
 	if err != nil {
 		return err
@@ -637,23 +668,6 @@ func (s *BoltState) addContainer(ctr *Container, pod *Pod) error {
 			return errors.Wrapf(err, "name \"%s\" is in use", ctr.Name())
 		}
 
-		allNets := make(map[string]bool)
-
-		// Check that we don't have any empty network names
-		for _, net := range ctr.config.Networks {
-			if net == "" {
-				return errors.Wrapf(define.ErrInvalidArg, "network names cannot be an empty string")
-			}
-			allNets[net] = true
-		}
-
-		// Each network we have aliases for, must exist in networks
-		for net := range ctr.config.NetworkAliases {
-			if !allNets[net] {
-				return errors.Wrapf(define.ErrNoSuchNetwork, "container %s has network aliases for network %q but is not part of that network", ctr.ID(), net)
-			}
-		}
-
 		// No overlapping containers
 		// Add the new container to the DB
 		if err := idsBucket.Put(ctrID, ctrName); err != nil {
@@ -697,31 +711,14 @@ func (s *BoltState) addContainer(ctr *Container, pod *Pod) error {
 				return errors.Wrapf(err, "error adding container %s netns path to DB", ctr.ID())
 			}
 		}
-		if ctr.config.Networks != nil {
+		if len(networks) > 0 {
 			ctrNetworksBkt, err := newCtrBkt.CreateBucket(networksBkt)
 			if err != nil {
 				return errors.Wrapf(err, "error creating networks bucket for container %s", ctr.ID())
 			}
-			for _, network := range ctr.config.Networks {
-				if err := ctrNetworksBkt.Put([]byte(network), ctrID); err != nil {
+			for network, opts := range networks {
+				if err := ctrNetworksBkt.Put([]byte(network), opts); err != nil {
 					return errors.Wrapf(err, "error adding network %q to networks bucket for container %s", network, ctr.ID())
-				}
-			}
-		}
-		if ctr.config.NetworkAliases != nil {
-			ctrAliasesBkt, err := newCtrBkt.CreateBucket(aliasesBkt)
-			if err != nil {
-				return errors.Wrapf(err, "error creating network aliases bucket for container %s", ctr.ID())
-			}
-			for net, aliases := range ctr.config.NetworkAliases {
-				netAliasesBkt, err := ctrAliasesBkt.CreateBucket([]byte(net))
-				if err != nil {
-					return errors.Wrapf(err, "error creating network aliases bucket for network %q in container %s", net, ctr.ID())
-				}
-				for _, alias := range aliases {
-					if err := netAliasesBkt.Put([]byte(alias), ctrID); err != nil {
-						return errors.Wrapf(err, "error creating network alias %q in network %q for container %s", alias, net, ctr.ID())
-					}
 				}
 			}
 		}
@@ -875,7 +872,7 @@ func (s *BoltState) removeContainer(ctr *Container, pod *Pod, tx *bolt.Tx) error
 		podCtrs := podDB.Bucket(containersBkt)
 		if podCtrs == nil {
 			// Malformed pod
-			logrus.Errorf("pod %s malformed in database, missing containers bucket!", pod.ID())
+			logrus.Errorf("Pod %s malformed in database, missing containers bucket!", pod.ID())
 		} else {
 			ctrInPod := podCtrs.Get(ctrID)
 			if ctrInPod == nil {

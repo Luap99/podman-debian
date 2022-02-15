@@ -34,7 +34,7 @@ Note: Podman shares containers storage with other tools such as Buildah and CRI-
 
 #### **--external**
 
-Display external containers that are not controlled by Podman but are stored in containers storage.  These external containers are generally created via other container technology such as Buildah or CRI-O and may depend on the same container images that Podman is also using.  External containers are denoted with either a 'buildah' or 'storage' in the COMMAND and STATUS column of the ps output. Only used with the --all option.
+Display external containers that are not controlled by Podman but are stored in containers storage.  These external containers are generally created via other container technology such as Buildah or CRI-O and may depend on the same container images that Podman is also using.  External containers are denoted with either a 'buildah' or 'storage' in the COMMAND and STATUS column of the ps output.
 
 #### **--filter**, **-f**
 
@@ -94,7 +94,7 @@ Print the n last created containers (all states)
 
 #### **--latest**, **-l**
 
-Show the latest container created (all states) (This option is not available with the remote Podman client)
+Show the latest container created (all states) (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
 
 #### **--namespace**, **--ns**
 
@@ -106,7 +106,7 @@ Omit the table headings from the listing of containers.
 
 #### **--no-trunc**
 
-Display the extended information
+Do not truncate the output (default *false*).
 
 #### **--pod**, **-p**
 
@@ -116,11 +116,10 @@ Display the pods the containers are associated with
 
 Print the numeric IDs of the containers only
 
-#### **--sort**
+#### **--sort**=*created*
 
 Sort by command, created, id, image, names, runningfor, size, or status",
 Note: Choosing size will sort by size of rootFs, not alphabetically like the rest of the options
-Default: created
 
 #### **--size**, **-s**
 
@@ -195,7 +194,7 @@ f78620804e00  scratch                           buildah  2 hours ago  storage   
 Print a list of containers
 
 ## SEE ALSO
-podman(1), buildah(1), crio(8)
+**[podman(1)](podman.1.md)**, **[buildah(1)](https://github.com/containers/buildah/blob/main/docs/buildah.1.md)**, **[crio(8)](https://github.com/cri-o/cri-o/blob/main/docs/crio.8.md)**
 
 ## HISTORY
 August 2017, Originally compiled by Urvashi Mohnani <umohnani@redhat.com>

@@ -82,9 +82,17 @@ function _run_bindings() {
     # shellcheck disable=SC2155
     export PATH=$PATH:$GOSRC/hack
 
+    # if logformatter sees this, it can link directly to failing source lines
+    local gitcommit_magic=
+    if [[ -n "$GIT_COMMIT" ]]; then
+        gitcommit_magic="/define.gitCommit=${GIT_COMMIT}"
+    fi
+
     # Subshell needed so logformatter will write output in cwd; if it runs in
     # the subdir, .cirrus.yml will not find the html'ized log
-    (cd pkg/bindings/test && ginkgo -trace -noColor -debug  -r) |& logformatter
+    (cd pkg/bindings/test && \
+         echo "$gitcommit_magic" && \
+         ginkgo -progress -trace -noColor -debug -timeout 30m -r -v) |& logformatter
 }
 
 function _run_docker-py() {
@@ -117,6 +125,7 @@ exec_container() {
     set -x
     # shellcheck disable=SC2154
     exec podman run --rm --privileged --net=host --cgroupns=host \
+        -v `mktemp -d -p /var/tmp`:/tmp:Z \
         -v /dev/fuse:/dev/fuse \
         -v "$GOPATH:$GOPATH:Z" \
         --workdir "$GOSRC" \
@@ -132,11 +141,8 @@ function _run_swagger() {
     local envvarsfile
     req_env_vars GCPJSON GCPNAME GCPPROJECT CTR_FQIN
 
-    # Building this is a PITA, just grab binary for use in automation
-    # Ref: https://goswagger.io/install.html#static-binary
-    download_url=$(\
-        curl -s https://api.github.com/repos/go-swagger/go-swagger/releases/latest | \
-        jq -r '.assets[] | select(.name | contains("linux_amd64")) | .browser_download_url')
+    [[ -x /usr/local/bin/swagger ]] || \
+        die "Expecting swagger binary to be present and executable."
 
     # The filename and bucket depend on the automation context
     #shellcheck disable=SC2154,SC2153
@@ -156,9 +162,6 @@ function _run_swagger() {
     else
         die "Unknown execution context, expected a non-empty value for \$CIRRUS_TAG, \$CIRRUS_BRANCH, or \$CIRRUS_PR"
     fi
-
-    curl -s -o /usr/local/bin/swagger -L'#' "$download_url"
-    chmod +x /usr/local/bin/swagger
 
     # Swagger validation takes a significant amount of time
     msg "Pulling \$CTR_FQIN '$CTR_FQIN' (background process)"
@@ -205,10 +208,12 @@ function _run_build() {
     # Ensure always start from clean-slate with all vendor modules downloaded
     make clean
     make vendor
-    make podman-release.tar.gz  # includes podman, podman-remote, and docs
+    make podman-release  # includes podman, podman-remote, and docs
 }
 
 function _run_altbuild() {
+    local -a arches
+    local arch
     req_env_vars ALT_NAME
     # Defined in .cirrus.yml
     # shellcheck disable=SC2154
@@ -221,32 +226,31 @@ function _run_altbuild() {
             make build-all-new-commits GIT_BASE_BRANCH=origin/$DEST_BRANCH
             ;;
         *Windows*)
-            make podman-remote-release-windows.zip
+            make podman-remote-release-windows_amd64.zip
             make podman.msi
             ;;
         *Without*)
             make build-no-cgo
             ;;
         *RPM*)
-            make -f ./.copr/Makefile
-            rpmbuild --rebuild ./podman-*.src.rpm
+            make package
             ;;
         Alt*Cross)
-            make local-cross
-            ;;
-        *Static*)
-            req_env_vars CTR_FQIN
-            [[ "$UID" -eq 0 ]] || \
-                die "Static build must execute nixos container as root on host"
-            podman run -i --rm \
-                -e CACHIX_AUTH_TOKEN \
-                -v $PWD:$PWD:Z -w $PWD $CTR_FQIN sh -c \
-                "nix-env -iA cachix -f https://cachix.org/api/v1/install && \
-                 cachix use podman && \
-                 nix-build nix && \
-                 nix-store -qR --include-outputs \$(nix-instantiate nix/default.nix) | grep -v podman | cachix push podman && \
-                 cp -R result/bin ."
-            rm result  # makes cirrus puke
+            arches=(\
+                amd64
+                ppc64le
+                arm
+                arm64
+                386
+                s390x
+                mips
+                mipsle
+                mips64
+                mips64le)
+            for arch in "${arches[@]}"; do
+                msg "Building release archive for $arch"
+                make podman-release-${arch}.tar.gz GOARCH=$arch
+            done
             ;;
         *)
             die "Unknown/Unsupported \$$ALT_NAME '$ALT_NAME'"
@@ -268,6 +272,23 @@ function _run_release() {
         die "Releases must never contain '-dev' in output of 'podman info' ($dev)"
     fi
     msg "All OK"
+}
+
+
+function _run_gitlab() {
+    rootless_uid=$(id -u)
+    systemctl enable --now --user podman.socket
+    export DOCKER_HOST=unix:///run/user/${rootless_uid}/podman/podman.sock
+    export CONTAINER_HOST=$DOCKER_HOST
+    cd $GOPATH/src/gitlab.com/gitlab-org/gitlab-runner
+    set +e
+    go test -v ./executors/docker |& tee $GOSRC/gitlab-runner-podman.log
+    ret=$?
+    set -e
+    # This file is collected and parsed by Cirrus-CI so must be in $GOSRC
+    cat $GOSRC/gitlab-runner-podman.log | \
+        go-junit-report > $GOSRC/gitlab-runner-podman.xml
+    return $ret
 }
 
 logformatter() {

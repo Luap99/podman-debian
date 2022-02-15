@@ -3,8 +3,8 @@ package server
 import (
 	"net/http"
 
-	"github.com/containers/podman/v3/pkg/api/handlers/compat"
-	"github.com/containers/podman/v3/pkg/api/handlers/libpod"
+	"github.com/containers/podman/v4/pkg/api/handlers/compat"
+	"github.com/containers/podman/v4/pkg/api/handlers/libpod"
 	"github.com/gorilla/mux"
 )
 
@@ -442,6 +442,7 @@ func (s *APIServer) registerContainersHandlers(r *mux.Router) error {
 	//  - in: query
 	//    name: ps_args
 	//    type: string
+	//    default: -ef
 	//    description: arguments to pass to ps such as aux. Requires ps(1) to be installed in the container if no ps(1) compatible AIX descriptors are used.
 	// produces:
 	// - application/json
@@ -816,9 +817,22 @@ func (s *APIServer) registerContainersHandlers(r *mux.Router) error {
 	//    required: true
 	//    description: the name or ID of the container
 	//  - in: query
+	//    name: depend
+	//    type: boolean
+	//    description: additionally remove containers that depend on the container to be removed
+	//  - in: query
 	//    name: force
 	//    type: boolean
-	//    description: need something
+	//    description: force stop container if running
+	//  - in: query
+	//    name: ignore
+	//    type: boolean
+	//    description: ignore errors when the container to be removed does not existxo
+	//  - in: query
+	//    name: timeout
+	//    type: integer
+	//    default: 10
+	//    description: number of seconds to wait before killing container when force removing
 	//  - in: query
 	//    name: v
 	//    type: boolean
@@ -826,6 +840,8 @@ func (s *APIServer) registerContainersHandlers(r *mux.Router) error {
 	// produces:
 	// - application/json
 	// responses:
+	//   200:
+	//     $ref: "#/responses/DocsLibpodContainerRmReport"
 	//   204:
 	//     description: no error
 	//   400:
@@ -1142,19 +1158,23 @@ func (s *APIServer) registerContainersHandlers(r *mux.Router) error {
 	//    name: name
 	//    type: string
 	//    required: true
-	//    description: |
-	//      Name of container to query for processes
-	//      (As of version 1.xx)
+	//    description: Name of container to query for processes (As of version 1.xx)
 	//  - in: query
 	//    name: stream
 	//    type: boolean
-	//    default: true
-	//    description: Stream the output
+	//    description: when true, repeatedly stream the latest output (As of version 4.0)
+	//  - in: query
+	//    name: delay
+	//    type: integer
+	//    description: if streaming, delay in seconds between updates. Must be >1. (As of version 4.0)
+	//    default: 5
 	//  - in: query
 	//    name: ps_args
 	//    type: string
 	//    default: -ef
-	//    description: arguments to pass to ps such as aux. Requires ps(1) to be installed in the container if no ps(1) compatible AIX descriptors are used.
+	//    description: |
+	//      arguments to pass to ps such as aux.
+	//      Requires ps(1) to be installed in the container if no ps(1) compatible AIX descriptors are used.
 	// produces:
 	// - application/json
 	// responses:
@@ -1436,6 +1456,10 @@ func (s *APIServer) registerContainersHandlers(r *mux.Router) error {
 	//    name: ignoreRootFS
 	//    type: boolean
 	//    description: do not include root file-system changes when exporting
+	//  - in: query
+	//    name: printStats
+	//    type: boolean
+	//    description: add checkpoint statistics to the returned CheckpointReport
 	// produces:
 	// - application/json
 	// responses:
@@ -1490,6 +1514,10 @@ func (s *APIServer) registerContainersHandlers(r *mux.Router) error {
 	//    name: ignoreStaticMAC
 	//    type: boolean
 	//    description: ignore MAC address if set statically
+	//  - in: query
+	//    name: printStats
+	//    type: boolean
+	//    description: add restore statistics to the returned RestoreReport
 	// produces:
 	// - application/json
 	// responses:

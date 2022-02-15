@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/containers/podman/v3/libpod"
-	"github.com/containers/podman/v3/pkg/api/handlers/utils"
-	api "github.com/containers/podman/v3/pkg/api/types"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/specgen"
-	"github.com/containers/podman/v3/pkg/specgen/generate"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v4/pkg/api/types"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/specgen"
+	"github.com/containers/podman/v4/pkg/specgen/generate"
 	"github.com/pkg/errors"
 )
 
@@ -19,11 +19,15 @@ import (
 func CreateContainer(w http.ResponseWriter, r *http.Request) {
 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	var sg specgen.SpecGenerator
+
 	if err := json.NewDecoder(r.Body).Decode(&sg); err != nil {
-		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrap(err, "Decode()"))
+		utils.Error(w, http.StatusInternalServerError, errors.Wrap(err, "Decode()"))
 		return
 	}
-
+	if sg.Passwd == nil {
+		t := true
+		sg.Passwd = &t
+	}
 	warn, err := generate.CompleteSpec(r.Context(), runtime, &sg)
 	if err != nil {
 		utils.InternalServerError(w, err)

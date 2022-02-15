@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -48,21 +48,22 @@ var _ = Describe("Podman run with --cgroup-parent", func() {
 		run := podmanTest.Podman([]string{"run", "--cgroupns=host", "--cgroup-parent", cgroup, fedoraMinimal, "cat", "/proc/self/cgroup"})
 		run.WaitWithDefaultTimeout()
 		Expect(run).Should(Exit(0))
-		ok, _ := run.GrepString(cgroup)
-		Expect(ok).To(BeTrue())
+		Expect(run.OutputToString()).To(ContainSubstring(cgroup))
 	})
 
 	Specify("no --cgroup-parent", func() {
-		SkipIfRootless("FIXME This seems to be broken in rootless mode")
 		cgroup := "/libpod_parent"
 		if !Containerized() && podmanTest.CgroupManager != "cgroupfs" {
-			cgroup = "/machine.slice"
+			if isRootless() {
+				cgroup = "/user.slice"
+			} else {
+				cgroup = "/machine.slice"
+			}
 		}
 		run := podmanTest.Podman([]string{"run", "--cgroupns=host", fedoraMinimal, "cat", "/proc/self/cgroup"})
 		run.WaitWithDefaultTimeout()
 		Expect(run).Should(Exit(0))
-		ok, _ := run.GrepString(cgroup)
-		Expect(ok).To(BeTrue())
+		Expect(run.OutputToString()).To(ContainSubstring(cgroup))
 	})
 
 	Specify("always honor --cgroup-parent", func() {
@@ -114,7 +115,6 @@ var _ = Describe("Podman run with --cgroup-parent", func() {
 		run := podmanTest.Podman([]string{"run", "--cgroupns=host", "--cgroup-parent", cgroup, fedoraMinimal, "cat", "/proc/1/cgroup"})
 		run.WaitWithDefaultTimeout()
 		Expect(run).Should(Exit(0))
-		ok, _ := run.GrepString(cgroup)
-		Expect(ok).To(BeTrue())
+		Expect(run.OutputToString()).To(ContainSubstring(cgroup))
 	})
 })

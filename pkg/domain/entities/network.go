@@ -3,7 +3,7 @@ package entities
 import (
 	"net"
 
-	"github.com/containernetworking/cni/libcni"
+	"github.com/containers/common/libnetwork/types"
 )
 
 // NetworkListOptions describes options for listing networks in cli
@@ -12,15 +12,6 @@ type NetworkListOptions struct {
 	Quiet   bool
 	Filters map[string][]string
 }
-
-// NetworkListReport describes the results from listing networks
-type NetworkListReport struct {
-	*libcni.NetworkConfigList
-	Labels map[string]string
-}
-
-// NetworkInspectReport describes the results from inspect networks
-type NetworkInspectReport map[string]interface{}
 
 // NetworkReloadOptions describes options for reloading container network
 // configuration.
@@ -38,7 +29,8 @@ type NetworkReloadReport struct {
 
 // NetworkRmOptions describes options for removing networks
 type NetworkRmOptions struct {
-	Force bool
+	Force   bool
+	Timeout *uint
 }
 
 //NetworkRmReport describes the results of network removal
@@ -48,16 +40,15 @@ type NetworkRmReport struct {
 }
 
 // NetworkCreateOptions describes options to create a network
-// swagger:model NetworkCreateOptions
 type NetworkCreateOptions struct {
 	DisableDNS bool
 	Driver     string
-	Gateway    net.IP
+	Gateways   []net.IP
 	Internal   bool
 	Labels     map[string]string
 	MacVLAN    string
-	Range      net.IPNet
-	Subnet     net.IPNet
+	Ranges     []string
+	Subnets    []string
 	IPv6       bool
 	// Mapping of driver options and values.
 	Options map[string]string
@@ -65,7 +56,7 @@ type NetworkCreateOptions struct {
 
 // NetworkCreateReport describes a created network for the cli
 type NetworkCreateReport struct {
-	Filename string
+	Name string
 }
 
 // NetworkDisconnectOptions describes options for disconnecting
@@ -78,8 +69,8 @@ type NetworkDisconnectOptions struct {
 // NetworkConnectOptions describes options for connecting
 // a container to a network
 type NetworkConnectOptions struct {
-	Aliases   []string
-	Container string
+	Container string `json:"container"`
+	types.PerNetworkOptions
 }
 
 // NetworkPruneReport containers the name of network and an error
