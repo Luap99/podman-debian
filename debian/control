@@ -14,7 +14,7 @@ Build-Depends: debhelper-compat (= 13)
     ,golang-ginkgo-dev
     ,golang-github-appc-cni-dev (>= 0.8)
     ,golang-github-buger-goterm-dev
-    ,golang-github-checkpoint-restore-go-criu-dev (>> 5.1)
+    ,golang-github-checkpoint-restore-go-criu-dev (>> 5.3)
     ,golang-github-containerd-cgroups-dev
     ,golang-github-containernetworking-plugins-dev (>= 0.8.7)
     ,golang-github-containers-buildah-dev (>= 1.24.1)
