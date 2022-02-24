@@ -88,12 +88,10 @@ EOF
     containerfile=$PODMAN_TMPDIR/Containerfile
     cat >$containerfile <<EOF
 FROM $IMAGE
-RUN apk add nginx
 RUN echo $rand_content > /$rand_filename
 EOF
 
-    # The 'apk' command can take a long time to fetch files; bump timeout
-    PODMAN_TIMEOUT=240 run_podman build -t build_test -f - --format=docker $tmpdir < $containerfile
+    run_podman build -t build_test -f - --format=docker $tmpdir < $containerfile
     is "$output" ".*COMMIT" "COMMIT seen in log"
 
     run_podman run --rm build_test cat /$rand_filename
@@ -186,6 +184,30 @@ EOF
     is "$output"   "This is a NEW file" "file contents, second time"
 
     run_podman rmi -f build_test $iid
+}
+
+@test "podman build test -f ./relative" {
+    rand_filename=$(random_string 20)
+    rand_content=$(random_string 50)
+
+    tmpdir=$PODMAN_TMPDIR/build-test
+    mkdir -p $tmpdir
+    mkdir -p $PODMAN_TMPDIR/reldir
+
+    containerfile=$PODMAN_TMPDIR/reldir/Containerfile
+    cat >$containerfile <<EOF
+FROM $IMAGE
+RUN echo $rand_content > /$rand_filename
+EOF
+
+    cd $PODMAN_TMPDIR
+    run_podman build -t build_test -f ./reldir/Containerfile --format=docker $tmpdir
+    is "$output" ".*COMMIT" "COMMIT seen in log"
+
+    run_podman run --rm build_test cat /$rand_filename
+    is "$output"   "$rand_content"   "reading generated file in image"
+
+    run_podman rmi -f build_test
 }
 
 @test "podman build - URLs" {
@@ -992,6 +1014,27 @@ EOF
     echo FROM $IMAGE > $tmpdir/link/Dockerfile
     echo RUN echo hello >> $tmpdir/link/Dockerfile
     run_podman build -t build_test $tmpdir/link
+}
+
+@test "podman build --volumes-from conflict" {
+    rand_content=$(random_string 50)
+
+    tmpdir=$PODMAN_TMPDIR/build-test
+    mkdir -p $tmpdir
+    dockerfile=$tmpdir/Dockerfile
+    cat >$dockerfile <<EOF
+FROM $IMAGE
+VOLUME /vol
+EOF
+
+    run_podman build -t build_test $tmpdir
+    is "$output" ".*COMMIT" "COMMIT seen in log"
+
+    run_podman run -d --name test_ctr build_test  top
+    run_podman run --rm --volumes-from test_ctr $IMAGE  echo $rand_content
+    is "$output"   "$rand_content"   "No error should be thrown about volume in use"
+
+    run_podman rmi -f build_test
 }
 
 function teardown() {
