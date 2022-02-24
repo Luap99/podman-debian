@@ -1,3 +1,9 @@
+libpod (4.0.1+ds1-1) experimental; urgency=medium
+
+  * New upstream release
+
+ -- Reinhard Tartler <siretart@tauware.de>  Wed, 23 Feb 2022 21:43:55 -0500
+
 libpod (4.0.0~rc5+ds1-1) experimental; urgency=medium
 
   * New upstream release, closes: #1003486
