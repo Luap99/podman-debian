@@ -58,6 +58,7 @@ override_dh_auto_install:
 
 # Disable dh_missing
 override_dh_missing:
+	dh_missing --list-missing -X goecho -X testvol -X version
 
 override_dh_installsystemd:
 	dh_installsystemd
