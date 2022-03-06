@@ -1,3 +1,9 @@
+libpod (4.0.1+ds1-3) experimental; urgency=medium
+
+  * Fix installation of systemd units
+
+ -- Reinhard Tartler <siretart@tauware.de>  Sun, 06 Mar 2022 17:16:32 -0500
+
 libpod (4.0.1+ds1-2) experimental; urgency=medium
 
   * Install rootlessport, Closes: #1006426
