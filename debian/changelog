@@ -1,3 +1,14 @@
+libpod (3.4.6+ds1-1) unstable; urgency=medium
+
+  * New upstream release
+    - Fixes: CVE-2022-27191, CVE-2022-27649
+  * Fix installation of systemd units
+
+  [ Antonio Terceiro ]
+  * Stop installing systemd socket units under /usr/lib (Closes: #1009374)
+
+ -- Reinhard Tartler <siretart@tauware.de>  Thu, 14 Apr 2022 07:11:33 -0400
+
 libpod (3.4.4+ds1-1) unstable; urgency=medium
 
   * New upstream release
