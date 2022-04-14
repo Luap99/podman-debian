@@ -12,12 +12,12 @@ require (
 	github.com/containernetworking/cni v0.8.1
 	github.com/containernetworking/plugins v0.9.1
 	github.com/containers/buildah v1.23.1
-	github.com/containers/common v0.44.4
+	github.com/containers/common v0.44.5
 	github.com/containers/conmon v2.0.20+incompatible
 	github.com/containers/image/v5 v5.17.0
 	github.com/containers/ocicrypt v1.1.2
 	github.com/containers/psgo v1.7.1
-	github.com/containers/storage v1.37.0
+	github.com/containers/storage v1.37.1
 	github.com/coreos/go-systemd/v22 v22.3.2
 	github.com/coreos/stream-metadata-go v0.0.0-20210225230131-70edb9eb47b3
 	github.com/cri-o/ocicni v0.2.1-0.20210621164014-d0acc7862283
@@ -53,6 +53,7 @@ require (
 	github.com/opencontainers/selinux v1.9.1
 	github.com/pkg/errors v0.9.1
 	github.com/pmezard/go-difflib v1.0.0
+	github.com/prometheus/client_golang v1.11.1 // indirect
 	github.com/rootless-containers/rootlesskit v0.14.5
 	github.com/sirupsen/logrus v1.8.1
 	github.com/spf13/cobra v1.2.1
@@ -63,7 +64,7 @@ require (
 	github.com/vbauerster/mpb/v6 v6.0.4
 	github.com/vishvananda/netlink v1.1.1-0.20201029203352-d40f9887b852
 	go.etcd.io/bbolt v1.3.6
-	golang.org/x/crypto v0.0.0-20210711020723-a769d52b0f97
+	golang.org/x/crypto v0.0.0-20220411220226-7b82a4e95df4
 	golang.org/x/sync v0.0.0-20210220032951-036812b2e83c
 	golang.org/x/sys v0.0.0-20211004093028-2c5d950f24ef
 	gopkg.in/yaml.v3 v3.0.0-20210107192922-496545a6307b
