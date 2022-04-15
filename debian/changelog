@@ -1,3 +1,14 @@
+libpod (4.0.3+ds1-1) experimental; urgency=medium
+
+  [ Antonio Terceiro ]
+  * Stop installing systemd socket units under /usr/lib, Closes: #1009374
+
+  [ Reinhard Tartler ]
+  * New upstream release
+  * Skip installation of podman-remote(1), Closes: #1000521
+
+ -- Reinhard Tartler <siretart@tauware.de>  Sat, 16 Apr 2022 06:41:11 -0400
+
 libpod (4.0.1+ds1-3) experimental; urgency=medium
 
   * Fix installation of systemd units
