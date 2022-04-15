@@ -191,7 +191,7 @@ endif
 # dependencies. This is only used for the Windows installer task (podman.msi), which must
 # include this lightweight helper binary.
 #
-GV_GITURL=git://github.com/containers/gvisor-tap-vsock.git
+GV_GITURL=https://github.com/containers/gvisor-tap-vsock.git
 GV_SHA=e943b1806d94d387c4c38d96719432d50a84bbd0
 
 ###
@@ -335,7 +335,10 @@ $(SRCBINDIR)/podman$(BINSFX): $(SRCBINDIR) .gopathok $(SOURCES) go.mod go.sum
 		-o $@ ./cmd/podman
 
 $(SRCBINDIR)/podman-remote-static: $(SRCBINDIR) .gopathok $(SOURCES) go.mod go.sum
-	$(GOCMD) build \
+	CGO_ENABLED=0 \
+	GOOS=$(GOOS) \
+	GOARCH=$(GOARCH) \
+	$(GO) build \
 		$(BUILDFLAGS) \
 		$(GO_LDFLAGS) '$(LDFLAGS_PODMAN_STATIC)' \
 		-tags "${REMOTETAGS}" \
