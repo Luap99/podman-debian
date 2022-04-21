@@ -1,3 +1,10 @@
+libpod (3.4.7+ds1-1) unstable; urgency=medium
+
+  * New upstream release.
+    - Fixes:  CVE-2022-1227
+
+ -- Reinhard Tartler <siretart@tauware.de>  Thu, 21 Apr 2022 16:09:59 -0400
+
 libpod (3.4.6+ds1-1) unstable; urgency=medium
 
   * New upstream release
