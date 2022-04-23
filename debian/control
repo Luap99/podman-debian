@@ -46,7 +46,7 @@ Build-Depends: debhelper-compat (= 13)
     ,golang-github-opencontainers-go-digest-dev
     ,golang-github-opencontainers-image-spec-dev
     ,golang-github-opencontainers-runc-dev (>= 1.0.0~rc92~)
-    ,golang-github-opencontainers-runtime-tools-dev (>= 0.9.0~)
+    ,golang-github-opencontainers-runtime-tools-dev (>= 0.9.0+git20220423)
     ,golang-github-opencontainers-selinux-dev (>= 1.2.2~)
     ,golang-github-openshift-imagebuilder-dev
     ,golang-github-pkg-errors-dev
@@ -168,7 +168,7 @@ Depends: ${misc:Depends},
     ,golang-github-opencontainers-go-digest-dev
     ,golang-github-opencontainers-image-spec-dev
     ,golang-github-opencontainers-runc-dev (>= 1.0.0~rc92~)
-    ,golang-github-opencontainers-runtime-tools-dev (>= 0.9.0~)
+    ,golang-github-opencontainers-runtime-tools-dev (>= 0.9.0+git20220423)
     ,golang-github-opencontainers-selinux-dev (>= 1.2.2~)
     ,golang-github-openshift-imagebuilder-dev
     ,golang-github-pkg-errors-dev
