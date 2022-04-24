@@ -1,0 +1,56 @@
+commit a42c131c80fc8c7220687c56cf4384a224572ca0
+Author: Daniel J Walsh <dwalsh@redhat.com>
+Date:   Mon Oct 25 07:22:11 2021 -0400
+
+    Update vendor github.com/opencontainers/runtime-tools
+    
+    This will change mount of /dev within container to noexec, making
+    containers slightly more secure.
+    
+    [NO NEW TESTS NEEDED]
+    
+    Signed-off-by: Daniel J Walsh <dwalsh@redhat.com>
+
+--- a/libpod/container_internal_linux.go
++++ b/libpod/container_internal_linux.go
+@@ -320,7 +320,7 @@
+ 		return nil, err
+ 	}
+ 
+-	g := generate.Generator{Config: c.config.Spec}
++	g := generate.NewFromSpec(c.config.Spec)
+ 
+ 	// If network namespace was requested, add it now
+ 	if c.config.CreateNetNS {
+@@ -1182,7 +1182,8 @@
+ 	}
+ 
+ 	// Make sure the newly created config.json exists on disk
+-	g := generate.Generator{Config: c.config.Spec}
++	g := generate.NewFromSpec(c.config.Spec)
++
+ 	if err := c.saveSpec(g.Config); err != nil {
+ 		return errors.Wrap(err, "saving imported container specification for restore failed")
+ 	}
+--- a/libpod/options.go
++++ b/libpod/options.go
+@@ -958,7 +958,7 @@
+ 		if err := JSONDeepCopy(nsCtr.IDMappings(), &ctr.config.IDMappings); err != nil {
+ 			return err
+ 		}
+-		g := generate.Generator{Config: ctr.config.Spec}
++		g := generate.NewFromSpec(ctr.config.Spec)
+ 
+ 		g.ClearLinuxUIDMappings()
+ 		for _, uidmap := range nsCtr.config.IDMappings.UIDMap {
+--- a/libpod/runtime_ctr.go
++++ b/libpod/runtime_ctr.go
+@@ -376,7 +376,7 @@
+ 	if ctr.restoreFromCheckpoint {
+ 		// Remove information about bind mount
+ 		// for new container from imported checkpoint
+-		g := generate.Generator{Config: ctr.config.Spec}
++		g := generate.NewFromSpec(ctr.config.Spec)
+ 		g.RemoveMount("/dev/shm")
+ 		ctr.config.ShmDir = ""
+ 		g.RemoveMount("/etc/resolv.conf")
