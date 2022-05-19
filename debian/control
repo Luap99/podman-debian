@@ -43,6 +43,7 @@ Build-Depends: debhelper-compat (= 13)
     ,golang-github-json-iterator-go-dev
     ,golang-github-moby-term-dev
     ,golang-github-mrunalp-fileutils-dev
+    ,golang-github-nxadm-tail-dev
     ,golang-github-opencontainers-go-digest-dev
     ,golang-github-opencontainers-image-spec-dev
     ,golang-github-opencontainers-runc-dev (>= 1.0.0~rc92~)
