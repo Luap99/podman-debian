@@ -860,19 +860,12 @@ func (p *PodmanTestIntegration) makeOptions(args []string, noEvents, noCache boo
 		eventsType = "none"
 	}
 
-	networkBackend := p.NetworkBackend.ToString()
-	networkDir := p.NetworkConfigDir
-	if p.NetworkBackend == Netavark {
-		networkDir = p.NetworkConfigDir
-	}
 	podmanOptions := strings.Split(fmt.Sprintf("%s--root %s --runroot %s --runtime %s --conmon %s --network-config-dir %s --cgroup-manager %s --tmpdir %s --events-backend %s",
 		debug, p.Root, p.RunRoot, p.OCIRuntime, p.ConmonBinary, p.NetworkConfigDir, p.CgroupManager, p.TmpDir, eventsType), " ")
 
 	if !p.RemoteTest {
 		podmanOptions = append(podmanOptions, "--network-backend", p.NetworkBackend.ToString())
 	}
-
-	podmanOptions = append(podmanOptions, "--network-backend", networkBackend)
 
 	podmanOptions = append(podmanOptions, strings.Split(p.StorageOptions, " ")...)
 	if !noCache {

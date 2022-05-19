@@ -1296,22 +1296,6 @@ func (c *Container) NetworkDisconnect(nameOrID, netName string, force bool) erro
 			}
 		}
 	}
-
-	// Update resolv.conf if required
-	if statusExist {
-		stringIPs := make([]string, 0, len(oldStatus.DNSServerIPs))
-		for _, ip := range oldStatus.DNSServerIPs {
-			stringIPs = append(stringIPs, ip.String())
-		}
-		if len(stringIPs) == 0 {
-			return nil
-		}
-		logrus.Debugf("Removing DNS Servers %v from resolv.conf", stringIPs)
-		if err := c.removeNameserver(stringIPs); err != nil {
-			return err
-		}
-	}
-
 	return nil
 }
 

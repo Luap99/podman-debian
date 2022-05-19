@@ -107,14 +107,6 @@ When true, access to the Podman service will be remote. Defaults to false.
 Settings can be modified in the containers.conf file. If the CONTAINER_HOST
 environment variable is set, the **--remote** option defaults to true.
 
-Some example URL values in valid formats:
- - unix://run/podman/podman.sock
- - unix://run/user/$UID/podman/podman.sock
- - ssh://notroot@localhost:22/run/user/$UID/podman/podman.sock
- - ssh://root@localhost:22/run/podman/podman.sock
- - tcp://localhost:34451
- - tcp://127.0.0.1:34451
-
 #### **--root**=*value*
 
 Storage root dir in which data, including images, is stored (default: "/var/lib/containers/storage" for UID 0, "$HOME/.local/share/containers/storage" for other users).

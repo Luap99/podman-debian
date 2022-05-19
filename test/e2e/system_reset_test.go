@@ -34,7 +34,6 @@ var _ = Describe("podman system reset", func() {
 	})
 
 	It("podman system reset", func() {
-		Skip("Disabled until Netavark testing added")
 		SkipIfRemote("system reset not supported on podman --remote")
 		// system reset will not remove additional store images, so need to grab length
 

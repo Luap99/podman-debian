@@ -24,11 +24,6 @@ env:
     # Runner statistics log file path/name
     STATS_LOGFILE_SFX: 'runner_stats.log'
     STATS_LOGFILE: '$GOSRC/${CIRRUS_TASK_NAME}-${STATS_LOGFILE_SFX}'
-    # Netavark/aardvark location/options when TEST_ENVIRON=host-netavark
-    NETAVARK_URL: "https://api.cirrus-ci.com/v1/artifact/github/containers/netavark/success/binary.zip?branch=${NETAVARK_BRANCH}"
-    NETAVARK_DEBUG: 0  # set non-zero to use the debug-mode binary
-    AARDVARK_URL: "https://api.cirrus-ci.com/v1/artifact/github/containers/aardvark-dns/success/binary.zip?branch=${AARDVARK_BRANCH}"
-    AARDVARK_DEBUG: 0  # set non-zero to use the debug-mode binary
 
     ####
     #### Cache-image names to test with (double-quotes around names are critical)
@@ -546,41 +541,6 @@ rootless_integration_test_task:
     env:
         TEST_FLAVOR: int
         PRIV_NAME: rootless
-    clone_script: *noop  # Comes from cache
-    gopath_cache: *ro_gopath_cache
-    setup_script: *setup
-    main_script: *main
-    always: *int_logs_artifacts
-
-
-# Run various scenarios using upstream netavark/aardvark-dns binaries
-netavark_task:
-    name: "Netavark $TEST_FLAVOR $PODBIN_NAME $PRIV_NAME"
-    alias: netavark
-    only_if: *not_build
-    skip: *branches_and_tags
-    depends_on:
-        - unit_test
-    gce_instance: *standardvm
-    matrix:
-        - env: &nenv
-            DISTRO_NV: ${FEDORA_NAME}
-            _BUILD_CACHE_HANDLE: ${FEDORA_NAME}-build-${CIRRUS_BUILD_ID}
-            VM_IMAGE_NAME: ${FEDORA_CACHE_IMAGE_NAME}
-            CTR_FQIN: ${FEDORA_CONTAINER_FQIN}
-            TEST_FLAVOR: int
-            TEST_ENVIRON: host-netavark
-        - env:
-            <<: *nenv
-            TEST_FLAVOR: int
-            PRIV_NAME: rootless
-        - env:
-            <<: *nenv
-            TEST_FLAVOR: sys
-        - env:
-            <<: *nenv
-            TEST_FLAVOR: sys
-            PRIV_NAME: rootless
     clone_script: *noop  # Comes from cache
     gopath_cache: *ro_gopath_cache
     setup_script: *setup
