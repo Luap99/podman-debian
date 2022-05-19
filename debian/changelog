@@ -1,3 +1,9 @@
+libpod (4.1.0+ds2-2) experimental; urgency=medium
+
+  * Avoid building podman/pkg/machine/e2e on all architectures
+
+ -- Reinhard Tartler <siretart@tauware.de>  Thu, 19 May 2022 16:31:29 -0400
+
 libpod (4.1.0+ds2-1) experimental; urgency=medium
 
   * New upstream release
