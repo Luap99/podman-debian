@@ -13,7 +13,7 @@ export GO111MODULE=off
 export DH_GOLANG_GO_GENERATE := 1
 
 export DH_GOLANG_INSTALL_EXTRA := $(wildcard libpod/*/testdata/* libpod/*/cni/*/*/*)
-export DH_GOLANG_EXCLUDES := dependencies test/e2e contrib/perftest test/utils test/endpoint hack/podman-registry-go pkg/bindings/test
+export DH_GOLANG_EXCLUDES := dependencies podman/pkg/machine/e2e test/e2e contrib/perftest test/utils test/endpoint hack/podman-registry-go pkg/bindings/test
 
 export HOME=$(CURDIR)/debian/tmp
 
@@ -46,7 +46,7 @@ ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	  XDG_DATA_HOME=$(CURDIR)/debian/tmp-home/.local/share \
 	  XDG_RUNTIME_DIR=$(CURDIR)/debian/tmp-home/run \
 	  PATH="$(CURDIR)/_output/bin:$$PATH" \
-	  DH_GOLANG_EXCLUDES="$${DH_GOLANG_EXCLUDES} libpod/network/cni libpod/lock/file libpod/hack/podman-registry-go libpod/pkg/bindings/test podman/pkg/machine/e2e podman/cmd/podman/common" \
+	  DH_GOLANG_EXCLUDES="$${DH_GOLANG_EXCLUDES} libpod/network/cni libpod/lock/file libpod/hack/podman-registry-go libpod/pkg/bindings/test podman/cmd/podman/common" \
 	dh_auto_test -v --max-parallel=2 -- -tags "$(BUILDTAGS)"
 	rm -rf $(CURDIR)/debian/tmp-home
 endif
