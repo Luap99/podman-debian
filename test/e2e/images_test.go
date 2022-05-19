@@ -27,7 +27,6 @@ var _ = Describe("Podman images", func() {
 		}
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
 	})
 
 	AfterEach(func() {
@@ -438,7 +437,7 @@ RUN > file2
 		Expect(result).Should(Exit(0))
 		Expect(result.OutputToStringArray()).To(HaveLen(1))
 
-		//check if really abc is removed
+		// check if really abc is removed
 		result = podmanTest.Podman([]string{"image", "list", "--filter", "label=abc"})
 		Expect(result.OutputToStringArray()).To(BeEmpty())
 
@@ -459,7 +458,7 @@ RUN > file2
 		Expect(result).Should(Exit(0))
 		Expect(result.OutputToStringArray()).To(HaveLen(1))
 
-		//check if really abc is removed
+		// check if really abc is removed
 		result = podmanTest.Podman([]string{"image", "list", "--filter", "label=abc"})
 		Expect(result.OutputToStringArray()).To(BeEmpty())
 

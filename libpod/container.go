@@ -288,7 +288,23 @@ func (c *Container) Config() *ContainerConfig {
 		return nil
 	}
 
+	if c != nil {
+		networks, err := c.networks()
+		if err != nil {
+			return nil
+		}
+
+		returnConfig.Networks = networks
+	}
+
 	return returnConfig
+}
+
+// ConfigNoCopy returns the configuration used by the container.
+// Note that the returned value is not a copy and must hence
+// only be used in a reading fashion.
+func (c *Container) ConfigNoCopy() *ContainerConfig {
+	return c.config
 }
 
 // DeviceHostSrc returns the user supplied device to be passed down in the pod
@@ -417,7 +433,10 @@ func (c *Container) MountLabel() string {
 
 // Systemd returns whether the container will be running in systemd mode
 func (c *Container) Systemd() bool {
-	return c.config.Systemd
+	if c.config.Systemd != nil {
+		return *c.config.Systemd
+	}
+	return false
 }
 
 // User returns the user who the container is run as
@@ -618,6 +637,15 @@ func (c *Container) RuntimeName() string {
 
 // Hostname gets the container's hostname
 func (c *Container) Hostname() string {
+	if c.config.UTSNsCtr != "" {
+		utsNsCtr, err := c.runtime.GetContainer(c.config.UTSNsCtr)
+		if err != nil {
+			// should we return an error here?
+			logrus.Errorf("unable to lookup uts namespace for container %s: %v", c.ID(), err)
+			return ""
+		}
+		return utsNsCtr.Hostname()
+	}
 	if c.config.Spec.Hostname != "" {
 		return c.config.Spec.Hostname
 	}
@@ -1161,7 +1189,7 @@ func (c *Container) Umask() string {
 	return c.config.Umask
 }
 
-//Secrets return the secrets in the container
+// Secrets return the secrets in the container
 func (c *Container) Secrets() []*ContainerSecret {
 	return c.config.Secrets
 }
@@ -1241,7 +1269,10 @@ func (c *Container) NetworkMode() string {
 
 // Unlocked accessor for networks
 func (c *Container) networks() (map[string]types.PerNetworkOptions, error) {
-	return c.runtime.state.GetNetworks(c)
+	if c != nil && c.runtime != nil && c.runtime.state != nil { // can fail if c.networks is called from the tests
+		return c.runtime.state.GetNetworks(c)
+	}
+	return nil, nil
 }
 
 // getInterfaceByName returns a formatted interface name for a given

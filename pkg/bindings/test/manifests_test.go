@@ -87,6 +87,7 @@ var _ = Describe("podman manifest", func() {
 
 		list, err := manifests.Inspect(bt.conn, id, nil)
 		Expect(err).ToNot(HaveOccurred())
+
 		Expect(len(list.Manifests)).To(BeNumerically("==", 1))
 
 		// add bogus name to existing list should fail
@@ -128,6 +129,7 @@ var _ = Describe("podman manifest", func() {
 		// removal on good manifest with good digest should work
 		data, err = manifests.Inspect(bt.conn, id, nil)
 		Expect(err).ToNot(HaveOccurred())
+
 		Expect(data.Manifests).Should(BeEmpty())
 	})
 

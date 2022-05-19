@@ -63,7 +63,7 @@ func init() {
 	})
 	flags := createCommand.Flags()
 	flags.SetInterspersed(false)
-	common.DefineCreateFlags(createCommand, &infraOptions, true)
+	common.DefineCreateFlags(createCommand, &infraOptions, true, false)
 	common.DefineNetFlags(createCommand)
 
 	flags.BoolVar(&createOptions.Infra, "infra", true, "Create an infra container associated with the pod to share namespaces with")
@@ -179,7 +179,7 @@ func create(cmd *cobra.Command, args []string) error {
 			return errors.Errorf("pod id file exists. Ensure another pod is not using it or delete %s", podIDFile)
 		}
 		if err != nil {
-			return errors.Errorf("error opening pod-id-file %s", podIDFile)
+			return errors.Errorf("opening pod-id-file %s", podIDFile)
 		}
 		defer errorhandling.CloseQuiet(podIDFD)
 		defer errorhandling.SyncQuiet(podIDFD)
@@ -214,7 +214,7 @@ func create(cmd *cobra.Command, args []string) error {
 	ret, err := parsers.ParseUintList(copy)
 	copy = ""
 	if err != nil {
-		errors.Wrapf(err, "could not parse list")
+		return errors.Wrapf(err, "could not parse list")
 	}
 	var vals []int
 	for ind, val := range ret {
@@ -224,7 +224,8 @@ func create(cmd *cobra.Command, args []string) error {
 	}
 	sort.Ints(vals)
 	for ind, core := range vals {
-		if core > int(cpuSet) {
+		switch {
+		case core > int(cpuSet):
 			if copy == "" {
 				copy = "0-" + strconv.Itoa(int(cpuSet))
 				infraOptions.CPUSetCPUs = copy
@@ -233,9 +234,9 @@ func create(cmd *cobra.Command, args []string) error {
 				infraOptions.CPUSetCPUs = copy
 				break
 			}
-		} else if ind != 0 {
+		case ind != 0:
 			copy += "," + strconv.Itoa(core)
-		} else {
+		default:
 			copy = "" + strconv.Itoa(core)
 		}
 	}

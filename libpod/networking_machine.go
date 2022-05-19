@@ -11,8 +11,10 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/containers/common/libnetwork/types"
+	"github.com/containers/common/pkg/machine"
 	"github.com/sirupsen/logrus"
 )
 
@@ -31,12 +33,23 @@ type machineExpose struct {
 func requestMachinePorts(expose bool, ports []types.PortMapping) error {
 	url := "http://" + machineGvproxyEndpoint + "/services/forwarder/"
 	if expose {
-		url = url + "expose"
+		url += "expose"
 	} else {
-		url = url + "unexpose"
+		url += "unexpose"
 	}
 	ctx := context.Background()
-	client := &http.Client{}
+	client := &http.Client{
+		Transport: &http.Transport{
+			// make sure to not set a proxy here so explicitly ignore the proxy
+			// since we want to talk directly to gvproxy
+			// https://github.com/containers/podman/issues/13628
+			Proxy:                 nil,
+			MaxIdleConns:          50,
+			IdleConnTimeout:       30 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
+	}
 	buf := new(bytes.Buffer)
 	for num, port := range ports {
 		protocols := strings.Split(port.Protocol, ",")
@@ -78,7 +91,6 @@ func requestMachinePorts(expose bool, ports []types.PortMapping) error {
 }
 
 func makeMachineRequest(ctx context.Context, client *http.Client, url string, buf io.Reader) error {
-	//var buf io.ReadWriter
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, buf)
 	if err != nil {
 		return err
@@ -106,7 +118,7 @@ func annotateGvproxyResponseError(r io.Reader) error {
 
 // exposeMachinePorts exposes the ports for podman machine via gvproxy
 func (r *Runtime) exposeMachinePorts(ports []types.PortMapping) error {
-	if !r.config.Engine.MachineEnabled {
+	if !machine.IsGvProxyBased() {
 		return nil
 	}
 	return requestMachinePorts(true, ports)
@@ -114,7 +126,7 @@ func (r *Runtime) exposeMachinePorts(ports []types.PortMapping) error {
 
 // unexposeMachinePorts closes the ports for podman machine via gvproxy
 func (r *Runtime) unexposeMachinePorts(ports []types.PortMapping) error {
-	if !r.config.Engine.MachineEnabled {
+	if !machine.IsGvProxyBased() {
 		return nil
 	}
 	return requestMachinePorts(false, ports)

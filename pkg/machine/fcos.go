@@ -1,3 +1,4 @@
+//go:build amd64 || arm64
 // +build amd64 arm64
 
 package machine
@@ -25,8 +26,8 @@ import (
 // These should eventually be moved into machine/qemu as
 // they are specific to running qemu
 var (
-	artifact string = "qemu"
-	Format   string = "qcow2.xz"
+	artifact = "qemu"
+	Format   = "qcow2.xz"
 )
 
 const (
@@ -42,7 +43,7 @@ type FcosDownload struct {
 }
 
 func NewFcosDownloader(vmType, vmName, imageStream string) (DistributionDownload, error) {
-	info, err := getFCOSDownload(imageStream)
+	info, err := GetFCOSDownload(imageStream)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +79,7 @@ func (f FcosDownload) Get() *Download {
 	return &f.Download
 }
 
-type fcosDownloadInfo struct {
+type FcosDownloadInfo struct {
 	CompressionType string
 	Location        string
 	Release         string
@@ -138,7 +139,7 @@ func getStreamURL(streamType string) url2.URL {
 
 // This should get Exported and stay put as it will apply to all fcos downloads
 // getFCOS parses fedoraCoreOS's stream and returns the image download URL and the release version
-func getFCOSDownload(imageStream string) (*fcosDownloadInfo, error) {
+func GetFCOSDownload(imageStream string) (*FcosDownloadInfo, error) { //nolint:staticcheck
 	var (
 		fcosstable stream.Stream
 		altMeta    release.Release
@@ -148,7 +149,9 @@ func getFCOSDownload(imageStream string) (*fcosDownloadInfo, error) {
 	// This is being hard set to testing. Once podman4 is in the
 	// fcos trees, we should remove it and re-release at least on
 	// macs.
-	imageStream = "podman-testing"
+	// TODO: remove when podman4.0 is in coreos
+
+	imageStream = "podman-testing" //nolint:staticcheck
 
 	switch imageStream {
 	case "podman-testing":
@@ -191,7 +194,7 @@ func getFCOSDownload(imageStream string) (*fcosDownloadInfo, error) {
 		}
 		disk := qcow2.Disk
 
-		return &fcosDownloadInfo{
+		return &FcosDownloadInfo{
 			Location:        disk.Location,
 			Sha256Sum:       disk.Sha256,
 			CompressionType: "xz",
@@ -225,7 +228,7 @@ func getFCOSDownload(imageStream string) (*fcosDownloadInfo, error) {
 	if disk == nil {
 		return nil, fmt.Errorf("unable to pull VM image: no disk in stream")
 	}
-	return &fcosDownloadInfo{
+	return &FcosDownloadInfo{
 		Location:        disk.Location,
 		Release:         qemu.Release,
 		Sha256Sum:       disk.Sha256,

@@ -134,22 +134,31 @@ errmsg "no such file or directory" \
        "context must be a directory" \
        "bud with specified context should fail if context contains not-existing Dockerfile"
 
+# 2022-04-26 after buildah PR 3926 (where Ed added error-message checks"
+errmsg "no FROM statement found" \
+       "Error: no FROM statement found" \
+       "bud with Dockerfile from invalid URL"
+
+errmsg "no contents in .*" \
+       "Error: context must be a directory: .*" \
+       "bud with specified context should fail if context contains empty Dockerfile"
+
+errmsg "checking authfile: stat /tmp/nonexistent: no such file or directory" \
+       "Error: checking authfile: stat /tmp/nonexistent: no such file or directory" \
+       "bud with Containerfile should fail with nonexistent authfile"
+
 ###############################################################################
 # BEGIN tests that don't make sense under podman due to fundamental differences
 
-skip "N/A under podman" \
-     "bud-flags-order-verification"
+# TODO
+# Normally, when buildah exits 1 on error, podman exits 125.
+# These tests are the exception. They exit 1 under podman.
+skip "these tests exit 1 under podman, not 125" \
+     "bud with --add-host" \
+     "bud - invalid runtime flags test"
 
 skip "does not work under podman" \
      "bud without any arguments should succeed"
-
-skip "podman requires a directory, not a Dockerfile" \
-     "bud with specified context should succeed if context contains existing Dockerfile"
-
-# ...or due to Ed's laziness
-skip "Too much effort to spin up a local registry" \
-     "bud with encrypted FROM image" \
-     "bud --authfile"
 
 # ...or due to a fundamental arg-parsing difference between buildah and podman
 # which we could and perhaps should fix in the buildah repo via:
@@ -161,13 +170,11 @@ skip "FIXME FIXME FIXME: argument-order incompatible with podman" \
 skip "FIXME FIXME FIXME: this passes on Ed's laptop, fails in CI??" \
      "bud-multi-stage-nocache-nocommit"
 
-# This will probably never work: buildah and podman have incompatible defaults
-# Documented in https://github.com/containers/podman/issues/10412
-skip "buildah runs with --cgroup-manager=cgroupfs, podman with systemd" \
-     "bud with --cgroup-parent"
-
 ###############################################################################
 # BEGIN tests which are skipped because they make no sense under podman-remote
+
+skip_if_remote "--runtime-flags does not work with podman-remote" \
+               "bud - invalid runtime flags test"
 
 skip_if_remote "--target does not work with podman-remote" \
                "bud-target"
@@ -186,9 +193,22 @@ skip_if_remote "volumes don't work with podman-remote" \
                "buildah bud --volume" \
                "buildah-bud-policy"
 
+# Requires a local file outside context dir
+skip_if_remote "local keyfile not sent to podman-remote" \
+               "bud with encrypted FROM image"
+
 # See podman #9890 for discussion
 skip_if_remote "--stdin option will not be implemented in podman-remote" \
                "bud test no --stdin"
+
+# https://github.com/containers/buildah/pull/3823
+# If this is possible with podman-remote, it'll take way more Go skills
+# to implement than what Ed can do.
+skip_if_remote "--output option not implemented in podman-remote" \
+               "build with custom build output and output rootfs to directory" \
+               "build with custom build output and output rootfs to tar" \
+               "build with custom build output and output rootfs to tar by pipe" \
+               "build with custom build output must fail for bad input"
 
 ###############################################################################
 # BEGIN tests which are skipped due to actual podman or podman-remote bugs.

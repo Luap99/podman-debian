@@ -59,7 +59,7 @@ function teardown() {
     skip_if_remote "CONTAINERS_CONF only effects server side"
     image="i.do/not/exist:image"
     tmpdir=$PODMAN_TMPDIR/pod-test
-    run mkdir -p $tmpdir
+    mkdir -p $tmpdir
     containersconf=$tmpdir/containers.conf
     cat >$containersconf <<EOF
 [engine]
@@ -86,9 +86,7 @@ EOF
 
     # (Assert that output is formatted, not a one-line blob: #8021)
     run_podman pod inspect $podname
-    if [[ "${#lines[*]}" -lt 10 ]]; then
-        die "Output from 'pod inspect' is only ${#lines[*]} lines; see #8011"
-    fi
+    assert "${#lines[*]}" -ge 10 "Output from 'pod inspect'; see #8011"
 
     # Randomly-assigned port in the 5xxx range
     port=$(random_free_port)
@@ -252,7 +250,7 @@ EOF
     is "$output" ".*invalid config provided: cannot set hostname when joining the pod UTS namespace: invalid configuration" "--hostname should not be allowed in share UTS pod"
 
     run_podman run --rm --pod $pod_id $IMAGE cat /etc/hosts
-    is "$output" ".*$add_host_ip $add_host_n" "--add-host was added"
+    is "$output" ".*$add_host_ip[[:blank:]]$add_host_n" "--add-host was added"
     is "$output" ".*	$hostname"            "--hostname is in /etc/hosts"
     #               ^^^^ this must be a tab, not a space
 
@@ -322,10 +320,11 @@ EOF
 
     run_podman --noout pod create --name $pod_name --infra-name "$infra_name" --infra-image "$infra_image"
     is "$output" "" "output from pod create should be empty"
-    run_podman '?' pod create --infra-name "$infra_name"
-    if [ $status -eq 0 ]; then
-        die "Podman should fail when user try to create two pods with the same infra-name value"
-    fi
+
+    run_podman 125 pod create --infra-name "$infra_name"
+    assert "$output" =~ "^Error: .*: the container name \"$infra_name\" is already in use by .* You have to remove that container to be able to reuse that name.: that name is already in use" \
+           "Trying to create two pods with same infra-name"
+
     run_podman pod rm -f $pod_name
     run_podman rmi $infra_image
 }
@@ -380,6 +379,34 @@ EOF
     is "$output" ".*$container_1_ID.*"
     is "$output" ".*$container_2_ID.*"
     is "$output" ".*$container_3_ID.*"
+}
+
+@test "podman pod create share net" {
+    run_podman pod create --name test
+    run_podman pod inspect test --format {{.InfraConfig.HostNetwork}}
+    is "$output" "false" "Default network sharing should be false"
+    run_podman pod rm test
+
+    run_podman pod create --name test --share ipc  --network private
+    run_podman pod inspect test --format {{.InfraConfig.HostNetwork}}
+    is "$output" "false" "Private network sharing with only ipc should be false"
+    run_podman pod rm test
+
+    run_podman pod create --name test --share net  --network private
+    run_podman pod inspect test --format {{.InfraConfig.HostNetwork}}
+    is "$output" "false" "Private network sharing with only net should be false"
+    run_podman pod rm test
+
+    run_podman pod create --name test --share net --network host
+    run_podman pod inspect test --format {{.InfraConfig.HostNetwork}}
+    is "$output" "true" "Host network sharing with only net should be true"
+    run_podman pod rm test
+
+    run_podman pod create --name test --share ipc --network host
+    run_podman pod inspect test --format {{.InfraConfig.HostNetwork}}
+    is "$output" "true" "Host network sharing with only ipc should be true"
+    run_podman pod rm test
+
 }
 
 # vim: filetype=sh

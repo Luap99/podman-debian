@@ -1,3 +1,4 @@
+//go:build amd64 || arm64
 // +build amd64 arm64
 
 package machine
@@ -19,8 +20,8 @@ import (
 	"github.com/containers/storage/pkg/archive"
 	"github.com/sirupsen/logrus"
 	"github.com/ulikunitz/xz"
-	"github.com/vbauerster/mpb/v6"
-	"github.com/vbauerster/mpb/v6/decor"
+	"github.com/vbauerster/mpb/v7"
+	"github.com/vbauerster/mpb/v7/decor"
 )
 
 // GenericDownload is used when a user provides a URL
@@ -128,7 +129,7 @@ func DownloadVMImage(downloadURL *url2.URL, localImagePath string) error {
 	}()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("error downloading VM image %s: %s", downloadURL, resp.Status)
+		return fmt.Errorf("downloading VM image %s: %s", downloadURL, resp.Status)
 	}
 	size := resp.ContentLength
 	urlSplit := strings.Split(downloadURL.Path, "/")

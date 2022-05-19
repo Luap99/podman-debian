@@ -5,9 +5,9 @@ import (
 
 	"github.com/containers/common/pkg/parse"
 	"github.com/containers/podman/v4/libpod"
+	v1 "github.com/containers/podman/v4/pkg/k8s.io/api/core/v1"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-	v1 "k8s.io/api/core/v1"
 )
 
 const (
@@ -17,7 +17,7 @@ const (
 	kubeFilePermission = 0644
 )
 
-// nolint:golint
+//nolint:revive
 type KubeVolumeType int
 
 const (
@@ -26,7 +26,7 @@ const (
 	KubeVolumeTypeConfigMap KubeVolumeType = iota
 )
 
-// nolint:golint
+//nolint:revive
 type KubeVolume struct {
 	// Type of volume to create
 	Type KubeVolumeType
@@ -76,7 +76,7 @@ func VolumeFromHostPath(hostPath *v1.HostPathVolumeSource) (*KubeVolume, error) 
 				return nil, errors.Wrap(err, "error checking HostPathSocket")
 			}
 			if st.Mode()&os.ModeSocket != os.ModeSocket {
-				return nil, errors.Errorf("error checking HostPathSocket: path %s is not a socket", hostPath.Path)
+				return nil, errors.Errorf("checking HostPathSocket: path %s is not a socket", hostPath.Path)
 			}
 
 		case v1.HostPathDirectory:

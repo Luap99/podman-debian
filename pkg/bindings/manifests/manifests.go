@@ -7,9 +7,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/blang/semver"
 	"github.com/containers/image/v5/manifest"
+	imageTypes "github.com/containers/image/v5/types"
 	"github.com/containers/podman/v4/pkg/api/handlers"
+	"github.com/containers/podman/v4/pkg/auth"
 	"github.com/containers/podman/v4/pkg/bindings"
 	"github.com/containers/podman/v4/pkg/bindings/images"
 	"github.com/containers/podman/v4/pkg/domain/entities"
@@ -92,15 +93,19 @@ func Add(ctx context.Context, name string, options *AddOptions) (string, error) 
 	}
 
 	optionsv4 := ModifyOptions{
-		All:         options.All,
-		Annotations: options.Annotation,
-		Arch:        options.Arch,
-		Features:    options.Features,
-		Images:      options.Images,
-		OS:          options.OS,
-		OSFeatures:  nil,
-		OSVersion:   options.OSVersion,
-		Variant:     options.Variant,
+		All:           options.All,
+		Annotations:   options.Annotation,
+		Arch:          options.Arch,
+		Features:      options.Features,
+		Images:        options.Images,
+		OS:            options.OS,
+		OSFeatures:    nil,
+		OSVersion:     options.OSVersion,
+		Variant:       options.Variant,
+		Username:      options.Username,
+		Password:      options.Password,
+		Authfile:      options.Authfile,
+		SkipTLSVerify: options.SkipTLSVerify,
 	}
 	optionsv4.WithOperation("update")
 	return Modify(ctx, name, options.Images, &optionsv4)
@@ -131,6 +136,11 @@ func Push(ctx context.Context, name, destination string, options *images.PushOpt
 		return "", err
 	}
 
+	header, err := auth.MakeXRegistryAuthHeader(&imageTypes.SystemContext{AuthFilePath: options.GetAuthfile()}, options.GetUsername(), options.GetPassword())
+	if err != nil {
+		return "", err
+	}
+
 	params, err := options.ToParams()
 	if err != nil {
 		return "", err
@@ -142,20 +152,13 @@ func Push(ctx context.Context, name, destination string, options *images.PushOpt
 		params.Set("tlsVerify", strconv.FormatBool(!options.GetSkipTLSVerify()))
 	}
 
-	var response *bindings.APIResponse
-	if bindings.ServiceVersion(ctx).GTE(semver.MustParse("4.0.0")) {
-		response, err = conn.DoRequest(ctx, nil, http.MethodPost, "/manifests/%s/registry/%s", params, nil, name, destination)
-	} else {
-		params.Set("image", name)
-		params.Set("destination", destination)
-		response, err = conn.DoRequest(ctx, nil, http.MethodPost, "/manifests/%s/push", params, nil, name)
-	}
+	response, err := conn.DoRequest(ctx, nil, http.MethodPost, "/manifests/%s/registry/%s", params, header, name, destination)
 	if err != nil {
 		return "", err
 	}
 	defer response.Body.Close()
 
-	return idr.ID, err
+	return idr.ID, response.Process(&idr)
 }
 
 // Modify modifies the given manifest list using options and the optional list of images
@@ -175,7 +178,23 @@ func Modify(ctx context.Context, name string, images []string, options *ModifyOp
 	}
 	reader := strings.NewReader(opts)
 
-	response, err := conn.DoRequest(ctx, reader, http.MethodPut, "/manifests/%s", nil, nil, name)
+	header, err := auth.MakeXRegistryAuthHeader(&imageTypes.SystemContext{AuthFilePath: options.GetAuthfile()}, options.GetUsername(), options.GetPassword())
+	if err != nil {
+		return "", err
+	}
+
+	params, err := options.ToParams()
+	if err != nil {
+		return "", err
+	}
+	// SkipTLSVerify is special.  We need to delete the param added by
+	// ToParams() and change the key and flip the bool
+	if options.SkipTLSVerify != nil {
+		params.Del("SkipTLSVerify")
+		params.Set("tlsVerify", strconv.FormatBool(!options.GetSkipTLSVerify()))
+	}
+
+	response, err := conn.DoRequest(ctx, reader, http.MethodPut, "/manifests/%s", params, header, name)
 	if err != nil {
 		return "", err
 	}
@@ -203,6 +222,7 @@ func Modify(ctx context.Context, name string, images []string, options *ModifyOp
 		}
 		return report.ID, nil
 	}
+
 	errModel := errorhandling.ErrorModel{
 		ResponseCode: response.StatusCode,
 	}

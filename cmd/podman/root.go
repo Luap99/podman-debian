@@ -153,7 +153,9 @@ func persistentPreRunE(cmd *cobra.Command, args []string) error {
 						*runtime,
 					)
 				}
-				runtimeFlag.Value.Set(*runtime)
+				if err := runtimeFlag.Value.Set(*runtime); err != nil {
+					return err
+				}
 				runtimeFlag.Changed = true
 				logrus.Debugf("Checkpoint was created using '%s'. Restore will use the same runtime", *runtime)
 			} else if cfg.RuntimePath != *runtime {
@@ -402,7 +404,7 @@ func rootFlags(cmd *cobra.Command, opts *entities.PodmanConfig) {
 		networkBackendFlagName := "network-backend"
 		pFlags.StringVar(&cfg.Network.NetworkBackend, networkBackendFlagName, cfg.Network.NetworkBackend, `Network backend to use ("cni"|"netavark")`)
 		_ = cmd.RegisterFlagCompletionFunc(networkBackendFlagName, common.AutocompleteNetworkBackend)
-		pFlags.MarkHidden(networkBackendFlagName)
+		_ = pFlags.MarkHidden(networkBackendFlagName)
 
 		rootFlagName := "root"
 		pFlags.StringVar(&cfg.Engine.StaticDir, rootFlagName, "", "Path to the root directory in which data, including images, is stored")
@@ -428,6 +430,10 @@ func rootFlags(cmd *cobra.Command, opts *entities.PodmanConfig) {
 		_ = cmd.RegisterFlagCompletionFunc(tmpdirFlagName, completion.AutocompleteDefault)
 
 		pFlags.BoolVar(&opts.Trace, "trace", false, "Enable opentracing output (default false)")
+
+		volumePathFlagName := "volumepath"
+		pFlags.StringVar(&opts.Engine.VolumePath, volumePathFlagName, "", "Path to the volume directory in which volume data is stored")
+		_ = cmd.RegisterFlagCompletionFunc(volumePathFlagName, completion.AutocompleteDefault)
 
 		// Hide these flags for both ABI and Tunneling
 		for _, f := range []string{

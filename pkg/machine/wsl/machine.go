@@ -145,25 +145,29 @@ http://docs.microsoft.com/en-us/windows/wsl/install\
 const (
 	winSShProxy    = "win-sshproxy.exe"
 	winSshProxyTid = "win-sshproxy.tid"
+	pipePrefix     = "npipe:////./pipe/"
+	globalPipe     = "docker_engine"
 )
 
 type Provider struct{}
 
 type MachineVM struct {
-	// IdentityPath is the fq path to the ssh priv key
-	IdentityPath string
-	// IgnitionFilePath is the fq path to the .ign file
+	// ConfigPath is the path to the configuration file
+	ConfigPath string
+	// Created contains the original created time instead of querying the file mod time
+	Created time.Time
+	// ImageStream is the version of fcos being used
 	ImageStream string
 	// ImagePath is the fq path to
 	ImagePath string
+	// LastUp contains the last recorded uptime
+	LastUp time.Time
 	// Name of the vm
 	Name string
-	// SSH port for user networking
-	Port int
-	// RemoteUsername of the vm user
-	RemoteUsername string
 	// Whether this machine should run in a rootful or rootless manner
 	Rootful bool
+	// SSH identity, username, etc
+	machine.SSHConfig
 }
 
 type ExitCodeError struct {
@@ -178,16 +182,22 @@ func GetWSLProvider() machine.Provider {
 	return wslProvider
 }
 
-// NewMachine initializes an instance of a virtual machine based on the qemu
-// virtualization.
+// NewMachine initializes an instance of a wsl machine
 func (p *Provider) NewMachine(opts machine.InitOptions) (machine.VM, error) {
 	vm := new(MachineVM)
 	if len(opts.Name) > 0 {
 		vm.Name = opts.Name
 	}
+	configPath, err := getConfigPath(opts.Name)
+	if err != nil {
+		return vm, err
+	}
 
+	vm.ConfigPath = configPath
 	vm.ImagePath = opts.ImagePath
 	vm.RemoteUsername = opts.Username
+	vm.Created = time.Now()
+	vm.LastUp = vm.Created
 
 	// Add a random port for ssh
 	port, err := utils.GetRandomPort()
@@ -199,23 +209,67 @@ func (p *Provider) NewMachine(opts machine.InitOptions) (machine.VM, error) {
 	return vm, nil
 }
 
+func getConfigPath(name string) (string, error) {
+	vmConfigDir, err := machine.GetConfDir(vmtype)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(vmConfigDir, name+".json"), nil
+}
+
 // LoadByName reads a json file that describes a known qemu vm
 // and returns a vm instance
 func (p *Provider) LoadVMByName(name string) (machine.VM, error) {
+	configPath, err := getConfigPath(name)
+	if err != nil {
+		return nil, err
+	}
+
+	vm, err := readAndMigrate(configPath, name)
+	return vm, err
+}
+
+// readAndMigrate returns the content of the VM's
+// configuration file in json
+func readAndMigrate(configPath string, name string) (*MachineVM, error) {
 	vm := new(MachineVM)
-	vmConfigDir, err := machine.GetConfDir(vmtype)
+	b, err := os.ReadFile(configPath)
 	if err != nil {
-		return nil, err
-	}
-	b, err := ioutil.ReadFile(filepath.Join(vmConfigDir, name+".json"))
-	if os.IsNotExist(err) {
-		return nil, errors.Wrap(machine.ErrNoSuchVM, name)
-	}
-	if err != nil {
-		return nil, err
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, errors.Wrap(machine.ErrNoSuchVM, name)
+		}
+		return vm, err
 	}
 	err = json.Unmarshal(b, vm)
+	if err == nil && vm.Created.IsZero() {
+		err = vm.migrate40(configPath)
+	}
 	return vm, err
+}
+
+func (v *MachineVM) migrate40(configPath string) error {
+	v.ConfigPath = configPath
+	fi, err := os.Stat(configPath)
+	if err != nil {
+		return err
+	}
+	v.Created = fi.ModTime()
+	v.LastUp = getLegacyLastStart(v)
+	return v.writeConfig()
+}
+
+func getLegacyLastStart(vm *MachineVM) time.Time {
+	vmDataDir, err := machine.GetDataDir(vmtype)
+	if err != nil {
+		return vm.Created
+	}
+	distDir := filepath.Join(vmDataDir, "wsldist")
+	start := filepath.Join(distDir, vm.Name, "laststart")
+	info, err := os.Stat(start)
+	if err != nil {
+		return vm.Created
+	}
+	return info.ModTime()
 }
 
 // Init writes the json configuration file to the filesystem for
@@ -286,12 +340,7 @@ func downloadDistro(v *MachineVM, opts machine.InitOptions) error {
 }
 
 func (v *MachineVM) writeConfig() error {
-	vmConfigDir, err := machine.GetConfDir(vmtype)
-	if err != nil {
-		return err
-	}
-
-	jsonFile := filepath.Join(vmConfigDir, v.Name) + ".json"
+	jsonFile := v.ConfigPath
 
 	b, err := json.MarshalIndent(v, "", " ")
 	if err != nil {
@@ -443,6 +492,10 @@ func configureSystem(v *MachineVM, dist string) error {
 
 	if err := pipeCmdPassThrough("wsl", containersConf, "-d", dist, "sh", "-c", "cat > /etc/containers/containers.conf"); err != nil {
 		return errors.Wrap(err, "could not create containers.conf for guest OS")
+	}
+
+	if err := runCmdPassThrough("wsl", "-d", dist, "sh", "-c", "echo wsl > /etc/containers/podman-machine"); err != nil {
+		return errors.Wrap(err, "could not create podman-machine file for guest OS")
 	}
 
 	return nil
@@ -729,28 +782,34 @@ func pipeCmdPassThrough(name string, input string, arg ...string) error {
 	return cmd.Run()
 }
 
-func (v *MachineVM) Set(name string, opts machine.SetOptions) error {
-	if v.Rootful == opts.Rootful {
-		return nil
-	}
+func (v *MachineVM) Set(_ string, opts machine.SetOptions) ([]error, error) {
+	// If one setting fails to be applied, the others settings will not fail and still be applied.
+	// The setting(s) that failed to be applied will have its errors returned in setErrors
+	var setErrors []error
 
-	changeCon, err := machine.AnyConnectionDefault(v.Name, v.Name+"-root")
-	if err != nil {
-		return err
-	}
-
-	if changeCon {
-		newDefault := v.Name
-		if opts.Rootful {
-			newDefault += "-root"
-		}
-		if err := machine.ChangeDefault(newDefault); err != nil {
-			return err
+	if opts.Rootful != nil && v.Rootful != *opts.Rootful {
+		err := v.setRootful(*opts.Rootful)
+		if err != nil {
+			setErrors = append(setErrors, errors.Wrapf(err, "error setting rootful option"))
+		} else {
+			v.Rootful = *opts.Rootful
 		}
 	}
 
-	v.Rootful = opts.Rootful
-	return v.writeConfig()
+	if opts.CPUs != nil {
+		setErrors = append(setErrors, errors.Errorf("changing CPUs not suppored for WSL machines"))
+	}
+
+	if opts.Memory != nil {
+		setErrors = append(setErrors, errors.Errorf("changing memory not suppored for WSL machines"))
+
+	}
+
+	if opts.DiskSize != nil {
+		setErrors = append(setErrors, errors.Errorf("changing Disk Size not suppored for WSL machines"))
+	}
+
+	return setErrors, v.writeConfig()
 }
 
 func (v *MachineVM) Start(name string, _ machine.StartOptions) error {
@@ -797,20 +856,20 @@ func (v *MachineVM) Start(name string, _ machine.StartOptions) error {
 		}
 	}
 
-	return markStart(name)
+	_, _, err = v.updateTimeStamps(true)
+	return err
 }
 
 func launchWinProxy(v *MachineVM) (bool, string, error) {
-	globalName := true
-	pipeName := "docker_engine"
-	if !pipeAvailable(pipeName) {
-		pipeName = toDist(v.Name)
-		globalName = false
-		if !pipeAvailable(pipeName) {
-			return globalName, "", errors.Errorf("could not start api proxy since expected pipe is not available: %s", pipeName)
-		}
+	machinePipe := toDist(v.Name)
+	if !pipeAvailable(machinePipe) {
+		return false, "", errors.Errorf("could not start api proxy since expected pipe is not available: %s", machinePipe)
 	}
-	fullPipeName := "npipe:////./pipe/" + pipeName
+
+	globalName := false
+	if pipeAvailable(globalPipe) {
+		globalName = true
+	}
 
 	exe, err := os.Executable()
 	if err != nil {
@@ -828,13 +887,28 @@ func launchWinProxy(v *MachineVM) (bool, string, error) {
 		return globalName, "", err
 	}
 
-	dest := fmt.Sprintf("ssh://root@localhost:%d/run/podman/podman.sock", v.Port)
-	cmd := exec.Command(command, v.Name, stateDir, fullPipeName, dest, v.IdentityPath)
+	destSock := "/run/user/1000/podman/podman.sock"
+	forwardUser := v.RemoteUsername
+
+	if v.Rootful {
+		destSock = "/run/podman/podman.sock"
+		forwardUser = "root"
+	}
+
+	dest := fmt.Sprintf("ssh://%s@localhost:%d%s", forwardUser, v.Port, destSock)
+	args := []string{v.Name, stateDir, pipePrefix + machinePipe, dest, v.IdentityPath}
+	waitPipe := machinePipe
+	if globalName {
+		args = append(args, pipePrefix+globalPipe, dest, v.IdentityPath)
+		waitPipe = globalPipe
+	}
+
+	cmd := exec.Command(command, args...)
 	if err := cmd.Start(); err != nil {
 		return globalName, "", err
 	}
 
-	return globalName, fullPipeName, waitPipeExists(pipeName, 30, func() error {
+	return globalName, pipePrefix + waitPipe, waitPipeExists(waitPipe, 30, func() error {
 		active, exitCode := getProcessState(cmd.Process.Pid)
 		if !active {
 			return errors.Errorf("win-sshproxy.exe failed to start, exit code: %d (see windows event logs)", exitCode)
@@ -978,6 +1052,8 @@ func (v *MachineVM) Stop(name string, _ machine.StopOptions) error {
 		return errors.Errorf("%q is not running", v.Name)
 	}
 
+	_, _, _ = v.updateTimeStamps(true)
+
 	if err := stopWinProxy(v); err != nil {
 		fmt.Fprintf(os.Stderr, "Could not stop API forwarding service (win-sshproxy.exe): %s\n", err.Error())
 	}
@@ -1003,6 +1079,14 @@ func (v *MachineVM) Stop(name string, _ machine.StopOptions) error {
 	}
 
 	return nil
+}
+
+func (v *MachineVM) State(bypass bool) (machine.Status, error) {
+	if v.isRunning() {
+		return machine.Running, nil
+	}
+
+	return machine.Stopped, nil
 }
 
 func stopWinProxy(v *MachineVM) error {
@@ -1177,14 +1261,9 @@ func GetVMInfos() ([]*machine.ListResponse, error) {
 	var listed []*machine.ListResponse
 
 	if err = filepath.WalkDir(vmConfigDir, func(path string, d fs.DirEntry, err error) error {
-		vm := new(MachineVM)
 		if strings.HasSuffix(d.Name(), ".json") {
-			fullPath := filepath.Join(vmConfigDir, d.Name())
-			b, err := ioutil.ReadFile(fullPath)
-			if err != nil {
-				return err
-			}
-			err = json.Unmarshal(b, vm)
+			path := filepath.Join(vmConfigDir, d.Name())
+			vm, err := readAndMigrate(path, strings.TrimSuffix(d.Name(), ".json"))
 			if err != nil {
 				return err
 			}
@@ -1196,15 +1275,13 @@ func GetVMInfos() ([]*machine.ListResponse, error) {
 			listEntry.CPUs, _ = getCPUs(vm)
 			listEntry.Memory, _ = getMem(vm)
 			listEntry.DiskSize = getDiskSize(vm)
-			fi, err := os.Stat(fullPath)
-			if err != nil {
-				return err
-			}
-			listEntry.CreatedAt = fi.ModTime()
-			listEntry.LastUp = getLastStart(vm, fi.ModTime())
-			if vm.isRunning() {
-				listEntry.Running = true
-			}
+			listEntry.RemoteUsername = vm.RemoteUsername
+			listEntry.Port = vm.Port
+			listEntry.IdentityPath = vm.IdentityPath
+
+			running := vm.isRunning()
+			listEntry.CreatedAt, listEntry.LastUp, _ = vm.updateTimeStamps(running)
+			listEntry.Running = running
 
 			listed = append(listed, listEntry)
 		}
@@ -1213,6 +1290,16 @@ func GetVMInfos() ([]*machine.ListResponse, error) {
 		return nil, err
 	}
 	return listed, err
+}
+
+func (vm *MachineVM) updateTimeStamps(updateLast bool) (time.Time, time.Time, error) {
+	var err error
+	if updateLast {
+		vm.LastUp = time.Now()
+		err = vm.writeConfig()
+	}
+
+	return vm.Created, vm.LastUp, err
 }
 
 func getDiskSize(vm *MachineVM) uint64 {
@@ -1227,36 +1314,6 @@ func getDiskSize(vm *MachineVM) uint64 {
 		return 0
 	}
 	return uint64(info.Size())
-}
-
-func markStart(name string) error {
-	vmDataDir, err := machine.GetDataDir(vmtype)
-	if err != nil {
-		return err
-	}
-	distDir := filepath.Join(vmDataDir, "wsldist")
-	start := filepath.Join(distDir, name, "laststart")
-	file, err := os.Create(start)
-	if err != nil {
-		return err
-	}
-	file.Close()
-
-	return nil
-}
-
-func getLastStart(vm *MachineVM, created time.Time) time.Time {
-	vmDataDir, err := machine.GetDataDir(vmtype)
-	if err != nil {
-		return created
-	}
-	distDir := filepath.Join(vmDataDir, "wsldist")
-	start := filepath.Join(distDir, vm.Name, "laststart")
-	info, err := os.Stat(start)
-	if err != nil {
-		return created
-	}
-	return info.ModTime()
 }
 
 func getCPUs(vm *MachineVM) (uint64, error) {
@@ -1334,4 +1391,130 @@ func (p *Provider) IsValidVMName(name string) (bool, error) {
 
 func (p *Provider) CheckExclusiveActiveVM() (bool, string, error) {
 	return false, "", nil
+}
+
+func (v *MachineVM) setRootful(rootful bool) error {
+	changeCon, err := machine.AnyConnectionDefault(v.Name, v.Name+"-root")
+	if err != nil {
+		return err
+	}
+
+	if changeCon {
+		newDefault := v.Name
+		if rootful {
+			newDefault += "-root"
+		}
+		err := machine.ChangeDefault(newDefault)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Inspect returns verbose detail about the machine
+func (v *MachineVM) Inspect() (*machine.InspectInfo, error) {
+	state, err := v.State(false)
+	if err != nil {
+		return nil, err
+	}
+
+	created, lastUp, _ := v.updateTimeStamps(state == machine.Running)
+
+	return &machine.InspectInfo{
+		ConfigPath: machine.VMFile{Path: v.ConfigPath},
+		Created:    created,
+		Image: machine.ImageConfig{
+			ImagePath:   machine.VMFile{Path: v.ImagePath},
+			ImageStream: v.ImageStream,
+		},
+		LastUp:    lastUp,
+		Name:      v.Name,
+		Resources: v.getResources(),
+		SSHConfig: v.SSHConfig,
+		State:     state,
+	}, nil
+}
+
+func (v *MachineVM) getResources() (resources machine.ResourceConfig) {
+	resources.CPUs, _ = getCPUs(v)
+	resources.Memory, _ = getMem(v)
+	resources.DiskSize = getDiskSize(v)
+	return
+}
+
+// RemoveAndCleanMachines removes all machine and cleans up any other files associatied with podman machine
+func (p *Provider) RemoveAndCleanMachines() error {
+	var (
+		vm             machine.VM
+		listResponse   []*machine.ListResponse
+		opts           machine.ListOptions
+		destroyOptions machine.RemoveOptions
+	)
+	destroyOptions.Force = true
+	var prevErr error
+
+	listResponse, err := p.List(opts)
+	if err != nil {
+		return err
+	}
+
+	for _, mach := range listResponse {
+		vm, err = p.LoadVMByName(mach.Name)
+		if err != nil {
+			if prevErr != nil {
+				logrus.Error(prevErr)
+			}
+			prevErr = err
+		}
+		_, remove, err := vm.Remove(mach.Name, destroyOptions)
+		if err != nil {
+			if prevErr != nil {
+				logrus.Error(prevErr)
+			}
+			prevErr = err
+		} else {
+			if err := remove(); err != nil {
+				if prevErr != nil {
+					logrus.Error(prevErr)
+				}
+				prevErr = err
+			}
+		}
+	}
+
+	// Clean leftover files in data dir
+	dataDir, err := machine.DataDirPrefix()
+	if err != nil {
+		if prevErr != nil {
+			logrus.Error(prevErr)
+		}
+		prevErr = err
+	} else {
+		err := os.RemoveAll(dataDir)
+		if err != nil {
+			if prevErr != nil {
+				logrus.Error(prevErr)
+			}
+			prevErr = err
+		}
+	}
+
+	// Clean leftover files in conf dir
+	confDir, err := machine.ConfDirPrefix()
+	if err != nil {
+		if prevErr != nil {
+			logrus.Error(prevErr)
+		}
+		prevErr = err
+	} else {
+		err := os.RemoveAll(confDir)
+		if err != nil {
+			if prevErr != nil {
+				logrus.Error(prevErr)
+			}
+			prevErr = err
+		}
+	}
+	return prevErr
 }

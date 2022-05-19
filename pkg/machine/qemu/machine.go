@@ -34,7 +34,7 @@ import (
 
 var (
 	qemuProvider = &Provider{}
-	// vmtype refers to qemu (vs libvirt, krun, etc)
+	// vmtype refers to qemu (vs libvirt, krun, etc).
 	vmtype = "qemu"
 )
 
@@ -71,10 +71,16 @@ func (p *Provider) NewMachine(opts machine.InitOptions) (machine.VM, error) {
 	if len(opts.Name) > 0 {
 		vm.Name = opts.Name
 	}
-	ignitionFile := filepath.Join(vmConfigDir, vm.Name+".ign")
-	vm.IgnitionFilePath = ignitionFile
-
-	vm.ImagePath = opts.ImagePath
+	ignitionFile, err := machine.NewMachineFile(filepath.Join(vmConfigDir, vm.Name+".ign"), nil)
+	if err != nil {
+		return nil, err
+	}
+	vm.IgnitionFile = *ignitionFile
+	imagePath, err := machine.NewMachineFile(opts.ImagePath, nil)
+	if err != nil {
+		return nil, err
+	}
+	vm.ImagePath = *imagePath
 	vm.RemoteUsername = opts.Username
 
 	// Add a random port for ssh
@@ -88,6 +94,8 @@ func (p *Provider) NewMachine(opts machine.InitOptions) (machine.VM, error) {
 	vm.Memory = opts.Memory
 	vm.DiskSize = opts.DiskSize
 
+	vm.Created = time.Now()
+
 	// Find the qemu executable
 	cfg, err := config.Default()
 	if err != nil {
@@ -97,56 +105,133 @@ func (p *Provider) NewMachine(opts machine.InitOptions) (machine.VM, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	cmd := []string{execPath}
 	// Add memory
 	cmd = append(cmd, []string{"-m", strconv.Itoa(int(vm.Memory))}...)
 	// Add cpus
 	cmd = append(cmd, []string{"-smp", strconv.Itoa(int(vm.CPUs))}...)
 	// Add ignition file
-	cmd = append(cmd, []string{"-fw_cfg", "name=opt/com.coreos/config,file=" + vm.IgnitionFilePath}...)
+	cmd = append(cmd, []string{"-fw_cfg", "name=opt/com.coreos/config,file=" + vm.IgnitionFile.GetPath()}...)
 	// Add qmp socket
 	monitor, err := NewQMPMonitor("unix", vm.Name, defaultQMPTimeout)
 	if err != nil {
 		return nil, err
 	}
 	vm.QMPMonitor = monitor
-	cmd = append(cmd, []string{"-qmp", monitor.Network + ":/" + monitor.Address + ",server=on,wait=off"}...)
+	cmd = append(cmd, []string{"-qmp", monitor.Network + ":/" + monitor.Address.GetPath() + ",server=on,wait=off"}...)
 
 	// Add network
 	// Right now the mac address is hardcoded so that the host networking gives it a specific IP address.  This is
 	// why we can only run one vm at a time right now
 	cmd = append(cmd, []string{"-netdev", "socket,id=vlan,fd=3", "-device", "virtio-net-pci,netdev=vlan,mac=5a:94:ef:e4:0c:ee"}...)
-	socketPath, err := getRuntimeDir()
-	if err != nil {
+	if err := vm.setReadySocket(); err != nil {
 		return nil, err
 	}
-	virtualSocketPath := filepath.Join(socketPath, "podman", vm.Name+"_ready.sock")
+
 	// Add serial port for readiness
 	cmd = append(cmd, []string{
 		"-device", "virtio-serial",
-		"-chardev", "socket,path=" + virtualSocketPath + ",server=on,wait=off,id=" + vm.Name + "_ready",
+		// qemu needs to establish the long name; other connections can use the symlink'd
+		"-chardev", "socket,path=" + vm.ReadySocket.Path + ",server=on,wait=off,id=" + vm.Name + "_ready",
 		"-device", "virtserialport,chardev=" + vm.Name + "_ready" + ",name=org.fedoraproject.port.0"}...)
 	vm.CmdLine = cmd
+	if err := vm.setPIDSocket(); err != nil {
+		return nil, err
+	}
 	return vm, nil
 }
 
-// LoadByName reads a json file that describes a known qemu vm
+// migrateVM takes the old configuration structure and migrates it
+// to the new structure and writes it to the filesystem
+func migrateVM(configPath string, config []byte, vm *MachineVM) error {
+	fmt.Printf("Migrating machine %q\n", vm.Name)
+	var old MachineVMV1
+	err := json.Unmarshal(config, &old)
+	if err != nil {
+		return err
+	}
+	// Looks like we loaded the older structure; now we need to migrate
+	// from the old structure to the new structure
+	_, pidFile, err := vm.getSocketandPid()
+	if err != nil {
+		return err
+	}
+
+	pidFilePath := machine.VMFile{Path: pidFile}
+	qmpMonitor := Monitor{
+		Address: machine.VMFile{Path: old.QMPMonitor.Address},
+		Network: old.QMPMonitor.Network,
+		Timeout: old.QMPMonitor.Timeout,
+	}
+	socketPath, err := getRuntimeDir()
+	if err != nil {
+		return err
+	}
+	virtualSocketPath := filepath.Join(socketPath, "podman", vm.Name+"_ready.sock")
+	readySocket := machine.VMFile{Path: virtualSocketPath}
+
+	vm.HostUser = machine.HostUser{}
+	vm.ImageConfig = machine.ImageConfig{}
+	vm.ResourceConfig = machine.ResourceConfig{}
+	vm.SSHConfig = machine.SSHConfig{}
+
+	ignitionFilePath, err := machine.NewMachineFile(old.IgnitionFilePath, nil)
+	if err != nil {
+		return err
+	}
+	imagePath, err := machine.NewMachineFile(old.ImagePath, nil)
+	if err != nil {
+		return err
+	}
+
+	// setReadySocket will stick the entry into the new struct
+	if err := vm.setReadySocket(); err != nil {
+		return err
+	}
+
+	vm.CPUs = old.CPUs
+	vm.CmdLine = old.CmdLine
+	vm.DiskSize = old.DiskSize
+	vm.IdentityPath = old.IdentityPath
+	vm.IgnitionFile = *ignitionFilePath
+	vm.ImagePath = *imagePath
+	vm.ImageStream = old.ImageStream
+	vm.Memory = old.Memory
+	vm.Mounts = old.Mounts
+	vm.Name = old.Name
+	vm.PidFilePath = pidFilePath
+	vm.Port = old.Port
+	vm.QMPMonitor = qmpMonitor
+	vm.ReadySocket = readySocket
+	vm.RemoteUsername = old.RemoteUsername
+	vm.Rootful = old.Rootful
+	vm.UID = old.UID
+
+	// Backup the original config file
+	if err := os.Rename(configPath, configPath+".orig"); err != nil {
+		return err
+	}
+	// Write the config file
+	if err := vm.writeConfig(); err != nil {
+		// If the config file fails to be written, put the origina
+		// config file back before erroring
+		if renameError := os.Rename(configPath+".orig", configPath); renameError != nil {
+			logrus.Warn(renameError)
+		}
+		return err
+	}
+	// Remove the backup file
+	return os.Remove(configPath + ".orig")
+}
+
+// LoadVMByName reads a json file that describes a known qemu vm
 // and returns a vm instance
 func (p *Provider) LoadVMByName(name string) (machine.VM, error) {
-	vm := &MachineVM{UID: -1} // posix reserves -1, so use it to signify undefined
-	vmConfigDir, err := machine.GetConfDir(vmtype)
-	if err != nil {
+	vm := &MachineVM{Name: name}
+	vm.HostUser = machine.HostUser{UID: -1} // posix reserves -1, so use it to signify undefined
+	if err := vm.update(); err != nil {
 		return nil, err
 	}
-	b, err := ioutil.ReadFile(filepath.Join(vmConfigDir, name+".json"))
-	if os.IsNotExist(err) {
-		return nil, errors.Wrap(machine.ErrNoSuchVM, name)
-	}
-	if err != nil {
-		return nil, err
-	}
-	err = json.Unmarshal(b, vm)
 
 	// It is here for providing the ability to propagate
 	// proxy settings (e.g. HTTP_PROXY and others) on a start
@@ -162,7 +247,7 @@ func (p *Provider) LoadVMByName(name string) (machine.VM, error) {
 	}
 
 	logrus.Debug(vm.CmdLine)
-	return vm, err
+	return vm, nil
 }
 
 // Init writes the json configuration file to the filesystem for
@@ -176,7 +261,7 @@ func (v *MachineVM) Init(opts machine.InitOptions) (bool, error) {
 	v.Rootful = opts.Rootful
 
 	switch opts.ImagePath {
-	case "testing", "next", "stable", "":
+	case Testing, Next, Stable, "":
 		// Get image as usual
 		v.ImageStream = opts.ImagePath
 		dd, err := machine.NewFcosDownloader(vmtype, v.Name, opts.ImagePath)
@@ -184,7 +269,11 @@ func (v *MachineVM) Init(opts machine.InitOptions) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		v.ImagePath = dd.Get().LocalUncompressedFile
+		uncompressedFile, err := machine.NewMachineFile(dd.Get().LocalUncompressedFile, nil)
+		if err != nil {
+			return false, err
+		}
+		v.ImagePath = *uncompressedFile
 		if err := machine.DownloadImage(dd); err != nil {
 			return false, err
 		}
@@ -196,14 +285,17 @@ func (v *MachineVM) Init(opts machine.InitOptions) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		v.ImagePath = g.Get().LocalUncompressedFile
+		imagePath, err := machine.NewMachineFile(g.Get().LocalUncompressedFile, nil)
+		if err != nil {
+			return false, err
+		}
+		v.ImagePath = *imagePath
 		if err := machine.DownloadImage(g); err != nil {
 			return false, err
 		}
 	}
 	// Add arch specific options including image location
 	v.CmdLine = append(v.CmdLine, v.addArchOptions()...)
-
 	var volumeType string
 	switch opts.VolumeDriver {
 	case "virtfs":
@@ -215,7 +307,7 @@ func (v *MachineVM) Init(opts machine.InitOptions) (bool, error) {
 		return false, err
 	}
 
-	mounts := []Mount{}
+	mounts := []machine.Mount{}
 	for i, volume := range opts.Volumes {
 		tag := fmt.Sprintf("vol%d", i)
 		paths := strings.SplitN(volume, ":", 3)
@@ -239,21 +331,20 @@ func (v *MachineVM) Init(opts machine.InitOptions) (bool, error) {
 				}
 			}
 		}
-		switch volumeType {
-		case VolumeTypeVirtfs:
+		if volumeType == VolumeTypeVirtfs {
 			virtfsOptions := fmt.Sprintf("local,path=%s,mount_tag=%s,security_model=mapped-xattr", source, tag)
 			if readonly {
 				virtfsOptions += ",readonly"
 			}
 			v.CmdLine = append(v.CmdLine, []string{"-virtfs", virtfsOptions}...)
-			mounts = append(mounts, Mount{Type: MountType9p, Tag: tag, Source: source, Target: target, ReadOnly: readonly})
+			mounts = append(mounts, machine.Mount{Type: MountType9p, Tag: tag, Source: source, Target: target, ReadOnly: readonly})
 		}
 	}
 	v.Mounts = mounts
 	v.UID = os.Getuid()
 
 	// Add location of bootable image
-	v.CmdLine = append(v.CmdLine, "-drive", "if=virtio,file="+v.ImagePath)
+	v.CmdLine = append(v.CmdLine, "-drive", "if=virtio,file="+v.getImageFile())
 	// This kind of stinks but no other way around this r/n
 	if len(opts.IgnitionPath) < 1 {
 		uri := machine.SSHRemoteConnection.MakeSSHURL("localhost", fmt.Sprintf("/run/user/%d/podman/podman.sock", v.UID), strconv.Itoa(v.Port), v.RemoteUsername)
@@ -278,8 +369,9 @@ func (v *MachineVM) Init(opts machine.InitOptions) (bool, error) {
 		fmt.Println("An ignition path was provided.  No SSH connection was added to Podman")
 	}
 	// Write the JSON file
-	v.writeConfig()
-
+	if err := v.writeConfig(); err != nil {
+		return false, fmt.Errorf("writing JSON file: %w", err)
+	}
 	// User has provided ignition file so keygen
 	// will be skipped.
 	if len(opts.IgnitionPath) < 1 {
@@ -293,30 +385,13 @@ func (v *MachineVM) Init(opts machine.InitOptions) (bool, error) {
 	if err := v.prepare(); err != nil {
 		return false, err
 	}
-
-	originalDiskSize, err := getDiskSize(v.ImagePath)
+	originalDiskSize, err := getDiskSize(v.getImageFile())
 	if err != nil {
 		return false, err
 	}
-	// Resize the disk image to input disk size
-	// only if the virtualdisk size is less than
-	// the given disk size
-	if opts.DiskSize<<(10*3) > originalDiskSize {
-		// Find the qemu executable
-		cfg, err := config.Default()
-		if err != nil {
-			return false, err
-		}
-		resizePath, err := cfg.FindHelperBinary("qemu-img", true)
-		if err != nil {
-			return false, err
-		}
-		resize := exec.Command(resizePath, []string{"resize", v.ImagePath, strconv.Itoa(int(opts.DiskSize)) + "G"}...)
-		resize.Stdout = os.Stdout
-		resize.Stderr = os.Stderr
-		if err := resize.Run(); err != nil {
-			return false, errors.Errorf("error resizing image: %q", err)
-		}
+
+	if err := v.resizeDisk(opts.DiskSize, originalDiskSize>>(10*3)); err != nil {
+		return false, err
 	}
 	// If the user provides an ignition file, we need to
 	// copy it into the conf dir
@@ -325,7 +400,7 @@ func (v *MachineVM) Init(opts machine.InitOptions) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		return false, ioutil.WriteFile(v.IgnitionFilePath, inputIgnition, 0644)
+		return false, ioutil.WriteFile(v.getIgnitionFile(), inputIgnition, 0644)
 	}
 	// Write the ignition file
 	ign := machine.DynamicIgnition{
@@ -333,35 +408,67 @@ func (v *MachineVM) Init(opts machine.InitOptions) (bool, error) {
 		Key:       key,
 		VMName:    v.Name,
 		TimeZone:  opts.TimeZone,
-		WritePath: v.IgnitionFilePath,
+		WritePath: v.getIgnitionFile(),
 		UID:       v.UID,
 	}
 	err = machine.NewIgnitionFile(ign)
 	return err == nil, err
 }
 
-func (v *MachineVM) Set(name string, opts machine.SetOptions) error {
-	if v.Rootful == opts.Rootful {
-		return nil
-	}
+func (v *MachineVM) Set(_ string, opts machine.SetOptions) ([]error, error) {
+	// If one setting fails to be applied, the others settings will not fail and still be applied.
+	// The setting(s) that failed to be applied will have its errors returned in setErrors
+	var setErrors []error
 
-	changeCon, err := machine.AnyConnectionDefault(v.Name, v.Name+"-root")
+	state, err := v.State(false)
 	if err != nil {
-		return err
+		return setErrors, err
 	}
 
-	if changeCon {
-		newDefault := v.Name
-		if opts.Rootful {
-			newDefault += "-root"
+	if state == machine.Running {
+		suffix := ""
+		if v.Name != machine.DefaultMachineName {
+			suffix = " " + v.Name
 		}
-		if err := machine.ChangeDefault(newDefault); err != nil {
-			return err
+		return setErrors, errors.Errorf("cannot change settings while the vm is running, run 'podman machine stop%s' first", suffix)
+	}
+
+	if opts.Rootful != nil && v.Rootful != *opts.Rootful {
+		if err := v.setRootful(*opts.Rootful); err != nil {
+			setErrors = append(setErrors, errors.Wrapf(err, "failed to set rootful option"))
+		} else {
+			v.Rootful = *opts.Rootful
 		}
 	}
 
-	v.Rootful = opts.Rootful
-	return v.writeConfig()
+	if opts.CPUs != nil && v.CPUs != *opts.CPUs {
+		v.CPUs = *opts.CPUs
+		v.editCmdLine("-smp", strconv.Itoa(int(v.CPUs)))
+	}
+
+	if opts.Memory != nil && v.Memory != *opts.Memory {
+		v.Memory = *opts.Memory
+		v.editCmdLine("-m", strconv.Itoa(int(v.Memory)))
+	}
+
+	if opts.DiskSize != nil && v.DiskSize != *opts.DiskSize {
+		if err := v.resizeDisk(*opts.DiskSize, v.DiskSize); err != nil {
+			setErrors = append(setErrors, errors.Wrapf(err, "failed to resize disk"))
+		} else {
+			v.DiskSize = *opts.DiskSize
+		}
+	}
+
+	err = v.writeConfig()
+	if err != nil {
+		setErrors = append(setErrors, err)
+	}
+
+	if len(setErrors) > 0 {
+		return setErrors, setErrors[0]
+	}
+
+	return setErrors, nil
 }
 
 // Start executes the qemu command line and forks it
@@ -370,9 +477,19 @@ func (v *MachineVM) Start(name string, _ machine.StartOptions) error {
 		conn           net.Conn
 		err            error
 		qemuSocketConn net.Conn
-		wait           time.Duration = time.Millisecond * 500
+		wait           = time.Millisecond * 500
 	)
 
+	v.Starting = true
+	if err := v.writeConfig(); err != nil {
+		return fmt.Errorf("writing JSON file: %w", err)
+	}
+	defer func() {
+		v.Starting = false
+		if err := v.writeConfig(); err != nil {
+			logrus.Errorf("Writing JSON file: %v", err)
+		}
+	}()
 	if v.isIncompatible() {
 		logrus.Errorf("machine %q is incompatible with this release of podman and needs to be recreated, starting for recovery only", v.Name)
 	}
@@ -394,17 +511,14 @@ func (v *MachineVM) Start(name string, _ machine.StartOptions) error {
 			return err
 		}
 	}
-	qemuSocketPath, _, err := v.getSocketandPid()
-	if err != nil {
-		return err
-	}
+
 	// If the qemusocketpath exists and the vm is off/down, we should rm
 	// it before the dial as to avoid a segv
-	if err := os.Remove(qemuSocketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		logrus.Warn(err)
+	if err := v.QMPMonitor.Address.Delete(); err != nil {
+		return err
 	}
 	for i := 0; i < 6; i++ {
-		qemuSocketConn, err = net.Dial("unix", qemuSocketPath)
+		qemuSocketConn, err = net.Dial("unix", v.QMPMonitor.Address.GetPath())
 		if err == nil {
 			break
 		}
@@ -414,14 +528,26 @@ func (v *MachineVM) Start(name string, _ machine.StartOptions) error {
 	if err != nil {
 		return err
 	}
+	defer qemuSocketConn.Close()
 
 	fd, err := qemuSocketConn.(*net.UnixConn).File()
 	if err != nil {
 		return err
 	}
+	defer fd.Close()
+	dnr, err := os.OpenFile("/dev/null", os.O_RDONLY, 0755)
+	if err != nil {
+		return err
+	}
+	defer dnr.Close()
+	dnw, err := os.OpenFile("/dev/null", os.O_WRONLY, 0755)
+	if err != nil {
+		return err
+	}
+	defer dnw.Close()
 
 	attr := new(os.ProcAttr)
-	files := []*os.File{os.Stdin, os.Stdout, os.Stderr, fd}
+	files := []*os.File{dnr, dnw, dnw, fd}
 	attr.Files = files
 	logrus.Debug(v.CmdLine)
 	cmd := v.CmdLine
@@ -449,7 +575,7 @@ func (v *MachineVM) Start(name string, _ machine.StartOptions) error {
 		}
 		_, err = os.StartProcess(cmd[0], cmd, attr)
 		if err != nil {
-			return err
+			return errors.Wrapf(err, "unable to execute %q", cmd)
 		}
 	}
 	fmt.Println("Waiting for VM ...")
@@ -472,20 +598,20 @@ func (v *MachineVM) Start(name string, _ machine.StartOptions) error {
 	if err != nil {
 		return err
 	}
+	defer conn.Close()
 	_, err = bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
 		return err
 	}
-
 	if len(v.Mounts) > 0 {
-		running, err := v.isRunning()
+		state, err := v.State(true)
 		if err != nil {
 			return err
 		}
 		listening := v.isListening()
-		for !running || !listening {
+		for state != machine.Running || !listening {
 			time.Sleep(100 * time.Millisecond)
-			running, err = v.isRunning()
+			state, err = v.State(true)
 			if err != nil {
 				return err
 			}
@@ -527,18 +653,18 @@ func (v *MachineVM) Start(name string, _ machine.StartOptions) error {
 	}
 
 	v.waitAPIAndPrintInfo(forwardState, forwardSock)
-
 	return nil
 }
 
-func (v *MachineVM) checkStatus(monitor *qmp.SocketMonitor) (machine.QemuMachineStatus, error) {
+func (v *MachineVM) checkStatus(monitor *qmp.SocketMonitor) (machine.Status, error) {
 	// this is the format returned from the monitor
 	// {"return": {"status": "running", "singlestep": false, "running": true}}
 
 	type statusDetails struct {
-		Status  string `json:"status"`
-		Step    bool   `json:"singlestep"`
-		Running bool   `json:"running"`
+		Status   string `json:"status"`
+		Step     bool   `json:"singlestep"`
+		Running  bool   `json:"running"`
+		Starting bool   `json:"starting"`
 	}
 	type statusResponse struct {
 		Response statusDetails `json:"return"`
@@ -571,15 +697,15 @@ func (v *MachineVM) checkStatus(monitor *qmp.SocketMonitor) (machine.QemuMachine
 }
 
 // Stop uses the qmp monitor to call a system_powerdown
-func (v *MachineVM) Stop(name string, _ machine.StopOptions) error {
+func (v *MachineVM) Stop(_ string, _ machine.StopOptions) error {
 	var disconnected bool
 	// check if the qmp socket is there. if not, qemu instance is gone
-	if _, err := os.Stat(v.QMPMonitor.Address); os.IsNotExist(err) {
+	if _, err := os.Stat(v.QMPMonitor.Address.GetPath()); os.IsNotExist(err) {
 		// Right now it is NOT an error to stop a stopped machine
 		logrus.Debugf("QMP monitor socket %v does not exist", v.QMPMonitor.Address)
 		return nil
 	}
-	qmpMonitor, err := qmp.NewSocketMonitor(v.QMPMonitor.Network, v.QMPMonitor.Address, v.QMPMonitor.Timeout)
+	qmpMonitor, err := qmp.NewSocketMonitor(v.QMPMonitor.Network, v.QMPMonitor.Address.GetPath(), v.QMPMonitor.Timeout)
 	if err != nil {
 		return err
 	}
@@ -608,14 +734,10 @@ func (v *MachineVM) Stop(name string, _ machine.StopOptions) error {
 		return err
 	}
 
-	qemuSocketFile, pidFile, err := v.getSocketandPid()
-	if err != nil {
-		return err
-	}
-	if _, err := os.Stat(pidFile); os.IsNotExist(err) {
+	if _, err := os.Stat(v.PidFilePath.GetPath()); os.IsNotExist(err) {
 		return nil
 	}
-	pidString, err := ioutil.ReadFile(pidFile)
+	pidString, err := v.PidFilePath.Read()
 	if err != nil {
 		return err
 	}
@@ -628,38 +750,44 @@ func (v *MachineVM) Stop(name string, _ machine.StopOptions) error {
 	if p == nil && err != nil {
 		return err
 	}
+
+	v.LastUp = time.Now()
+	if err := v.writeConfig(); err != nil { // keep track of last up
+		return err
+	}
 	// Kill the process
 	if err := p.Kill(); err != nil {
 		return err
 	}
 	// Remove the pidfile
-	if err := os.Remove(pidFile); err != nil && !errors.Is(err, os.ErrNotExist) {
-		logrus.Warn(err)
+	if err := v.PidFilePath.Delete(); err != nil {
+		return err
 	}
 	// Remove socket
-	if err := os.Remove(qemuSocketFile); err != nil {
+	if err := v.QMPMonitor.Address.Delete(); err != nil {
 		return err
 	}
 
 	if err := qmpMonitor.Disconnect(); err != nil {
-		return nil
+		// FIXME: this error should probably be returned
+		return nil // nolint: nilerr
 	}
 
 	disconnected = true
 	waitInternal := 250 * time.Millisecond
 	for i := 0; i < 5; i++ {
-		running, err := v.isRunning()
+		state, err := v.State(false)
 		if err != nil {
 			return err
 		}
-		if !running {
+		if state != machine.Running {
 			break
 		}
 		time.Sleep(waitInternal)
-		waitInternal = waitInternal * 2
+		waitInternal *= 2
 	}
 
-	return nil
+	return v.ReadySocket.Delete()
 }
 
 // NewQMPMonitor creates the monitor subsection of our vm
@@ -672,8 +800,7 @@ func NewQMPMonitor(network, name string, timeout time.Duration) (Monitor, error)
 		rtDir = "/run"
 	}
 	rtDir = filepath.Join(rtDir, "podman")
-	if _, err := os.Stat(filepath.Join(rtDir)); os.IsNotExist(err) {
-		// TODO 0644 is fine on linux but macos is weird
+	if _, err := os.Stat(rtDir); os.IsNotExist(err) {
 		if err := os.MkdirAll(rtDir, 0755); err != nil {
 			return Monitor{}, err
 		}
@@ -681,25 +808,30 @@ func NewQMPMonitor(network, name string, timeout time.Duration) (Monitor, error)
 	if timeout == 0 {
 		timeout = defaultQMPTimeout
 	}
+	address, err := machine.NewMachineFile(filepath.Join(rtDir, "qmp_"+name+".sock"), nil)
+	if err != nil {
+		return Monitor{}, err
+	}
 	monitor := Monitor{
 		Network: network,
-		Address: filepath.Join(rtDir, "qmp_"+name+".sock"),
+		Address: *address,
 		Timeout: timeout,
 	}
 	return monitor, nil
 }
 
-func (v *MachineVM) Remove(name string, opts machine.RemoveOptions) (string, func() error, error) {
+// Remove deletes all the files associated with a machine including ssh keys, the image itself
+func (v *MachineVM) Remove(_ string, opts machine.RemoveOptions) (string, func() error, error) {
 	var (
 		files []string
 	)
 
-	// cannot remove a running vm
-	running, err := v.isRunning()
+	// cannot remove a running vm unless --force is used
+	state, err := v.State(false)
 	if err != nil {
 		return "", nil, err
 	}
-	if running && !opts.Force {
+	if state == machine.Running && !opts.Force {
 		return "", nil, errors.Errorf("running vm %q cannot be destroyed", v.Name)
 	}
 
@@ -708,16 +840,19 @@ func (v *MachineVM) Remove(name string, opts machine.RemoveOptions) (string, fun
 		files = append(files, v.IdentityPath, v.IdentityPath+".pub")
 	}
 	if !opts.SaveIgnition {
-		files = append(files, v.IgnitionFilePath)
+		files = append(files, v.getIgnitionFile())
 	}
 	if !opts.SaveImage {
-		files = append(files, v.ImagePath)
+		files = append(files, v.getImageFile())
 	}
-	socketPath, err := v.getForwardSocketPath()
+	socketPath, err := v.forwardSocketPath()
 	if err != nil {
-		logrus.Error(err)
+		return "", nil, err
 	}
-	files = append(files, socketPath)
+	if socketPath.Symlink != nil {
+		files = append(files, *socketPath.Symlink)
+	}
+	files = append(files, socketPath.Path)
 	files = append(files, v.archRemovalFiles()...)
 
 	if err := machine.RemoveConnection(v.Name); err != nil {
@@ -737,25 +872,20 @@ func (v *MachineVM) Remove(name string, opts machine.RemoveOptions) (string, fun
 		confirmationMessage += msg + "\n"
 	}
 
-	// Get path to socket and pidFile before we do any cleanups
-	qemuSocketFile, pidFile, errSocketFile := v.getSocketandPid()
-	//silently try to delete socket and pid file
-	//remove socket and pid file if any: warn at low priority if things fail
-	if errSocketFile == nil {
-		// Remove the pidfile
-		if err := os.Remove(pidFile); err != nil && !errors.Is(err, os.ErrNotExist) {
-			logrus.Debugf("Error while removing pidfile: %v", err)
-		}
-		// Remove socket
-		if err := os.Remove(qemuSocketFile); err != nil && !errors.Is(err, os.ErrNotExist) {
-			logrus.Debugf("Error while removing podman-machine-socket: %v", err)
-		}
+	// remove socket and pid file if any: warn at low priority if things fail
+	// Remove the pidfile
+	if err := v.PidFilePath.Delete(); err != nil {
+		logrus.Debugf("Error while removing pidfile: %v", err)
+	}
+	// Remove socket
+	if err := v.QMPMonitor.Address.Delete(); err != nil {
+		logrus.Debugf("Error while removing podman-machine-socket: %v", err)
 	}
 
 	confirmationMessage += "\n"
 	return confirmationMessage, func() error {
 		for _, f := range files {
-			if err := os.Remove(f); err != nil {
+			if err := os.Remove(f); err != nil && !errors.Is(err, os.ErrNotExist) {
 				logrus.Error(err)
 			}
 		}
@@ -763,18 +893,26 @@ func (v *MachineVM) Remove(name string, opts machine.RemoveOptions) (string, fun
 	}, nil
 }
 
-func (v *MachineVM) isRunning() (bool, error) {
+func (v *MachineVM) State(bypass bool) (machine.Status, error) {
 	// Check if qmp socket path exists
-	if _, err := os.Stat(v.QMPMonitor.Address); os.IsNotExist(err) {
-		return false, nil
+	if _, err := os.Stat(v.QMPMonitor.Address.GetPath()); os.IsNotExist(err) {
+		return "", nil
+	}
+	err := v.update()
+	if err != nil {
+		return "", err
 	}
 	// Check if we can dial it
-	monitor, err := qmp.NewSocketMonitor(v.QMPMonitor.Network, v.QMPMonitor.Address, v.QMPMonitor.Timeout)
+	if v.Starting && !bypass {
+		return "", nil
+	}
+	monitor, err := qmp.NewSocketMonitor(v.QMPMonitor.Network, v.QMPMonitor.Address.GetPath(), v.QMPMonitor.Timeout)
 	if err != nil {
-		return false, nil
+		// FIXME: this error should probably be returned
+		return "", err
 	}
 	if err := monitor.Connect(); err != nil {
-		return false, err
+		return "", err
 	}
 	defer func() {
 		if err := monitor.Disconnect(); err != nil {
@@ -782,14 +920,7 @@ func (v *MachineVM) isRunning() (bool, error) {
 		}
 	}()
 	// If there is a monitor, lets see if we can query state
-	state, err := v.checkStatus(monitor)
-	if err != nil {
-		return false, err
-	}
-	if state == machine.Running {
-		return true, nil
-	}
-	return false, nil
+	return v.checkStatus(monitor)
 }
 
 func (v *MachineVM) isListening() bool {
@@ -804,13 +935,13 @@ func (v *MachineVM) isListening() bool {
 
 // SSH opens an interactive SSH session to the vm specified.
 // Added ssh function to VM interface: pkg/machine/config/go : line 58
-func (v *MachineVM) SSH(name string, opts machine.SSHOptions) error {
-	running, err := v.isRunning()
+func (v *MachineVM) SSH(_ string, opts machine.SSHOptions) error {
+	state, err := v.State(true)
 	if err != nil {
 		return err
 	}
-	if !running {
-		return errors.Errorf("vm %q is not running.", v.Name)
+	if state != machine.Running {
+		return errors.Errorf("vm %q is not running", v.Name)
 	}
 
 	username := opts.Username
@@ -821,7 +952,7 @@ func (v *MachineVM) SSH(name string, opts machine.SSHOptions) error {
 	sshDestination := username + "@localhost"
 	port := strconv.Itoa(v.Port)
 
-	args := []string{"-i", v.IdentityPath, "-p", port, sshDestination, "-o", "UserKnownHostsFile /dev/null", "-o", "StrictHostKeyChecking no"}
+	args := []string{"-i", v.IdentityPath, "-p", port, sshDestination, "-o", "UserKnownHostsFile=/dev/null", "-o", "StrictHostKeyChecking=no"}
 	if len(opts.Args) > 0 {
 		args = append(args, opts.Args...)
 	} else {
@@ -880,10 +1011,10 @@ func getDiskSize(path string) (uint64, error) {
 
 // List lists all vm's that use qemu virtualization
 func (p *Provider) List(_ machine.ListOptions) ([]*machine.ListResponse, error) {
-	return GetVMInfos()
+	return getVMInfos()
 }
 
-func GetVMInfos() ([]*machine.ListResponse, error) {
+func getVMInfos() ([]*machine.ListResponse, error) {
 	vmConfigDir, err := machine.GetConfDir(vmtype)
 	if err != nil {
 		return nil, err
@@ -901,7 +1032,12 @@ func GetVMInfos() ([]*machine.ListResponse, error) {
 			}
 			err = json.Unmarshal(b, vm)
 			if err != nil {
-				return err
+				// Checking if the file did not unmarshal because it is using
+				// the deprecated config file format.
+				migrateErr := migrateVM(fullPath, b, vm)
+				if migrateErr != nil {
+					return migrateErr
+				}
 			}
 			listEntry := new(machine.ListResponse)
 
@@ -914,22 +1050,31 @@ func GetVMInfos() ([]*machine.ListResponse, error) {
 			listEntry.Port = vm.Port
 			listEntry.RemoteUsername = vm.RemoteUsername
 			listEntry.IdentityPath = vm.IdentityPath
-			fi, err := os.Stat(fullPath)
-			if err != nil {
-				return err
-			}
-			listEntry.CreatedAt = fi.ModTime()
+			listEntry.CreatedAt = vm.Created
 
-			fi, err = os.Stat(vm.ImagePath)
+			if listEntry.CreatedAt.IsZero() {
+				listEntry.CreatedAt = time.Now()
+				vm.Created = time.Now()
+				if err := vm.writeConfig(); err != nil {
+					return err
+				}
+			}
+
+			state, err := vm.State(false)
 			if err != nil {
 				return err
 			}
-			listEntry.LastUp = fi.ModTime()
-			running, err := vm.isRunning()
-			if err != nil {
-				return err
+
+			if !vm.LastUp.IsZero() { // this means we have already written a time to the config
+				listEntry.LastUp = vm.LastUp
+			} else { // else we just created the machine AKA last up = created time
+				listEntry.LastUp = vm.Created
+				vm.LastUp = listEntry.LastUp
+				if err := vm.writeConfig(); err != nil {
+					return err
+				}
 			}
-			if running {
+			if state == machine.Running {
 				listEntry.Running = true
 			}
 
@@ -943,7 +1088,7 @@ func GetVMInfos() ([]*machine.ListResponse, error) {
 }
 
 func (p *Provider) IsValidVMName(name string) (bool, error) {
-	infos, err := GetVMInfos()
+	infos, err := getVMInfos()
 	if err != nil {
 		return false, err
 	}
@@ -958,7 +1103,7 @@ func (p *Provider) IsValidVMName(name string) (bool, error) {
 // CheckExclusiveActiveVM checks if there is a VM already running
 // that does not allow other VMs to be running
 func (p *Provider) CheckExclusiveActiveVM() (bool, string, error) {
-	vms, err := GetVMInfos()
+	vms, err := getVMInfos()
 	if err != nil {
 		return false, "", errors.Wrap(err, "error checking VM active")
 	}
@@ -982,16 +1127,22 @@ func (v *MachineVM) startHostNetworking() (string, apiForwardingState, error) {
 		return "", noForwarding, err
 	}
 
-	qemuSocket, pidFile, err := v.getSocketandPid()
+	attr := new(os.ProcAttr)
+	dnr, err := os.OpenFile("/dev/null", os.O_RDONLY, 0755)
 	if err != nil {
 		return "", noForwarding, err
 	}
-	attr := new(os.ProcAttr)
-	// Pass on stdin, stdout, stderr
-	files := []*os.File{os.Stdin, os.Stdout, os.Stderr}
-	attr.Files = files
+	dnw, err := os.OpenFile("/dev/null", os.O_WRONLY, 0755)
+	if err != nil {
+		return "", noForwarding, err
+	}
+
+	defer dnr.Close()
+	defer dnw.Close()
+
+	attr.Files = []*os.File{dnr, dnw, dnw}
 	cmd := []string{binary}
-	cmd = append(cmd, []string{"-listen-qemu", fmt.Sprintf("unix://%s", qemuSocket), "-pid-file", pidFile}...)
+	cmd = append(cmd, []string{"-listen-qemu", fmt.Sprintf("unix://%s", v.QMPMonitor.Address.GetPath()), "-pid-file", v.PidFilePath.GetPath()}...)
 	// Add the ssh port
 	cmd = append(cmd, []string{"-ssh-port", fmt.Sprintf("%d", v.Port)}...)
 
@@ -1006,11 +1157,11 @@ func (v *MachineVM) startHostNetworking() (string, apiForwardingState, error) {
 		fmt.Println(cmd)
 	}
 	_, err = os.StartProcess(cmd[0], cmd, attr)
-	return forwardSock, state, err
+	return forwardSock, state, errors.Wrapf(err, "unable to execute: %q", cmd)
 }
 
 func (v *MachineVM) setupAPIForwarding(cmd []string) ([]string, string, apiForwardingState) {
-	socket, err := v.getForwardSocketPath()
+	socket, err := v.forwardSocketPath()
 
 	if err != nil {
 		return cmd, "", noForwarding
@@ -1024,43 +1175,48 @@ func (v *MachineVM) setupAPIForwarding(cmd []string) ([]string, string, apiForwa
 		forwardUser = "root"
 	}
 
-	cmd = append(cmd, []string{"-forward-sock", socket}...)
+	cmd = append(cmd, []string{"-forward-sock", socket.GetPath()}...)
 	cmd = append(cmd, []string{"-forward-dest", destSock}...)
 	cmd = append(cmd, []string{"-forward-user", forwardUser}...)
 	cmd = append(cmd, []string{"-forward-identity", v.IdentityPath}...)
-	link := filepath.Join(filepath.Dir(filepath.Dir(socket)), "podman.sock")
 
 	// The linking pattern is /var/run/docker.sock -> user global sock (link) -> machine sock (socket)
 	// This allows the helper to only have to maintain one constant target to the user, which can be
 	// repositioned without updating docker.sock.
+
+	link, err := v.userGlobalSocketLink()
+	if err != nil {
+		return cmd, socket.GetPath(), machineLocal
+	}
+
 	if !dockerClaimSupported() {
-		return cmd, socket, claimUnsupported
+		return cmd, socket.GetPath(), claimUnsupported
 	}
 
 	if !dockerClaimHelperInstalled() {
-		return cmd, socket, notInstalled
+		return cmd, socket.GetPath(), notInstalled
 	}
 
-	if !alreadyLinked(socket, link) {
+	if !alreadyLinked(socket.GetPath(), link) {
 		if checkSockInUse(link) {
-			return cmd, socket, machineLocal
+			return cmd, socket.GetPath(), machineLocal
 		}
 
 		_ = os.Remove(link)
-		if err = os.Symlink(socket, link); err != nil {
+		if err = os.Symlink(socket.GetPath(), link); err != nil {
 			logrus.Warnf("could not create user global API forwarding link: %s", err.Error())
-			return cmd, socket, machineLocal
+			return cmd, socket.GetPath(), machineLocal
 		}
 	}
 
 	if !alreadyLinked(link, dockerSock) {
 		if checkSockInUse(dockerSock) {
-			return cmd, socket, machineLocal
+			return cmd, socket.GetPath(), machineLocal
 		}
 
 		if !claimDockerSock() {
 			logrus.Warn("podman helper is installed, but was not able to claim the global docker sock")
-			return cmd, socket, machineLocal
+			return cmd, socket.GetPath(), machineLocal
 		}
 	}
 
@@ -1071,15 +1227,74 @@ func (v *MachineVM) isIncompatible() bool {
 	return v.UID == -1
 }
 
-func (v *MachineVM) getForwardSocketPath() (string, error) {
+func (v *MachineVM) userGlobalSocketLink() (string, error) {
 	path, err := machine.GetDataDir(v.Name)
 	if err != nil {
-		logrus.Errorf("Error resolving data dir: %s", err.Error())
-		return "", nil
+		logrus.Errorf("Resolving data dir: %s", err.Error())
+		return "", err
 	}
-	return filepath.Join(path, "podman.sock"), nil
+	// User global socket is located in parent directory of machine dirs (one per user)
+	return filepath.Join(filepath.Dir(path), "podman.sock"), err
 }
 
+func (v *MachineVM) forwardSocketPath() (*machine.VMFile, error) {
+	sockName := "podman.sock"
+	path, err := machine.GetDataDir(v.Name)
+	if err != nil {
+		logrus.Errorf("Resolving data dir: %s", err.Error())
+		return nil, err
+	}
+	return machine.NewMachineFile(filepath.Join(path, sockName), &sockName)
+}
+
+func (v *MachineVM) setConfigPath() error {
+	vmConfigDir, err := machine.GetConfDir(vmtype)
+	if err != nil {
+		return err
+	}
+
+	configPath, err := machine.NewMachineFile(filepath.Join(vmConfigDir, v.Name)+".json", nil)
+	if err != nil {
+		return err
+	}
+	v.ConfigPath = *configPath
+	return nil
+}
+
+func (v *MachineVM) setReadySocket() error {
+	readySocketName := v.Name + "_ready.sock"
+	rtPath, err := getRuntimeDir()
+	if err != nil {
+		return err
+	}
+	virtualSocketPath, err := machine.NewMachineFile(filepath.Join(rtPath, "podman", readySocketName), &readySocketName)
+	if err != nil {
+		return err
+	}
+	v.ReadySocket = *virtualSocketPath
+	return nil
+}
+
+func (v *MachineVM) setPIDSocket() error {
+	rtPath, err := getRuntimeDir()
+	if err != nil {
+		return err
+	}
+	if !rootless.IsRootless() {
+		rtPath = "/run"
+	}
+	pidFileName := fmt.Sprintf("%s.pid", v.Name)
+	socketDir := filepath.Join(rtPath, "podman")
+	pidFilePath, err := machine.NewMachineFile(filepath.Join(socketDir, pidFileName), &pidFileName)
+	if err != nil {
+		return err
+	}
+	v.PidFilePath = *pidFilePath
+	return nil
+}
+
+// Deprecated: getSocketandPid is being replace by setPIDSocket and
+// machinefiles.
 func (v *MachineVM) getSocketandPid() (string, string, error) {
 	rtPath, err := getRuntimeDir()
 	if err != nil {
@@ -1113,10 +1328,13 @@ func waitAndPingAPI(sock string) {
 		Transport: &http.Transport{
 			DialContext: func(context.Context, string, string) (net.Conn, error) {
 				con, err := net.DialTimeout("unix", sock, apiUpTimeout)
-				if err == nil {
-					con.SetDeadline(time.Now().Add(apiUpTimeout))
+				if err != nil {
+					return nil, err
 				}
-				return con, err
+				if err := con.SetDeadline(time.Now().Add(apiUpTimeout)); err != nil {
+					return nil, err
+				}
+				return con, nil
 			},
 		},
 	}
@@ -1193,23 +1411,212 @@ func (v *MachineVM) waitAPIAndPrintInfo(forwardState apiForwardingState, forward
 	}
 }
 
-func (v *MachineVM) writeConfig() error {
-	// GetConfDir creates the directory so no need to check for
-	// its existence
-	vmConfigDir, err := machine.GetConfDir(vmtype)
+// update returns the content of the VM's
+// configuration file in json
+func (v *MachineVM) update() error {
+	if err := v.setConfigPath(); err != nil {
+		return err
+	}
+	b, err := v.ConfigPath.Read()
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return errors.Wrap(machine.ErrNoSuchVM, v.Name)
+		}
+		return err
+	}
 	if err != nil {
 		return err
 	}
+	err = json.Unmarshal(b, v)
+	if err != nil {
+		err = migrateVM(v.ConfigPath.GetPath(), b, v)
+		if err != nil {
+			return err
+		}
+	}
+	return err
+}
 
-	jsonFile := filepath.Join(vmConfigDir, v.Name) + ".json"
+func (v *MachineVM) writeConfig() error {
+	// Set the path of the configfile before writing to make
+	// life easier down the line
+	if err := v.setConfigPath(); err != nil {
+		return err
+	}
 	// Write the JSON file
 	b, err := json.MarshalIndent(v, "", " ")
 	if err != nil {
 		return err
 	}
-	if err := ioutil.WriteFile(jsonFile, b, 0644); err != nil {
+	if err := ioutil.WriteFile(v.ConfigPath.GetPath(), b, 0644); err != nil {
 		return err
+	}
+	return nil
+}
+
+// getImageFile wrapper returns the path to the image used
+// to boot the VM
+func (v *MachineVM) getImageFile() string {
+	return v.ImagePath.GetPath()
+}
+
+// getIgnitionFile wrapper returns the path to the ignition file
+func (v *MachineVM) getIgnitionFile() string {
+	return v.IgnitionFile.GetPath()
+}
+
+// Inspect returns verbose detail about the machine
+func (v *MachineVM) Inspect() (*machine.InspectInfo, error) {
+	state, err := v.State(false)
+	if err != nil {
+		return nil, err
+	}
+
+	return &machine.InspectInfo{
+		ConfigPath: v.ConfigPath,
+		Created:    v.Created,
+		Image:      v.ImageConfig,
+		LastUp:     v.LastUp,
+		Name:       v.Name,
+		Resources:  v.ResourceConfig,
+		SSHConfig:  v.SSHConfig,
+		State:      state,
+	}, nil
+}
+
+// resizeDisk increases the size of the machine's disk in GB.
+func (v *MachineVM) resizeDisk(diskSize uint64, oldSize uint64) error {
+	// Resize the disk image to input disk size
+	// only if the virtualdisk size is less than
+	// the given disk size
+	if diskSize < oldSize {
+		return errors.Errorf("new disk size must be larger than current disk size: %vGB", oldSize)
+	}
+
+	// Find the qemu executable
+	cfg, err := config.Default()
+	if err != nil {
+		return err
+	}
+	resizePath, err := cfg.FindHelperBinary("qemu-img", true)
+	if err != nil {
+		return err
+	}
+	resize := exec.Command(resizePath, []string{"resize", v.getImageFile(), strconv.Itoa(int(diskSize)) + "G"}...)
+	resize.Stdout = os.Stdout
+	resize.Stderr = os.Stderr
+	if err := resize.Run(); err != nil {
+		return errors.Errorf("resizing image: %q", err)
 	}
 
 	return nil
+}
+
+func (v *MachineVM) setRootful(rootful bool) error {
+	changeCon, err := machine.AnyConnectionDefault(v.Name, v.Name+"-root")
+	if err != nil {
+		return err
+	}
+
+	if changeCon {
+		newDefault := v.Name
+		if rootful {
+			newDefault += "-root"
+		}
+		err := machine.ChangeDefault(newDefault)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (v *MachineVM) editCmdLine(flag string, value string) {
+	found := false
+	for i, val := range v.CmdLine {
+		if val == flag {
+			found = true
+			v.CmdLine[i+1] = value
+			break
+		}
+	}
+	if !found {
+		v.CmdLine = append(v.CmdLine, []string{flag, value}...)
+	}
+}
+
+// RemoveAndCleanMachines removes all machine and cleans up any other files associatied with podman machine
+func (p *Provider) RemoveAndCleanMachines() error {
+	var (
+		vm             machine.VM
+		listResponse   []*machine.ListResponse
+		opts           machine.ListOptions
+		destroyOptions machine.RemoveOptions
+	)
+	destroyOptions.Force = true
+	var prevErr error
+
+	listResponse, err := p.List(opts)
+	if err != nil {
+		return err
+	}
+
+	for _, mach := range listResponse {
+		vm, err = p.LoadVMByName(mach.Name)
+		if err != nil {
+			if prevErr != nil {
+				logrus.Error(prevErr)
+			}
+			prevErr = err
+		}
+		_, remove, err := vm.Remove(mach.Name, destroyOptions)
+		if err != nil {
+			if prevErr != nil {
+				logrus.Error(prevErr)
+			}
+			prevErr = err
+		} else {
+			if err := remove(); err != nil {
+				if prevErr != nil {
+					logrus.Error(prevErr)
+				}
+				prevErr = err
+			}
+		}
+	}
+
+	// Clean leftover files in data dir
+	dataDir, err := machine.DataDirPrefix()
+	if err != nil {
+		if prevErr != nil {
+			logrus.Error(prevErr)
+		}
+		prevErr = err
+	} else {
+		err := os.RemoveAll(dataDir)
+		if err != nil {
+			if prevErr != nil {
+				logrus.Error(prevErr)
+			}
+			prevErr = err
+		}
+	}
+
+	// Clean leftover files in conf dir
+	confDir, err := machine.ConfDirPrefix()
+	if err != nil {
+		if prevErr != nil {
+			logrus.Error(prevErr)
+		}
+		prevErr = err
+	} else {
+		err := os.RemoveAll(confDir)
+		if err != nil {
+			if prevErr != nil {
+				logrus.Error(prevErr)
+			}
+			prevErr = err
+		}
+	}
+	return prevErr
 }

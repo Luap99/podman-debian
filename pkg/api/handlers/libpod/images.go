@@ -367,10 +367,13 @@ func ImagesImport(w http.ResponseWriter, r *http.Request) {
 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	query := struct {
-		Changes   []string `schema:"changes"`
-		Message   string   `schema:"message"`
-		Reference string   `schema:"reference"`
-		URL       string   `schema:"URL"`
+		Changes      []string `schema:"changes"`
+		Message      string   `schema:"message"`
+		Reference    string   `schema:"reference"`
+		URL          string   `schema:"URL"`
+		OS           string   `schema:"OS"`
+		Architecture string   `schema:"Architecture"`
+		Variant      string   `schema:"Variant"`
 	}{
 		// Add defaults here once needed.
 	}
@@ -402,10 +405,13 @@ func ImagesImport(w http.ResponseWriter, r *http.Request) {
 
 	imageEngine := abi.ImageEngine{Libpod: runtime}
 	importOptions := entities.ImageImportOptions{
-		Changes:   query.Changes,
-		Message:   query.Message,
-		Reference: query.Reference,
-		Source:    source,
+		Changes:      query.Changes,
+		Message:      query.Message,
+		Reference:    query.Reference,
+		OS:           query.OS,
+		Architecture: query.Architecture,
+		Variant:      query.Variant,
+		Source:       source,
 	}
 	report, err := imageEngine.Import(r.Context(), importOptions)
 	if err != nil {
@@ -497,6 +503,7 @@ func CommitContainer(w http.ResponseWriter, r *http.Request) {
 		Container string   `schema:"container"`
 		Format    string   `schema:"format"`
 		Pause     bool     `schema:"pause"`
+		Squash    bool     `schema:"squash"`
 		Repo      string   `schema:"repo"`
 		Tag       string   `schema:"tag"`
 	}{
@@ -543,6 +550,7 @@ func CommitContainer(w http.ResponseWriter, r *http.Request) {
 	options.Message = query.Comment
 	options.Author = query.Author
 	options.Pause = query.Pause
+	options.Squash = query.Squash
 	options.Changes = query.Changes
 	ctr, err := runtime.LookupContainer(query.Container)
 	if err != nil {
@@ -611,6 +619,7 @@ func ImagesBatchRemove(w http.ResponseWriter, r *http.Request) {
 	query := struct {
 		All    bool     `schema:"all"`
 		Force  bool     `schema:"force"`
+		Ignore bool     `schema:"ignore"`
 		Images []string `schema:"images"`
 	}{}
 
@@ -619,7 +628,7 @@ func ImagesBatchRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	opts := entities.ImageRemoveOptions{All: query.All, Force: query.Force}
+	opts := entities.ImageRemoveOptions{All: query.All, Force: query.Force, Ignore: query.Ignore}
 	imageEngine := abi.ImageEngine{Libpod: runtime}
 	rmReport, rmErrors := imageEngine.Remove(r.Context(), query.Images, opts)
 	strErrs := errorhandling.ErrorsToStrings(rmErrors)

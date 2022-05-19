@@ -190,6 +190,7 @@ func buildFlags(cmd *cobra.Command) {
 		_ = flags.MarkHidden("tls-verify")
 		_ = flags.MarkHidden("compress")
 		_ = flags.MarkHidden("volume")
+		_ = flags.MarkHidden("output")
 	}
 }
 
@@ -199,6 +200,10 @@ func build(cmd *cobra.Command, args []string) error {
 		(cmd.Flags().Changed("squash-all") && cmd.Flags().Changed("layers")) ||
 		(cmd.Flags().Changed("squash-all") && cmd.Flags().Changed("squash")) {
 		return errors.New("cannot specify --squash, --squash-all and --layers options together")
+	}
+
+	if cmd.Flag("output").Changed && registry.IsRemote() {
+		return errors.New("'--output' option is not supported in remote mode")
 	}
 
 	// Extract container files from the CLI (i.e., --file/-f) first.
@@ -375,7 +380,7 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 		}
 	}
 
-	cleanTmpFile := false
+	var cleanTmpFile bool
 	flags.Authfile, cleanTmpFile = buildahUtil.MirrorToTempFileIfPathIsDescriptor(flags.Authfile)
 	if cleanTmpFile {
 		defer os.Remove(flags.Authfile)
@@ -474,7 +479,7 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 		return nil, err
 	}
 
-	format := ""
+	var format string
 	flags.Format = strings.ToLower(flags.Format)
 	switch {
 	case strings.HasPrefix(flags.Format, buildahDefine.OCI):
@@ -515,6 +520,7 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 		Annotations:             flags.Annotation,
 		Args:                    args,
 		BlobDirectory:           flags.BlobCache,
+		BuildOutput:             flags.BuildOutput,
 		CommonBuildOpts:         commonOpts,
 		Compression:             compression,
 		ConfigureNetwork:        networkPolicy,
@@ -522,6 +528,7 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 		DefaultMountsFilePath:   containerConfig.Containers.DefaultMountsFile,
 		Devices:                 flags.Devices,
 		DropCapabilities:        flags.CapDrop,
+		Envs:                    flags.Envs,
 		Err:                     stderr,
 		ForceRmIntermediateCtrs: flags.ForceRm,
 		From:                    flags.From,
@@ -536,6 +543,8 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 		MaxPullPushRetries:      3,
 		NamespaceOptions:        nsValues,
 		NoCache:                 flags.NoCache,
+		OSFeatures:              flags.OSFeatures,
+		OSVersion:               flags.OSVersion,
 		OciDecryptConfig:        decConfig,
 		Out:                     stdout,
 		Output:                  output,

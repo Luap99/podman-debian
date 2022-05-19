@@ -327,7 +327,7 @@ func suffixCompSlice(suf string, slice []string) []string {
 		if len(split) > 1 {
 			slice[i] = split[0] + suf + "\t" + split[1]
 		} else {
-			slice[i] = slice[i] + suf
+			slice[i] += suf
 		}
 	}
 	return slice
@@ -647,7 +647,10 @@ func AutocompleteInspect(cmd *cobra.Command, args []string, toComplete string) (
 	pods, _ := getPods(cmd, toComplete, completeDefault)
 	networks, _ := getNetworks(cmd, toComplete, completeDefault)
 	volumes, _ := getVolumes(cmd, toComplete)
-	suggestions := append(containers, images...)
+
+	suggestions := make([]string, 0, len(containers)+len(images)+len(pods)+len(networks)+len(volumes))
+	suggestions = append(suggestions, containers...)
+	suggestions = append(suggestions, images...)
 	suggestions = append(suggestions, pods...)
 	suggestions = append(suggestions, networks...)
 	suggestions = append(suggestions, volumes...)
@@ -756,7 +759,7 @@ func AutocompleteNamespace(cmd *cobra.Command, args []string, toComplete string)
 // -> same as AutocompleteNamespace with "auto", "keep-id" added
 func AutocompleteUserNamespace(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	results, directive := AutocompleteNamespace(cmd, args, toComplete)
-	results = append(results, "auto", "keep-id")
+	results = append(results, "auto", "keep-id", "nomap")
 	return results, directive
 }
 
@@ -961,6 +964,8 @@ func AutocompleteFormat(o interface{}) func(cmd *cobra.Command, args []string, t
 	// this function provides shell completion for go templates
 	return func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		// autocomplete json when nothing or json is typed
+		// gocritic complains about the argument order but this is correct in this case
+		//nolint:gocritic
 		if strings.HasPrefix("json", toComplete) {
 			return []string{"json"}, cobra.ShellCompDirectiveNoFileComp
 		}
@@ -982,14 +987,12 @@ func AutocompleteFormat(o interface{}) func(cmd *cobra.Command, args []string, t
 		fields := strings.Split(field[len(field)-1], ".")
 		f := reflect.ValueOf(o)
 		for i := 1; i < len(fields); i++ {
-			if f.Kind() == reflect.Ptr {
-				f = f.Elem()
-			}
-
-			// the only supported type is struct
-			if f.Kind() != reflect.Struct {
+			val := getActualStructType(f)
+			if val == nil {
+				// no struct return nothing to complete
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			}
+			f = *val
 
 			// last field get all names to suggest
 			if i == len(fields)-1 {
@@ -1007,17 +1010,38 @@ func AutocompleteFormat(o interface{}) func(cmd *cobra.Command, args []string, t
 	}
 }
 
-// getStructFields reads all struct field names and method names and returns them.
-func getStructFields(f reflect.Value, prefix string) []string {
-	suggestions := []string{}
+// getActualStructType take the value and check if it is a struct,
+// if it is pointer it will dereference it and when it is nil,
+// it will create a new value from it to get the actual struct
+// returns nil when type is not a struct
+func getActualStructType(f reflect.Value) *reflect.Value {
 	// follow the pointer first
 	if f.Kind() == reflect.Ptr {
+		// if the pointer is nil we create a new value from the elements type
+		// this allows us to follow nil pointers and get the actual struct fields
+		if f.IsNil() {
+			f = reflect.New(f.Type().Elem())
+		}
 		f = f.Elem()
 	}
 	// we only support structs
 	if f.Kind() != reflect.Struct {
 		return nil
 	}
+	return &f
+}
+
+// getStructFields reads all struct field names and method names and returns them.
+func getStructFields(f reflect.Value, prefix string) []string {
+	suggestions := []string{}
+
+	val := getActualStructType(f)
+	if val == nil {
+		// no struct return nothing to complete
+		return nil
+	}
+	f = *val
+
 	// loop over all field names
 	for j := 0; j < f.NumField(); j++ {
 		field := f.Type().Field(j)
@@ -1032,13 +1056,12 @@ func getStructFields(f reflect.Value, prefix string) []string {
 		if kind == reflect.Struct {
 			suffix = "."
 		}
-		if strings.HasPrefix(fname, prefix) {
-			// add field name with suffix
-			suggestions = append(suggestions, fname+suffix)
-		}
 		// if field is anonymous add the child fields as well
 		if field.Anonymous {
-			suggestions = append(suggestions, getStructFields(f.FieldByIndex([]int{j}), prefix)...)
+			suggestions = append(suggestions, getStructFields(f.Field(j), prefix)...)
+		} else if strings.HasPrefix(fname, prefix) {
+			// add field name with suffix
+			suggestions = append(suggestions, fname+suffix)
 		}
 	}
 
@@ -1057,10 +1080,10 @@ func getStructFields(f reflect.Value, prefix string) []string {
 // -> "container=", "event=", "image=", "pod=", "volume=", "type="
 func AutocompleteEventFilter(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	eventTypes := func(_ string) ([]string, cobra.ShellCompDirective) {
-		return []string{"attach", "checkpoint", "cleanup", "commit", "create", "exec",
-			"export", "import", "init", "kill", "mount", "pause", "prune", "remove",
-			"restart", "restore", "start", "stop", "sync", "unmount", "unpause",
-			"pull", "push", "save", "tag", "untag", "refresh", "renumber",
+		return []string{"attach", "checkpoint", "cleanup", "commit", "connect", "create", "disconnect", "exec",
+			"exec_died", "exited", "export", "import", "init", "kill", "loadFromArchive", "mount", "pause",
+			"prune", "pull", "push", "refresh", "remove", "rename", "renumber", "restart", "restore", "save",
+			"start", "stop", "sync", "tag", "unmount", "unpause", "untag",
 		}, cobra.ShellCompDirectiveNoFileComp
 	}
 	kv := keyValueCompletion{
@@ -1112,6 +1135,13 @@ func AutocompleteManifestFormat(cmd *cobra.Command, args []string, toComplete st
 // -> "bridge", "macvlan"
 func AutocompleteNetworkDriver(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	drivers := []string{types.BridgeNetworkDriver, types.MacVLANNetworkDriver, types.IPVLANNetworkDriver}
+	return drivers, cobra.ShellCompDirectiveNoFileComp
+}
+
+// AutocompleteNetworkIPAMDriver - Autocomplete network ipam driver option.
+// -> "bridge", "macvlan"
+func AutocompleteNetworkIPAMDriver(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	drivers := []string{types.HostLocalIPAMDriver, types.DHCPIPAMDriver, types.NoneIPAMDriver}
 	return drivers, cobra.ShellCompDirectiveNoFileComp
 }
 
@@ -1307,4 +1337,18 @@ func AutocompleteCheckpointCompressType(cmd *cobra.Command, args []string, toCom
 func AutocompleteCompressionFormat(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	types := []string{"gzip", "zstd", "zstd:chunked"}
 	return types, cobra.ShellCompDirectiveNoFileComp
+}
+
+// AutocompleteClone - Autocomplete container and image names
+func AutocompleteClone(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if !validCurrentCmdLine(cmd, args, toComplete) {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	switch len(args) {
+	case 0:
+		return getContainers(cmd, toComplete, completeDefault)
+	case 2:
+		return getImages(cmd, toComplete)
+	}
+	return nil, cobra.ShellCompDirectiveNoFileComp
 }

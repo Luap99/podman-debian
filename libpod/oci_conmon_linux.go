@@ -1,3 +1,4 @@
+//go:build linux
 // +build linux
 
 package libpod
@@ -37,7 +38,6 @@ import (
 	pmount "github.com/containers/storage/pkg/mount"
 	"github.com/coreos/go-systemd/v22/daemon"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
-	"github.com/opencontainers/selinux/go-selinux"
 	"github.com/opencontainers/selinux/go-selinux/label"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -660,7 +660,7 @@ func (r *ConmonOCIRuntime) HTTPAttach(ctr *Container, req *http.Request, w http.
 			}
 			errChan <- err
 		}()
-		if err := ctr.ReadLog(context.Background(), logOpts, logChan); err != nil {
+		if err := ctr.ReadLog(context.Background(), logOpts, logChan, 0); err != nil {
 			return err
 		}
 		go func() {
@@ -749,7 +749,7 @@ func openControlFile(ctr *Container, parentDir string) (*os.File, error) {
 	for i := 0; i < 600; i++ {
 		controlFile, err := os.OpenFile(controlPath, unix.O_WRONLY|unix.O_NONBLOCK, 0)
 		if err == nil {
-			return controlFile, err
+			return controlFile, nil
 		}
 		if !isRetryable(err) {
 			return nil, errors.Wrapf(err, "could not open ctl file for terminal resize for container %s", ctr.ID())
@@ -1014,7 +1014,8 @@ func (r *ConmonOCIRuntime) getLogTag(ctr *Container) (string, error) {
 	}
 	data, err := ctr.inspectLocked(false)
 	if err != nil {
-		return "", nil
+		// FIXME: this error should probably be returned
+		return "", nil // nolint: nilerr
 	}
 	tmpl, err := template.New("container").Parse(logTag)
 	if err != nil {
@@ -1180,7 +1181,7 @@ func (r *ConmonOCIRuntime) createOCIContainer(ctr *Container, restoreOptions *Co
 	}
 
 	// 0, 1 and 2 are stdin, stdout and stderr
-	conmonEnv := r.configureConmonEnv(ctr, runtimeDir)
+	conmonEnv := r.configureConmonEnv(runtimeDir)
 
 	var filesToClose []*os.File
 	if preserveFDs > 0 {
@@ -1245,7 +1246,7 @@ func (r *ConmonOCIRuntime) createOCIContainer(ctr *Container, restoreOptions *Co
 	if restoreOptions != nil {
 		runtimeRestoreStarted = time.Now()
 	}
-	err = startCommandGivenSelinux(cmd, ctr)
+	err = startCommand(cmd, ctr)
 
 	// regardless of whether we errored or not, we no longer need the children pipes
 	childSyncPipe.Close()
@@ -1311,7 +1312,7 @@ func (r *ConmonOCIRuntime) createOCIContainer(ctr *Container, restoreOptions *Co
 
 // configureConmonEnv gets the environment values to add to conmon's exec struct
 // TODO this may want to be less hardcoded/more configurable in the future
-func (r *ConmonOCIRuntime) configureConmonEnv(ctr *Container, runtimeDir string) []string {
+func (r *ConmonOCIRuntime) configureConmonEnv(runtimeDir string) []string {
 	var env []string
 	for _, e := range os.Environ() {
 		if strings.HasPrefix(e, "LC_") {
@@ -1370,7 +1371,7 @@ func (r *ConmonOCIRuntime) sharedConmonArgs(ctr *Container, cuuid, bundlePath, p
 	case define.JSONLogging:
 		fallthrough
 	//lint:ignore ST1015 the default case has to be here
-	default: //nolint-stylecheck
+	default: //nolint:stylecheck,gocritic
 		// No case here should happen except JSONLogging, but keep this here in case the options are extended
 		logrus.Errorf("%s logging specified but not supported. Choosing k8s-file logging instead", ctr.LogDriver())
 		fallthrough
@@ -1412,9 +1413,7 @@ func (r *ConmonOCIRuntime) sharedConmonArgs(ctr *Container, cuuid, bundlePath, p
 	return args
 }
 
-// startCommandGivenSelinux starts a container ensuring to set the labels of
-// the process to make sure SELinux doesn't block conmon communication, if SELinux is enabled
-func startCommandGivenSelinux(cmd *exec.Cmd, ctr *Container) error {
+func startCommand(cmd *exec.Cmd, ctr *Container) error {
 	// Make sure to unset the NOTIFY_SOCKET and reset if afterwards if needed.
 	switch ctr.config.SdNotifyMode {
 	case define.SdNotifyModeContainer, define.SdNotifyModeIgnore:
@@ -1431,47 +1430,7 @@ func startCommandGivenSelinux(cmd *exec.Cmd, ctr *Container) error {
 		}
 	}
 
-	if !selinux.GetEnabled() {
-		return cmd.Start()
-	}
-	// Set the label of the conmon process to be level :s0
-	// This will allow the container processes to talk to fifo-files
-	// passed into the container by conmon
-	var (
-		plabel string
-		con    selinux.Context
-		err    error
-	)
-	plabel, err = selinux.CurrentLabel()
-	if err != nil {
-		return errors.Wrapf(err, "failed to get current SELinux label")
-	}
-
-	con, err = selinux.NewContext(plabel)
-	if err != nil {
-		return errors.Wrapf(err, "failed to get new context from SELinux label")
-	}
-
-	runtime.LockOSThread()
-	if con["level"] != "s0" && con["level"] != "" {
-		con["level"] = "s0"
-		if err = label.SetProcessLabel(con.Get()); err != nil {
-			runtime.UnlockOSThread()
-			return err
-		}
-	}
-	err = cmd.Start()
-	// Ignore error returned from SetProcessLabel("") call,
-	// can't recover.
-	if labelErr := label.SetProcessLabel(""); labelErr == nil {
-		// Unlock the thread only if the process label could be restored
-		// successfully.  Otherwise leave the thread locked and the Go runtime
-		// will terminate it once it returns to the threads pool.
-		runtime.UnlockOSThread()
-	} else {
-		logrus.Errorf("Unable to set process label: %q", labelErr)
-	}
-	return err
+	return cmd.Start()
 }
 
 // moveConmonToCgroupAndSignal gets a container's cgroupParent and moves the conmon process to that cgroup
@@ -1597,7 +1556,7 @@ func readConmonPipeData(runtimeName string, pipe *os.File, ociLog string) (int, 
 		ch <- syncStruct{si: si}
 	}()
 
-	data := -1
+	data := -1 //nolint: wastedassign
 	select {
 	case ss := <-ch:
 		if ss.err != nil {

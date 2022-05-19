@@ -155,6 +155,7 @@ func (r *Runtime) RenameContainer(ctx context.Context, ctr *Container, newName s
 		return nil, err
 	}
 
+	ctr.newContainerEvent(events.Rename)
 	return ctr, nil
 }
 
@@ -173,6 +174,8 @@ func (r *Runtime) initContainerVariables(rSpec *spec.Spec, config *ContainerConf
 			return nil, errors.Wrapf(err, "converting containers.conf ShmSize %s to an int", r.config.Containers.ShmSize)
 		}
 		ctr.config.ShmSize = size
+		ctr.config.NoShm = false
+		ctr.config.NoShmShare = false
 		ctr.config.StopSignal = 15
 
 		ctr.config.StopTimeout = r.config.Engine.StopTimeout
@@ -394,6 +397,10 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 	if ctr.restoreFromCheckpoint {
 		// Remove information about bind mount
 		// for new container from imported checkpoint
+
+		// NewFromSpec() is deprecated according to its comment
+		// however the recommended replace just causes a nil map panic
+		//nolint:staticcheck
 		g := generate.NewFromSpec(ctr.config.Spec)
 		g.RemoveMount("/dev/shm")
 		ctr.config.ShmDir = ""
@@ -474,7 +481,27 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 		if isAnonymous {
 			volOptions = append(volOptions, withSetAnon())
 		}
-		newVol, err := r.newVolume(ctx, volOptions...)
+
+		// If volume-opts are set parse and add driver opts.
+		if len(vol.Options) > 0 {
+			isDriverOpts := false
+			driverOpts := make(map[string]string)
+			for _, opts := range vol.Options {
+				if strings.HasPrefix(opts, "volume-opt") {
+					isDriverOpts = true
+					driverOptKey, driverOptValue, err := util.ParseDriverOpts(opts)
+					if err != nil {
+						return nil, err
+					}
+					driverOpts[driverOptKey] = driverOptValue
+				}
+			}
+			if isDriverOpts {
+				parsedOptions := []VolumeCreateOption{WithVolumeOptions(driverOpts)}
+				volOptions = append(volOptions, parsedOptions...)
+			}
+		}
+		newVol, err := r.newVolume(volOptions...)
 		if err != nil {
 			return nil, errors.Wrapf(err, "error creating named volume %q", vol.Name)
 		}
@@ -486,14 +513,16 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 	case define.NoLogging, define.PassthroughLogging:
 		break
 	case define.JournaldLogging:
-		ctr.initializeJournal(ctx)
+		if err := ctr.initializeJournal(ctx); err != nil {
+			return nil, fmt.Errorf("failed to initialize journal: %w", err)
+		}
 	default:
 		if ctr.config.LogPath == "" {
 			ctr.config.LogPath = filepath.Join(ctr.config.StaticDir, "ctr.log")
 		}
 	}
 
-	if !MountExists(ctr.config.Spec.Mounts, "/dev/shm") && ctr.config.ShmDir == "" {
+	if !MountExists(ctr.config.Spec.Mounts, "/dev/shm") && ctr.config.ShmDir == "" && !ctr.config.NoShm {
 		ctr.config.ShmDir = filepath.Join(ctr.bundlePath(), "shm")
 		if err := os.MkdirAll(ctr.config.ShmDir, 0700); err != nil {
 			if !os.IsExist(err) {

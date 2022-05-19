@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 	"github.com/containers/podman/v4/libpod/define"
 	"github.com/containers/podman/v4/pkg/inspect"
 	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/util"
 	. "github.com/containers/podman/v4/test/utils"
 	"github.com/containers/storage"
 	"github.com/containers/storage/pkg/reexec"
@@ -34,12 +36,12 @@ import (
 
 var (
 	//lint:ignore ST1003
-	PODMAN_BINARY      string                        //nolint:golint,stylecheck
-	INTEGRATION_ROOT   string                        //nolint:golint,stylecheck
-	CGROUP_MANAGER     = "systemd"                   //nolint:golint,stylecheck
-	RESTORE_IMAGES     = []string{ALPINE, BB, nginx} //nolint:golint,stylecheck
+	PODMAN_BINARY      string                        //nolint:revive,stylecheck
+	INTEGRATION_ROOT   string                        //nolint:revive,stylecheck
+	CGROUP_MANAGER     = "systemd"                   //nolint:revive,stylecheck
+	RESTORE_IMAGES     = []string{ALPINE, BB, nginx} //nolint:revive,stylecheck
 	defaultWaitTimeout = 90
-	CGROUPSV2, _       = cgroups.IsCgroup2UnifiedMode() //nolint:golint,stylecheck
+	CGROUPSV2, _       = cgroups.IsCgroup2UnifiedMode() //nolint:revive,stylecheck
 )
 
 // PodmanTestIntegration struct for command line options
@@ -211,7 +213,7 @@ func PodmanTestCreateUtil(tempDir string, remote bool) *PodmanTestIntegration {
 		podmanRemoteBinary = os.Getenv("PODMAN_REMOTE_BINARY")
 	}
 
-	conmonBinary := filepath.Join("/usr/libexec/podman/conmon")
+	conmonBinary := "/usr/libexec/podman/conmon"
 	altConmonBinary := "/usr/bin/conmon"
 	if _, err := os.Stat(conmonBinary); os.IsNotExist(err) {
 		conmonBinary = altConmonBinary
@@ -343,7 +345,7 @@ func imageTarPath(image string) string {
 	}
 
 	// e.g., registry.com/fubar:latest -> registry.com-fubar-latest.tar
-	imageCacheName := strings.Replace(strings.Replace(image, ":", "-", -1), "/", "-", -1) + ".tar"
+	imageCacheName := strings.ReplaceAll(strings.ReplaceAll(image, ":", "-"), "/", "-") + ".tar"
 
 	return filepath.Join(cacheDir, imageCacheName)
 }
@@ -461,7 +463,8 @@ func (p *PodmanTestIntegration) RunNginxWithHealthCheck(name string) (*PodmanSes
 	if name != "" {
 		podmanArgs = append(podmanArgs, "--name", name)
 	}
-	podmanArgs = append(podmanArgs, "-dt", "-P", "--health-cmd", "curl http://localhost/", nginx)
+	// curl without -f exits 0 even if http code >= 400!
+	podmanArgs = append(podmanArgs, "-dt", "-P", "--health-cmd", "curl -f http://localhost/", nginx)
 	session := p.Podman(podmanArgs)
 	session.WaitWithDefaultTimeout()
 	return session, session.OutputToString()
@@ -500,14 +503,12 @@ func (p *PodmanTestIntegration) BuildImageWithLabel(dockerfile, imageName string
 // PodmanPID execs podman and returns its PID
 func (p *PodmanTestIntegration) PodmanPID(args []string) (*PodmanSessionIntegration, int) {
 	podmanOptions := p.MakeOptions(args, false, false)
-	if p.RemoteTest {
-		podmanOptions = append([]string{"--remote", "--url", p.RemoteSocket}, podmanOptions...)
-	}
 	fmt.Printf("Running: %s %s\n", p.PodmanBinary, strings.Join(podmanOptions, " "))
+
 	command := exec.Command(p.PodmanBinary, podmanOptions...)
 	session, err := Start(command, GinkgoWriter, GinkgoWriter)
 	if err != nil {
-		Fail(fmt.Sprintf("unable to run podman command: %s", strings.Join(podmanOptions, " ")))
+		Fail("unable to run podman command: " + strings.Join(podmanOptions, " "))
 	}
 	podmanSession := &PodmanSession{Session: session}
 	return &PodmanSessionIntegration{podmanSession}, command.Process.Pid
@@ -809,7 +810,8 @@ func (p *PodmanTestIntegration) RestoreArtifactToCache(image string) error {
 
 func populateCache(podman *PodmanTestIntegration) {
 	for _, image := range CACHE_IMAGES {
-		podman.RestoreArtifactToCache(image)
+		err := podman.RestoreArtifactToCache(image)
+		Expect(err).To(BeNil())
 	}
 	// logformatter uses this to recognize the first test
 	fmt.Printf("-----------------------------\n")
@@ -842,12 +844,14 @@ func (p *PodmanTestIntegration) PodmanNoEvents(args []string) *PodmanSessionInte
 // MakeOptions assembles all the podman main options
 func (p *PodmanTestIntegration) makeOptions(args []string, noEvents, noCache bool) []string {
 	if p.RemoteTest {
+		if !util.StringInSlice("--remote", args) {
+			return append([]string{"--remote", "--url", p.RemoteSocket}, args...)
+		}
 		return args
 	}
-	var (
-		debug string
-	)
-	if _, ok := os.LookupEnv("DEBUG"); ok {
+
+	var debug string
+	if _, ok := os.LookupEnv("E2E_DEBUG"); ok {
 		debug = "--log-level=debug --syslog=true "
 	}
 
@@ -862,9 +866,10 @@ func (p *PodmanTestIntegration) makeOptions(args []string, noEvents, noCache boo
 		networkDir = p.NetworkConfigDir
 	}
 	podmanOptions := strings.Split(fmt.Sprintf("%s--root %s --runroot %s --runtime %s --conmon %s --network-config-dir %s --cgroup-manager %s --tmpdir %s --events-backend %s",
-		debug, p.Root, p.RunRoot, p.OCIRuntime, p.ConmonBinary, networkDir, p.CgroupManager, p.TmpDir, eventsType), " ")
-	if os.Getenv("HOOK_OPTION") != "" {
-		podmanOptions = append(podmanOptions, os.Getenv("HOOK_OPTION"))
+		debug, p.Root, p.RunRoot, p.OCIRuntime, p.ConmonBinary, p.NetworkConfigDir, p.CgroupManager, p.TmpDir, eventsType), " ")
+
+	if !p.RemoteTest {
+		podmanOptions = append(podmanOptions, "--network-backend", p.NetworkBackend.ToString())
 	}
 
 	podmanOptions = append(podmanOptions, "--network-backend", networkBackend)
@@ -881,11 +886,11 @@ func (p *PodmanTestIntegration) makeOptions(args []string, noEvents, noCache boo
 
 func writeConf(conf []byte, confPath string) {
 	if _, err := os.Stat(filepath.Dir(confPath)); os.IsNotExist(err) {
-		if err := os.MkdirAll(filepath.Dir(confPath), 777); err != nil {
+		if err := os.MkdirAll(filepath.Dir(confPath), 0o777); err != nil {
 			fmt.Println(err)
 		}
 	}
-	if err := ioutil.WriteFile(confPath, conf, 777); err != nil {
+	if err := ioutil.WriteFile(confPath, conf, 0o777); err != nil {
 		fmt.Println(err)
 	}
 }
@@ -896,7 +901,7 @@ func removeConf(confPath string) {
 	}
 }
 
-// generateNetworkConfig generates a cni config with a random name
+// generateNetworkConfig generates a CNI or Netavark config with a random name
 // it returns the network name and the filepath
 func generateNetworkConfig(p *PodmanTestIntegration) (string, string) {
 	var (
@@ -1041,4 +1046,61 @@ func ncz(port int) bool {
 
 func createNetworkName(name string) string {
 	return name + stringid.GenerateNonCryptoID()[:10]
+}
+
+var IPRegex = `(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}`
+
+// digShort execs into the given container and does a dig lookup with a timeout
+// backoff.  If it gets a response, it ensures that the output is in the correct
+// format and iterates a string array for match
+func digShort(container, lookupName string, matchNames []string, p *PodmanTestIntegration) {
+	digInterval := time.Millisecond * 250
+	for i := 0; i < 6; i++ {
+		time.Sleep(digInterval * time.Duration(i))
+		dig := p.Podman([]string{"exec", container, "dig", "+short", lookupName})
+		dig.WaitWithDefaultTimeout()
+		if dig.ExitCode() == 0 {
+			output := dig.OutputToString()
+			Expect(output).To(MatchRegexp(IPRegex))
+			for _, name := range matchNames {
+				Expect(output).To(Equal(name))
+			}
+			// success
+			return
+		}
+	}
+	Fail("dns is not responding")
+}
+
+// WaitForFile to be created in defaultWaitTimeout seconds, returns false if file not created
+func WaitForFile(path string) (err error) {
+	until := time.Now().Add(time.Duration(defaultWaitTimeout) * time.Second)
+	for i := 1; time.Now().Before(until); i++ {
+		_, err = os.Stat(path)
+		switch {
+		case err == nil:
+			return nil
+		case errors.Is(err, os.ErrNotExist):
+			time.Sleep(time.Duration(i) * time.Second)
+		default:
+			return err
+		}
+	}
+	return err
+}
+
+// WaitForService blocks, waiting for some service listening on given host:port
+func WaitForService(address url.URL) {
+	// Wait for podman to be ready
+	var conn net.Conn
+	var err error
+	for i := 1; i <= 5; i++ {
+		conn, err = net.Dial("tcp", address.Host)
+		if err != nil {
+			// Podman not available yet...
+			time.Sleep(time.Duration(i) * time.Second)
+		}
+	}
+	Expect(err).ShouldNot(HaveOccurred())
+	conn.Close()
 }

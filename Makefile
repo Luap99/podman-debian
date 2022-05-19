@@ -32,7 +32,7 @@ HEAD ?= HEAD
 CHANGELOG_BASE ?= HEAD~
 CHANGELOG_TARGET ?= HEAD
 PROJECT := github.com/containers/podman
-GIT_BASE_BRANCH ?= origin/main
+GIT_BASE_BRANCH ?= origin/v4.1
 GIT_BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null)
 GIT_BRANCH_CLEAN ?= $(shell echo $(GIT_BRANCH) | sed -e "s/[^[:alnum:]]/-/g")
 LIBPOD_INSTANCE := libpod_dev
@@ -102,6 +102,7 @@ LDFLAGS_PODMAN ?= \
 	-X $(LIBPOD)/define.buildInfo=$(BUILD_INFO) \
 	-X $(LIBPOD)/config._installPrefix=$(PREFIX) \
 	-X $(LIBPOD)/config._etcDir=$(ETCDIR) \
+	-X github.com/containers/common/pkg/config.additionalHelperBinariesDir=$(HELPER_BINARIES_DIR)\
 	$(EXTRA_LDFLAGS)
 LDFLAGS_PODMAN_STATIC ?= \
 	$(LDFLAGS_PODMAN) \
@@ -133,7 +134,7 @@ ifeq ($(GOBIN),)
 GOBIN := $(FIRST_GOPATH)/bin
 endif
 
-export PATH := $(PATH):$(GOBIN)
+export PATH := $(PATH):$(GOBIN):$(CURDIR)/hack
 
 GOMD2MAN ?= $(shell command -v go-md2man || echo '$(GOBIN)/go-md2man')
 
@@ -173,9 +174,8 @@ endif
 # Necessary for nested-$(MAKE) calls and docs/remote-docs.sh
 export GOOS GOARCH CGO_ENABLED BINSFX SRCBINDIR
 
-define go-get
-	env GO111MODULE=off \
-		$(GO) get -u ${1}
+define go-install
+		$(GO) install ${1}@latest
 endef
 
 # Need to use CGO for mDNS resolution, but cross builds need CGO disabled
@@ -291,7 +291,7 @@ validate: gofmt lint .gitvalidation validate.completions man-page-check swagger-
 .PHONY: build-all-new-commits
 build-all-new-commits:
 	# Validate that all the commits build on top of $(GIT_BASE_BRANCH)
-	git rebase $(GIT_BASE_BRANCH) -x make
+	git rebase $(GIT_BASE_BRANCH) -x "$(MAKE)"
 
 .PHONY: vendor
 vendor:
@@ -303,7 +303,7 @@ vendor:
 vendor-in-container:
 	podman run --privileged --rm --env HOME=/root \
 		-v $(CURDIR):/src -w /src \
-		docker.io/library/golang:1.16 \
+		docker.io/library/golang:1.17 \
 		make vendor
 
 ###
@@ -434,22 +434,6 @@ local-cross: $(CROSS_BUILD_TARGETS) ## Cross compile podman binary for multiple 
 .PHONY: cross
 cross: local-cross
 
-# Update nix/nixpkgs.json its latest stable commit
-.PHONY: nixpkgs
-nixpkgs:
-	@nix run \
-		-f channel:nixos-21.05 nix-prefetch-git \
-		-c nix-prefetch-git \
-		--no-deepClone \
-		https://github.com/nixos/nixpkgs refs/heads/nixos-21.05 > nix/nixpkgs.json
-
-# Build statically linked binary
-.PHONY: static
-static:
-	@nix build -f nix/
-	mkdir -p ./bin
-	cp -rfp ./result/bin/* ./bin/
-
 .PHONY: build-no-cgo
 build-no-cgo:
 	BUILDTAGS="containers_image_openpgp exclude_graphdriver_btrfs \
@@ -543,8 +527,8 @@ validate.completions:
 .PHONY: run-docker-py-tests
 run-docker-py-tests:
 	touch test/__init__.py
-	env CONTAINERS_CONF=$(CURDIR)/test/apiv2/containers.conf pytest test/python/docker/
-	-rm test/__init__.py
+	env CONTAINERS_CONF=$(CURDIR)/test/apiv2/containers.conf pytest --disable-warnings test/python/docker/
+	rm -f test/__init__.py
 
 .PHONY: localunit
 localunit: test/goecho/goecho test/version/version
@@ -552,7 +536,7 @@ localunit: test/goecho/goecho test/version/version
 	UNIT=1 $(GOBIN)/ginkgo \
 		-r \
 		$(TESTFLAGS) \
-		--skipPackage test/e2e,pkg/apparmor,pkg/bindings,hack \
+		--skipPackage test/e2e,pkg/apparmor,pkg/bindings,hack,pkg/machine/e2e \
 		--cover \
 		--covermode atomic \
 		--coverprofile coverprofile \
@@ -568,8 +552,8 @@ test: localunit localintegration remoteintegration localsystem remotesystem  ## 
 
 .PHONY: ginkgo-run
 ginkgo-run:
-	$(GOBIN)/ginkgo version
-	$(GOBIN)/ginkgo -v $(TESTFLAGS) -tags "$(TAGS)" $(GINKGOTIMEOUT) -cover -flakeAttempts 3 -progress -trace -noColor -nodes 3 -debug test/e2e/. $(HACK)
+	ACK_GINKGO_RC=true $(GOBIN)/ginkgo version
+	ACK_GINKGO_RC=true $(GOBIN)/ginkgo -v $(TESTFLAGS) -tags "$(TAGS)" $(GINKGOTIMEOUT) -cover -flakeAttempts 3 -progress -trace -noColor -nodes 3 -debug test/e2e/. $(HACK)
 
 .PHONY: ginkgo
 ginkgo:
@@ -584,6 +568,14 @@ localintegration: test-binaries ginkgo
 
 .PHONY: remoteintegration
 remoteintegration: test-binaries ginkgo-remote
+
+.PHONY: localbenchmarks
+localbenchmarks: test-binaries
+	ACK_GINKGO_RC=true $(GOBIN)/ginkgo \
+		      -focus "Podman Benchmark Suite" \
+		      -tags "$(BUILDTAGS) benchmarks" -noColor \
+		      -noisySkippings=false -noisyPendings=false \
+		      test/e2e/.
 
 .PHONY: localsystem
 localsystem:
@@ -623,11 +615,23 @@ remotesystem:
 	fi;\
 	exit $$rc
 
+.PHONY: localapiv2-bash
+localapiv2-bash:
+	env PODMAN=./bin/podman stdbuf -o0 -e0 ./test/apiv2/test-apiv2
+
+.PHONY: localapiv2-python
+localapiv2-python:
+	env CONTAINERS_CONF=$(CURDIR)/test/apiv2/containers.conf PODMAN=./bin/podman \
+		pytest --verbose --disable-warnings ./test/apiv2/python
+	touch test/__init__.py
+	env CONTAINERS_CONF=$(CURDIR)/test/apiv2/containers.conf PODMAN=./bin/podman \
+		pytest --verbose --disable-warnings ./test/python/docker
+	rm -f test/__init__.py
+
+# Order is important running python tests first causes the bash tests
+# to fail, see 12-imagesMore.  FIXME order of tests should not matter
 .PHONY: localapiv2
-localapiv2:
-	env PODMAN=./bin/podman ./test/apiv2/test-apiv2
-	env CONTAINERS_CONF=$(CURDIR)/test/apiv2/containers.conf PODMAN=./bin/podman ${PYTHON} -m unittest discover -v ./test/apiv2/python
-	env CONTAINERS_CONF=$(CURDIR)/test/apiv2/containers.conf PODMAN=./bin/podman ${PYTHON} -m unittest discover -v ./test/python/docker
+localapiv2: localapiv2-bash localapiv2-python
 
 .PHONY: remoteapiv2
 remoteapiv2:
@@ -860,7 +864,7 @@ install.tools: .install.goimports .install.gitvalidation .install.md2man .instal
 
 .install.goimports: .gopathok
 	if [ ! -x "$(GOBIN)/goimports" ]; then \
-		$(call go-get,golang.org/x/tools/cmd/goimports); \
+		$(call go-install,golang.org/x/tools/cmd/goimports); \
 	fi
 	touch .install.goimports
 
@@ -873,12 +877,12 @@ install.tools: .install.goimports .install.gitvalidation .install.md2man .instal
 .PHONY: .install.gitvalidation
 .install.gitvalidation: .gopathok
 	if [ ! -x "$(GOBIN)/git-validation" ]; then \
-		$(call go-get,github.com/vbatts/git-validation); \
+		$(call go-install,github.com/vbatts/git-validation); \
 	fi
 
 .PHONY: .install.golangci-lint
 .install.golangci-lint: .gopathok
-	VERSION=1.36.0 GOBIN=$(GOBIN) ./hack/install_golangci.sh
+	VERSION=1.45.2 GOBIN=$(GOBIN) ./hack/install_golangci.sh
 
 .PHONY: .install.bats
 .install.bats: .gopathok
@@ -893,7 +897,7 @@ install.tools: .install.goimports .install.gitvalidation .install.md2man .instal
 .PHONY: .install.md2man
 .install.md2man: .gopathok
 	if [ ! -x "$(GOMD2MAN)" ]; then \
-		$(call go-get,github.com/cpuguy83/go-md2man); \
+		$(call go-install,github.com/cpuguy83/go-md2man); \
 	fi
 
 # $BUILD_TAGS variable is used in hack/golangci-lint.sh
@@ -951,5 +955,5 @@ clean: clean-binaries ## Clean all make artifacts
 		libpod/pod_easyjson.go \
 		.install.goimports \
 		docs/build \
-		venv
+		.venv
 	make -C docs clean

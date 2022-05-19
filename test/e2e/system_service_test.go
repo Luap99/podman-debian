@@ -20,7 +20,7 @@ var _ = Describe("podman system service", func() {
 
 	// The timeout used to for the service to respond. As shown in #12167,
 	// this may take some time on machines under high load.
-	var timeout = 20
+	var timeout = 30
 
 	BeforeEach(func() {
 		tempdir, err := CreateTempDirInTempDir()
@@ -121,22 +121,6 @@ var _ = Describe("podman system service", func() {
 		})
 	})
 })
-
-// WaitForService blocks, waiting for some service listening on given host:port
-func WaitForService(address url.URL) {
-	// Wait for podman to be ready
-	var conn net.Conn
-	var err error
-	for i := 1; i <= 5; i++ {
-		conn, err = net.Dial("tcp", address.Host)
-		if err != nil {
-			// Podman not available yet...
-			time.Sleep(time.Duration(i) * time.Second)
-		}
-	}
-	Expect(err).ShouldNot(HaveOccurred())
-	conn.Close()
-}
 
 // randomPort leans on the go net library to find an available port...
 func randomPort() string {

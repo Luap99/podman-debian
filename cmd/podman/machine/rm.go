@@ -1,3 +1,4 @@
+//go:build amd64 || arm64
 // +build amd64 arm64
 
 package machine
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/libpod/events"
 	"github.com/containers/podman/v4/pkg/machine"
 	"github.com/spf13/cobra"
 )
@@ -49,7 +51,7 @@ func init() {
 	flags.BoolVar(&destroyOptions.SaveImage, imageFlagName, false, "Do not delete the image file")
 }
 
-func rm(cmd *cobra.Command, args []string) error {
+func rm(_ *cobra.Command, args []string) error {
 	var (
 		err error
 		vm  machine.VM
@@ -59,7 +61,7 @@ func rm(cmd *cobra.Command, args []string) error {
 		vmName = args[0]
 	}
 
-	provider := getSystemDefaultProvider()
+	provider := GetSystemDefaultProvider()
 	vm, err = provider.LoadVMByName(vmName)
 	if err != nil {
 		return err
@@ -82,5 +84,10 @@ func rm(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 	}
-	return remove()
+	err = remove()
+	if err != nil {
+		return err
+	}
+	newMachineEvent(events.Remove, events.Event{Name: vmName})
+	return nil
 }

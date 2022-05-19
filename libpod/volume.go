@@ -52,6 +52,9 @@ type VolumeConfig struct {
 	Size uint64 `json:"size"`
 	// Inodes maximum of the volume.
 	Inodes uint64 `json:"inodes"`
+	// DisableQuota indicates that the volume should completely disable using any
+	// quota tracking.
+	DisableQuota bool `json:"disableQuota,omitempty"`
 }
 
 // VolumeState holds the volume's mutable state.
@@ -246,4 +249,17 @@ func (v *Volume) IsDangling() (bool, error) {
 // mounting.
 func (v *Volume) UsesVolumeDriver() bool {
 	return !(v.config.Driver == define.VolumeDriverLocal || v.config.Driver == "")
+}
+
+func (v *Volume) Mount() (string, error) {
+	v.lock.Lock()
+	defer v.lock.Unlock()
+	err := v.mount()
+	return v.config.MountPoint, err
+}
+
+func (v *Volume) Unmount() error {
+	v.lock.Lock()
+	defer v.lock.Unlock()
+	return v.unmount(false)
 }

@@ -54,7 +54,6 @@ func CRImportCheckpointConfigOnly(destination, input string) error {
 	options := &archive.TarOptions{
 		// Here we only need the files config.dump and spec.dump
 		ExcludePatterns: []string{
-			"volumes",
 			"ctr.log",
 			"artifacts",
 			stats.StatsDump,
@@ -62,6 +61,7 @@ func CRImportCheckpointConfigOnly(destination, input string) error {
 			metadata.DeletedFilesFile,
 			metadata.NetworkStatusFile,
 			metadata.CheckpointDirectory,
+			metadata.CheckpointVolumesDirectory,
 		},
 	}
 	if err = archive.Untar(archiveFile, destination, options); err != nil {
@@ -99,13 +99,12 @@ func CRRemoveDeletedFiles(id, baseDirectory, containerRootDirectory string) erro
 // root file system changes on top of containerRootDirectory
 func CRApplyRootFsDiffTar(baseDirectory, containerRootDirectory string) error {
 	rootfsDiffPath := filepath.Join(baseDirectory, metadata.RootFsDiffTar)
-	if _, err := os.Stat(rootfsDiffPath); err != nil {
-		// Only do this if a rootfs-diff.tar actually exists
-		return nil
-	}
-
+	// Only do this if a rootfs-diff.tar actually exists
 	rootfsDiffFile, err := os.Open(rootfsDiffPath)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		return errors.Wrap(err, "failed to open root file-system diff file")
 	}
 	defer rootfsDiffFile.Close()

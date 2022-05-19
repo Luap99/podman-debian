@@ -9,7 +9,7 @@ podman\-system\-service - Run an API service
 ## DESCRIPTION
 The **podman system service** command creates a listening service that will answer API calls for Podman.  You may
 optionally provide an endpoint for the API in URI form.  For example, *unix:///tmp/foobar.sock* or *tcp:localhost:8080*.
-If no endpoint is provided, defaults will be used.  The default endpoint for a rootfull
+If no endpoint is provided, defaults will be used.  The default endpoint for a rootful
 service is *unix:///run/podman/podman.sock* and rootless is *unix://$XDG_RUNTIME_DIR/podman/podman.sock* (for
 example *unix:///run/user/1000/podman/podman.sock*)
 
@@ -25,14 +25,6 @@ Note: The default systemd unit files (system and user) change the log-level opti
 
 ## OPTIONS
 
-#### **--time**, **-t**
-
-The time until the session expires in _seconds_. The default is 5
-seconds. A value of `0` means no timeout, therefore the session will not expire.
-
-The default timeout can be changed via the `service_timeout=VALUE` field in containers.conf.
-See **[containers.conf(5)](https://github.com/containers/common/blob/master/docs/containers.conf.5.md)** for more information.
-
 #### **--cors**
 
 CORS headers to inject to the HTTP response. The default value is empty string which disables CORS headers.
@@ -40,6 +32,14 @@ CORS headers to inject to the HTTP response. The default value is empty string w
 #### **--help**, **-h**
 
 Print usage statement.
+
+#### **--time**, **-t**
+
+The time until the session expires in _seconds_. The default is 5
+seconds. A value of `0` means no timeout, therefore the session will not expire.
+
+The default timeout can be changed via the `service_timeout=VALUE` field in containers.conf.
+See **[containers.conf(5)](https://github.com/containers/common/blob/master/docs/containers.conf.5.md)** for more information.
 
 ## EXAMPLES
 

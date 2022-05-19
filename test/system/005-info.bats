@@ -89,7 +89,7 @@ host.slirp4netns.executable | $expr_path
 }
 
 @test "podman info netavark " {
-    # Confirm netavark in use when explicitely required by execution environment.
+    # Confirm netavark in use when explicitly required by execution environment.
     if [[ "$NETWORK_BACKEND" == "netavark" ]]; then
         if ! is_netavark; then
             # Assume is_netavark() will provide debugging feedback.
@@ -104,6 +104,14 @@ host.slirp4netns.executable | $expr_path
     if ! is_remote; then
         run_podman --storage-driver=vfs --root ${PODMAN_TMPDIR}/nothing-here-move-along info --format '{{ .Store.GraphOptions }}'
         is "$output" "map\[\]" "'podman --root should reset Graphoptions to []"
+    fi
+}
+
+@test "podman --root PATH --volumepath info - basic output" {
+    volumePath=${PODMAN_TMPDIR}/volumesGoHere
+    if ! is_remote; then
+        run_podman --storage-driver=vfs --root ${PODMAN_TMPDIR}/nothing-here-move-along --volumepath ${volumePath} info --format '{{ .Store.VolumePath }}'
+        is "$output" "${volumePath}" "'podman --volumepath should reset VolumePath"
     fi
 }
 

@@ -12,9 +12,6 @@ has no containers connected or configured to connect to it. It will not remove
 the so-called default network which goes by the name of *podman*.
 
 ## OPTIONS
-#### **--force**, **-f**
-
-Do not prompt for confirmation
 
 #### **--filter**
 
@@ -33,13 +30,20 @@ The `label` *filter* accepts two formats. One is the `label`=*key* or `label`=*k
 
 The `until` *filter* can be Unix timestamps, date formatted timestamps, or Go duration strings (e.g. 10m, 1h30m) computed relative to the machine’s time.
 
+#### **--force**, **-f**
+
+Do not prompt for confirmation
+
 ## EXAMPLE
 Prune networks
-
 ```
 podman network prune
 ```
 
+Prune all networks created before 2h
+```
+podman network prune --filter until=2h
+```
 
 ## SEE ALSO
 **[podman(1)](podman.1.md)**, **[podman-network(1)](podman-network.1.md)**, **[podman-network-rm(1)](podman-network-rm.1.md)**

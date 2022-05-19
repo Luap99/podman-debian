@@ -4,7 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
+	"regexp"
+	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,14 +20,15 @@ import (
 	"github.com/containers/podman/v4/libpod/define"
 	ann "github.com/containers/podman/v4/pkg/annotations"
 	"github.com/containers/podman/v4/pkg/domain/entities"
+	v1 "github.com/containers/podman/v4/pkg/k8s.io/api/core/v1"
+	"github.com/containers/podman/v4/pkg/k8s.io/apimachinery/pkg/api/resource"
 	"github.com/containers/podman/v4/pkg/specgen"
 	"github.com/containers/podman/v4/pkg/specgen/generate"
 	"github.com/containers/podman/v4/pkg/util"
+	"github.com/docker/docker/pkg/system"
 	"github.com/docker/go-units"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/pkg/errors"
-	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 func ToPodOpt(ctx context.Context, podName string, p entities.PodCreateOptions, podYAML *v1.PodTemplateSpec) (entities.PodCreateOptions, error) {
@@ -77,7 +82,7 @@ func ToPodOpt(ctx context.Context, podName string, p entities.PodCreateOptions, 
 		}
 		// dns options
 		if options := dnsConfig.Options; len(options) > 0 {
-			dnsOptions := make([]string, 0)
+			dnsOptions := make([]string, 0, len(options))
 			for _, opts := range options {
 				d := opts.Name
 				if opts.Value != nil {
@@ -85,6 +90,7 @@ func ToPodOpt(ctx context.Context, podName string, p entities.PodCreateOptions, 
 				}
 				dnsOptions = append(dnsOptions, d)
 			}
+			p.Net.DNSOptions = dnsOptions
 		}
 	}
 	return p, nil
@@ -272,6 +278,9 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 	}
 
 	annotations := make(map[string]string)
+	if opts.Annotations != nil {
+		annotations = opts.Annotations
+	}
 	if opts.PodInfraID != "" {
 		annotations[ann.SandboxID] = opts.PodInfraID
 		annotations[ann.ContainerType] = ann.ContainerTypeContainer
@@ -291,9 +300,9 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 			return nil, err
 		}
 
-		// Only set the env if the value is not ""
-		if value != "" {
-			envs[env.Name] = value
+		// Only set the env if the value is not nil
+		if value != nil {
+			envs[env.Name] = *value
 		}
 	}
 	for _, envFrom := range opts.Container.EnvFrom {
@@ -440,12 +449,13 @@ func setupLivenessProbe(s *specgen.SpecGenerator, containerYAML v1.Container, re
 		}
 
 		// configure healthcheck on the basis of Handler Actions.
-		if probeHandler.Exec != nil {
+		switch {
+		case probeHandler.Exec != nil:
 			execString := strings.Join(probeHandler.Exec.Command, " ")
 			commandString = fmt.Sprintf("%s || %s", execString, failureCmd)
-		} else if probeHandler.HTTPGet != nil {
+		case probeHandler.HTTPGet != nil:
 			commandString = fmt.Sprintf("curl %s://%s:%d/%s  || %s", probeHandler.HTTPGet.Scheme, probeHandler.HTTPGet.Host, probeHandler.HTTPGet.Port.IntValue(), probeHandler.HTTPGet.Path, failureCmd)
-		} else if probeHandler.TCPSocket != nil {
+		case probeHandler.TCPSocket != nil:
 			commandString = fmt.Sprintf("nc -z -v %s %d || %s", probeHandler.TCPSocket.Host, probeHandler.TCPSocket.Port.IntValue(), failureCmd)
 		}
 		s.HealthConfig, err = makeHealthCheck(commandString, probe.PeriodSeconds, probe.FailureThreshold, probe.TimeoutSeconds, probe.InitialDelaySeconds)
@@ -481,17 +491,17 @@ func makeHealthCheck(inCmd string, interval int32, retries int32, timeout int32,
 	}
 
 	if interval < 1 {
-		//kubernetes interval defaults to 10 sec and cannot be less than 1
+		// kubernetes interval defaults to 10 sec and cannot be less than 1
 		interval = 10
 	}
 	hc.Interval = (time.Duration(interval) * time.Second)
 	if retries < 1 {
-		//kubernetes retries defaults to 3
+		// kubernetes retries defaults to 3
 		retries = 3
 	}
 	hc.Retries = int(retries)
 	if timeout < 1 {
-		//kubernetes timeout defaults to 1
+		// kubernetes timeout defaults to 1
 		timeout = 1
 	}
 	timeoutDuration := (time.Duration(timeout) * time.Second)
@@ -621,7 +631,7 @@ func envVarsFrom(envFrom v1.EnvFromSource, opts *CtrSpecGenOptions) (map[string]
 
 // envVarValue returns the environment variable value configured within the container's env setting.
 // It gets the value from a configMap or secret if specified, otherwise returns env.Value
-func envVarValue(env v1.EnvVar, opts *CtrSpecGenOptions) (string, error) {
+func envVarValue(env v1.EnvVar, opts *CtrSpecGenOptions) (*string, error) {
 	if env.ValueFrom != nil {
 		if env.ValueFrom.ConfigMapKeyRef != nil {
 			cmKeyRef := env.ValueFrom.ConfigMapKeyRef
@@ -630,16 +640,16 @@ func envVarValue(env v1.EnvVar, opts *CtrSpecGenOptions) (string, error) {
 			for _, c := range opts.ConfigMaps {
 				if cmKeyRef.Name == c.Name {
 					if value, ok := c.Data[cmKeyRef.Key]; ok {
-						return value, nil
+						return &value, nil
 					}
 					err = errors.Errorf("Cannot set env %v: key %s not found in configmap %v", env.Name, cmKeyRef.Key, cmKeyRef.Name)
 					break
 				}
 			}
 			if cmKeyRef.Optional == nil || !*cmKeyRef.Optional {
-				return "", err
+				return nil, err
 			}
-			return "", nil
+			return nil, nil
 		}
 
 		if env.ValueFrom.SecretKeyRef != nil {
@@ -647,18 +657,167 @@ func envVarValue(env v1.EnvVar, opts *CtrSpecGenOptions) (string, error) {
 			secret, err := k8sSecretFromSecretManager(secKeyRef.Name, opts.SecretsManager)
 			if err == nil {
 				if val, ok := secret[secKeyRef.Key]; ok {
-					return string(val), nil
+					value := string(val)
+					return &value, nil
 				}
 				err = errors.Errorf("Secret %v has not %v key", secKeyRef.Name, secKeyRef.Key)
 			}
 			if secKeyRef.Optional == nil || !*secKeyRef.Optional {
-				return "", errors.Errorf("Cannot set env %v: %v", env.Name, err)
+				return nil, errors.Errorf("Cannot set env %v: %v", env.Name, err)
 			}
-			return "", nil
+			return nil, nil
+		}
+
+		if env.ValueFrom.FieldRef != nil {
+			return envVarValueFieldRef(env, opts)
+		}
+
+		if env.ValueFrom.ResourceFieldRef != nil {
+			return envVarValueResourceFieldRef(env, opts)
 		}
 	}
 
-	return env.Value, nil
+	return &env.Value, nil
+}
+
+func envVarValueFieldRef(env v1.EnvVar, opts *CtrSpecGenOptions) (*string, error) {
+	fieldRef := env.ValueFrom.FieldRef
+
+	fieldPathLabelPattern := `^metadata.labels\['(.+)'\]$`
+	fieldPathLabelRegex := regexp.MustCompile(fieldPathLabelPattern)
+	fieldPathAnnotationPattern := `^metadata.annotations\['(.+)'\]$`
+	fieldPathAnnotationRegex := regexp.MustCompile(fieldPathAnnotationPattern)
+
+	fieldPath := fieldRef.FieldPath
+
+	if fieldPath == "metadata.name" {
+		return &opts.PodName, nil
+	}
+	if fieldPath == "metadata.uid" {
+		return &opts.PodID, nil
+	}
+	fieldPathMatches := fieldPathLabelRegex.FindStringSubmatch(fieldPath)
+	if len(fieldPathMatches) == 2 { // 1 for entire regex and 1 for subexp
+		labelValue := opts.Labels[fieldPathMatches[1]] // not existent label is OK
+		return &labelValue, nil
+	}
+	fieldPathMatches = fieldPathAnnotationRegex.FindStringSubmatch(fieldPath)
+	if len(fieldPathMatches) == 2 { // 1 for entire regex and 1 for subexp
+		annotationValue := opts.Annotations[fieldPathMatches[1]] // not existent annotation is OK
+		return &annotationValue, nil
+	}
+
+	return nil, errors.Errorf(
+		"Can not set env %v. Reason: fieldPath %v is either not valid or not supported",
+		env.Name, fieldPath,
+	)
+}
+
+func envVarValueResourceFieldRef(env v1.EnvVar, opts *CtrSpecGenOptions) (*string, error) {
+	divisor := env.ValueFrom.ResourceFieldRef.Divisor
+	if divisor.IsZero() { // divisor not set, use default
+		divisor.Set(1)
+	}
+
+	resources, err := getContainerResources(opts.Container)
+	if err != nil {
+		return nil, err
+	}
+
+	var value *resource.Quantity
+	resourceName := env.ValueFrom.ResourceFieldRef.Resource
+	var isValidDivisor bool
+
+	switch resourceName {
+	case "limits.memory":
+		value = resources.Limits.Memory()
+		isValidDivisor = isMemoryDivisor(divisor)
+	case "limits.cpu":
+		value = resources.Limits.Cpu()
+		isValidDivisor = isCPUDivisor(divisor)
+	case "requests.memory":
+		value = resources.Requests.Memory()
+		isValidDivisor = isMemoryDivisor(divisor)
+	case "requests.cpu":
+		value = resources.Requests.Cpu()
+		isValidDivisor = isCPUDivisor(divisor)
+	default:
+		return nil, errors.Errorf(
+			"Can not set env %v. Reason: resource %v is either not valid or not supported",
+			env.Name, resourceName,
+		)
+	}
+
+	if !isValidDivisor {
+		return nil, errors.Errorf(
+			"Can not set env %s. Reason: divisor value %s is not valid",
+			env.Name, divisor.String(),
+		)
+	}
+
+	// k8s rounds up the result to the nearest integer
+	intValue := int(math.Ceil(value.AsApproximateFloat64() / divisor.AsApproximateFloat64()))
+	stringValue := strconv.Itoa(intValue)
+
+	return &stringValue, nil
+}
+
+func isMemoryDivisor(divisor resource.Quantity) bool {
+	switch divisor.String() {
+	case "1", "1k", "1M", "1G", "1T", "1P", "1E", "1Ki", "1Mi", "1Gi", "1Ti", "1Pi", "1Ei":
+		return true
+	default:
+		return false
+	}
+}
+
+func isCPUDivisor(divisor resource.Quantity) bool {
+	switch divisor.String() {
+	case "1", "1m":
+		return true
+	default:
+		return false
+	}
+}
+
+func getContainerResources(container v1.Container) (v1.ResourceRequirements, error) {
+	result := v1.ResourceRequirements{
+		Limits:   v1.ResourceList{},
+		Requests: v1.ResourceList{},
+	}
+
+	limits := container.Resources.Limits
+	requests := container.Resources.Requests
+
+	if limits == nil || limits.Memory().IsZero() {
+		mi, err := system.ReadMemInfo()
+		if err != nil {
+			return result, err
+		}
+		result.Limits[v1.ResourceMemory] = *resource.NewQuantity(mi.MemTotal, resource.DecimalSI)
+	} else {
+		result.Limits[v1.ResourceMemory] = limits[v1.ResourceMemory]
+	}
+
+	if limits == nil || limits.Cpu().IsZero() {
+		result.Limits[v1.ResourceCPU] = *resource.NewQuantity(int64(runtime.NumCPU()), resource.DecimalSI)
+	} else {
+		result.Limits[v1.ResourceCPU] = limits[v1.ResourceCPU]
+	}
+
+	if requests == nil || requests.Memory().IsZero() {
+		result.Requests[v1.ResourceMemory] = result.Limits[v1.ResourceMemory]
+	} else {
+		result.Requests[v1.ResourceMemory] = requests[v1.ResourceMemory]
+	}
+
+	if requests == nil || requests.Cpu().IsZero() {
+		result.Requests[v1.ResourceCPU] = result.Limits[v1.ResourceCPU]
+	} else {
+		result.Requests[v1.ResourceCPU] = requests[v1.ResourceCPU]
+	}
+
+	return result, nil
 }
 
 // getPodPorts converts a slice of kube container descriptions to an

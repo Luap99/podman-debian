@@ -17,7 +17,11 @@ containers added to it. The pod id is printed to STDOUT. You can then use
 
 #### **--add-host**=_host_:_ip_
 
-Add a host to the /etc/hosts file shared between all containers in the pod.
+Add a custom host-to-IP mapping (host:ip)
+
+Add a line to /etc/hosts. The format is hostname:ip. The **--add-host**
+option can be set multiple times.
+The /etc/hosts file is shared between all containers in the pod.
 
 #### **--cgroup-parent**=*path*
 
@@ -75,21 +79,6 @@ Set custom DNS search domains in the /etc/resolv.conf file that will be shared b
 
 GID map for the user namespace. Using this flag will run the container with user namespace enabled. It conflicts with the `--userns` and `--subgidname` flags.
 
-#### **--uidmap**=*container_uid*:*from_uid*:*amount*
-
-Run the container in a new user namespace using the supplied mapping. This
-option conflicts with the **--userns** and **--subuidname** options. This
-option provides a way to map host UIDs to container UIDs. It can be passed
-several times to map different ranges.
-
-#### **--subgidname**=*name*
-
-Name for GID map from the `/etc/subgid` file. Using this flag will run the container with user namespace enabled. This flag conflicts with `--userns` and `--gidmap`.
-
-#### **--subuidname**=*name*
-
-Name for UID map from the `/etc/subuid` file. Using this flag will run the container with user namespace enabled. This flag conflicts with `--userns` and `--uidmap`.
-
 #### **--help**, **-h**
 
 Print usage statement.
@@ -102,13 +91,13 @@ Set a hostname to the pod
 
 Create an infra container and associate it with the pod. An infra container is a lightweight container used to coordinate the shared kernel namespace of a pod. Default: true.
 
-#### **--infra-conmon-pidfile**=*file*
-
-Write the pid of the infra container's **conmon** process to a file. As **conmon** runs in a separate process than Podman, this is necessary when using systemd to manage Podman containers and pods.
-
 #### **--infra-command**=*command*
 
 The command that will be run to start the infra container. Default: "/pause".
+
+#### **--infra-conmon-pidfile**=*file*
+
+Write the pid of the infra container's **conmon** process to a file. As **conmon** runs in a separate process than Podman, this is necessary when using systemd to manage Podman containers and pods.
 
 #### **--infra-image**=*image*
 
@@ -167,7 +156,7 @@ Set the network mode for the pod. Invalid if using **--dns**, **--dns-opt**, or 
 
 Valid _mode_ values are:
 
-- **bridge[:OPTIONS,...]**: Create a network stack on the default bridge. This is the default for rootfull containers. It is possible to specify these additional options:
+- **bridge[:OPTIONS,...]**: Create a network stack on the default bridge. This is the default for rootful containers. It is possible to specify these additional options:
   - **alias=name**: Add network-scoped alias for the container.
   - **ip=IPv4**: Specify a static ipv4 address for this container.
   - **ip=IPv6**: Specify a static ipv6 address for this container.
@@ -180,12 +169,12 @@ Valid _mode_ values are:
 - **container:**_id_: Reuse another container's network stack.
 - **host**: Do not create a network namespace, the container will use the host's network. Note: The host mode gives the container full access to local system services such as D-bus and is therefore considered insecure.
 - **ns:**_path_: Path to a network namespace to join.
-- **private**: Create a new namespace for the container. This will use the **bridge** mode for rootfull containers and **slirp4netns** for rootless ones.
-- **slirp4netns[:OPTIONS,...]**: use **slirp4netns**(1) to create a user network stack. This is the default for rootless containers. It is possible to specify these additional options:
-  - **allow_host_loopback=true|false**: Allow the slirp4netns to reach the host loopback IP (`10.0.2.2`, which is added to `/etc/hosts` as `host.containers.internal` for your convenience). Default is false.
+- **private**: Create a new namespace for the container. This will use the **bridge** mode for rootful containers and **slirp4netns** for rootless ones.
+- **slirp4netns[:OPTIONS,...]**: use **slirp4netns**(1) to create a user network stack. This is the default for rootless containers. It is possible to specify these additional options, they can also be set with `network_cmd_options` in containers.conf:
+  - **allow_host_loopback=true|false**: Allow the slirp4netns to reach the host loopback IP (`10.0.2.2`). Default is false.
   - **mtu=MTU**: Specify the MTU to use for this network. (Default is `65520`).
   - **cidr=CIDR**: Specify ip range to use for this network. (Default is `10.0.2.0/24`).
-  - **enable_ipv6=true|false**: Enable IPv6. Default is false. (Required for `outbound_addr6`).
+  - **enable_ipv6=true|false**: Enable IPv6. Default is true. (Required for `outbound_addr6`).
   - **outbound_addr=INTERFACE**: Specify the outbound interface slirp should bind to (ipv4 traffic only).
   - **outbound_addr=IPv4**: Specify the outbound ipv4 address slirp should bind to.
   - **outbound_addr6=INTERFACE**: Specify the outbound interface slirp should bind to (ipv6 traffic only).
@@ -202,7 +191,10 @@ NOTE: A container will only have access to aliases on the first network that it 
 
 #### **--no-hosts**
 
-Disable creation of /etc/hosts for the pod.
+Do not create _/etc/hosts_ for the pod.
+By default, Podman will manage _/etc/hosts_, adding the container's own IP address and any hosts from **--add-host**.
+**--no-hosts** disables this, and the image's _/etc/hosts_ will be preserved unmodified.
+This option conflicts with **--add-host**.
 
 #### **--pid**=*pid*
 
@@ -282,6 +274,14 @@ This boolean determines whether or not all containers entering the pod will use 
 
 Note: This options conflict with **--share=cgroup** since that would set the pod as the cgroup parent but enter the container into the same cgroupNS as the infra container.
 
+#### **--subgidname**=*name*
+
+Name for GID map from the `/etc/subgid` file. Using this flag will run the container with user namespace enabled. This flag conflicts with `--userns` and `--gidmap`.
+
+#### **--subuidname**=*name*
+
+Name for UID map from the `/etc/subuid` file. Using this flag will run the container with user namespace enabled. This flag conflicts with `--userns` and `--uidmap`.
+
 #### **--sysctl**=_name_=_value_
 
 Configure namespace kernel parameters for all containers in the pod.
@@ -304,18 +304,41 @@ For the network namespace, only sysctls beginning with net.\* are allowed.
 
 Note: if the network namespace is not shared within the pod, these sysctls are not allowed.
 
+#### **--uidmap**=*container_uid*:*from_uid*:*amount*
+
+Run the container in a new user namespace using the supplied mapping. This
+option conflicts with the **--userns** and **--subuidname** options. This
+option provides a way to map host UIDs to container UIDs. It can be passed
+several times to map different ranges.
+
 #### **--userns**=*mode*
 
 Set the user namespace mode for all the containers in a pod. It defaults to the **PODMAN_USERNS** environment variable. An empty value ("") means user namespaces are disabled.
 
+Rootless user --userns=Key mappings:
+
+Key       | Host User |  Container User
+----------|---------------|---------------------
+""        |$UID           |0 (Default User account mapped to root user in container.)
+keep-id   |$UID           |$UID (Map user account to same UID within container.)
+auto      |$UID           | nil (Host User UID is not mapped into container.)
+nomap     |$UID           | nil (Host User UID is not mapped into container.)
+
 Valid _mode_ values are:
 
-- *auto[:*_OPTIONS,..._*]*: automatically create a namespace. It is possible to specify these options to `auto`:
+  - *auto[:*_OPTIONS,..._*]*: automatically create a namespace. It is possible to specify these options to `auto`:
+
   - *gidmapping=*_CONTAINER_GID:HOST_GID:SIZE_ to force a GID mapping to be present in the user namespace.
+
   - *size=*_SIZE_: to specify an explicit size for the automatic user namespace. e.g. `--userns=auto:size=8192`. If `size` is not specified, `auto` will estimate a size for the user namespace.
+
   - *uidmapping=*_CONTAINER_UID:HOST_UID:SIZE_ to force a UID mapping to be present in the user namespace.
-- *host*: run in the user namespace of the caller. The processes running in the container will have the same privileges on the host as any other process launched by the calling user (default).
-- *keep-id*: creates a user namespace where the current rootless user's UID:GID are mapped to the same values in the container. This option is ignored for containers created by the root user.
+
+  - *host*: run in the user namespace of the caller. The processes running in the container will have the same privileges on the host as any other process launched by the calling user (default).
+
+  - *keep-id*: creates a user namespace where the current rootless user's UID:GID are mapped to the same values in the container. This option is ignored for containers created by the root user.
+
+  - *nomap*: creates a user namespace where the current rootless user's UID:GID are not mapped into the container. This option is ignored for containers created by the root user.
 
 #### **--volume**, **-v**[=*[[SOURCE-VOLUME|HOST-DIR:]CONTAINER-DIR[:OPTIONS]]*]
 

@@ -37,12 +37,10 @@ var _ = Describe("Podman checkpoint", func() {
 	BeforeEach(func() {
 		SkipIfRootless("checkpoint not supported in rootless mode")
 		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
+		Expect(err).To(BeNil())
+
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
 		// Check if the runtime implements checkpointing. Currently only
 		// runc's checkpoint/restore implementation is supported.
 		cmd := exec.Command(podmanTest.OCIRuntime, "checkpoint", "--help")
@@ -99,9 +97,9 @@ var _ = Describe("Podman checkpoint", func() {
 		inspectOut := inspect.InspectContainerToJSON()
 		Expect(inspectOut[0].State.Checkpointed).To(BeFalse(), ".State.Checkpointed")
 		Expect(inspectOut[0].State.Restored).To(BeFalse(), ".State.Restored")
-		Expect(inspectOut[0].State.CheckpointPath).To(Equal(""))
-		Expect(inspectOut[0].State.CheckpointLog).To(Equal(""))
-		Expect(inspectOut[0].State.RestoreLog).To(Equal(""))
+		Expect(inspectOut[0].State).To(HaveField("CheckpointPath", ""))
+		Expect(inspectOut[0].State).To(HaveField("CheckpointLog", ""))
+		Expect(inspectOut[0].State).To(HaveField("RestoreLog", ""))
 
 		result := podmanTest.Podman([]string{
 			"container",
@@ -125,7 +123,7 @@ var _ = Describe("Podman checkpoint", func() {
 		Expect(inspectOut[0].State.Restored).To(BeFalse(), ".State.Restored")
 		Expect(inspectOut[0].State.CheckpointPath).To(ContainSubstring("userdata/checkpoint"))
 		Expect(inspectOut[0].State.CheckpointLog).To(ContainSubstring("userdata/dump.log"))
-		Expect(inspectOut[0].State.RestoreLog).To(Equal(""))
+		Expect(inspectOut[0].State).To(HaveField("RestoreLog", ""))
 
 		result = podmanTest.Podman([]string{
 			"container",
@@ -179,9 +177,9 @@ var _ = Describe("Podman checkpoint", func() {
 		inspectOut = inspect.InspectContainerToJSON()
 		Expect(inspectOut[0].State.Checkpointed).To(BeFalse(), ".State.Checkpointed")
 		Expect(inspectOut[0].State.Restored).To(BeFalse(), ".State.Restored")
-		Expect(inspectOut[0].State.CheckpointPath).To(Equal(""))
-		Expect(inspectOut[0].State.CheckpointLog).To(Equal(""))
-		Expect(inspectOut[0].State.RestoreLog).To(Equal(""))
+		Expect(inspectOut[0].State).To(HaveField("CheckpointPath", ""))
+		Expect(inspectOut[0].State).To(HaveField("CheckpointLog", ""))
+		Expect(inspectOut[0].State).To(HaveField("RestoreLog", ""))
 	})
 
 	It("podman checkpoint a running container by name", func() {
@@ -1061,7 +1059,7 @@ var _ = Describe("Podman checkpoint", func() {
 
 		// Open a network connection to the redis server via initial port mapping
 		// This should fail
-		conn, err = net.DialTimeout("tcp4", fmt.Sprintf("localhost:%d", randomPort), time.Duration(3)*time.Second)
+		_, err = net.DialTimeout("tcp4", fmt.Sprintf("localhost:%d", randomPort), time.Duration(3)*time.Second)
 		Expect(err).ToNot(BeNil())
 		Expect(err.Error()).To(ContainSubstring("connection refused"))
 		// Open a network connection to the redis server via new port mapping

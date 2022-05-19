@@ -1,7 +1,6 @@
 package libpod
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -17,8 +16,10 @@ import (
 	"github.com/containers/buildah/copier"
 	"github.com/containers/buildah/pkg/overlay"
 	butil "github.com/containers/buildah/util"
+	"github.com/containers/common/libnetwork/etchosts"
 	"github.com/containers/common/pkg/cgroups"
 	"github.com/containers/common/pkg/chown"
+	"github.com/containers/common/pkg/config"
 	"github.com/containers/podman/v4/libpod/define"
 	"github.com/containers/podman/v4/libpod/events"
 	"github.com/containers/podman/v4/pkg/ctime"
@@ -31,6 +32,7 @@ import (
 	"github.com/containers/storage"
 	"github.com/containers/storage/pkg/archive"
 	"github.com/containers/storage/pkg/idtools"
+	"github.com/containers/storage/pkg/lockfile"
 	"github.com/containers/storage/pkg/mount"
 	"github.com/coreos/go-systemd/v22/daemon"
 	securejoin "github.com/cyphar/filepath-securejoin"
@@ -130,6 +132,11 @@ func (c *Container) bundlePath() string {
 // resizing
 func (c *Container) ControlSocketPath() string {
 	return filepath.Join(c.bundlePath(), "ctl")
+}
+
+// CheckpointVolumesPath returns the path to the directory containing the checkpointed volumes
+func (c *Container) CheckpointVolumesPath() string {
+	return filepath.Join(c.bundlePath(), metadata.CheckpointVolumesDirectory)
 }
 
 // CheckpointPath returns the path to the directory containing the checkpoint
@@ -259,7 +266,7 @@ func (c *Container) handleRestartPolicy(ctx context.Context) (_ bool, retErr err
 	if c.ensureState(define.ContainerStateRunning, define.ContainerStatePaused) {
 		return false, nil
 	} else if c.state.State == define.ContainerStateUnknown {
-		return false, errors.Wrapf(define.ErrInternal, "invalid container state encountered in restart attempt!")
+		return false, errors.Wrapf(define.ErrInternal, "invalid container state encountered in restart attempt")
 	}
 
 	c.newContainerEvent(events.Restart)
@@ -550,7 +557,7 @@ func (c *Container) setupStorage(ctx context.Context) error {
 }
 
 func (c *Container) processLabel(processLabel string) (string, error) {
-	if !c.config.Systemd && !c.ociRuntime.SupportsKVM() {
+	if !c.Systemd() && !c.ociRuntime.SupportsKVM() {
 		return processLabel, nil
 	}
 	ctrSpec, err := c.specFromState()
@@ -562,7 +569,7 @@ func (c *Container) processLabel(processLabel string) (string, error) {
 		switch {
 		case c.ociRuntime.SupportsKVM():
 			return selinux.KVMLabel(processLabel)
-		case c.config.Systemd:
+		case c.Systemd():
 			return selinux.InitLabel(processLabel)
 		}
 	}
@@ -1001,17 +1008,14 @@ func (c *Container) completeNetworkSetup() error {
 		}
 	}
 	// check if we have a bindmount for /etc/hosts
-	if hostsBindMount, ok := state.BindMounts["/etc/hosts"]; ok && len(c.cniHosts()) > 0 {
-		ctrHostPath := filepath.Join(c.state.RunDir, "hosts")
-		if hostsBindMount == ctrHostPath {
-			// read the existing hosts
-			b, err := ioutil.ReadFile(hostsBindMount)
-			if err != nil {
-				return err
-			}
-			if err := ioutil.WriteFile(hostsBindMount, append(b, []byte(c.cniHosts())...), 0644); err != nil {
-				return err
-			}
+	if hostsBindMount, ok := state.BindMounts[config.DefaultHostsFile]; ok {
+		entries, err := c.getHostsEntries()
+		if err != nil {
+			return err
+		}
+		// add new container ips to the hosts file
+		if err := etchosts.Add(hostsBindMount, entries); err != nil {
+			return err
 		}
 	}
 
@@ -1034,18 +1038,6 @@ func (c *Container) completeNetworkSetup() error {
 	}
 	// write and return
 	return ioutil.WriteFile(resolvBindMount, []byte(strings.Join(outResolvConf, "\n")), 0644)
-}
-
-func (c *Container) cniHosts() string {
-	var hosts string
-	for _, status := range c.getNetworkStatus() {
-		for _, netInt := range status.Interfaces {
-			for _, netAddress := range netInt.Subnets {
-				hosts += fmt.Sprintf("%s\t%s %s\n", netAddress.IPNet.IP.String(), c.Hostname(), c.config.Name)
-			}
-		}
-	}
-	return hosts
 }
 
 // Initialize a container, creating it in the runtime
@@ -1507,26 +1499,28 @@ func (c *Container) mountStorage() (_ string, deferredErr error) {
 		return c.state.Mountpoint, nil
 	}
 
-	mounted, err := mount.Mounted(c.config.ShmDir)
-	if err != nil {
-		return "", errors.Wrapf(err, "unable to determine if %q is mounted", c.config.ShmDir)
-	}
+	if !c.config.NoShm {
+		mounted, err := mount.Mounted(c.config.ShmDir)
+		if err != nil {
+			return "", errors.Wrapf(err, "unable to determine if %q is mounted", c.config.ShmDir)
+		}
 
-	if !mounted && !MountExists(c.config.Spec.Mounts, "/dev/shm") {
-		shmOptions := fmt.Sprintf("mode=1777,size=%d", c.config.ShmSize)
-		if err := c.mountSHM(shmOptions); err != nil {
-			return "", err
-		}
-		if err := os.Chown(c.config.ShmDir, c.RootUID(), c.RootGID()); err != nil {
-			return "", errors.Wrapf(err, "failed to chown %s", c.config.ShmDir)
-		}
-		defer func() {
-			if deferredErr != nil {
-				if err := c.unmountSHM(c.config.ShmDir); err != nil {
-					logrus.Errorf("Unmounting SHM for container %s after mount error: %v", c.ID(), err)
-				}
+		if !mounted && !MountExists(c.config.Spec.Mounts, "/dev/shm") {
+			shmOptions := fmt.Sprintf("mode=1777,size=%d", c.config.ShmSize)
+			if err := c.mountSHM(shmOptions); err != nil {
+				return "", err
 			}
-		}()
+			if err := os.Chown(c.config.ShmDir, c.RootUID(), c.RootGID()); err != nil {
+				return "", errors.Wrapf(err, "failed to chown %s", c.config.ShmDir)
+			}
+			defer func() {
+				if deferredErr != nil {
+					if err := c.unmountSHM(c.config.ShmDir); err != nil {
+						logrus.Errorf("Unmounting SHM for container %s after mount error: %v", c.ID(), err)
+					}
+				}
+			}()
+		}
 	}
 
 	// We need to mount the container before volumes - to ensure the copyup
@@ -1887,6 +1881,24 @@ func (c *Container) cleanup(ctx context.Context) error {
 		lastError = errors.Wrapf(err, "error removing container %s network", c.ID())
 	}
 
+	// cleanup host entry if it is shared
+	if c.config.NetNsCtr != "" {
+		if hoststFile, ok := c.state.BindMounts[config.DefaultHostsFile]; ok {
+			if _, err := os.Stat(hoststFile); err == nil {
+				// we cannot use the dependency container lock due ABBA deadlocks
+				if lock, err := lockfile.GetLockfile(hoststFile); err == nil {
+					lock.Lock()
+					// make sure to ignore ENOENT error in case the netns container was cleanup before this one
+					if err := etchosts.Remove(hoststFile, getLocalhostHostEntry(c)); err != nil && !errors.Is(err, os.ErrNotExist) {
+						// this error is not fatal we still want to do proper cleanup
+						logrus.Errorf("failed to remove hosts entry from the netns containers /etc/hosts: %v", err)
+					}
+					lock.Unlock()
+				}
+			}
+		}
+	}
+
 	// Remove the container from the runtime, if necessary.
 	// Do this *before* unmounting storage - some runtimes (e.g. Kata)
 	// apparently object to having storage removed while the container still
@@ -2021,33 +2033,6 @@ func (c *Container) writeStringToStaticDir(filename, contents string) (string, e
 	}
 
 	return destFileName, nil
-}
-
-// appendStringToRunDir appends the provided string to the runtimedir file
-func (c *Container) appendStringToRunDir(destFile, output string) (string, error) {
-	destFileName := filepath.Join(c.state.RunDir, destFile)
-
-	f, err := os.OpenFile(destFileName, os.O_APPEND|os.O_RDWR, 0600)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-
-	compareStr := strings.TrimRight(output, "\n")
-	scanner := bufio.NewScanner(f)
-	scanner.Split(bufio.ScanLines)
-
-	for scanner.Scan() {
-		if strings.Compare(scanner.Text(), compareStr) == 0 {
-			return filepath.Join(c.state.RunDir, destFile), nil
-		}
-	}
-
-	if _, err := f.WriteString(output); err != nil {
-		return "", errors.Wrapf(err, "unable to write %s", destFileName)
-	}
-
-	return filepath.Join(c.state.RunDir, destFile), nil
 }
 
 // saveSpec saves the OCI spec to disk, replacing any existing specs for the container
@@ -2235,9 +2220,9 @@ func (c *Container) prepareCheckpointExport() error {
 	return nil
 }
 
-// sortUserVolumes sorts the volumes specified for a container
+// SortUserVolumes sorts the volumes specified for a container
 // between named and normal volumes
-func (c *Container) sortUserVolumes(ctrSpec *spec.Spec) ([]*ContainerNamedVolume, []spec.Mount) {
+func (c *Container) SortUserVolumes(ctrSpec *spec.Spec) ([]*ContainerNamedVolume, []spec.Mount) {
 	namedUserVolumes := []*ContainerNamedVolume{}
 	userMounts := []spec.Mount{}
 

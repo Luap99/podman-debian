@@ -72,29 +72,31 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	query := struct {
 		AddHosts               string   `schema:"extrahosts"`
 		AdditionalCapabilities string   `schema:"addcaps"`
+		AllPlatforms           bool     `schema:"allplatforms"`
 		Annotations            string   `schema:"annotations"`
 		AppArmor               string   `schema:"apparmor"`
-		AllPlatforms           bool     `schema:"allplatforms"`
 		BuildArgs              string   `schema:"buildargs"`
 		CacheFrom              string   `schema:"cachefrom"`
+		CgroupParent           string   `schema:"cgroupparent"` // nolint
 		Compression            uint64   `schema:"compression"`
 		ConfigureNetwork       string   `schema:"networkmode"`
-		CpuPeriod              uint64   `schema:"cpuperiod"`    // nolint
-		CpuQuota               int64    `schema:"cpuquota"`     // nolint
-		CpuSetCpus             string   `schema:"cpusetcpus"`   // nolint
-		CpuSetMems             string   `schema:"cpusetmems"`   // nolint
-		CpuShares              uint64   `schema:"cpushares"`    // nolint
-		CgroupParent           string   `schema:"cgroupparent"` // nolint
+		CpuPeriod              uint64   `schema:"cpuperiod"`  // nolint
+		CpuQuota               int64    `schema:"cpuquota"`   // nolint
+		CpuSetCpus             string   `schema:"cpusetcpus"` // nolint
+		CpuSetMems             string   `schema:"cpusetmems"` // nolint
+		CpuShares              uint64   `schema:"cpushares"`  // nolint
 		DNSOptions             string   `schema:"dnsoptions"`
 		DNSSearch              string   `schema:"dnssearch"`
 		DNSServers             string   `schema:"dnsservers"`
 		Devices                string   `schema:"devices"`
 		Dockerfile             string   `schema:"dockerfile"`
 		DropCapabilities       string   `schema:"dropcaps"`
+		Envs                   []string `schema:"setenv"`
 		Excludes               string   `schema:"excludes"`
 		ForceRm                bool     `schema:"forcerm"`
 		From                   string   `schema:"from"`
 		HTTPProxy              bool     `schema:"httpproxy"`
+		IdentityLabel          bool     `schema:"identitylabel"`
 		Ignore                 bool     `schema:"ignore"`
 		Isolation              string   `schema:"isolation"`
 		Jobs                   int      `schema:"jobs"` // nolint
@@ -107,6 +109,8 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		Memory                 int64    `schema:"memory"`
 		NamespaceOptions       string   `schema:"nsoptions"`
 		NoCache                bool     `schema:"nocache"`
+		OSFeatures             []string `schema:"osfeature"`
+		OSVersion              string   `schema:"osversion"`
 		OutputFormat           string   `schema:"outputformat"`
 		Platform               []string `schema:"platform"`
 		Pull                   bool     `schema:"pull"`
@@ -116,20 +120,22 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		Rm                     bool     `schema:"rm"`
 		RusageLogFile          string   `schema:"rusagelogfile"`
 		Seccomp                string   `schema:"seccomp"`
+		Secrets                string   `schema:"secrets"`
 		SecurityOpt            string   `schema:"securityopt"`
 		ShmSize                int      `schema:"shmsize"`
 		Squash                 bool     `schema:"squash"`
+		TLSVerify              bool     `schema:"tlsVerify"`
 		Tags                   []string `schema:"t"`
 		Target                 string   `schema:"target"`
 		Timestamp              int64    `schema:"timestamp"`
 		Ulimits                string   `schema:"ulimits"`
 		UnsetEnvs              []string `schema:"unsetenv"`
-		Secrets                string   `schema:"secrets"`
 	}{
-		Dockerfile: "Dockerfile",
-		Registry:   "docker.io",
-		Rm:         true,
-		ShmSize:    64 * 1024 * 1024,
+		Dockerfile:    "Dockerfile",
+		IdentityLabel: true,
+		Registry:      "docker.io",
+		Rm:            true,
+		ShmSize:       64 * 1024 * 1024,
 	}
 
 	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
@@ -283,7 +289,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 						}
 					}
 				}
-				secrets = append(secrets, strings.Join(modifiedOpt[:], ","))
+				secrets = append(secrets, strings.Join(modifiedOpt, ","))
 			}
 		}
 	}
@@ -489,6 +495,11 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	}
 	utils.PossiblyEnforceDockerHub(r, systemContext)
 
+	if _, found := r.URL.Query()["tlsVerify"]; found {
+		systemContext.DockerInsecureSkipTLSVerify = types.NewOptionalBool(!query.TLSVerify)
+		systemContext.OCIInsecureSkipTLSVerify = !query.TLSVerify
+		systemContext.DockerDaemonInsecureSkipTLSVerify = !query.TLSVerify
+	}
 	// Channels all mux'ed in select{} below to follow API build protocol
 	stdout := channel.NewWriter(make(chan []byte))
 	defer stdout.Close()
@@ -522,6 +533,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 			DNSSearch:          dnssearch,
 			DNSServers:         dnsservers,
 			HTTPProxy:          query.HTTPProxy,
+			IdentityLabel:      types.NewOptionalBool(query.IdentityLabel),
 			LabelOpts:          labelOpts,
 			Memory:             query.Memory,
 			MemorySwap:         query.MemSwap,
@@ -535,6 +547,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		ContextDirectory:               contextDirectory,
 		Devices:                        devices,
 		DropCapabilities:               dropCaps,
+		Envs:                           query.Envs,
 		Err:                            auxout,
 		Excludes:                       excludes,
 		ForceRmIntermediateCtrs:        query.ForceRm,
@@ -549,6 +562,8 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		MaxPullPushRetries:             3,
 		NamespaceOptions:               nsoptions,
 		NoCache:                        query.NoCache,
+		OSFeatures:                     query.OSFeatures,
+		OSVersion:                      query.OSVersion,
 		Out:                            stdout,
 		Output:                         output,
 		OutputFormat:                   format,
@@ -560,8 +575,8 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		ReportWriter:                   reporter,
 		RusageLogFile:                  query.RusageLogFile,
 		Squash:                         query.Squash,
-		Target:                         query.Target,
 		SystemContext:                  systemContext,
+		Target:                         query.Target,
 		UnsetEnvs:                      query.UnsetEnvs,
 	}
 

@@ -65,6 +65,7 @@ and specified with a _tag_.
     $ podman create oci-archive:/tmp/fedora echo hello
 
 ## OPTIONS
+
 #### **--add-host**=*host*
 
 Add a custom host-to-IP mapping (host:ip)
@@ -114,6 +115,14 @@ Add Linux capabilities
 
 Drop Linux capabilities
 
+#### **--cgroup-conf**=*KEY=VALUE*
+
+When running on cgroup v2, specify the cgroup file to write to and its value. For example **--cgroup-conf=memory.high=1073741824** sets the memory.high limit to 1GB.
+
+#### **--cgroup-parent**=*path*
+
+Path to cgroups under which the cgroup for the container will be created. If the path is not absolute, the path is considered to be relative to the cgroups path of the init process. Cgroups will be created if they do not already exist.
+
 #### **--cgroupns**=*mode*
 
 Set the cgroup namespace mode for the container.
@@ -134,13 +143,11 @@ The *disabled* option will force the container to not create CGroups, and thus c
 The *no-conmon* option disables a new CGroup only for the conmon process.
 The *split* option splits the current cgroup in two sub-cgroups: one for conmon and one for the container payload. It is not possible to set *--cgroup-parent* with *split*.
 
-#### **--cgroup-parent**=*path*
+#### **--chrootdirs**=*path*
 
-Path to cgroups under which the cgroup for the container will be created. If the path is not absolute, the path is considered to be relative to the cgroups path of the init process. Cgroups will be created if they do not already exist.
-
-#### **--cgroup-conf**=*KEY=VALUE*
-
-When running on cgroup v2, specify the cgroup file to write to and its value. For example **--cgroup-conf=memory.high=1073741824** sets the memory.high limit to 1GB.
+Path to a directory inside the container that should be treated as a `chroot` directory.
+Any Podman managed file (e.g., /etc/resolv.conf, /etc/hosts, etc/hostname) that is mounted into the root directory will be mounted into that location as well.
+Multiple directories should be separated with a comma.
 
 #### **--cidfile**=*id*
 
@@ -346,13 +353,13 @@ This option allows arbitrary environment variables that are available for the pr
 
 See [**Environment**](#environment) note below for precedence and examples.
 
-#### **--env-host**
-
-Use host environment inside of the container. See **Environment** note below for precedence. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
-
 #### **--env-file**=*file*
 
 Read in a line delimited file of environment variables. See **Environment** note below for precedence.
+
+#### **--env-host**
+
+Use host environment inside of the container. See **Environment** note below for precedence. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
 
 #### **--expose**=*port*
 
@@ -406,6 +413,10 @@ The initialization time needed for a container to bootstrap. The value can be ex
 The maximum time allowed to complete the healthcheck before an interval is considered failed. Like start-period, the
 value can be expressed in a time format such as `1m22s`. The default value is `30s`.
 
+#### **--help**
+
+Print usage statement
+
 #### **--hostname**=*name*, **-h**
 
 Container host name
@@ -416,10 +427,6 @@ Sets the container host name that is available inside the container. Can only be
 
 Add a user account to /etc/passwd from the host to the container. The Username
 or UID must exist on the host system.
-
-#### **--help**
-
-Print usage statement
 
 #### **--http-proxy**
 
@@ -497,10 +504,16 @@ To specify multiple static IPv6 addresses per container, set multiple networks u
 
 #### **--ipc**=*ipc*
 
-Default is to create a private IPC namespace (POSIX SysV IPC) for the container
-		`container:<name|id>`: reuses another container shared memory, semaphores and message queues
-		`host`: use the host shared memory,semaphores and message queues inside the container. Note: the host mode gives the container full access to local shared memory and is therefore considered insecure.
-		`ns:<path>` path to an IPC namespace to join.
+Set the IPC namespace mode for a container. The default is to create
+a private IPC namespace.
+
+- "": Use Podman's default, defined in containers.conf.
+- **container:**_id_: reuses another container's shared memory, semaphores, and message queues
+- **host**: use the host's shared memory, semaphores, and message queues inside the container. Note: the host mode gives the container full access to local shared memory and is therefore considered insecure.
+- **none**:  private IPC namespace, with /dev/shm not mounted.
+- **ns:**_path_: path to an IPC namespace to join.
+- **private**: private IPC namespace.
+= **shareable**: private IPC namespace with a possibility to share it with other containers.
 
 #### **--label**, **-l**=*label*
 
@@ -691,7 +704,7 @@ Set the network mode for the container. Invalid if using **--dns**, **--dns-opt*
 
 Valid _mode_ values are:
 
-- **bridge[:OPTIONS,...]**: Create a network stack on the default bridge. This is the default for rootfull containers. It is possible to specify these additional options:
+- **bridge[:OPTIONS,...]**: Create a network stack on the default bridge. This is the default for rootful containers. It is possible to specify these additional options:
   - **alias=name**: Add network-scoped alias for the container.
   - **ip=IPv4**: Specify a static ipv4 address for this container.
   - **ip=IPv6**: Specify a static ipv6 address for this container.
@@ -704,12 +717,12 @@ Valid _mode_ values are:
 - **container:**_id_: Reuse another container's network stack.
 - **host**: Do not create a network namespace, the container will use the host's network. Note: The host mode gives the container full access to local system services such as D-bus and is therefore considered insecure.
 - **ns:**_path_: Path to a network namespace to join.
-- **private**: Create a new namespace for the container. This will use the **bridge** mode for rootfull containers and **slirp4netns** for rootless ones.
-- **slirp4netns[:OPTIONS,...]**: use **slirp4netns**(1) to create a user network stack. This is the default for rootless containers. It is possible to specify these additional options:
-  - **allow_host_loopback=true|false**: Allow the slirp4netns to reach the host loopback IP (`10.0.2.2`, which is added to `/etc/hosts` as `host.containers.internal` for your convenience). Default is false.
+- **private**: Create a new namespace for the container. This will use the **bridge** mode for rootful containers and **slirp4netns** for rootless ones.
+- **slirp4netns[:OPTIONS,...]**: use **slirp4netns**(1) to create a user network stack. This is the default for rootless containers. It is possible to specify these additional options, they can also be set with `network_cmd_options` in containers.conf:
+  - **allow_host_loopback=true|false**: Allow the slirp4netns to reach the host loopback IP (`10.0.2.2`). Default is false.
   - **mtu=MTU**: Specify the MTU to use for this network. (Default is `65520`).
   - **cidr=CIDR**: Specify ip range to use for this network. (Default is `10.0.2.0/24`).
-  - **enable_ipv6=true|false**: Enable IPv6. Default is false. (Required for `outbound_addr6`).
+  - **enable_ipv6=true|false**: Enable IPv6. Default is true. (Required for `outbound_addr6`).
   - **outbound_addr=INTERFACE**: Specify the outbound interface slirp should bind to (ipv4 traffic only).
   - **outbound_addr=IPv4**: Specify the outbound ipv4 address slirp should bind to.
   - **outbound_addr6=INTERFACE**: Specify the outbound interface slirp should bind to (ipv6 traffic only).
@@ -730,9 +743,9 @@ Disable any defined healthchecks for container.
 
 #### **--no-hosts**
 
-Do not create /etc/hosts for the container.
-By default, Podman will manage /etc/hosts, adding the container's own IP address and any hosts from **--add-host**.
-#### **--no-hosts** disables this, and the image's **/etc/host** will be preserved unmodified.
+Do not create _/etc/hosts_ for the container.
+By default, Podman will manage _/etc/hosts_, adding the container's own IP address and any hosts from **--add-host**.
+**--no-hosts** disables this, and the image's _/etc/hosts_ will be preserved unmodified.
 This option conflicts with **--add-host**.
 
 #### **--oom-kill-disable**
@@ -748,6 +761,12 @@ Tune the host's OOM preferences for containers (accepts -1000 to 1000)
 #### **--os**=*OS*
 Override the OS, defaults to hosts, of the image to be pulled. For example, `windows`.
 
+#### **--passwd-entry**=*ENTRY*
+
+Customize the entry that is written to the `/etc/passwd` file within the container when `--passwd` is used.
+
+The variables $USERNAME, $UID, $GID, $NAME, $HOME are automatically replaced with their value at runtime.
+
 #### **--personality**=*persona*
 
 Personality sets the execution domain via Linux personality(2).
@@ -760,6 +779,16 @@ Default is to create a private PID namespace for the container
 - `host`: use the host's PID namespace for the container. Note: the host mode gives the container full access to local PID and is therefore considered insecure.
 - `ns`: join the specified PID namespace
 - `private`: create a new namespace for the container (default)
+
+#### **--pidfile**=*path*
+
+When the pidfile location is specified, the container process' PID will be written to the pidfile. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
+If the pidfile option is not specified, the container process' PID will be written to /run/containers/storage/${storage-driver}-containers/$CID/userdata/pidfile.
+
+After the container is started, the location for the pidfile can be discovered with the following `podman inspect` command:
+
+    $ podman inspect --format '{{ .PidFile }}' $CID
+    /run/containers/storage/${storage-driver}-containers/$CID/userdata/pidfile
 
 #### **--pids-limit**=*limit*
 
@@ -1020,15 +1049,20 @@ Run container in systemd mode. The default is *true*.
 
 The value *always* enforces the systemd mode is enforced without
 looking at the executable name. Otherwise, if set to true and the
-command you are running inside the container is systemd, /usr/sbin/init,
-/sbin/init or /usr/local/sbin/init.
+command you are running inside the container is **systemd**, **/usr/sbin/init**,
+**/sbin/init** or **/usr/local/sbin/init**.
 
-If the command you are running inside of the container is systemd,
-Podman will setup tmpfs mount points in the following directories:
+Running the container in systemd mode causes the following changes:
 
-/run, /run/lock, /tmp, /sys/fs/cgroup/systemd, /var/lib/journal
-
-It will also set the default stop signal to SIGRTMIN+3.
+* Podman mounts tmpfs file systems on the following directories
+  * _/run_
+  * _/run/lock_
+  * _/tmp_
+  * _/sys/fs/cgroup/systemd_
+  * _/var/lib/journal_
+* Podman sets the default stop signal to **SIGRTMIN+3**.
+* Podman sets **container_uuid** environment variable in the container to the
+first 32 characters of the container id.
 
 This allows systemd to run in a confined container without any modifications.
 
@@ -1077,23 +1111,6 @@ standard input.
 Set timezone in container. This flag takes area-based timezones, GMT time, as well as `local`, which sets the timezone in the container to match the host machine. See `/usr/share/zoneinfo/` for valid timezones.
 Remote connections use local containers.conf for defaults
 
-#### **--umask**=*umask*
-
-Set the umask inside the container. Defaults to `0022`.
-Remote connections use local containers.conf for defaults
-
-#### **--unsetenv**=*env*
-
-Unset default environment variables for the container. Default environment
-variables include variables provided natively by Podman, environment variables
-configured by the image, and environment variables from containers.conf.
-
-#### **--unsetenv-all**=*true|false*
-
-Unset all default environment variables for the container. Default environment
-variables include variables provided natively by Podman, environment variables
-configured by the image, and environment variables from containers.conf.
-
 #### **--uidmap**=*container_uid*:*from_uid*:*amount*
 
 Run the container in a new user namespace using the supplied mapping. This
@@ -1101,8 +1118,8 @@ option conflicts with the **--userns** and **--subuidname** options. This
 option provides a way to map host UIDs to container UIDs. It can be passed
 several times to map different ranges.
 
-The _from_uid_ value is based upon the user running the command, either rootfull or rootless users.
-* rootfull user:  *container_uid*:*host_uid*:*amount*
+The _from_uid_ value is based upon the user running the command, either rootful or rootless users.
+* rootful user:  *container_uid*:*host_uid*:*amount*
 * rootless user: *container_uid*:*intermediate_uid*:*amount*
 
 When **podman create** is called by a privileged user, the option **--uidmap**
@@ -1178,6 +1195,23 @@ Ulimit options
 
 You can pass `host` to copy the current configuration from the host.
 
+#### **--umask**=*umask*
+
+Set the umask inside the container. Defaults to `0022`.
+Remote connections use local containers.conf for defaults
+
+#### **--unsetenv**=*env*
+
+Unset default environment variables for the container. Default environment
+variables include variables provided natively by Podman, environment variables
+configured by the image, and environment variables from containers.conf.
+
+#### **--unsetenv-all**=*true|false*
+
+Unset all default environment variables for the container. Default environment
+variables include variables provided natively by Podman, environment variables
+configured by the image, and environment variables from containers.conf.
+
 #### **--user**, **-u**=*user*
 
 Sets the username or UID used and optionally the groupname or GID for the specified command.
@@ -1190,6 +1224,15 @@ Without this argument the command will be run as root in the container.
 #### **--userns**=*mode*
 
 Set the user namespace mode for the container. It defaults to the **PODMAN_USERNS** environment variable. An empty value ("") means user namespaces are disabled unless an explicit mapping is set with the **--uidmap** and **--gidmap** options.
+
+Rootless user --userns=Key mappings:
+
+Key       | Host User |  Container User
+----------|---------------|---------------------
+""        |$UID           |0 (Default User account mapped to root user in container.)
+keep-id   |$UID           |$UID (Map user account to same UID within container.)
+auto      |$UID           | nil (Host User UID is not mapped into container.)
+nomap     |$UID           | nil (Host User UID is not mapped into container.)
 
 Valid _mode_ values are:
 
@@ -1212,6 +1255,8 @@ Podman allocates unique ranges of UIDs and GIDs from the `containers` subordinat
 **host**: run in the user namespace of the caller. The processes running in the container will have the same privileges on the host as any other process launched by the calling user (default).
 
 **keep-id**: creates a user namespace where the current rootless user's UID:GID are mapped to the same values in the container. This option is ignored for containers created by the root user.
+
+**nomap**: creates a user namespace where the current rootless user's UID:GID are not mapped into the container. This option is ignored for containers created by the root user.
 
 **ns:**_namespace_: run the container in the given existing user namespace.
 
@@ -1443,17 +1488,6 @@ The default working directory for running binaries within a container is the roo
 The image developer can set a different default with the WORKDIR instruction. The operator
 can override the working directory by using the **-w** option.
 
-#### **--pidfile**=*path*
-
-When the pidfile location is specified, the container process' PID will be written to the pidfile. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
-If the pidfile option is not specified, the container process' PID will be written to /run/containers/storage/${storage-driver}-containers/$CID/userdata/pidfile.
-
-After the container is started, the location for the pidfile can be discovered with the following `podman inspect` command:
-
-    $ podman inspect --format '{{ .PidFile }}' $CID
-    /run/containers/storage/${storage-driver}-containers/$CID/userdata/pidfile
-
-
 ## EXAMPLES
 
 ### Create a container using a local image
@@ -1544,8 +1578,6 @@ $ podman create --network net1:ip=10.89.1.5 --network net2:ip=10.89.10.10 alpine
 
 Podman runs as a non-root user on most systems. This feature requires that a new enough version of shadow-utils
 be installed. The shadow-utils package must include the newuidmap and newgidmap executables.
-
-Note: RHEL7 and Centos 7 will not have this feature until RHEL7.7 is released.
 
 In order for users to run rootless, there must be an entry for their username in /etc/subuid and /etc/subgid which lists the UIDs for their user namespace.
 

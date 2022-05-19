@@ -445,7 +445,8 @@ func (ir *ImageEngine) Import(ctx context.Context, options entities.ImageImportO
 	importOptions.Tag = options.Reference
 	importOptions.SignaturePolicyPath = options.SignaturePolicy
 	importOptions.OS = options.OS
-	importOptions.Architecture = options.Architecture
+	importOptions.Arch = options.Architecture
+	importOptions.Variant = options.Variant
 
 	if !options.Quiet {
 		importOptions.Writer = os.Stderr
@@ -578,6 +579,7 @@ func (ir *ImageEngine) Remove(ctx context.Context, images []string, opts entitie
 	libimageOptions := &libimage.RemoveImagesOptions{}
 	libimageOptions.Filters = []string{"readonly=false"}
 	libimageOptions.Force = opts.Force
+	libimageOptions.Ignore = opts.Ignore
 	libimageOptions.LookupManifest = opts.LookupManifest
 	if !opts.All {
 		libimageOptions.Filters = append(libimageOptions.Filters, "intermediate=false")
@@ -783,12 +785,19 @@ func transferRootless(source entities.ImageScpOptions, dest entities.ImageScpOpt
 	return cmdLoad.Run()
 }
 
-// TransferRootful creates new podman processes using exec.Command and a new uid/gid alongside a cleared environment
+// transferRootful creates new podman processes using exec.Command and a new uid/gid alongside a cleared environment
 func transferRootful(source entities.ImageScpOptions, dest entities.ImageScpOptions, podman string, parentFlags []string) error {
-	basicCommand := []string{podman}
+	basicCommand := make([]string, 0, len(parentFlags)+1)
+	basicCommand = append(basicCommand, podman)
 	basicCommand = append(basicCommand, parentFlags...)
-	saveCommand := append(basicCommand, "save")
-	loadCommand := append(basicCommand, "load")
+
+	saveCommand := make([]string, 0, len(basicCommand)+4)
+	saveCommand = append(saveCommand, basicCommand...)
+	saveCommand = append(saveCommand, "save")
+
+	loadCommand := make([]string, 0, len(basicCommand)+3)
+	loadCommand = append(loadCommand, basicCommand...)
+	loadCommand = append(loadCommand, "load")
 	if source.Quiet {
 		saveCommand = append(saveCommand, "-q")
 		loadCommand = append(loadCommand, "-q")
@@ -847,13 +856,12 @@ func execPodman(execUser *user.User, command []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() error {
-		err := cmdLogin.Process.Kill()
-		if err != nil {
-			return err
-		}
-		return cmdLogin.Wait()
+
+	defer func() {
+		_ = cmdLogin.Process.Kill()
+		_ = cmdLogin.Wait()
 	}()
+
 	cmd := exec.Command(command[0], command[1:]...)
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "TERM=" + os.Getenv("TERM")}
 	cmd.Stderr = os.Stderr

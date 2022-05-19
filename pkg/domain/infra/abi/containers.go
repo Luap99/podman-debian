@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -528,6 +529,7 @@ func (ic *ContainerEngine) ContainerCommit(ctx context.Context, nameOrID string,
 		Message:        options.Message,
 		Changes:        options.Changes,
 		Author:         options.Author,
+		Squash:         options.Squash,
 	}
 	newImage, err := ctr.Commit(ctx, options.ImageName, opts)
 	if err != nil {
@@ -561,6 +563,7 @@ func (ic *ContainerEngine) ContainerCheckpoint(ctx context.Context, namesOrIds [
 		Compression:    options.Compression,
 		PrintStats:     options.PrintStats,
 		FileLocks:      options.FileLocks,
+		CreateImage:    options.CreateImage,
 	}
 
 	if options.All {
@@ -590,8 +593,9 @@ func (ic *ContainerEngine) ContainerCheckpoint(ctx context.Context, namesOrIds [
 
 func (ic *ContainerEngine) ContainerRestore(ctx context.Context, namesOrIds []string, options entities.RestoreOptions) ([]*entities.RestoreReport, error) {
 	var (
-		cons []*libpod.Container
-		err  error
+		containers                  []*libpod.Container
+		checkpointImageImportErrors []error
+		err                         error
 	)
 
 	restoreOptions := libpod.ContainerCheckpointOptions{
@@ -617,17 +621,53 @@ func (ic *ContainerEngine) ContainerRestore(ctx context.Context, namesOrIds []st
 
 	switch {
 	case options.Import != "":
-		cons, err = checkpoint.CRImportCheckpoint(ctx, ic.Libpod, options)
+		containers, err = checkpoint.CRImportCheckpointTar(ctx, ic.Libpod, options)
 	case options.All:
-		cons, err = ic.Libpod.GetContainers(filterFuncs...)
+		containers, err = ic.Libpod.GetContainers(filterFuncs...)
+	case options.Latest:
+		containers, err = getContainersByContext(false, options.Latest, namesOrIds, ic.Libpod)
 	default:
-		cons, err = getContainersByContext(false, options.Latest, namesOrIds, ic.Libpod)
+		for _, nameOrID := range namesOrIds {
+			logrus.Debugf("lookup container: %q", nameOrID)
+			ctr, err := ic.Libpod.LookupContainer(nameOrID)
+			if err == nil {
+				containers = append(containers, ctr)
+			} else {
+				// If container was not found, check if this is a checkpoint image
+				logrus.Debugf("lookup image: %q", nameOrID)
+				img, _, err := ic.Libpod.LibimageRuntime().LookupImage(nameOrID, nil)
+				if err != nil {
+					return nil, fmt.Errorf("no such container or image: %s", nameOrID)
+				}
+				restoreOptions.CheckpointImageID = img.ID()
+				mountPoint, err := img.Mount(ctx, nil, "")
+				defer func() {
+					if err := img.Unmount(true); err != nil {
+						logrus.Errorf("Failed to unmount image: %v", err)
+					}
+				}()
+				if err != nil {
+					return nil, err
+				}
+				importedContainers, err := checkpoint.CRImportCheckpoint(ctx, ic.Libpod, options, mountPoint)
+				if err != nil {
+					// CRImportCheckpoint is expected to import exactly one container from checkpoint image
+					checkpointImageImportErrors = append(
+						checkpointImageImportErrors,
+						errors.Errorf("unable to import checkpoint from image: %q: %v", nameOrID, err),
+					)
+				} else {
+					containers = append(containers, importedContainers[0])
+				}
+			}
+		}
 	}
 	if err != nil {
 		return nil, err
 	}
-	reports := make([]*entities.RestoreReport, 0, len(cons))
-	for _, con := range cons {
+
+	reports := make([]*entities.RestoreReport, 0, len(containers))
+	for _, con := range containers {
 		criuStatistics, runtimeRestoreDuration, err := con.Restore(ctx, restoreOptions)
 		reports = append(reports, &entities.RestoreReport{
 			Err:             err,
@@ -636,6 +676,13 @@ func (ic *ContainerEngine) ContainerRestore(ctx context.Context, namesOrIds []st
 			CRIUStatistics:  criuStatistics,
 		})
 	}
+
+	for _, importErr := range checkpointImageImportErrors {
+		reports = append(reports, &entities.RestoreReport{
+			Err: importErr,
+		})
+	}
+
 	return reports, nil
 }
 
@@ -648,7 +695,7 @@ func (ic *ContainerEngine) ContainerCreate(ctx context.Context, s *specgen.SpecG
 	for _, w := range warn {
 		fmt.Fprintf(os.Stderr, "%s\n", w)
 	}
-	rtSpec, spec, opts, err := generate.MakeContainer(context.Background(), ic.Libpod, s)
+	rtSpec, spec, opts, err := generate.MakeContainer(context.Background(), ic.Libpod, s, false, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -971,7 +1018,7 @@ func (ic *ContainerEngine) ContainerRun(ctx context.Context, opts entities.Conta
 		fmt.Fprintf(os.Stderr, "%s\n", w)
 	}
 
-	rtSpec, spec, optsN, err := generate.MakeContainer(ctx, ic.Libpod, opts.Spec)
+	rtSpec, spec, optsN, err := generate.MakeContainer(ctx, ic.Libpod, opts.Spec, false, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1086,6 +1133,7 @@ func (ic *ContainerEngine) ContainerLogs(ctx context.Context, containers []strin
 		Until:      options.Until,
 		Tail:       options.Tail,
 		Timestamps: options.Timestamps,
+		Colors:     options.Colors,
 		UseName:    options.Names,
 		WaitGroup:  &wg,
 	}
@@ -1484,4 +1532,125 @@ func (ic *ContainerEngine) ContainerRename(ctx context.Context, nameOrID string,
 	}
 
 	return nil
+}
+
+func (ic *ContainerEngine) ContainerClone(ctx context.Context, ctrCloneOpts entities.ContainerCloneOptions) (*entities.ContainerCreateReport, error) {
+	spec := specgen.NewSpecGenerator(ctrCloneOpts.Image, ctrCloneOpts.CreateOpts.RootFS)
+	var c *libpod.Container
+	c, _, err := generate.ConfigToSpec(ic.Libpod, spec, ctrCloneOpts.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	if ctrCloneOpts.CreateOpts.Pod != "" {
+		pod, err := ic.Libpod.LookupPod(ctrCloneOpts.CreateOpts.Pod)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(spec.Networks) > 0 && pod.SharesNet() {
+			logrus.Warning("resetting network config, cannot specify a network other than the pod's when sharing the net namespace")
+			spec.Networks = nil
+			spec.NetworkOptions = nil
+		}
+
+		allNamespaces := []struct {
+			isShared bool
+			value    *specgen.Namespace
+		}{
+			{pod.SharesPID(), &spec.PidNS},
+			{pod.SharesNet(), &spec.NetNS},
+			{pod.SharesCgroup(), &spec.CgroupNS},
+			{pod.SharesIPC(), &spec.IpcNS},
+			{pod.SharesUTS(), &spec.UtsNS},
+		}
+
+		printWarning := false
+		for _, n := range allNamespaces {
+			if n.isShared && !n.value.IsDefault() {
+				*n.value = specgen.Namespace{NSMode: specgen.Default}
+				printWarning = true
+			}
+		}
+		if printWarning {
+			logrus.Warning("At least one namespace was reset to the default configuration")
+		}
+	}
+
+	err = specgenutil.FillOutSpecGen(spec, &ctrCloneOpts.CreateOpts, []string{})
+	if err != nil {
+		return nil, err
+	}
+	out, err := generate.CompleteSpec(ctx, ic.Libpod, spec)
+	if err != nil {
+		return nil, err
+	}
+
+	// Print warnings
+	if len(out) > 0 {
+		for _, w := range out {
+			fmt.Println("Could not properly complete the spec as expected:")
+			fmt.Fprintf(os.Stderr, "%s\n", w)
+		}
+	}
+
+	if len(ctrCloneOpts.CreateOpts.Name) > 0 {
+		spec.Name = ctrCloneOpts.CreateOpts.Name
+	} else {
+		n := c.Name()
+		_, err := ic.Libpod.LookupContainer(c.Name() + "-clone")
+		if err == nil {
+			n += "-clone"
+		}
+		switch {
+		case strings.Contains(n, "-clone"):
+			ind := strings.Index(n, "-clone") + 6
+			num, _ := strconv.Atoi(n[ind:])
+			if num == 0 { // clone1 is hard to get with this logic, just check for it here.
+				_, err = ic.Libpod.LookupContainer(n + "1")
+				if err != nil {
+					spec.Name = n + "1"
+					break
+				}
+			} else {
+				n = n[0:ind]
+			}
+			err = nil
+			count := num
+			for err == nil {
+				count++
+				tempN := n + strconv.Itoa(count)
+				_, err = ic.Libpod.LookupContainer(tempN)
+			}
+			n += strconv.Itoa(count)
+			spec.Name = n
+		default:
+			spec.Name = c.Name() + "-clone"
+		}
+	}
+
+	rtSpec, spec, opts, err := generate.MakeContainer(context.Background(), ic.Libpod, spec, true, c)
+	if err != nil {
+		return nil, err
+	}
+	ctr, err := generate.ExecuteCreate(ctx, ic.Libpod, rtSpec, spec, false, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	if ctrCloneOpts.Destroy {
+		var time *uint
+		err = ic.Libpod.RemoveContainer(context.Background(), c, ctrCloneOpts.Force, false, time)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if ctrCloneOpts.Run {
+		if err := ctr.Start(ctx, true); err != nil {
+			return nil, err
+		}
+	}
+
+	return &entities.ContainerCreateReport{Id: ctr.ID()}, nil
 }

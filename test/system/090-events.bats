@@ -126,6 +126,70 @@ function _events_disjunctive_filters() {
 events_logfile_path="$events_file"
 EOF
     CONTAINERS_CONF="$containersconf" run_podman --events-backend=file pull $IMAGE
-    run cat $events_file
-    is "$output" ".*\"Name\":\"$IMAGE" "test"
+    assert "$(< $events_file)" =~ "\"Name\":\"$IMAGE\"" "Image found in events"
+}
+
+function _populate_events_file() {
+    # Create 100 duplicate entries to populate the events log file.
+    local events_file=$1
+    truncate --size=0 $events_file
+    for i in {0..99}; do
+    printf '{"Name":"busybox","Status":"pull","Time":"2022-04-06T11:26:42.7236679%02d+02:00","Type":"image","Attributes":null}\n' $i >> $events_file
+    done
+}
+
+@test "events log-file rotation" {
+    skip_if_remote "setting CONTAINERS_CONF logger options does not affect remote client"
+
+    # Make sure that the events log file is (not) rotated depending on the
+    # settings in containers.conf.
+
+    # Config without a limit
+    eventsFile=$PODMAN_TMPDIR/events.txt
+    _populate_events_file $eventsFile
+    containersConf=$PODMAN_TMPDIR/containers.conf
+    cat >$containersConf <<EOF
+[engine]
+events_logger="file"
+events_logfile_path="$eventsFile"
+EOF
+
+    # Create events *without* a limit and make sure that it has not been
+    # rotated/truncated.
+    contentBefore=$(head -n100 $eventsFile)
+    CONTAINERS_CONF=$containersConf run_podman run --rm $IMAGE true
+    contentAfter=$(head -n100 $eventsFile)
+    is "$contentBefore" "$contentAfter" "events file has not been rotated"
+
+    # Repopulate events file
+    rm $eventsFile
+    _populate_events_file $eventsFile
+
+    # Config with a limit
+    rm $containersConf
+    cat >$containersConf <<EOF
+[engine]
+events_logger="file"
+events_logfile_path="$eventsFile"
+# The limit of 4750 is the *exact* half of the initial events file.
+events_logfile_max_size=4750
+EOF
+
+    # Create events *with* a limit and make sure that it has been
+    # rotated/truncated.  Once rotated, the events file should only contain the
+    # second half of its previous events plus the new ones.
+    expectedContentAfterTruncation=$PODMAN_TMPDIR/truncated.txt
+
+    run_podman create $IMAGE
+    CONTAINERS_CONF=$containersConf run_podman rm $output
+    tail -n52 $eventsFile >> $expectedContentAfterTruncation
+
+    # Make sure the events file looks as expected.
+    is "$(cat $eventsFile)" "$(cat $expectedContentAfterTruncation)" "events file has been rotated"
+
+    # Make sure that `podman events` can read the file, and that it returns the
+    # same amount of events.  We checked the contents before.
+    CONTAINERS_CONF=$containersConf run_podman events --stream=false --since="2022-03-06T11:26:42.723667984+02:00"
+    is "$(wc -l <$eventsFile)" "$(wc -l <<<$output)" "all events are returned"
+    is "${lines[-2]}" ".* log-rotation $eventsFile"
 }

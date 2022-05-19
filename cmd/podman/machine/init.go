@@ -1,12 +1,15 @@
+//go:build amd64 || arm64
 // +build amd64 arm64
 
 package machine
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/libpod/events"
 	"github.com/containers/podman/v4/pkg/machine"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
@@ -29,6 +32,10 @@ var (
 	defaultMachineName = machine.DefaultMachineName
 	now                bool
 )
+
+// maxMachineNameSize is set to thirty to limit huge machine names primarily
+// because macos has a much smaller file size limit.
+const maxMachineNameSize = 30
 
 func init() {
 	registry.Commands = append(registry.Commands, registry.CliCommand{
@@ -82,14 +89,14 @@ func init() {
 		"reexec", false,
 		"process was rexeced",
 	)
-	flags.MarkHidden("reexec")
+	_ = flags.MarkHidden("reexec")
 
 	ImagePathFlagName := "image-path"
 	flags.StringVar(&initOpts.ImagePath, ImagePathFlagName, cfg.Machine.Image, "Path to qcow image")
 	_ = initCmd.RegisterFlagCompletionFunc(ImagePathFlagName, completion.AutocompleteDefault)
 
 	VolumeFlagName := "volume"
-	flags.StringArrayVarP(&initOpts.Volumes, VolumeFlagName, "v", []string{}, "Volumes to mount, source:target")
+	flags.StringArrayVarP(&initOpts.Volumes, VolumeFlagName, "v", cfg.Machine.Volumes, "Volumes to mount, source:target")
 	_ = initCmd.RegisterFlagCompletionFunc(VolumeFlagName, completion.AutocompleteDefault)
 
 	VolumeDriverFlagName := "volume-driver"
@@ -101,30 +108,34 @@ func init() {
 	_ = initCmd.RegisterFlagCompletionFunc(IgnitionPathFlagName, completion.AutocompleteDefault)
 
 	rootfulFlagName := "rootful"
-	flags.BoolVar(&initOpts.Rootful, rootfulFlagName, false, "Whether this machine should prefer rootful container exectution")
+	flags.BoolVar(&initOpts.Rootful, rootfulFlagName, false, "Whether this machine should prefer rootful container execution")
 }
 
 // TODO should we allow for a users to append to the qemu cmdline?
 func initMachine(cmd *cobra.Command, args []string) error {
 	var (
-		vm  machine.VM
 		err error
+		vm  machine.VM
 	)
 
-	provider := getSystemDefaultProvider()
+	provider := GetSystemDefaultProvider()
 	initOpts.Name = defaultMachineName
 	if len(args) > 0 {
+		if len(args[0]) > maxMachineNameSize {
+			return errors.New("machine name must be 30 characters or less")
+		}
 		initOpts.Name = args[0]
 	}
 	if _, err := provider.LoadVMByName(initOpts.Name); err == nil {
 		return errors.Wrap(machine.ErrVMAlreadyExists, initOpts.Name)
 	}
-
+	for idx, vol := range initOpts.Volumes {
+		initOpts.Volumes[idx] = os.ExpandEnv(vol)
+	}
 	vm, err = provider.NewMachine(initOpts)
 	if err != nil {
 		return err
 	}
-
 	if finished, err := vm.Init(initOpts); err != nil || !finished {
 		// Finished = true,  err  = nil  -  Success! Log a message with further instructions
 		// Finished = false, err  = nil  -  The installation is partially complete and podman should
@@ -133,14 +144,16 @@ func initMachine(cmd *cobra.Command, args []string) error {
 		//                                  - a user has chosen to perform their own reboot
 		//                                  - reexec for limited admin operations, returning to parent
 		// Finished = *,     err != nil  -  Exit with an error message
-
 		return err
 	}
+	newMachineEvent(events.Init, events.Event{Name: initOpts.Name})
 	fmt.Println("Machine init complete")
+
 	if now {
 		err = vm.Start(initOpts.Name, machine.StartOptions{})
 		if err == nil {
 			fmt.Printf("Machine %q started successfully\n", initOpts.Name)
+			newMachineEvent(events.Start, events.Event{Name: initOpts.Name})
 		}
 	} else {
 		extra := ""

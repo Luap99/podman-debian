@@ -51,7 +51,8 @@ var _ = Describe("Common functions test", func() {
 			txt := fmt.Sprintf("ID=%s\nVERSION_ID=%s", id, ver)
 			if !empty {
 				f, _ := os.Create(path)
-				f.WriteString(txt)
+				_, err := f.WriteString(txt)
+				Expect(err).To(BeNil(), "Failed to write data.")
 				f.Close()
 			}
 
@@ -102,18 +103,20 @@ var _ = Describe("Common functions test", func() {
 			Item2: []string{"test"},
 		}
 
-		testByte, _ := json.Marshal(testData)
-		err := WriteJSONFile(testByte, "/tmp/testJSON")
+		testByte, err := json.Marshal(testData)
+		Expect(err).To(BeNil(), "Failed to marshal data.")
 
+		err = WriteJSONFile(testByte, "/tmp/testJSON")
 		Expect(err).To(BeNil(), "Failed to write JSON to file.")
 
 		read, err := os.Open("/tmp/testJSON")
+		Expect(err).To(BeNil(), "Can not find the JSON file after we write it.")
 		defer read.Close()
 
-		Expect(err).To(BeNil(), "Can not find the JSON file after we write it.")
-
-		bytes, _ := ioutil.ReadAll(read)
-		json.Unmarshal(bytes, compareData)
+		bytes, err := ioutil.ReadAll(read)
+		Expect(err).ToNot(HaveOccurred())
+		err = json.Unmarshal(bytes, compareData)
+		Expect(err).ToNot(HaveOccurred())
 
 		Expect(reflect.DeepEqual(testData, compareData)).To(BeTrue(), "Data changed after we store it to file.")
 	})
@@ -135,7 +138,8 @@ var _ = Describe("Common functions test", func() {
 			}
 			if createFile {
 				f, _ := os.Create(path)
-				f.WriteString(txt)
+				_, err := f.WriteString(txt)
+				Expect(err).To(BeNil(), "Failed to write data.")
 				f.Close()
 			}
 			ProcessOneCgroupPath = path

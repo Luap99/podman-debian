@@ -23,7 +23,6 @@ var _ = Describe("Podman namespaces", func() {
 		}
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
 	})
 
 	AfterEach(func() {
@@ -51,7 +50,7 @@ var _ = Describe("Podman namespaces", func() {
 		numCtrs := 0
 		for _, outputLine := range output {
 			if outputLine != "" {
-				numCtrs = numCtrs + 1
+				numCtrs++
 			}
 		}
 		Expect(numCtrs).To(Equal(0))

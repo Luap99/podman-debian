@@ -27,7 +27,7 @@ function check_help() {
 
         # The line immediately after 'Usage:' gives us a 1-line synopsis
         usage=$(echo "$full_help" | grep -A1 '^Usage:' | tail -1)
-        [ -n "$usage" ] || die "podman $cmd: no Usage message found"
+        assert "$usage" != "" "podman $cmd: no Usage message found"
 
         # e.g. 'podman ps' should not show 'podman container ps' in usage
         # Trailing space in usage handles 'podman system renumber' which
@@ -42,14 +42,12 @@ function check_help() {
         fi
 
         # We had someone write upper-case '[OPTIONS]' once. Prevent it.
-        if expr "$usage" : '.*\[OPTION' >/dev/null; then
-            die "'options' string must be lower-case in usage: $usage"
-        fi
+        assert "$usage" !~ '\[OPTION' \
+               "'options' string must be lower-case in usage"
 
         # We had someone do 'podman foo ARG [options]' one time. Yeah, no.
-        if expr "$usage" : '.*[A-Z].*\[option' >/dev/null; then
-            die "'options' must precede arguments in usage: $usage"
-        fi
+        assert "$usage" !~ '[A-Z].*\[option' \
+               "'options' must precede arguments in usage"
 
         # Cross-check: if usage includes '[options]', there must be a
         # longer 'Options:' section in the full --help output; vice-versa,
@@ -68,9 +66,10 @@ function check_help() {
             if [ "$cmd" != "help" ]; then
                 dprint "$command_string invalid-arg"
                 run_podman '?' "$@" $cmd invalid-arg
-                is "$status" 125 "'$command_string invalid-arg' - exit status"
+                is "$status" 125 \
+                   "'$usage' indicates that the command takes no arguments. I invoked it with 'invalid-arg' and expected an error status"
                 is "$output" "Error: .* takes no arguments" \
-                   "'$command_string' with extra (invalid) arguments"
+                   "'$usage' indicates that the command takes no arguments. I invoked it with 'invalid-arg' and expected the following error message"
             fi
             found[takes_no_args]=1
         fi
@@ -115,9 +114,10 @@ function check_help() {
             # try to read username/password from stdin.
             dprint "$command_string (without required args)"
             run_podman '?' "$@" $cmd </dev/null
-            is "$status" 125 "'$command_string' with no arguments - exit status"
+            is "$status" 125 \
+               "'$usage' indicates at least one required arg. I invoked it with no args and expected an error exit code"
             is "$output" "Error:.* \(require\|specif\|must\|provide\|need\|choose\|accepts\)" \
-               "'$command_string' without required arg"
+               "'$usage' indicates at least one required arg. I invoked it with no args and expected one of these error messages"
 
             found[required_args]=1
         fi
@@ -138,9 +138,10 @@ function check_help() {
                 local n_args=$(wc -w <<<"$rhs")
 
                 run_podman '?' "$@" $cmd $(seq --format='x%g' 0 $n_args)
-                is "$status" 125 "'$command_string' with >$n_args arguments - exit status"
+                is "$status" 125 \
+                   "'$usage' indicates a maximum of $n_args args. I invoked it with more, and expected this exit status"
                 is "$output" "Error:.* \(takes no arguments\|requires exactly $n_args arg\|accepts at most\|too many arguments\|accepts $n_args arg(s), received\|accepts between .* and .* arg(s), received \)" \
-                   "'$command_string' with >$n_args arguments"
+                   "'$usage' indicates a maximum of $n_args args. I invoked it with more, and expected one of these error messages"
 
                 found[fixed_args]=1
             fi
@@ -166,16 +167,15 @@ function check_help() {
 
     # This can happen if the output of --help changes, such as between
     # the old command parser and cobra.
-    [ $count -gt 0 ] || \
-        die "Internal error: no commands found in 'podman help $@' list"
+    assert "$count" -gt 0 \
+           "Internal error: no commands found in 'podman help $*' list"
 
     # Sanity check: make sure the special loops above triggered at least once.
     # (We've had situations where a typo makes the conditional never run)
     if [ -z "$*" ]; then
         for i in subcommands required_args takes_no_args fixed_args; do
-            if [[ -z ${found[$i]} ]]; then
-                die "Internal error: '$i' subtest did not trigger"
-            fi
+            assert "${found[$i]}" != "" \
+                   "Internal error: '$i' subtest did not trigger"
         done
     fi
 }

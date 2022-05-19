@@ -103,8 +103,8 @@ func (c *Container) getContainerInspectData(size bool, driverData *define.Driver
 		}
 	}
 
-	namedVolumes, mounts := c.sortUserVolumes(ctrSpec)
-	inspectMounts, err := c.GetInspectMounts(namedVolumes, c.config.ImageVolumes, mounts)
+	namedVolumes, mounts := c.SortUserVolumes(ctrSpec)
+	inspectMounts, err := c.GetMounts(namedVolumes, c.config.ImageVolumes, mounts)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +222,7 @@ func (c *Container) getContainerInspectData(size bool, driverData *define.Driver
 // Get inspect-formatted mounts list.
 // Only includes user-specified mounts. Only includes bind mounts and named
 // volumes, not tmpfs volumes.
-func (c *Container) GetInspectMounts(namedVolumes []*ContainerNamedVolume, imageVolumes []*ContainerImageVolume, mounts []spec.Mount) ([]define.InspectMount, error) {
+func (c *Container) GetMounts(namedVolumes []*ContainerNamedVolume, imageVolumes []*ContainerImageVolume, mounts []spec.Mount) ([]define.InspectMount, error) {
 	inspectMounts := []define.InspectMount{}
 
 	// No mounts, return early
@@ -357,7 +357,7 @@ func (c *Container) generateInspectContainerConfig(spec *spec.Spec) *define.Insp
 	ctrConfig.Timeout = c.config.Timeout
 	ctrConfig.OpenStdin = c.config.Stdin
 	ctrConfig.Image = c.config.RootfsImageName
-	ctrConfig.SystemdMode = c.config.Systemd
+	ctrConfig.SystemdMode = c.Systemd()
 
 	// Leave empty is not explicitly overwritten by user
 	if len(c.config.Command) != 0 {
@@ -411,6 +411,7 @@ func (c *Container) generateInspectContainerConfig(spec *spec.Spec) *define.Insp
 	}
 
 	ctrConfig.Passwd = c.config.Passwd
+	ctrConfig.ChrootDirs = append(ctrConfig.ChrootDirs, c.config.ChrootDirs...)
 
 	return ctrConfig
 }
@@ -702,32 +703,31 @@ func (c *Container) generateInspectContainerHostConfig(ctrSpec *spec.Spec, named
 	}
 	hostConfig.CapAdd = capAdd
 	hostConfig.CapDrop = capDrop
-
-	// IPC Namespace mode
-	ipcMode := ""
-	if c.config.IPCNsCtr != "" {
-		ipcMode = fmt.Sprintf("container:%s", c.config.IPCNsCtr)
-	} else if ctrSpec.Linux != nil {
+	switch {
+	case c.config.IPCNsCtr != "":
+		hostConfig.IpcMode = fmt.Sprintf("container:%s", c.config.IPCNsCtr)
+	case ctrSpec.Linux != nil:
 		// Locate the spec's IPC namespace.
 		// If there is none, it's ipc=host.
 		// If there is one and it has a path, it's "ns:".
 		// If no path, it's default - the empty string.
-
 		for _, ns := range ctrSpec.Linux.Namespaces {
 			if ns.Type == spec.IPCNamespace {
 				if ns.Path != "" {
-					ipcMode = fmt.Sprintf("ns:%s", ns.Path)
+					hostConfig.IpcMode = fmt.Sprintf("ns:%s", ns.Path)
 				} else {
-					ipcMode = "private"
+					break
 				}
-				break
 			}
 		}
-		if ipcMode == "" {
-			ipcMode = "host"
-		}
+	case c.config.NoShm:
+		hostConfig.IpcMode = "none"
+	case c.config.NoShmShare:
+		hostConfig.IpcMode = "private"
 	}
-	hostConfig.IpcMode = ipcMode
+	if hostConfig.IpcMode == "" {
+		hostConfig.IpcMode = "shareable"
+	}
 
 	// Cgroup namespace mode
 	cgroupMode := ""
@@ -845,7 +845,7 @@ func (c *Container) generateInspectContainerHostConfig(ctrSpec *spec.Spec, named
 	// Do not include if privileged - assumed that all devices will be
 	// included.
 	var err error
-	hostConfig.Devices, err = c.GetDevices(*&hostConfig.Privileged, *ctrSpec, deviceNodes)
+	hostConfig.Devices, err = c.GetDevices(hostConfig.Privileged, *ctrSpec, deviceNodes)
 	if err != nil {
 		return nil, err
 	}

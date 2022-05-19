@@ -20,7 +20,6 @@ import (
 	"github.com/containers/podman/v4/pkg/api/server/idle"
 	"github.com/containers/podman/v4/pkg/api/types"
 	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/coreos/go-systemd/v22/activation"
 	"github.com/coreos/go-systemd/v22/daemon"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/schema"
@@ -60,33 +59,19 @@ func NewServer(runtime *libpod.Runtime) (*APIServer, error) {
 }
 
 // NewServerWithSettings will create and configure a new API server using provided settings
-func NewServerWithSettings(runtime *libpod.Runtime, listener *net.Listener, opts entities.ServiceOptions) (*APIServer, error) {
+func NewServerWithSettings(runtime *libpod.Runtime, listener net.Listener, opts entities.ServiceOptions) (*APIServer, error) {
 	return newServer(runtime, listener, opts)
 }
 
-func newServer(runtime *libpod.Runtime, listener *net.Listener, opts entities.ServiceOptions) (*APIServer, error) {
-	// If listener not provided try socket activation protocol
-	if listener == nil {
-		if _, found := os.LookupEnv("LISTEN_PID"); !found {
-			return nil, fmt.Errorf("no service listener provided and socket activation protocol is not active")
-		}
-
-		listeners, err := activation.Listeners()
-		if err != nil {
-			return nil, fmt.Errorf("cannot retrieve file descriptors from systemd: %w", err)
-		}
-		if len(listeners) != 1 {
-			return nil, fmt.Errorf("wrong number of file descriptors for socket activation protocol (%d != 1)", len(listeners))
-		}
-		listener = &listeners[0]
-	}
+func newServer(runtime *libpod.Runtime, listener net.Listener, opts entities.ServiceOptions) (*APIServer, error) {
+	logrus.Infof("API service listening on %q. URI: %q", listener.Addr(), runtime.RemoteURI())
 	if opts.CorsHeaders == "" {
 		logrus.Debug("CORS Headers were not set")
 	} else {
 		logrus.Debugf("CORS Headers were set to %q", opts.CorsHeaders)
 	}
 
-	logrus.Infof("API service listening on %q", (*listener).Addr())
+	logrus.Infof("API service listening on %q", listener.Addr())
 	router := mux.NewRouter().UseEncodedPath()
 	tracker := idle.NewTracker(opts.Timeout)
 
@@ -101,7 +86,7 @@ func newServer(runtime *libpod.Runtime, listener *net.Listener, opts entities.Se
 			IdleTimeout: opts.Timeout * 2,
 		},
 		CorsHeaders: opts.CorsHeaders,
-		Listener:    *listener,
+		Listener:    listener,
 		PProfAddr:   opts.PProfAddr,
 		idleTracker: tracker,
 	}

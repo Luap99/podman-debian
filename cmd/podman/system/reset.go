@@ -1,3 +1,4 @@
+//go:build !remote
 // +build !remote
 
 package system
@@ -60,7 +61,9 @@ func reset(cmd *cobra.Command, args []string) {
         - all pods
         - all images
         - all networks
-        - all build cache`)
+        - all build cache
+        - all machines`)
+
 		if len(listCtn) > 0 {
 			fmt.Println(`WARNING! The following external containers will be purged:`)
 			// print first 12 characters of ID and first configured name alias
@@ -80,7 +83,10 @@ func reset(cmd *cobra.Command, args []string) {
 	}
 
 	// Purge all the external containers with storage
-	registry.ContainerEngine().ContainerRm(registry.Context(), listCtnIds, entities.RmOptions{Force: true, All: true, Ignore: true, Volumes: true})
+	_, err := registry.ContainerEngine().ContainerRm(registry.Context(), listCtnIds, entities.RmOptions{Force: true, All: true, Ignore: true, Volumes: true})
+	if err != nil {
+		logrus.Error(err)
+	}
 	// Shutdown all running engines, `reset` will hijack repository
 	registry.ContainerEngine().Shutdown(registry.Context())
 	registry.ImageEngine().Shutdown(registry.Context())
@@ -94,7 +100,16 @@ func reset(cmd *cobra.Command, args []string) {
 
 	if err := engine.Reset(registry.Context()); err != nil {
 		logrus.Error(err)
+		// FIXME change this to return the error like other commands
+		// defer will never run on os.Exit()
+		//nolint:gocritic
 		os.Exit(define.ExecErrorCodeGeneric)
 	}
+
+	// Shutdown podman-machine and delete all machine files
+	if err := resetMachine(); err != nil {
+		logrus.Error(err)
+	}
+
 	os.Exit(0)
 }

@@ -23,11 +23,21 @@ Valid placeholders for the Go template are listed below:
 | --------------- | ----------------------------------------------------------------------------- |
 | .ID             | Image ID                                                                      |
 | .Created        | if --human, time elapsed since creation, otherwise time stamp of creation     |
-| .CreatedBy      | Command used to create the layer                                              |
-| .Size           | Size of layer on disk                                                         |
-| .Comment        | Comment for the layer                                                         |
-
+| .CreatedAt      | Time when the image layer was created                |
+| .CreatedBy      | Command used to create the layer                     |
+| .CreatedSince   | Elapsed time since the image layer was created       |
+| .Size           | Size of layer on disk                                |
+| .Comment        | Comment for the layer                                |
 ## OPTIONS
+
+Print the numeric IDs only (default *false*).
+#### **--format**=*format*
+
+Alter the output for a format like 'json' or a Go template.
+
+#### **--help**, **-h**
+
+Print usage statement
 
 #### **--human**, **-H**
 
@@ -38,15 +48,6 @@ Display sizes and dates in human readable format (default *true*).
 Do not truncate the output (default *false*).
 
 #### **--quiet**, **-q**
-
-Print the numeric IDs only (default *false*).
-#### **--format**=*format*
-
-Alter the output for a format like 'json' or a Go template.
-
-#### **--help**, **-h**
-
-Print usage statement
 
 ## EXAMPLES
 

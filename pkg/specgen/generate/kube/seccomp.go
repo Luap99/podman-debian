@@ -5,13 +5,13 @@ import (
 	"strings"
 
 	"github.com/containers/podman/v4/libpod"
+	v1 "github.com/containers/podman/v4/pkg/k8s.io/api/core/v1"
 	"github.com/pkg/errors"
-	v1 "k8s.io/api/core/v1"
 )
 
 // KubeSeccompPaths holds information about a pod YAML's seccomp configuration
 // it holds both container and pod seccomp paths
-// nolint:golint
+//nolint:revive
 type KubeSeccompPaths struct {
 	containerPaths map[string]string
 	podPath        string

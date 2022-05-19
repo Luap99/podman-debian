@@ -2,6 +2,7 @@ package generate
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"strings"
 	"time"
@@ -66,12 +67,21 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 			// NOTE: the health check is only set for Docker images
 			// but inspect will take care of it.
 			s.HealthConfig = inspectData.HealthCheck
-			if s.HealthConfig != nil && s.HealthConfig.Timeout == 0 {
-				hct, err := time.ParseDuration(define.DefaultHealthCheckTimeout)
-				if err != nil {
-					return nil, err
+			if s.HealthConfig != nil {
+				if s.HealthConfig.Timeout == 0 {
+					hct, err := time.ParseDuration(define.DefaultHealthCheckTimeout)
+					if err != nil {
+						return nil, err
+					}
+					s.HealthConfig.Timeout = hct
 				}
-				s.HealthConfig.Timeout = hct
+				if s.HealthConfig.Interval == 0 {
+					hct, err := time.ParseDuration(define.DefaultHealthCheckInterval)
+					if err != nil {
+						return nil, err
+					}
+					s.HealthConfig.Interval = hct
+				}
 			}
 		}
 
@@ -334,4 +344,185 @@ func FinishThrottleDevices(s *specgen.SpecGenerator) error {
 		}
 	}
 	return nil
+}
+
+// ConfigToSpec takes a completed container config and converts it back into a specgenerator for purposes of cloning an existing container
+func ConfigToSpec(rt *libpod.Runtime, specg *specgen.SpecGenerator, contaierID string) (*libpod.Container, *libpod.InfraInherit, error) {
+	c, err := rt.LookupContainer(contaierID)
+	if err != nil {
+		return nil, nil, err
+	}
+	conf := c.Config()
+
+	tmpSystemd := conf.Systemd
+	tmpMounts := conf.Mounts
+
+	conf.Systemd = nil
+	conf.Mounts = []string{}
+
+	if specg == nil {
+		specg = &specgen.SpecGenerator{}
+	}
+
+	specg.Pod = conf.Pod
+
+	matching, err := json.Marshal(conf)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	err = json.Unmarshal(matching, specg)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	conf.Systemd = tmpSystemd
+	conf.Mounts = tmpMounts
+
+	if conf.Spec != nil && conf.Spec.Linux != nil && conf.Spec.Linux.Resources != nil {
+		if specg.ResourceLimits == nil {
+			specg.ResourceLimits = conf.Spec.Linux.Resources
+		}
+	}
+
+	nameSpaces := []string{"pid", "net", "cgroup", "ipc", "uts", "user"}
+	containers := []string{conf.PIDNsCtr, conf.NetNsCtr, conf.CgroupNsCtr, conf.IPCNsCtr, conf.UTSNsCtr, conf.UserNsCtr}
+	place := []*specgen.Namespace{&specg.PidNS, &specg.NetNS, &specg.CgroupNS, &specg.IpcNS, &specg.UtsNS, &specg.UserNS}
+	for i, ns := range containers {
+		if len(ns) > 0 {
+			ns := specgen.Namespace{NSMode: specgen.FromContainer, Value: ns}
+			place[i] = &ns
+		} else {
+			switch nameSpaces[i] {
+			case "pid":
+				specg.PidNS = specgen.Namespace{NSMode: specgen.Default} // default
+			case "net":
+				switch {
+				case conf.NetMode.IsBridge():
+					toExpose := make(map[uint16]string, len(conf.ExposedPorts))
+					for _, expose := range []map[uint16][]string{conf.ExposedPorts} {
+						for port, proto := range expose {
+							toExpose[port] = strings.Join(proto, ",")
+						}
+					}
+					specg.Expose = toExpose
+					specg.PortMappings = conf.PortMappings
+					specg.NetNS = specgen.Namespace{NSMode: specgen.Bridge}
+				case conf.NetMode.IsSlirp4netns():
+					toExpose := make(map[uint16]string, len(conf.ExposedPorts))
+					for _, expose := range []map[uint16][]string{conf.ExposedPorts} {
+						for port, proto := range expose {
+							toExpose[port] = strings.Join(proto, ",")
+						}
+					}
+					specg.Expose = toExpose
+					specg.PortMappings = conf.PortMappings
+					netMode := strings.Split(string(conf.NetMode), ":")
+					var val string
+					if len(netMode) > 1 {
+						val = netMode[1]
+					}
+					specg.NetNS = specgen.Namespace{NSMode: specgen.Slirp, Value: val}
+				case conf.NetMode.IsPrivate():
+					specg.NetNS = specgen.Namespace{NSMode: specgen.Private}
+				case conf.NetMode.IsDefault():
+					specg.NetNS = specgen.Namespace{NSMode: specgen.Default}
+				case conf.NetMode.IsUserDefined():
+					specg.NetNS = specgen.Namespace{NSMode: specgen.Path, Value: strings.Split(string(conf.NetMode), ":")[1]}
+				case conf.NetMode.IsContainer():
+					specg.NetNS = specgen.Namespace{NSMode: specgen.FromContainer, Value: strings.Split(string(conf.NetMode), ":")[1]}
+				case conf.NetMode.IsPod():
+					specg.NetNS = specgen.Namespace{NSMode: specgen.FromPod, Value: strings.Split(string(conf.NetMode), ":")[1]}
+				}
+			case "cgroup":
+				specg.CgroupNS = specgen.Namespace{NSMode: specgen.Default} // default
+			case "ipc":
+				switch conf.ShmDir {
+				case "/dev/shm":
+					specg.IpcNS = specgen.Namespace{NSMode: specgen.Host}
+				case "":
+					specg.IpcNS = specgen.Namespace{NSMode: specgen.None}
+				default:
+					specg.IpcNS = specgen.Namespace{NSMode: specgen.Default} // default
+				}
+			case "uts":
+				specg.UtsNS = specgen.Namespace{NSMode: specgen.Default} // default
+			case "user":
+				if conf.AddCurrentUserPasswdEntry {
+					specg.UserNS = specgen.Namespace{NSMode: specgen.KeepID}
+				} else {
+					specg.UserNS = specgen.Namespace{NSMode: specgen.Default} // default
+				}
+			}
+		}
+	}
+
+	specg.IDMappings = &conf.IDMappings
+	specg.ContainerCreateCommand = conf.CreateCommand
+	if len(specg.Rootfs) == 0 {
+		specg.Rootfs = conf.Rootfs
+	}
+	if len(specg.Image) == 0 {
+		specg.Image = conf.RootfsImageID
+	}
+	var named []*specgen.NamedVolume
+	if len(conf.NamedVolumes) != 0 {
+		for _, v := range conf.NamedVolumes {
+			named = append(named, &specgen.NamedVolume{
+				Name:    v.Name,
+				Dest:    v.Dest,
+				Options: v.Options,
+			})
+		}
+	}
+	specg.Volumes = named
+	var image []*specgen.ImageVolume
+	if len(conf.ImageVolumes) != 0 {
+		for _, v := range conf.ImageVolumes {
+			image = append(image, &specgen.ImageVolume{
+				Source:      v.Source,
+				Destination: v.Dest,
+				ReadWrite:   v.ReadWrite,
+			})
+		}
+	}
+	specg.ImageVolumes = image
+	var overlay []*specgen.OverlayVolume
+	if len(conf.OverlayVolumes) != 0 {
+		for _, v := range conf.OverlayVolumes {
+			overlay = append(overlay, &specgen.OverlayVolume{
+				Source:      v.Source,
+				Destination: v.Dest,
+				Options:     v.Options,
+			})
+		}
+	}
+	specg.OverlayVolumes = overlay
+	_, mounts := c.SortUserVolumes(c.Spec())
+	specg.Mounts = mounts
+	specg.HostDeviceList = conf.DeviceHostSrc
+	specg.Networks = conf.Networks
+
+	mapSecurityConfig(conf, specg)
+
+	if c.IsInfra() { // if we are creating this spec for a pod's infra ctr, map the compatible options
+		spec, err := json.Marshal(specg)
+		if err != nil {
+			return nil, nil, err
+		}
+		infraInherit := &libpod.InfraInherit{}
+		err = json.Unmarshal(spec, infraInherit)
+		return c, infraInherit, err
+	}
+	// else just return the container
+	return c, nil, nil
+}
+
+// mapSecurityConfig takes a libpod.ContainerSecurityConfig and converts it to a specgen.ContinerSecurityConfig
+func mapSecurityConfig(c *libpod.ContainerConfig, s *specgen.SpecGenerator) {
+	s.Privileged = c.Privileged
+	s.SelinuxOpts = append(s.SelinuxOpts, c.LabelOpts...)
+	s.User = c.User
+	s.Groups = c.Groups
+	s.HostUsers = c.HostUsers
 }

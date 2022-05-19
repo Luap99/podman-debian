@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/containers/image/v5/docker/reference"
@@ -100,10 +101,10 @@ func ManifestCreate(w http.ResponseWriter, r *http.Request) {
 	// gather all images for manifest list
 	var images []string
 	if len(query.Images) > 0 {
-		images = append(query.Images)
+		images = query.Images
 	}
 	if len(body.Images) > 0 {
-		images = append(body.Images)
+		images = body.Images
 	}
 
 	id, err := imageEngine.ManifestAdd(r.Context(), query.Name, images, body.ManifestAddOptions)
@@ -153,20 +154,42 @@ func ManifestInspect(w http.ResponseWriter, r *http.Request) {
 	utils.WriteResponse(w, http.StatusOK, schema2List)
 }
 
-// ManifestAdd remove digest from manifest list
+// ManifestAddV3 remove digest from manifest list
 //
-// Deprecated: As of 4.0.0 use ManifestModify instead
-func ManifestAdd(w http.ResponseWriter, r *http.Request) {
+// As of 4.0.0 use ManifestModify instead
+func ManifestAddV3(w http.ResponseWriter, r *http.Request) {
 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 
 	// Wrapper to support 3.x with 4.x libpod
 	query := struct {
 		entities.ManifestAddOptions
-		Images []string
+		Images    []string
+		TLSVerify bool `schema:"tlsVerify"`
 	}{}
 	if err := json.NewDecoder(r.Body).Decode(&query); err != nil {
 		utils.Error(w, http.StatusInternalServerError, errors.Wrap(err, "Decode()"))
 		return
+	}
+
+	authconf, authfile, err := auth.GetCredentials(r)
+	if err != nil {
+		utils.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	defer auth.RemoveAuthfile(authfile)
+	var username, password string
+	if authconf != nil {
+		username = authconf.Username
+		password = authconf.Password
+	}
+	query.ManifestAddOptions.Authfile = authfile
+	query.ManifestAddOptions.Username = username
+	query.ManifestAddOptions.Password = password
+	if sys := runtime.SystemContext(); sys != nil {
+		query.ManifestAddOptions.CertDir = sys.DockerCertPath
+	}
+	if _, found := r.URL.Query()["tlsVerify"]; found {
+		query.SkipTLSVerify = types.NewOptionalBool(!query.TLSVerify)
 	}
 
 	name := utils.GetName(r)
@@ -184,10 +207,10 @@ func ManifestAdd(w http.ResponseWriter, r *http.Request) {
 	utils.WriteResponse(w, http.StatusOK, handlers.IDResponse{ID: newID})
 }
 
-// ManifestRemoveDigest remove digest from manifest list
+// ManifestRemoveDigestV3 remove digest from manifest list
 //
-// Deprecated: As of 4.0.0 use ManifestModify instead
-func ManifestRemoveDigest(w http.ResponseWriter, r *http.Request) {
+// As of 4.0.0 use ManifestModify instead
+func ManifestRemoveDigestV3(w http.ResponseWriter, r *http.Request) {
 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	query := struct {
@@ -220,7 +243,7 @@ func ManifestRemoveDigest(w http.ResponseWriter, r *http.Request) {
 
 // ManifestPushV3 push image to registry
 //
-// Deprecated: As of 4.0.0 use ManifestPush instead
+// As of 4.0.0 use ManifestPush instead
 func ManifestPushV3(w http.ResponseWriter, r *http.Request) {
 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
@@ -271,7 +294,7 @@ func ManifestPushV3(w http.ResponseWriter, r *http.Request) {
 		utils.Error(w, http.StatusBadRequest, errors.Wrapf(err, "error pushing image %q", query.Destination))
 		return
 	}
-	utils.WriteResponse(w, http.StatusOK, digest)
+	utils.WriteResponse(w, http.StatusOK, handlers.IDResponse{ID: digest})
 }
 
 // ManifestPush push image to registry
@@ -348,6 +371,33 @@ func ManifestModify(w http.ResponseWriter, r *http.Request) {
 	if _, err := runtime.LibimageRuntime().LookupManifestList(name); err != nil {
 		utils.Error(w, http.StatusNotFound, err)
 		return
+	}
+
+	if tlsVerify, ok := r.URL.Query()["tlsVerify"]; ok {
+		tls, err := strconv.ParseBool(tlsVerify[len(tlsVerify)-1])
+		if err != nil {
+			utils.Error(w, http.StatusBadRequest, fmt.Errorf("tlsVerify param is not a bool: %w", err))
+			return
+		}
+		body.SkipTLSVerify = types.NewOptionalBool(!tls)
+	}
+
+	authconf, authfile, err := auth.GetCredentials(r)
+	if err != nil {
+		utils.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	defer auth.RemoveAuthfile(authfile)
+	var username, password string
+	if authconf != nil {
+		username = authconf.Username
+		password = authconf.Password
+	}
+	body.ManifestAddOptions.Authfile = authfile
+	body.ManifestAddOptions.Username = username
+	body.ManifestAddOptions.Password = password
+	if sys := runtime.SystemContext(); sys != nil {
+		body.ManifestAddOptions.CertDir = sys.DockerCertPath
 	}
 
 	var report entities.ManifestModifyReport

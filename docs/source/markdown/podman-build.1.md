@@ -52,7 +52,7 @@ command to see these containers. External containers can be removed with the
 Add a custom host-to-IP mapping (host:ip)
 
 Add a line to /etc/hosts. The format is hostname:ip. The **--add-host** option
-can be set multiple times.
+can be set multiple times. Conflicts with the --no-hosts option.
 
 #### **--all-platforms**
 
@@ -280,6 +280,14 @@ Set custom DNS options to be used during the build.
 
 Set custom DNS search domains to be used during the build.
 
+#### **--env** *env[=value]*
+
+Add a value (e.g. env=*value*) to the built image.  Can be used multiple times.
+If neither `=` nor a `*value*` are specified, but *env* is set in the current
+environment, the value from the current environment will be added to the image.
+To remove an environment variable from the built image, use the `--unsetenv`
+option.
+
 #### **--file**, **-f**=*Containerfile*
 
 Specifies a Containerfile which contains instructions for building the image,
@@ -312,7 +320,7 @@ environment variable.  `export BUILDAH_FORMAT=docker`
 Overrides the first `FROM` instruction within the Containerfile.  If there are multiple
 FROM instructions in a Containerfile, only the first is changed.
 
-**-h**, **--help**
+#### **--help**, **-h**
 
 Print usage statement
 
@@ -320,14 +328,18 @@ Print usage statement
 
 Pass through HTTP Proxy environment variables.
 
-#### **--iidfile**=*ImageIDfile*
+#### **--identity-label**
 
-Write the built image's ID to the file.  When `--platform` is specified more
-than once, attempting to use this option will trigger an error.
+Adds default identity label `io.buildah.version` if set. (default true).
 
 #### **--ignorefile**
 
 Path to an alternative .containerignore file.
+
+#### **--iidfile**=*ImageIDfile*
+
+Write the built image's ID to the file.  When `--platform` is specified more
+than once, attempting to use this option will trigger an error.
 
 #### **--ipc**=*how*
 
@@ -432,11 +444,55 @@ considered insecure.
 Do not use existing cached images for the container build. Build from the start
 with a new set of cached layers.
 
+#### **--no-hosts**
+
+Do not create _/etc/hosts_ for the container.
+By default, Podman will manage _/etc/hosts_, adding the container's own IP address and any hosts from **--add-host**.
+**--no-hosts** disables this, and the image's _/etc/hosts_ will be preserved unmodified.
+This option conflicts with **--add-host**.
+
 #### **--os**=*string*
 
 Set the OS of the image to be built, and that of the base image to be pulled,
 if the build uses one, instead of using the current operating system of the
 build host.
+
+#### **--os-feature** *feature*
+
+Set the name of a required operating system *feature* for the image which will
+be built.  By default, if the image is not based on *scratch*, the base image's
+required OS feature list is kept, if the base image specified any.  This option
+is typically only meaningful when the image's OS is Windows.
+
+If *feature* has a trailing `-`, then the *feature* is removed from the set of
+required features which will be listed in the image.
+
+#### **--os-version** *version*
+
+Set the exact required operating system *version* for the image which will be
+built.  By default, if the image is not based on *scratch*, the base image's
+required OS version is kept, if the base image specified one.  This option is
+typically only meaningful when the image's OS is Windows, and is typically set in
+Windows base images, so using this option is usually unnecessary.
+
+#### **--output**, **-o**=""
+
+Output destination (format: type=local,dest=path)
+
+The --output (or -o) option extends the default behavior of building a container image by allowing users to export the contents of the image as files on the local filesystem, which can be useful for generating local binaries, code generation, etc. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
+
+The value for --output is a comma-separated sequence of key=value pairs, defining the output type and options.
+
+Supported _keys_ are:
+- **dest**: Destination path for exported output. Valid value is absolute or relative path, `-` means the standard output.
+- **type**: Defines the type of output to be used. Valid values is documented below.
+
+Valid _type_ values are:
+- **local**: write the resulting build files to a directory on the client-side.
+- **tar**: write the resulting files as a single tarball (.tar).
+
+If no type is specified, the value defaults to **local**.
+Alternatively, instead of a comma-separated sequence, the value of **--output** can be just a destination (in the `**dest** format) (e.g. `--output some-path`, `--output -`) where `--output some-path` is treated as if **type=local** and `--output -` is treated as if **type=tar**.
 
 #### **--pid**=*pid*
 
@@ -483,6 +539,10 @@ in the registries and not present locally.
 If the pull option is set to `always` (with *--pull=always*),
 pull the image from the first registry it is found in as listed in registries.conf.
 Raise an error if not found in the registries, even if the image is present locally.
+
+If the pull option is set to `missing` (with *--pull=missing*),
+Pull the image only if it is not present in the local storage.  Raise an error if it
+could neither be found in the local storage or on a registry.
 
 If the pull option is set to `never` (with *--pull=never*),
 Do not pull the image from the registry, use only the local version. Raise an error
@@ -636,27 +696,6 @@ the user namespace in which `podman` itself is being run should be reused, or
 it can be the path to a user namespace which is already in use by another
 process.
 
-#### **--userns-uid-map**=*mapping*
-
-Directly specifies a UID mapping which should be used to set ownership, at the
-filesystem level, on the working container's contents.
-Commands run when handling `RUN` instructions will default to being run in
-their own user namespaces, configured using the UID and GID maps.
-
-Entries in this map take the form of one or more triples of a starting
-in-container UID, a corresponding starting host-level UID, and the number of
-consecutive IDs which the map entry represents.
-
-This option overrides the *remap-uids* setting in the *options* section of
-/etc/containers/storage.conf.
-
-If this option is not specified, but a global --userns-uid-map setting is
-supplied, settings from the global option will be used.
-
-If none of --userns-uid-map-user, --userns-gid-map-group, or --userns-uid-map
-are specified, but --userns-gid-map is specified, the UID map will be set to
-use the same numeric values as the GID map.
-
 #### **--userns-gid-map**=*mapping*
 
 Directly specifies a GID mapping which should be used to set ownership, at the
@@ -678,21 +717,6 @@ If none of --userns-uid-map-user, --userns-gid-map-group, or --userns-gid-map
 are specified, but --userns-uid-map is specified, the GID map will be set to
 use the same numeric values as the UID map.
 
-#### **--userns-uid-map-user**=*user*
-
-Specifies that a UID mapping which should be used to set ownership, at the
-filesystem level, on the working container's contents, can be found in entries
-in the `/etc/subuid` file which correspond to the specified user.
-Commands run when handling `RUN` instructions will default to being run in
-their own user namespaces, configured using the UID and GID maps.
-If --userns-gid-map-group is specified, but --userns-uid-map-user is not
-specified, `podman` will assume that the specified group name is also a
-suitable user name to use as the default setting for this option.
-
-**NOTE:** When this option is specified by a rootless user, the specified
-mappings are relative to the rootless user namespace in the container, rather
-than being relative to the host as it would be when run rootfull.
-
 #### **--userns-gid-map-group**=*group*
 
 Specifies that a GID mapping which should be used to set ownership, at the
@@ -706,7 +730,43 @@ suitable group name to use as the default setting for this option.
 
 **NOTE:** When this option is specified by a rootless user, the specified
 mappings are relative to the rootless user namespace in the container, rather
-than being relative to the host as it would be when run rootfull.
+than being relative to the host as it would be when run rootful.
+
+#### **--userns-uid-map**=*mapping*
+
+Directly specifies a UID mapping which should be used to set ownership, at the
+filesystem level, on the working container's contents.
+Commands run when handling `RUN` instructions will default to being run in
+their own user namespaces, configured using the UID and GID maps.
+
+Entries in this map take the form of one or more triples of a starting
+in-container UID, a corresponding starting host-level UID, and the number of
+consecutive IDs which the map entry represents.
+
+This option overrides the *remap-uids* setting in the *options* section of
+/etc/containers/storage.conf.
+
+If this option is not specified, but a global --userns-uid-map setting is
+supplied, settings from the global option will be used.
+
+If none of --userns-uid-map-user, --userns-gid-map-group, or --userns-uid-map
+are specified, but --userns-gid-map is specified, the UID map will be set to
+use the same numeric values as the GID map.
+
+#### **--userns-uid-map-user**=*user*
+
+Specifies that a UID mapping which should be used to set ownership, at the
+filesystem level, on the working container's contents, can be found in entries
+in the `/etc/subuid` file which correspond to the specified user.
+Commands run when handling `RUN` instructions will default to being run in
+their own user namespaces, configured using the UID and GID maps.
+If --userns-gid-map-group is specified, but --userns-uid-map-user is not
+specified, `podman` will assume that the specified group name is also a
+suitable user name to use as the default setting for this option.
+
+**NOTE:** When this option is specified by a rootless user, the specified
+mappings are relative to the rootless user namespace in the container, rather
+than being relative to the host as it would be when run rootful.
 
 #### **--uts**=*how*
 

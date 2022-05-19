@@ -229,8 +229,7 @@ func (c *Container) Kill(signal uint) error {
 // This function returns when the attach finishes. It does not hold the lock for
 // the duration of its runtime, only using it at the beginning to verify state.
 func (c *Container) Attach(streams *define.AttachStreams, keys string, resize <-chan define.TerminalSize) error {
-	switch c.LogDriver() {
-	case define.PassthroughLogging:
+	if c.LogDriver() == define.PassthroughLogging {
 		return errors.Wrapf(define.ErrNoLogs, "this container is using the 'passthrough' log driver, cannot attach")
 	}
 	if !c.batched {
@@ -754,6 +753,9 @@ type ContainerCheckpointOptions struct {
 	// TargetFile tells the API to read (or write) the checkpoint image
 	// from (or to) the filename set in TargetFile
 	TargetFile string
+	// CheckpointImageID tells the API to restore the container from
+	// checkpoint image with ID set in CheckpointImageID
+	CheckpointImageID string
 	// Name tells the API that during restore from an exported
 	// checkpoint archive a new name should be used for the
 	// restored container
@@ -781,6 +783,9 @@ type ContainerCheckpointOptions struct {
 	// ImportPrevious tells the API to restore container with two
 	// images. One is TargetFile, the other is ImportPrevious.
 	ImportPrevious string
+	// CreateImage tells Podman to create an OCI image from container
+	// checkpoint in the local image store.
+	CreateImage string
 	// Compression tells the API which compression to use for
 	// the exported checkpoint archive.
 	Compression archive.Compression
@@ -883,7 +888,7 @@ func (c *Container) CopyFromArchive(ctx context.Context, containerPath string, c
 		}
 	}
 
-	return c.copyFromArchive(ctx, containerPath, chown, rename, tarStream)
+	return c.copyFromArchive(containerPath, chown, rename, tarStream)
 }
 
 // CopyToArchive copies the contents from the specified path *inside* the
@@ -898,7 +903,7 @@ func (c *Container) CopyToArchive(ctx context.Context, containerPath string, tar
 		}
 	}
 
-	return c.copyToArchive(ctx, containerPath, tarStream)
+	return c.copyToArchive(containerPath, tarStream)
 }
 
 // Stat the specified path *inside* the container and return a file info.
@@ -921,9 +926,13 @@ func (c *Container) Stat(ctx context.Context, containerPath string) (*define.Fil
 		if err != nil {
 			return nil, err
 		}
-		defer c.unmount(false)
+		defer func() {
+			if err := c.unmount(false); err != nil {
+				logrus.Errorf("Unmounting container %s: %v", c.ID(), err)
+			}
+		}()
 	}
 
-	info, _, _, err := c.stat(ctx, mountPoint, containerPath)
+	info, _, _, err := c.stat(mountPoint, containerPath)
 	return info, err
 }

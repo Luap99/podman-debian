@@ -32,7 +32,7 @@ func setProcOpts(s *specgen.SpecGenerator, g *generate.Generator) {
 	}
 }
 
-func addRlimits(s *specgen.SpecGenerator, g *generate.Generator) error {
+func addRlimits(s *specgen.SpecGenerator, g *generate.Generator) {
 	var (
 		isRootless = rootless.IsRootless()
 		nofileSet  = false
@@ -41,7 +41,7 @@ func addRlimits(s *specgen.SpecGenerator, g *generate.Generator) error {
 
 	if s.Rlimits == nil {
 		g.Config.Process.Rlimits = nil
-		return nil
+		return
 	}
 
 	for _, u := range s.Rlimits {
@@ -91,12 +91,10 @@ func addRlimits(s *specgen.SpecGenerator, g *generate.Generator) error {
 		}
 		g.AddProcessRlimits("RLIMIT_NPROC", max, current)
 	}
-
-	return nil
 }
 
 // Produce the final command for the container.
-func makeCommand(ctx context.Context, s *specgen.SpecGenerator, imageData *libimage.ImageData, rtc *config.Config) ([]string, error) {
+func makeCommand(s *specgen.SpecGenerator, imageData *libimage.ImageData, rtc *config.Config) ([]string, error) {
 	finalCommand := []string{}
 
 	entrypoint := s.Entrypoint
@@ -300,9 +298,17 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 		g.AddAnnotation(key, val)
 	}
 
-	if compatibleOptions.InfraResources == nil && s.ResourceLimits != nil {
-		g.Config.Linux.Resources = s.ResourceLimits
-	} else if s.ResourceLimits != nil { // if we have predefined resource limits we need to make sure we keep the infra and container limits
+	switch {
+	case compatibleOptions.InfraResources == nil && s.ResourceLimits != nil:
+		out, err := json.Marshal(s.ResourceLimits)
+		if err != nil {
+			return nil, err
+		}
+		err = json.Unmarshal(out, g.Config.Linux.Resources)
+		if err != nil {
+			return nil, err
+		}
+	case s.ResourceLimits != nil: // if we have predefined resource limits we need to make sure we keep the infra and container limits
 		originalResources, err := json.Marshal(s.ResourceLimits)
 		if err != nil {
 			return nil, err
@@ -320,7 +326,7 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 			return nil, err
 		}
 		g.Config.Linux.Resources = s.ResourceLimits
-	} else {
+	default:
 		g.Config.Linux.Resources = compatibleOptions.InfraResources
 	}
 	// Devices
@@ -345,8 +351,8 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 				return nil, err
 			}
 		}
-		if len(compatibleOptions.InfraDevices) > 0 && len(s.Devices) == 0 {
-			userDevices = compatibleOptions.InfraDevices
+		if len(compatibleOptions.HostDeviceList) > 0 && len(s.Devices) == 0 {
+			userDevices = compatibleOptions.HostDeviceList
 		} else {
 			userDevices = s.Devices
 		}
@@ -381,9 +387,7 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 		g.AddProcessEnv(name, val)
 	}
 
-	if err := addRlimits(s, &g); err != nil {
-		return nil, err
-	}
+	addRlimits(s, &g)
 
 	// NAMESPACES
 	if err := specConfigureNamespaces(s, &g, rt, pod); err != nil {

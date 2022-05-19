@@ -75,6 +75,16 @@ setup() {
     cat >| $pmscript <<EOF
 #!/bin/bash
 
+#
+# Argh! podman >= 3.4 something something namespace something, fails with
+#   Error: invalid config provided: cannot set hostname when running in the host UTS namespace: invalid configuration
+#
+# https://github.com/containers/podman/issues/11969#issuecomment-943386484
+#
+if grep -q utsns /etc/containers/containers.conf; then
+    sed -i -e '/^\utsns=/d' /etc/containers/containers.conf
+fi
+
 # events-backend=journald does not work inside a container
 opts="--events-backend=file $_PODMAN_TEST_OPTS"
 
@@ -136,6 +146,12 @@ EOF
     # cause connectivity issues since cni and netavark should never be mixed.
     mkdir -p /run/netns /run/cni /run/containers /var/lib/cni /etc/cni/net.d
 
+    # Containers-common around release 1-55 no-longer supplies this file
+    sconf=/etc/containers/storage.conf
+    v_sconf=
+    if [[ -e "$sconf" ]]; then
+        v_sconf="-v $sconf:$sconf"
+    fi
 
     #
     # Use new-podman to run the above script under old-podman.
@@ -155,7 +171,7 @@ EOF
             --net=host \
             --cgroupns=host \
             --pid=host \
-            -v /etc/containers/storage.conf:/etc/containers/storage.conf \
+            $v_sconf \
             -v /dev/fuse:/dev/fuse \
             -v /run/crun:/run/crun \
             -v /run/netns:/run/netns:rshared \

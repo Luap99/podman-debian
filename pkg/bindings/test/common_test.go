@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"testing"
 	"time"
 
 	"github.com/containers/podman/v4/libpod/define"
@@ -52,7 +51,7 @@ var (
 		shortName:   "busybox",
 		tarballName: "busybox.tar",
 	}
-	CACHE_IMAGES = []testImage{alpine, busybox} //nolint:golint,stylecheck
+	CACHE_IMAGES = []testImage{alpine, busybox} //nolint:revive,stylecheck
 )
 
 type bindingTest struct {
@@ -152,12 +151,7 @@ func createTempDirInTempDir() (string, error) {
 }
 
 func (b *bindingTest) startAPIService() *gexec.Session {
-	logLevel := "debug"
-	if testing.Verbose() {
-		logLevel = "trace"
-	}
-
-	cmd := []string{"--log-level=" + logLevel, "system", "service", "--timeout=0", b.sock}
+	cmd := []string{"--log-level=debug", "system", "service", "--timeout=0", b.sock}
 	session := b.runPodman(cmd)
 
 	sock := strings.TrimPrefix(b.sock, "unix://")
@@ -217,7 +211,7 @@ func (b *bindingTest) RunTopContainer(containerName *string, podName *string) (s
 	}
 	ctr, err := containers.CreateWithSpec(b.conn, s, nil)
 	if err != nil {
-		return "", nil
+		return "", err
 	}
 	err = containers.Start(b.conn, ctr.ID, nil)
 	if err != nil {

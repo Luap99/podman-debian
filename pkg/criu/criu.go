@@ -1,3 +1,4 @@
+//go:build linux
 // +build linux
 
 package criu
@@ -25,6 +26,11 @@ func CheckForCriu(version int) bool {
 		return false
 	}
 	return result
+}
+
+func GetCriuVestion() (int, error) {
+	c := criu.MakeCriu()
+	return c.GetCriuVersion()
 }
 
 func MemTrack() bool {

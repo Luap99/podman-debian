@@ -1,9 +1,11 @@
 package integration
 
 import (
+	"bytes"
 	"fmt"
 	"io/ioutil"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -51,8 +53,8 @@ var _ = Describe("Podman build", func() {
 		inspect := podmanTest.Podman([]string{"inspect", iid})
 		inspect.WaitWithDefaultTimeout()
 		data := inspect.InspectImageJSON()
-		Expect(data[0].Os).To(Equal(runtime.GOOS))
-		Expect(data[0].Architecture).To(Equal(runtime.GOARCH))
+		Expect(data[0]).To(HaveField("Os", runtime.GOOS))
+		Expect(data[0]).To(HaveField("Architecture", runtime.GOARCH))
 
 		session = podmanTest.Podman([]string{"rmi", ALPINE})
 		session.WaitWithDefaultTimeout()
@@ -108,8 +110,8 @@ var _ = Describe("Podman build", func() {
 		inspect := podmanTest.Podman([]string{"inspect", "test"})
 		inspect.WaitWithDefaultTimeout()
 		data := inspect.InspectImageJSON()
-		Expect(data[0].Os).To(Equal(runtime.GOOS))
-		Expect(data[0].Architecture).To(Equal(runtime.GOARCH))
+		Expect(data[0]).To(HaveField("Os", runtime.GOOS))
+		Expect(data[0]).To(HaveField("Architecture", runtime.GOARCH))
 
 		st, err := os.Stat(logfile)
 		Expect(err).To(BeNil())
@@ -493,14 +495,67 @@ subdir**`
 		Expect(output).NotTo(ContainSubstring("/testfilter/subdir"))
 	})
 
+	// See https://github.com/containers/podman/issues/13535
+	It("Remote build .containerignore filtering embedded directory (#13535)", func() {
+		SkipIfNotRemote("Testing remote .containerignore file filtering")
+		podmanTest.RestartRemoteService()
+
+		// Switch to temp dir and restore it afterwards
+		cwd, err := os.Getwd()
+		Expect(err).ToNot(HaveOccurred())
+
+		podmanTest.AddImageToRWStore(ALPINE)
+
+		contents := bytes.Buffer{}
+		contents.WriteString("FROM " + ALPINE + "\n")
+		contents.WriteString("ADD . /testfilter/\n")
+		contents.WriteString("RUN find /testfilter/ -print\n")
+
+		containerfile := filepath.Join(tempdir, "Containerfile")
+		Expect(ioutil.WriteFile(containerfile, contents.Bytes(), 0644)).ToNot(HaveOccurred())
+
+		contextDir, err := CreateTempDirInTempDir()
+		Expect(err).ToNot(HaveOccurred())
+		defer os.RemoveAll(contextDir)
+
+		Expect(ioutil.WriteFile(filepath.Join(contextDir, "expected"), contents.Bytes(), 0644)).
+			ToNot(HaveOccurred())
+
+		subdirPath := filepath.Join(contextDir, "subdir")
+		Expect(os.MkdirAll(subdirPath, 0755)).ToNot(HaveOccurred())
+		Expect(ioutil.WriteFile(filepath.Join(subdirPath, "extra"), contents.Bytes(), 0644)).
+			ToNot(HaveOccurred())
+		randomFile := filepath.Join(subdirPath, "randomFile")
+		dd := exec.Command("dd", "if=/dev/random", "of="+randomFile, "bs=1G", "count=1")
+		ddSession, err := Start(dd, GinkgoWriter, GinkgoWriter)
+		Expect(err).ToNot(HaveOccurred())
+		Eventually(ddSession).Should(Exit(0))
+
+		// make cwd as context root path
+		Expect(os.Chdir(contextDir)).ToNot(HaveOccurred())
+		defer func() {
+			err := os.Chdir(cwd)
+			Expect(err).ToNot(HaveOccurred())
+		}()
+
+		By("Test .containerignore filtering subdirectory")
+		err = ioutil.WriteFile(filepath.Join(contextDir, ".containerignore"), []byte(`subdir/`), 0644)
+		Expect(err).ToNot(HaveOccurred())
+
+		session := podmanTest.Podman([]string{"build", "-f", containerfile, contextDir})
+		session.WaitWithDefaultTimeout()
+		Expect(session).To(Exit(0))
+
+		output := session.OutputToString()
+		Expect(output).To(ContainSubstring("Containerfile"))
+		Expect(output).To(ContainSubstring("/testfilter/expected"))
+		Expect(output).NotTo(ContainSubstring("subdir"))
+	})
+
 	It("podman remote test context dir contains empty dirs and symlinks", func() {
-		if IsRemote() {
-			podmanTest.StopRemoteService()
-			podmanTest.StartRemoteService()
-		} else {
-			Skip("Only valid at remote test")
-		}
-		// Given
+		SkipIfNotRemote("Testing remote contextDir empty")
+		podmanTest.RestartRemoteService()
+
 		// Switch to temp dir and restore it afterwards
 		cwd, err := os.Getwd()
 		Expect(err).To(BeNil())

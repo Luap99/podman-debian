@@ -20,6 +20,8 @@ import (
 	"github.com/containers/podman/v4/libpod/define"
 	"github.com/containers/podman/v4/pkg/autoupdate"
 	"github.com/containers/podman/v4/pkg/domain/entities"
+	v1apps "github.com/containers/podman/v4/pkg/k8s.io/api/apps/v1"
+	v1 "github.com/containers/podman/v4/pkg/k8s.io/api/core/v1"
 	"github.com/containers/podman/v4/pkg/specgen"
 	"github.com/containers/podman/v4/pkg/specgen/generate"
 	"github.com/containers/podman/v4/pkg/specgen/generate/kube"
@@ -28,9 +30,7 @@ import (
 	"github.com/ghodss/yaml"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-	yamlv3 "gopkg.in/yaml.v3"
-	v1apps "k8s.io/api/apps/v1"
-	v1 "k8s.io/api/core/v1"
+	yamlv2 "gopkg.in/yaml.v2"
 )
 
 func (ic *ContainerEngine) PlayKube(ctx context.Context, body io.Reader, options entities.PlayKubeOptions) (*entities.PlayKubeReport, error) {
@@ -78,6 +78,17 @@ func (ic *ContainerEngine) PlayKube(ctx context.Context, body io.Reader, options
 
 			podTemplateSpec.ObjectMeta = podYAML.ObjectMeta
 			podTemplateSpec.Spec = podYAML.Spec
+			for name, val := range podYAML.Annotations {
+				if len(val) > define.MaxKubeAnnotation {
+					return nil, errors.Errorf("invalid annotation %q=%q value length exceeds Kubernetetes max %d", name, val, define.MaxKubeAnnotation)
+				}
+			}
+			for name, val := range options.Annotations {
+				if podYAML.Annotations == nil {
+					podYAML.Annotations = make(map[string]string)
+				}
+				podYAML.Annotations[name] = val
+			}
 
 			r, err := ic.playKubePod(ctx, podTemplateSpec.ObjectMeta.Name, &podTemplateSpec, options, &ipIndex, podYAML.Annotations, configMaps)
 			if err != nil {
@@ -107,7 +118,7 @@ func (ic *ContainerEngine) PlayKube(ctx context.Context, body io.Reader, options
 				return nil, errors.Wrap(err, "unable to read YAML as Kube PersistentVolumeClaim")
 			}
 
-			r, err := ic.playKubePVC(ctx, &pvcYAML, options)
+			r, err := ic.playKubePVC(ctx, &pvcYAML)
 			if err != nil {
 				return nil, err
 			}
@@ -128,6 +139,9 @@ func (ic *ContainerEngine) PlayKube(ctx context.Context, body io.Reader, options
 	}
 
 	if validKinds == 0 {
+		if len(configMaps) > 0 {
+			return nil, fmt.Errorf("ConfigMaps in podman are not a standalone object and must be used in a container")
+		}
 		return nil, fmt.Errorf("YAML document does not contain any supported kube kind")
 	}
 
@@ -189,23 +203,25 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 		return nil, err
 	}
 
-	ns, networks, netOpts, err := specgen.ParseNetworkFlag(options.Networks)
-	if err != nil {
-		return nil, err
-	}
+	if len(options.Networks) > 0 {
+		ns, networks, netOpts, err := specgen.ParseNetworkFlag(options.Networks)
+		if err != nil {
+			return nil, err
+		}
 
-	if (ns.IsBridge() && len(networks) == 0) || ns.IsHost() {
-		return nil, errors.Errorf("invalid value passed to --network: bridge or host networking must be configured in YAML")
-	}
+		if (ns.IsBridge() && len(networks) == 0) || ns.IsHost() {
+			return nil, errors.Errorf("invalid value passed to --network: bridge or host networking must be configured in YAML")
+		}
 
-	podOpt.Net.Network = ns
-	podOpt.Net.Networks = networks
-	podOpt.Net.NetworkOptions = netOpts
+		podOpt.Net.Network = ns
+		podOpt.Net.Networks = networks
+		podOpt.Net.NetworkOptions = netOpts
+	}
 
 	// FIXME This is very hard to support properly with a good ux
 	if len(options.StaticIPs) > *ipIndex {
 		if !podOpt.Net.Network.IsBridge() {
-			errors.Wrap(define.ErrInvalidArg, "static ip addresses can only be set when the network mode is bridge")
+			return nil, errors.Wrap(define.ErrInvalidArg, "static ip addresses can only be set when the network mode is bridge")
 		}
 		if len(podOpt.Net.Networks) != 1 {
 			return nil, errors.Wrap(define.ErrInvalidArg, "cannot set static ip addresses for more than network, use netname:ip=<ip> syntax to specify ips for more than network")
@@ -220,7 +236,7 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 	}
 	if len(options.StaticMACs) > *ipIndex {
 		if !podOpt.Net.Network.IsBridge() {
-			errors.Wrap(define.ErrInvalidArg, "static mac address can only be set when the network mode is bridge")
+			return nil, errors.Wrap(define.ErrInvalidArg, "static mac address can only be set when the network mode is bridge")
 		}
 		if len(podOpt.Net.Networks) != 1 {
 			return nil, errors.Wrap(define.ErrInvalidArg, "cannot set static mac address for more than network, use netname:mac=<mac> syntax to specify mac for more than network")
@@ -280,7 +296,16 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 		if v.Type == kube.KubeVolumeTypeConfigMap && !v.Optional {
 			vol, err := ic.Libpod.NewVolume(ctx, libpod.WithVolumeName(v.Source))
 			if err != nil {
-				return nil, errors.Wrapf(err, "cannot create a local volume for volume from configmap %q", v.Source)
+				if errors.Is(err, define.ErrVolumeExists) {
+					// Volume for this configmap already exists do not
+					// error out instead reuse the current volume.
+					vol, err = ic.Libpod.GetVolume(v.Source)
+					if err != nil {
+						return nil, errors.Wrapf(err, "cannot re-use local volume for volume from configmap %q", v.Source)
+					}
+				} else {
+					return nil, errors.Wrapf(err, "cannot create a local volume for volume from configmap %q", v.Source)
+				}
 			}
 			mountPoint, err := vol.MountPoint()
 			if err != nil || mountPoint == "" {
@@ -351,9 +376,15 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 
 	containers := make([]*libpod.Container, 0, len(podYAML.Spec.Containers))
 	initContainers := make([]*libpod.Container, 0, len(podYAML.Spec.InitContainers))
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, err
+
+	var cwd string
+	if options.ContextDir != "" {
+		cwd = options.ContextDir
+	} else {
+		cwd, err = os.Getwd()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	ctrNames := make(map[string]string)
@@ -371,6 +402,11 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 		if err != nil {
 			return nil, err
 		}
+
+		for k, v := range podSpec.PodSpecGen.Labels { // add podYAML labels
+			labels[k] = v
+		}
+
 		specgenOpts := kube.CtrSpecGenOptions{
 			Annotations:       annotations,
 			Container:         initCtr,
@@ -393,7 +429,7 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 		if err != nil {
 			return nil, err
 		}
-		rtSpec, spec, opts, err := generate.MakeContainer(ctx, ic.Libpod, specGen)
+		rtSpec, spec, opts, err := generate.MakeContainer(ctx, ic.Libpod, specGen, false, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -405,47 +441,51 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 		initContainers = append(initContainers, ctr)
 	}
 	for _, container := range podYAML.Spec.Containers {
-		if !strings.Contains("infra", container.Name) {
-			// Error out if the same name is used for more than one container
-			if _, ok := ctrNames[container.Name]; ok {
-				return nil, errors.Errorf("the pod %q is invalid; duplicate container name %q detected", podName, container.Name)
-			}
-			ctrNames[container.Name] = ""
-			pulledImage, labels, err := ic.getImageAndLabelInfo(ctx, cwd, annotations, writer, container, options)
-			if err != nil {
-				return nil, err
-			}
-
-			specgenOpts := kube.CtrSpecGenOptions{
-				Container:      container,
-				Image:          pulledImage,
-				Volumes:        volumes,
-				PodID:          pod.ID(),
-				PodName:        podName,
-				PodInfraID:     podInfraID,
-				ConfigMaps:     configMaps,
-				SeccompPaths:   seccompPaths,
-				RestartPolicy:  ctrRestartPolicy,
-				NetNSIsHost:    p.NetNS.IsHost(),
-				SecretsManager: secretsManager,
-				LogDriver:      options.LogDriver,
-				LogOptions:     options.LogOptions,
-				Labels:         labels,
-			}
-			specGen, err := kube.ToSpecGen(ctx, &specgenOpts)
-			if err != nil {
-				return nil, err
-			}
-			rtSpec, spec, opts, err := generate.MakeContainer(ctx, ic.Libpod, specGen)
-			if err != nil {
-				return nil, err
-			}
-			ctr, err := generate.ExecuteCreate(ctx, ic.Libpod, rtSpec, spec, false, opts...)
-			if err != nil {
-				return nil, err
-			}
-			containers = append(containers, ctr)
+		// Error out if the same name is used for more than one container
+		if _, ok := ctrNames[container.Name]; ok {
+			return nil, errors.Errorf("the pod %q is invalid; duplicate container name %q detected", podName, container.Name)
 		}
+		ctrNames[container.Name] = ""
+		pulledImage, labels, err := ic.getImageAndLabelInfo(ctx, cwd, annotations, writer, container, options)
+		if err != nil {
+			return nil, err
+		}
+
+		for k, v := range podSpec.PodSpecGen.Labels { // add podYAML labels
+			labels[k] = v
+		}
+
+		specgenOpts := kube.CtrSpecGenOptions{
+			Annotations:    annotations,
+			Container:      container,
+			Image:          pulledImage,
+			Volumes:        volumes,
+			PodID:          pod.ID(),
+			PodName:        podName,
+			PodInfraID:     podInfraID,
+			ConfigMaps:     configMaps,
+			SeccompPaths:   seccompPaths,
+			RestartPolicy:  ctrRestartPolicy,
+			NetNSIsHost:    p.NetNS.IsHost(),
+			SecretsManager: secretsManager,
+			LogDriver:      options.LogDriver,
+			LogOptions:     options.LogOptions,
+			Labels:         labels,
+		}
+		specGen, err := kube.ToSpecGen(ctx, &specgenOpts)
+		if err != nil {
+			return nil, err
+		}
+		specGen.RawImageName = container.Image
+		rtSpec, spec, opts, err := generate.MakeContainer(ctx, ic.Libpod, specGen, false, nil)
+		if err != nil {
+			return nil, err
+		}
+		ctr, err := generate.ExecuteCreate(ctx, ic.Libpod, rtSpec, spec, false, opts...)
+		if err != nil {
+			return nil, err
+		}
+		containers = append(containers, ctr)
 	}
 
 	if options.Start != types.OptionalBoolFalse {
@@ -556,13 +596,13 @@ func (ic *ContainerEngine) getImageAndLabelInfo(ctx context.Context, cwd string,
 }
 
 // playKubePVC creates a podman volume from a kube persistent volume claim.
-func (ic *ContainerEngine) playKubePVC(ctx context.Context, pvcYAML *v1.PersistentVolumeClaim, options entities.PlayKubeOptions) (*entities.PlayKubeReport, error) {
+func (ic *ContainerEngine) playKubePVC(ctx context.Context, pvcYAML *v1.PersistentVolumeClaim) (*entities.PlayKubeReport, error) {
 	var report entities.PlayKubeReport
 	opts := make(map[string]string)
 
 	// Get pvc name.
 	// This is the only required pvc attribute to create a podman volume.
-	name := pvcYAML.GetName()
+	name := pvcYAML.Name
 	if strings.TrimSpace(name) == "" {
 		return nil, fmt.Errorf("persistent volume claim name can not be empty")
 	}
@@ -570,13 +610,13 @@ func (ic *ContainerEngine) playKubePVC(ctx context.Context, pvcYAML *v1.Persiste
 	// Create podman volume options.
 	volOptions := []libpod.VolumeCreateOption{
 		libpod.WithVolumeName(name),
-		libpod.WithVolumeLabels(pvcYAML.GetLabels()),
+		libpod.WithVolumeLabels(pvcYAML.Labels),
 	}
 
 	// Get pvc annotations and create remaining podman volume options if available.
 	// These are podman volume options that do not match any of the persistent volume claim
 	// attributes, so they can be configured using annotations since they will not affect k8s.
-	for k, v := range pvcYAML.GetAnnotations() {
+	for k, v := range pvcYAML.Annotations {
 		switch k {
 		case util.VolumeDriverAnnotation:
 			volOptions = append(volOptions, libpod.WithVolumeDriver(v))
@@ -642,7 +682,7 @@ func readConfigMapFromFile(r io.Reader) (v1.ConfigMap, error) {
 func splitMultiDocYAML(yamlContent []byte) ([][]byte, error) {
 	var documentList [][]byte
 
-	d := yamlv3.NewDecoder(bytes.NewReader(yamlContent))
+	d := yamlv2.NewDecoder(bytes.NewReader(yamlContent))
 	for {
 		var o interface{}
 		// read individual document
@@ -656,7 +696,7 @@ func splitMultiDocYAML(yamlContent []byte) ([][]byte, error) {
 
 		if o != nil {
 			// back to bytes
-			document, err := yamlv3.Marshal(o)
+			document, err := yamlv2.Marshal(o)
 			if err != nil {
 				return nil, errors.Wrapf(err, "individual doc yaml could not be marshalled")
 			}
@@ -734,7 +774,7 @@ func getBuildFile(imageName string, cwd string) (string, error) {
 		logrus.Error(err.Error())
 	}
 
-	_, err = os.Stat(filepath.Join(dockerfilePath))
+	_, err = os.Stat(dockerfilePath)
 	if err == nil {
 		logrus.Debugf("Building %s with %s", imageName, dockerfilePath)
 		return dockerfilePath, nil

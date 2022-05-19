@@ -27,9 +27,7 @@ function setup() {
     retries=5
     while [[ ! -e $PODMAN_TEST_PTY ]]; do
         retries=$(( retries - 1 ))
-        if [[ $retries -eq 0 ]]; then
-            die "Timed out waiting for $PODMAN_TEST_PTY"
-        fi
+        assert $retries -gt 0 "Timed out waiting for $PODMAN_TEST_PTY"
         sleep 0.5
     done
 }
@@ -77,7 +75,7 @@ function teardown() {
 @test "podman load - will not read from tty" {
     run_podman 125 load <$PODMAN_TEST_PTY
     is "$output" \
-       "Error: cannot read from terminal. Use command-line redirection or the --input flag." \
+       "Error: cannot read from terminal, use command-line redirection or the --input flag" \
        "Diagnostic from 'podman load' without redirection or -i"
 }
 

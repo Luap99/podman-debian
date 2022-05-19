@@ -47,7 +47,8 @@ function teardown() {
 
     # Checkpoint, and confirm via inspect
     run_podman container checkpoint $cid
-    is "$output" "$cid" "podman container checkpoint"
+    # FIXME: remove the `.*` prefix after fix packaged for https://github.com/checkpoint-restore/criu/pull/1706
+    is "$output" ".*$cid" "podman container checkpoint"
 
     run_podman container inspect \
                --format '{{.State.Status}}:{{.State.Running}}:{{.State.Paused}}:{{.State.Checkpointed}}' $cid
@@ -79,9 +80,8 @@ function teardown() {
     # Get full logs, and make sure something changed
     run_podman logs $cid
     local nlines_after="${#lines[*]}"
-    if [[ $nlines_after -eq $nlines_before ]]; then
-        die "Container failed to output new lines after first restore"
-    fi
+    assert $nlines_after -gt $nlines_before \
+           "Container failed to output new lines after first restore"
 
     # Same thing again: test for https://github.com/containers/crun/issues/756
     # in which, after second checkpoint/restore, we lose logs
@@ -95,9 +95,8 @@ function teardown() {
     sleep 0.3
     run_podman container logs $cid
     nlines_after="${#lines[*]}"
-    if [[ $nlines_after -eq $nlines_before ]]; then
-        die "stdout went away after second restore (crun issue 756)"
-    fi
+    assert $nlines_after -gt $nlines_before \
+           "stdout went away after second restore (crun issue 756)"
 
     run_podman rm -t 0 -f $cid
 }
@@ -159,9 +158,8 @@ function teardown() {
     sleep .3
     run curl --max-time 3 -s $server/mydate
     local date_newroot="$output"
-    if [[ $date_newroot = $date_oldroot ]]; then
-        die "Restored container did not update the timestamp file"
-    fi
+    assert "$date_newroot" != "$date_oldroot" \
+           "Restored container did not update the timestamp file"
 
     run_podman exec $cid cat /myvol/cname
     is "$output" "$cname" "volume transferred fine"

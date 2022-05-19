@@ -24,14 +24,13 @@ var _ = Describe("podman system reset", func() {
 		}
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
 	})
 
 	AfterEach(func() {
 		podmanTest.Cleanup()
 		f := CurrentGinkgoTestDescription()
 		timedResult := fmt.Sprintf("Test: %s completed in %f seconds", f.TestText, f.Duration.Seconds())
-		GinkgoWriter.Write([]byte(timedResult))
+		_, _ = GinkgoWriter.Write([]byte(timedResult))
 	})
 
 	It("podman system reset", func() {
@@ -41,8 +40,7 @@ var _ = Describe("podman system reset", func() {
 
 		// change the network dir so that we do not conflict with other tests
 		// that would use the same network dir and cause unnecessary flakes
-		// TODO: Uncomment when we enable Netavark testing in E2E.
-		//podmanTest.NetworkConfigDir = tempdir
+		podmanTest.NetworkConfigDir = tempdir
 
 		session := podmanTest.Podman([]string{"rmi", "--force", "--all"})
 		session.WaitWithDefaultTimeout()
@@ -92,5 +90,12 @@ var _ = Describe("podman system reset", func() {
 		Expect(session).Should(Exit(0))
 		// default network should exists
 		Expect(session.OutputToStringArray()).To(HaveLen(1))
+
+		// TODO: machine tests currently don't run outside of the machine test pkg
+		// no machines are created here to cleanup
+		session = podmanTest.Podman([]string{"machine", "list", "-q"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToStringArray()).To(BeEmpty())
 	})
 })

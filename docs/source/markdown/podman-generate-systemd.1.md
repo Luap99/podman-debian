@@ -10,9 +10,21 @@ podman\-generate\-systemd - Generate systemd unit file(s) for a container or pod
 **podman generate systemd** will create a systemd unit file that can be used to control a container or pod.
 By default, the command will print the content of the unit files to stdout.
 
+Generating unit files for a pod requires the pod to be created with an infra container (see `--infra=true`).  An infra container runs across the entire lifespan of a pod and is hence required for systemd to manage the life cycle of the pod's main unit.
+
 _Note: If you use this command with the remote client, including Mac and Windows (excluding WSL2) machines, you would still have to place the generated units on the remote system.  Moreover, please make sure that the XDG_RUNTIME_DIR environment variable is set.  If unset, you may set it via `export XDG_RUNTIME_DIR=/run/user/$(id -u)`._
 
 ## OPTIONS
+
+#### **--after**=*dependency_name*
+
+Add the systemd unit after (`After=`) option, that ordering dependencies between the list of dependencies and this service. This option may be specified more than once.
+
+User-defined dependencies will be appended to the generated unit file, but any existing options such as needed or defined by default (e.g. `online.target`) will **not** be removed or overridden.
+
+#### **--container-prefix**=*prefix*
+
+Set the systemd unit name prefix for containers. The default is *container*.
 
 #### **--files**, **-f**
 
@@ -38,13 +50,13 @@ Note that `--new` only works on containers and pods created directly via Podman 
 
 Do not generate the header including meta data such as the Podman version and the timestamp.
 
-#### **--start-timeout** =*value*
+#### **--pod-prefix**=*prefix*
 
-Override the default start timeout for the container with the given value in seconds.
+Set the systemd unit name prefix for pods. The default is *pod*.
 
-#### **--stop-timeout** =*value*
+#### **--requires**=*dependency_name*
 
-Override the default stop timeout for the container with the given value in seconds.
+Set the systemd unit requires (`Requires=`) option. Similar to wants, but declares a stronger requirement dependency.
 
 #### **--restart-policy**=*policy*
 
@@ -56,39 +68,29 @@ Set the systemd restart policy.  The restart-policy must be one of: "no", "on-su
 Set the systemd service restartsec value. Configures the time to sleep before restarting a service (as configured with restart-policy).
 Takes a value in seconds.
 
-#### **--container-prefix**=*prefix*
-
-Set the systemd unit name prefix for containers. The default is *container*.
-
-#### **--pod-prefix**=*prefix*
-
-Set the systemd unit name prefix for pods. The default is *pod*.
-
 #### **--separator**=*separator*
 
 Set the systemd unit name separator between the name/id of a container/pod and the prefix. The default is *-*.
 
-#### **--wants**=*dependency_name*
+#### **--start-timeout** =*value*
 
-Add the systemd unit wants (`Wants=`) option, that this service is (weak) dependent on. This option may be specified more than once. This option does not influence the order in which services are started or stopped.
+Override the default start timeout for the container with the given value in seconds.
 
-User-defined dependencies will be appended to the generated unit file, but any existing options such as needed or defined by default (e.g. `online.target`) will **not** be removed or overridden.
+#### **--stop-timeout** =*value*
 
-#### **--after**=*dependency_name*
-
-Add the systemd unit after (`After=`) option, that ordering dependencies between the list of dependencies and this service. This option may be specified more than once.
-
-User-defined dependencies will be appended to the generated unit file, but any existing options such as needed or defined by default (e.g. `online.target`) will **not** be removed or overridden.
-
-#### **--requires**=*dependency_name*
-
-Set the systemd unit requires (`Requires=`) option. Similar to wants, but declares a stronger requirement dependency.
+Override the default stop timeout for the container with the given value in seconds.
 
 #### **--template**
 
 Add template specifiers to run multiple services from the systemd unit file.
 
 Note that if `--new` was not set to true, it is set to true by default. However, if `--new` is set to `false` explicitly the command will fail.
+
+#### **--wants**=*dependency_name*
+
+Add the systemd unit wants (`Wants=`) option, that this service is (weak) dependent on. This option may be specified more than once. This option does not influence the order in which services are started or stopped.
+
+User-defined dependencies will be appended to the generated unit file, but any existing options such as needed or defined by default (e.g. `online.target`) will **not** be removed or overridden.
 
 ## EXAMPLES
 
@@ -143,7 +145,12 @@ RequiresMountsFor=/var/run/container/storage
 Environment=PODMAN_SYSTEMD_UNIT=%n
 Restart=on-failure
 ExecStartPre=/bin/rm -f %t/%n-pid %t/%n-cid
-ExecStart=/usr/local/bin/podman run --conmon-pidfile %t/%n-pid --cidfile %t/%n-cid --cgroups=no-conmon -d -dit alpine
+ExecStart=/usr/local/bin/podman run
+	--conmon-pidfile %t/%n-pid
+	--cidfile %t/%n-cid
+	--cgroups=no-conmon
+	-d
+	-dit alpine
 ExecStop=/usr/local/bin/podman stop --ignore --cidfile %t/%n-cid -t 10
 ExecStopPost=/usr/local/bin/podman rm --ignore -f --cidfile %t/%n-cid
 PIDFile=%t/%n-pid

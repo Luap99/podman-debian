@@ -15,6 +15,10 @@ podman\-pod\-rm - Remove one or more stopped pods and containers
 
 Remove all pods.  Can be used in conjunction with \-f as well.
 
+#### **--force**, **-f**
+
+Stop running containers and delete all stopped containers before removal of pod.
+
 #### **--ignore**, **-i**
 
 Ignore errors when specified pods are not in the container store.  A user might
@@ -24,10 +28,6 @@ ExecStop directive of a systemd service referencing that pod.
 #### **--latest**, **-l**
 
 Instead of providing the pod name or ID, remove the last created pod. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
-
-#### **--force**, **-f**
-
-Stop running containers and delete all stopped containers before removal of pod.
 
 #### **--pod-id-file**
 
@@ -39,17 +39,31 @@ Seconds to wait before forcibly stopping running containers within the pod. The 
 
 ## EXAMPLE
 
+Remove pod with a given name
+```
 podman pod rm mywebserverpod
+```
 
+Remove multiple pods with given names and/or IDs
+```
 podman pod rm mywebserverpod myflaskserverpod 860a4b23
+```
 
+Forcefully remove pod with a given ID
+```
 podman pod rm -f 860a4b23
+```
 
+Forcefully remove all pods
+```
 podman pod rm -f -a
-
 podman pod rm -fa
+```
 
+Remove pod using ID specified in a given file
+```
 podman pod rm --pod-id-file /path/to/id/file
+```
 
 ## Exit Status
   **0**   All specified pods removed

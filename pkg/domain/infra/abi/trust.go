@@ -84,7 +84,7 @@ func (ir *ImageEngine) SetTrust(ctx context.Context, args []string, options enti
 		policyContentStruct.Default = newReposContent
 	} else {
 		if len(policyContentStruct.Default) == 0 {
-			return errors.Errorf("Default trust policy must be set.")
+			return errors.Errorf("default trust policy must be set")
 		}
 		registryExists := false
 		for transport, transportval := range policyContentStruct.Transports {
@@ -122,29 +122,35 @@ func getPolicyShowOutput(policyContentStruct trust.PolicyContent, systemRegistri
 
 	if len(policyContentStruct.Default) > 0 {
 		defaultPolicyStruct := trust.Policy{
-			Name:     "* (default)",
-			RepoName: "default",
-			Type:     trustTypeDescription(policyContentStruct.Default[0].Type),
+			Transport: "all",
+			Name:      "* (default)",
+			RepoName:  "default",
+			Type:      trustTypeDescription(policyContentStruct.Default[0].Type),
 		}
 		output = append(output, &defaultPolicyStruct)
 	}
-	for _, transval := range policyContentStruct.Transports {
+	for transport, transval := range policyContentStruct.Transports {
+		if transport == "docker" {
+			transport = "repository"
+		}
+
 		for repo, repoval := range transval {
 			tempTrustShowOutput := trust.Policy{
-				Name:     repo,
-				RepoName: repo,
-				Type:     repoval[0].Type,
+				Name:      repo,
+				RepoName:  repo,
+				Transport: transport,
+				Type:      trustTypeDescription(repoval[0].Type),
 			}
 			// TODO - keyarr is not used and I don't know its intent; commenting out for now for someone to fix later
-			//keyarr := []string{}
+			// keyarr := []string{}
 			uids := []string{}
 			for _, repoele := range repoval {
 				if len(repoele.KeyPath) > 0 {
-					//keyarr = append(keyarr, repoele.KeyPath)
+					// keyarr = append(keyarr, repoele.KeyPath)
 					uids = append(uids, trust.GetGPGIdFromKeyPath(repoele.KeyPath)...)
 				}
 				if len(repoele.KeyData) > 0 {
-					//keyarr = append(keyarr, string(repoele.KeyData))
+					// keyarr = append(keyarr, string(repoele.KeyData))
 					uids = append(uids, trust.GetGPGIdFromKeyData(repoele.KeyData)...)
 				}
 			}

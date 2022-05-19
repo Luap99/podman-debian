@@ -24,12 +24,9 @@ var _ = Describe("Podman create", func() {
 
 	BeforeEach(func() {
 		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
+		Expect(err).To(BeNil())
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
 	})
 
 	AfterEach(func() {
@@ -177,7 +174,8 @@ var _ = Describe("Podman create", func() {
 		// tests are passing inside a container.
 
 		mountPath := filepath.Join(podmanTest.TempDir, "secrets")
-		os.Mkdir(mountPath, 0755)
+		err := os.Mkdir(mountPath, 0755)
+		Expect(err).ToNot(HaveOccurred())
 		session := podmanTest.Podman([]string{"create", "--log-driver", "k8s-file", "--name", "test", "--mount", fmt.Sprintf("type=bind,src=%s,target=/create/test", mountPath), ALPINE, "grep", "/create/test", "/proc/self/mountinfo"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
@@ -213,7 +211,8 @@ var _ = Describe("Podman create", func() {
 		Expect(session.OutputToString()).To(ContainSubstring("shared"))
 
 		mountPath = filepath.Join(podmanTest.TempDir, "scratchpad")
-		os.Mkdir(mountPath, 0755)
+		err = os.Mkdir(mountPath, 0755)
+		Expect(err).ToNot(HaveOccurred())
 		session = podmanTest.Podman([]string{"create", "--log-driver", "k8s-file", "--name", "test_tmpfs", "--mount", "type=tmpfs,target=/create/test", ALPINE, "grep", "/create/test", "/proc/self/mountinfo"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
@@ -269,7 +268,7 @@ var _ = Describe("Podman create", func() {
 		Expect(session).Should(Exit(0))
 
 		ctrJSON := podmanTest.InspectContainer(ctrName)
-		Expect(podData.ID).To(Equal(ctrJSON[0].Pod)) // Make sure the container's pod matches the pod's ID
+		Expect(podData).To(HaveField("ID", ctrJSON[0].Pod)) // Make sure the container's pod matches the pod's ID
 	})
 
 	It("podman run entrypoint and cmd test", func() {
@@ -282,7 +281,7 @@ var _ = Describe("Podman create", func() {
 		Expect(ctrJSON).To(HaveLen(1))
 		Expect(ctrJSON[0].Config.Cmd).To(HaveLen(1))
 		Expect(ctrJSON[0].Config.Cmd[0]).To(Equal("redis-server"))
-		Expect(ctrJSON[0].Config.Entrypoint).To(Equal("docker-entrypoint.sh"))
+		Expect(ctrJSON[0].Config).To(HaveField("Entrypoint", "docker-entrypoint.sh"))
 	})
 
 	It("podman create --pull", func() {
@@ -414,8 +413,8 @@ var _ = Describe("Podman create", func() {
 		inspect.WaitWithDefaultTimeout()
 		data := inspect.InspectContainerToJSON()
 		Expect(data).To(HaveLen(1))
-		Expect(data[0].HostConfig.RestartPolicy.Name).To(Equal("on-failure"))
-		Expect(data[0].HostConfig.RestartPolicy.MaximumRetryCount).To(Equal(uint(5)))
+		Expect(data[0].HostConfig.RestartPolicy).To(HaveField("Name", "on-failure"))
+		Expect(data[0].HostConfig.RestartPolicy).To(HaveField("MaximumRetryCount", uint(5)))
 	})
 
 	It("podman create with --restart-policy=always:5 fails", func() {
@@ -435,7 +434,7 @@ var _ = Describe("Podman create", func() {
 		inspect.WaitWithDefaultTimeout()
 		data := inspect.InspectContainerToJSON()
 		Expect(data).To(HaveLen(1))
-		Expect(data[0].HostConfig.RestartPolicy.Name).To(Equal(unlessStopped))
+		Expect(data[0].HostConfig.RestartPolicy).To(HaveField("Name", unlessStopped))
 	})
 
 	It("podman create with -m 1000000 sets swap to 2000000", func() {
@@ -449,7 +448,7 @@ var _ = Describe("Podman create", func() {
 		inspect.WaitWithDefaultTimeout()
 		data := inspect.InspectContainerToJSON()
 		Expect(data).To(HaveLen(1))
-		Expect(data[0].HostConfig.MemorySwap).To(Equal(int64(2 * numMem)))
+		Expect(data[0].HostConfig).To(HaveField("MemorySwap", int64(2*numMem)))
 	})
 
 	It("podman create --cpus 5 sets nanocpus", func() {
@@ -464,7 +463,7 @@ var _ = Describe("Podman create", func() {
 		inspect.WaitWithDefaultTimeout()
 		data := inspect.InspectContainerToJSON()
 		Expect(data).To(HaveLen(1))
-		Expect(data[0].HostConfig.NanoCpus).To(Equal(int64(nanoCPUs)))
+		Expect(data[0].HostConfig).To(HaveField("NanoCpus", int64(nanoCPUs)))
 	})
 
 	It("podman create --replace", func() {
@@ -492,7 +491,7 @@ var _ = Describe("Podman create", func() {
 		inspect.WaitWithDefaultTimeout()
 		data := inspect.InspectContainerToJSON()
 		Expect(data).To(HaveLen(1))
-		Expect(data[0].Config.StopSignal).To(Equal(uint(15)))
+		Expect(data[0].Config).To(HaveField("StopSignal", uint(15)))
 	})
 
 	It("podman create --tz", func() {
@@ -510,7 +509,7 @@ var _ = Describe("Podman create", func() {
 		inspect.WaitWithDefaultTimeout()
 		data := inspect.InspectContainerToJSON()
 		Expect(data).To(HaveLen(1))
-		Expect(data[0].Config.Timezone).To(Equal("Pacific/Honolulu"))
+		Expect(data[0].Config).To(HaveField("Timezone", "Pacific/Honolulu"))
 
 		session = podmanTest.Podman([]string{"create", "--tz", "local", "--name", "lcl", ALPINE, "date"})
 		session.WaitWithDefaultTimeout()
@@ -518,7 +517,7 @@ var _ = Describe("Podman create", func() {
 		inspect.WaitWithDefaultTimeout()
 		data = inspect.InspectContainerToJSON()
 		Expect(data).To(HaveLen(1))
-		Expect(data[0].Config.Timezone).To(Equal("local"))
+		Expect(data[0].Config).To(HaveField("Timezone", "local"))
 	})
 
 	It("podman create --umask", func() {
@@ -532,7 +531,7 @@ var _ = Describe("Podman create", func() {
 		inspect.WaitWithDefaultTimeout()
 		data := inspect.InspectContainerToJSON()
 		Expect(data).To(HaveLen(1))
-		Expect(data[0].Config.Umask).To(Equal("0022"))
+		Expect(data[0].Config).To(HaveField("Umask", "0022"))
 
 		session = podmanTest.Podman([]string{"create", "--umask", "0002", "--name", "umask", ALPINE})
 		session.WaitWithDefaultTimeout()
@@ -540,7 +539,7 @@ var _ = Describe("Podman create", func() {
 		inspect.WaitWithDefaultTimeout()
 		data = inspect.InspectContainerToJSON()
 		Expect(data).To(HaveLen(1))
-		Expect(data[0].Config.Umask).To(Equal("0002"))
+		Expect(data[0].Config).To(HaveField("Umask", "0002"))
 
 		session = podmanTest.Podman([]string{"create", "--umask", "0077", "--name", "fedora", fedoraMinimal})
 		session.WaitWithDefaultTimeout()
@@ -548,7 +547,7 @@ var _ = Describe("Podman create", func() {
 		inspect.WaitWithDefaultTimeout()
 		data = inspect.InspectContainerToJSON()
 		Expect(data).To(HaveLen(1))
-		Expect(data[0].Config.Umask).To(Equal("0077"))
+		Expect(data[0].Config).To(HaveField("Umask", "0077"))
 
 		session = podmanTest.Podman([]string{"create", "--umask", "22", "--name", "umask-short", ALPINE})
 		session.WaitWithDefaultTimeout()
@@ -556,7 +555,7 @@ var _ = Describe("Podman create", func() {
 		inspect.WaitWithDefaultTimeout()
 		data = inspect.InspectContainerToJSON()
 		Expect(data).To(HaveLen(1))
-		Expect(data[0].Config.Umask).To(Equal("0022"))
+		Expect(data[0].Config).To(HaveField("Umask", "0022"))
 
 		session = podmanTest.Podman([]string{"create", "--umask", "9999", "--name", "bad", ALPINE})
 		session.WaitWithDefaultTimeout()
@@ -690,8 +689,8 @@ var _ = Describe("Podman create", func() {
 
 		idata := setup.InspectImageJSON() // returns []inspect.ImageData
 		Expect(idata).To(HaveLen(1))
-		Expect(idata[0].Os).To(Equal(runtime.GOOS))
-		Expect(idata[0].Architecture).To(Equal("arm64"))
+		Expect(idata[0]).To(HaveField("Os", runtime.GOOS))
+		Expect(idata[0]).To(HaveField("Architecture", "arm64"))
 	})
 
 	It("podman create --uid/gidmap --pod conflict test", func() {
@@ -705,5 +704,35 @@ var _ = Describe("Podman create", func() {
 		Expect(create).ShouldNot(Exit(0))
 		Expect(create.ErrorToString()).To(ContainSubstring("cannot specify a new uid/gid map when entering a pod with an infra container"))
 
+	})
+
+	It("podman create --chrootdirs inspection test", func() {
+		session := podmanTest.Podman([]string{"create", "--chrootdirs", "/var/local/qwerty", ALPINE})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		setup := podmanTest.Podman([]string{"container", "inspect", session.OutputToString()})
+		setup.WaitWithDefaultTimeout()
+		Expect(setup).Should(Exit(0))
+
+		data := setup.InspectContainerToJSON()
+		Expect(data).To(HaveLen(1))
+		Expect(data[0].Config.ChrootDirs).To(HaveLen(1))
+		Expect(data[0].Config.ChrootDirs[0]).To(Equal("/var/local/qwerty"))
+	})
+
+	It("podman create --chrootdirs functionality test", func() {
+		session := podmanTest.Podman([]string{"create", "-t", "--chrootdirs", "/var/local/qwerty", ALPINE, "/bin/cat"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		ctrID := session.OutputToString()
+
+		setup := podmanTest.Podman([]string{"start", ctrID})
+		setup.WaitWithDefaultTimeout()
+		Expect(setup).Should(Exit(0))
+
+		setup = podmanTest.Podman([]string{"exec", ctrID, "cmp", "/etc/resolv.conf", "/var/local/qwerty/etc/resolv.conf"})
+		setup.WaitWithDefaultTimeout()
+		Expect(setup).Should(Exit(0))
 	})
 })

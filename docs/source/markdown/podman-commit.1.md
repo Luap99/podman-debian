@@ -65,6 +65,11 @@ The default is **false**.
 Suppresses output.\
 The default is **false**.
 
+#### **--squash**, **-s**
+
+Squash newly built layers into a single new layer.\
+The default is **false**.
+
 ## EXAMPLES
 Create image from container with entrypoint and label
 ```

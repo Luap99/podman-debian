@@ -182,13 +182,14 @@ EOF
 
     run_podman volume rm $myvol
 
-    # Autocreated volumes should also work with keep-id
-    # All we do here is check status; podman 1.9.1 would fail with EPERM
-    myvol=myvol$(random_string)
-    run_podman run --rm -v $myvol:/myvol:z --userns=keep-id $IMAGE \
+    if is_rootless; then
+       # Autocreated volumes should also work with keep-id
+       # All we do here is check status; podman 1.9.1 would fail with EPERM
+       myvol=myvol$(random_string)
+       run_podman run --rm -v $myvol:/myvol:z --userns=keep-id $IMAGE \
                touch /myvol/myfile
-
-    run_podman volume rm $myvol
+       run_podman volume rm $myvol
+    fi
 }
 
 
@@ -282,9 +283,7 @@ EOF
 
     # (Assert that output is formatted, not a one-line blob: #8011)
     run_podman volume inspect ${v[1]}
-    if [[ "${#lines[*]}" -lt 10 ]]; then
-        die "Output from 'volume inspect' is only ${#lines[*]} lines; see #8011"
-    fi
+    assert "${#lines[*]}" -ge 10 "Output from 'volume inspect'; see #8011"
 
     # Run two containers: one mounting v1, one mounting v2 & v3
     run_podman run --name c1 --volume ${v[1]}:/vol1 $IMAGE date
@@ -385,6 +384,31 @@ NeedsChown    | true
 
     # Clean up
     run_podman volume rm $myvolume
+}
+
+@test "podman volume mount" {
+    skip_if_remote "podman --remote volume mount not supported"
+    myvolume=myvol$(random_string)
+    myfile=myfile$(random_string)
+    mytext=$(random_string)
+
+    # Create a named volume
+    run_podman volume create $myvolume
+    is "$output" "$myvolume" "output from volume create"
+
+    if ! is_rootless ; then
+        # image mount is hard to test as a rootless user
+        # and does not work remotely
+        run_podman volume mount ${myvolume}
+        mnt=${output}
+	echo $mytext >$mnt/$myfile
+        run_podman run -v ${myvolume}:/vol:z $IMAGE cat /vol/$myfile
+	is "$output" "$mytext" "$myfile should exist within the containers volume and contain $mytext"
+        run_podman volume unmount ${myvolume}
+    else
+        run_podman 125 volume mount ${myvolume}
+	is "$output" "Error: cannot run command \"podman volume mount\" in rootless mode, must execute.*podman unshare.*first" "Should fail and complain about unshare"
+    fi
 }
 
 # vim: filetype=sh

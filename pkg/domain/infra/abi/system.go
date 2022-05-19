@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 
 	"github.com/containers/common/pkg/cgroups"
 	"github.com/containers/common/pkg/config"
@@ -27,27 +28,40 @@ func (ic *ContainerEngine) Info(ctx context.Context) (*define.Info, error) {
 	if err != nil {
 		return nil, err
 	}
+	info.Host.RemoteSocket = &define.RemoteSocket{Path: ic.Libpod.RemoteURI()}
 
-	socketPath, err := util.SocketPath()
+	// `podman system connection add` invokes podman via ssh to fill in connection string. Here
+	// we are reporting the default systemd activation socket path as we cannot know if a future
+	// service may be run with another URI.
+	if ic.Libpod.RemoteURI() == "" {
+		xdg := "/run"
+		if path, err := util.GetRuntimeDir(); err != nil {
+			// Info is as good as we can guess...
+			return info, err
+		} else if path != "" {
+			xdg = path
+		}
+
+		uri := url.URL{
+			Scheme: "unix",
+			Path:   filepath.Join(xdg, "podman", "podman.sock"),
+		}
+		ic.Libpod.SetRemoteURI(uri.String())
+		info.Host.RemoteSocket.Path = uri.Path
+	}
+
+	uri, err := url.Parse(ic.Libpod.RemoteURI())
 	if err != nil {
 		return nil, err
 	}
-	rs := define.RemoteSocket{
-		Path:   socketPath,
-		Exists: false,
+
+	if uri.Scheme == "unix" {
+		_, err := os.Stat(uri.Path)
+		info.Host.RemoteSocket.Exists = err == nil
+	} else {
+		info.Host.RemoteSocket.Exists = true
 	}
 
-	// Check if the socket exists
-	if fi, err := os.Stat(socketPath); err == nil {
-		if fi.Mode()&os.ModeSocket != 0 {
-			rs.Exists = true
-		}
-	}
-	// TODO
-	// it was suggested future versions of this could perform
-	// a ping on the socket for greater confidence the socket is
-	// actually active.
-	info.Host.RemoteSocket = &rs
 	return info, err
 }
 
@@ -150,7 +164,7 @@ func (ic *ContainerEngine) SystemPrune(ctx context.Context, options entities.Sys
 		if err != nil {
 			return nil, err
 		}
-		reclaimedSpace = reclaimedSpace + reports.PruneReportsSize(containerPruneReports)
+		reclaimedSpace += reports.PruneReportsSize(containerPruneReports)
 		systemPruneReport.ContainerPruneReports = append(systemPruneReport.ContainerPruneReports, containerPruneReports...)
 		imagePruneOptions := entities.ImagePruneOptions{
 			All:    options.All,
@@ -158,7 +172,7 @@ func (ic *ContainerEngine) SystemPrune(ctx context.Context, options entities.Sys
 		}
 		imageEngine := ImageEngine{Libpod: ic.Libpod}
 		imagePruneReports, err := imageEngine.Prune(ctx, imagePruneOptions)
-		reclaimedSpace = reclaimedSpace + reports.PruneReportsSize(imagePruneReports)
+		reclaimedSpace += reports.PruneReportsSize(imagePruneReports)
 
 		if err != nil {
 			return nil, err
@@ -178,7 +192,7 @@ func (ic *ContainerEngine) SystemPrune(ctx context.Context, options entities.Sys
 			if len(volumePruneReport) > 0 {
 				found = true
 			}
-			reclaimedSpace = reclaimedSpace + reports.PruneReportsSize(volumePruneReport)
+			reclaimedSpace += reports.PruneReportsSize(volumePruneReport)
 			systemPruneReport.VolumePruneReports = append(systemPruneReport.VolumePruneReports, volumePruneReport...)
 		}
 	}

@@ -4,7 +4,6 @@
 package machine
 
 import (
-	"encoding/json"
 	"os"
 	"sort"
 	"strconv"
@@ -41,6 +40,7 @@ var (
 type listFlagType struct {
 	format    string
 	noHeading bool
+	quiet     bool
 }
 
 type machineReporter struct {
@@ -68,8 +68,9 @@ func init() {
 	flags := lsCmd.Flags()
 	formatFlagName := "format"
 	flags.StringVar(&listFlag.format, formatFlagName, "{{.Name}}\t{{.VMType}}\t{{.Created}}\t{{.LastUp}}\t{{.CPUs}}\t{{.Memory}}\t{{.DiskSize}}\n", "Format volume output using JSON or a Go template")
-	_ = lsCmd.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteFormat(machineReporter{}))
+	_ = lsCmd.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteFormat(&machineReporter{}))
 	flags.BoolVar(&listFlag.noHeading, "noheading", false, "Do not print headers")
+	flags.BoolVarP(&listFlag.quiet, "quiet", "q", false, "Show only machine names")
 }
 
 func list(cmd *cobra.Command, args []string) error {
@@ -79,7 +80,11 @@ func list(cmd *cobra.Command, args []string) error {
 		err          error
 	)
 
-	provider := getSystemDefaultProvider()
+	if listFlag.quiet {
+		listFlag.format = "{{.Name}}\n"
+	}
+
+	provider := GetSystemDefaultProvider()
 	listResponse, err = provider.List(opts)
 	if err != nil {
 		return errors.Wrap(err, "error listing vms")
@@ -124,7 +129,10 @@ func outputTemplate(cmd *cobra.Command, responses []*machineReporter) error {
 		"Memory":   "MEMORY",
 		"DiskSize": "DISK SIZE",
 	})
-
+	printHeader := !listFlag.noHeading
+	if listFlag.quiet {
+		printHeader = false
+	}
 	var row string
 	switch {
 	case cmd.Flags().Changed("format"):
@@ -146,8 +154,7 @@ func outputTemplate(cmd *cobra.Command, responses []*machineReporter) error {
 		return err
 	}
 	defer w.Flush()
-
-	if !listFlag.noHeading {
+	if printHeader {
 		if err := tmpl.Execute(w, headers); err != nil {
 			return errors.Wrapf(err, "failed to write report column headers")
 		}

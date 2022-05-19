@@ -1,7 +1,6 @@
 package generate
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -59,7 +58,7 @@ func GetDefaultNamespaceMode(nsType string, cfg *config.Config, pod *libpod.Pod)
 	case "pid":
 		return specgen.ParseNamespace(cfg.Containers.PidNS)
 	case "ipc":
-		return specgen.ParseNamespace(cfg.Containers.IPCNS)
+		return specgen.ParseIPCNamespace(cfg.Containers.IPCNS)
 	case "uts":
 		return specgen.ParseNamespace(cfg.Containers.UTSNS)
 	case "user":
@@ -80,7 +79,7 @@ func GetDefaultNamespaceMode(nsType string, cfg *config.Config, pod *libpod.Pod)
 // joining a pod.
 // TODO: Consider grouping options that are not directly attached to a namespace
 // elsewhere.
-func namespaceOptions(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runtime, pod *libpod.Pod, imageData *libimage.ImageData) ([]libpod.CtrCreateOption, error) {
+func namespaceOptions(s *specgen.SpecGenerator, rt *libpod.Runtime, pod *libpod.Pod, imageData *libimage.ImageData) ([]libpod.CtrCreateOption, error) {
 	toReturn := []libpod.CtrCreateOption{}
 
 	// If pod is not nil, get infra container.
@@ -134,8 +133,17 @@ func namespaceOptions(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.
 		if err != nil {
 			return nil, errors.Wrapf(err, "error looking up container to share ipc namespace with")
 		}
+		if ipcCtr.ConfigNoCopy().NoShmShare {
+			return nil, errors.Errorf("joining IPC of container %s is not allowed: non-shareable IPC (hint: use IpcMode:shareable for the donor container)", ipcCtr.ID())
+		}
 		toReturn = append(toReturn, libpod.WithIPCNSFrom(ipcCtr))
-		toReturn = append(toReturn, libpod.WithShmDir(ipcCtr.ShmDir()))
+		if !ipcCtr.ConfigNoCopy().NoShm {
+			toReturn = append(toReturn, libpod.WithShmDir(ipcCtr.ShmDir()))
+		}
+	case specgen.None:
+		toReturn = append(toReturn, libpod.WithNoShm(true))
+	case specgen.Private:
+		toReturn = append(toReturn, libpod.WithNoShmShare(true))
 	}
 
 	// UTS
@@ -156,21 +164,19 @@ func namespaceOptions(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.
 	// User
 	switch s.UserNS.NSMode {
 	case specgen.KeepID:
-		if rootless.IsRootless() {
-			toReturn = append(toReturn, libpod.WithAddCurrentUserPasswdEntry())
+		if !rootless.IsRootless() {
+			return nil, errors.New("keep-id is only supported in rootless mode")
+		}
+		toReturn = append(toReturn, libpod.WithAddCurrentUserPasswdEntry())
 
-			// If user is not overridden, set user in the container
-			// to user running Podman.
-			if s.User == "" {
-				_, uid, gid, err := util.GetKeepIDMapping()
-				if err != nil {
-					return nil, err
-				}
-				toReturn = append(toReturn, libpod.WithUser(fmt.Sprintf("%d:%d", uid, gid)))
+		// If user is not overridden, set user in the container
+		// to user running Podman.
+		if s.User == "" {
+			_, uid, gid, err := util.GetKeepIDMapping()
+			if err != nil {
+				return nil, err
 			}
-		} else {
-			// keep-id as root doesn't need a user namespace
-			s.UserNS.NSMode = specgen.Host
+			toReturn = append(toReturn, libpod.WithUser(fmt.Sprintf("%d:%d", uid, gid)))
 		}
 	case specgen.FromPod:
 		if pod == nil || infraCtr == nil {
@@ -196,10 +202,8 @@ func namespaceOptions(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.
 	if s.IDMappings != nil {
 		if pod == nil {
 			toReturn = append(toReturn, libpod.WithIDMappings(*s.IDMappings))
-		} else {
-			if pod.HasInfraContainer() && (len(s.IDMappings.UIDMap) > 0 || len(s.IDMappings.GIDMap) > 0) {
-				return nil, errors.Wrapf(define.ErrInvalidArg, "cannot specify a new uid/gid map when entering a pod with an infra container")
-			}
+		} else if pod.HasInfraContainer() && (len(s.IDMappings.UIDMap) > 0 || len(s.IDMappings.GIDMap) > 0) {
+			return nil, errors.Wrapf(define.ErrInvalidArg, "cannot specify a new uid/gid map when entering a pod with an infra container")
 		}
 	}
 	if s.User != "" {
@@ -249,7 +253,7 @@ func namespaceOptions(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.
 		}
 		toReturn = append(toReturn, libpod.WithNetNSFrom(netCtr))
 	case specgen.Slirp:
-		portMappings, expose, err := createPortMappings(ctx, s, imageData)
+		portMappings, expose, err := createPortMappings(s, imageData)
 		if err != nil {
 			return nil, err
 		}
@@ -261,7 +265,7 @@ func namespaceOptions(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.
 	case specgen.Private:
 		fallthrough
 	case specgen.Bridge:
-		portMappings, expose, err := createPortMappings(ctx, s, imageData)
+		portMappings, expose, err := createPortMappings(s, imageData)
 		if err != nil {
 			return nil, err
 		}
@@ -476,7 +480,7 @@ func GetNamespaceOptions(ns []string, netnsIsHost bool) ([]libpod.PodCreateOptio
 	var options []libpod.PodCreateOption
 	var erroredOptions []libpod.PodCreateOption
 	if ns == nil {
-		//set the default namespaces
+		// set the default namespaces
 		ns = strings.Split(specgen.DefaultKernelNamespaces, ",")
 	}
 	for _, toShare := range ns {

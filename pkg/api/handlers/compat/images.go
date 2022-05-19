@@ -102,6 +102,7 @@ func CommitContainer(w http.ResponseWriter, r *http.Request) {
 		Comment   string   `schema:"comment"`
 		Container string   `schema:"container"`
 		Pause     bool     `schema:"pause"`
+		Squash    bool     `schema:"squash"`
 		Repo      string   `schema:"repo"`
 		Tag       string   `schema:"tag"`
 		// fromSrc   string  # fromSrc is currently unused
@@ -138,6 +139,7 @@ func CommitContainer(w http.ResponseWriter, r *http.Request) {
 	options.Message = query.Comment
 	options.Author = query.Author
 	options.Pause = query.Pause
+	options.Squash = query.Squash
 	for _, change := range query.Changes {
 		options.Changes = append(options.Changes, strings.Split(change, "\n")...)
 	}
@@ -530,7 +532,7 @@ func ExportImages(w http.ResponseWriter, r *http.Request) {
 		utils.Error(w, http.StatusBadRequest, errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
 		return
 	}
-	if len(query.Names) <= 0 {
+	if len(query.Names) == 0 {
 		utils.Error(w, http.StatusBadRequest, fmt.Errorf("no images to download"))
 		return
 	}

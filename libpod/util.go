@@ -55,8 +55,11 @@ func WaitForFile(path string, chWait chan error, timeout time.Duration) (bool, e
 		if err := watcher.Add(filepath.Dir(path)); err == nil {
 			inotifyEvents = watcher.Events
 		}
-		defer watcher.Close()
-		defer watcher.Remove(filepath.Dir(path))
+		defer func() {
+			if err := watcher.Close(); err != nil {
+				logrus.Errorf("Failed to close fsnotify watcher: %v", err)
+			}
+		}()
 	}
 
 	var timeoutChan <-chan time.Time
@@ -149,6 +152,14 @@ func queryPackageVersion(cmdArg ...string) string {
 		cmd := exec.Command(cmdArg[0], cmdArg[1:]...)
 		if outp, err := cmd.Output(); err == nil {
 			output = string(outp)
+			if cmdArg[0] == "/usr/bin/dpkg" {
+				r := strings.Split(output, ": ")
+				queryFormat := `${Package}_${Version}_${Architecture}`
+				cmd = exec.Command("/usr/bin/dpkg-query", "-f", queryFormat, "-W", r[0])
+				if outp, err := cmd.Output(); err == nil {
+					output = string(outp)
+				}
+			}
 		}
 		if cmdArg[0] == "/sbin/apk" {
 			prefix := cmdArg[len(cmdArg)-1] + " is owned by "

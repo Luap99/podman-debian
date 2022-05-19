@@ -1,10 +1,11 @@
+//go:build linux
 // +build linux
 
 package libpod
 
 import (
 	"crypto/rand"
-	"crypto/sha1"
+	"crypto/sha256"
 	"fmt"
 	"io/ioutil"
 	"net"
@@ -19,7 +20,10 @@ import (
 	"time"
 
 	"github.com/containernetworking/plugins/pkg/ns"
+	"github.com/containers/common/libnetwork/etchosts"
 	"github.com/containers/common/libnetwork/types"
+	"github.com/containers/common/pkg/config"
+	"github.com/containers/common/pkg/machine"
 	"github.com/containers/common/pkg/netns"
 	"github.com/containers/podman/v4/libpod/define"
 	"github.com/containers/podman/v4/libpod/events"
@@ -30,6 +34,7 @@ import (
 	"github.com/containers/podman/v4/pkg/util"
 	"github.com/containers/podman/v4/utils"
 	"github.com/containers/storage/pkg/lockfile"
+	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/selinux/go-selinux/label"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -58,7 +63,7 @@ const (
 // This is need because a HostIP of 127.0.0.1 would now allow the gvproxy forwarder to reach to open ports.
 // For machine the HostIP must only be used by gvproxy and never in the VM.
 func (c *Container) convertPortMappings() []types.PortMapping {
-	if !c.runtime.config.Engine.MachineEnabled || len(c.config.PortMappings) == 0 {
+	if !machine.IsGvProxyBased() || len(c.config.PortMappings) == 0 {
 		return c.config.PortMappings
 	}
 	// if we run in a machine VM we have to ignore the host IP part
@@ -70,7 +75,7 @@ func (c *Container) convertPortMappings() []types.PortMapping {
 	return newPorts
 }
 
-func (c *Container) getNetworkOptions(networkOpts map[string]types.PerNetworkOptions) (types.NetworkOptions, error) {
+func (c *Container) getNetworkOptions(networkOpts map[string]types.PerNetworkOptions) types.NetworkOptions {
 	opts := types.NetworkOptions{
 		ContainerID:   c.config.ID,
 		ContainerName: getCNIPodName(c),
@@ -84,7 +89,7 @@ func (c *Container) getNetworkOptions(networkOpts map[string]types.PerNetworkOpt
 	} else {
 		opts.Networks = networkOpts
 	}
-	return opts, nil
+	return opts
 }
 
 type RootlessNetNS struct {
@@ -398,7 +403,7 @@ func (r *Runtime) GetRootlessNetNs(new bool) (*RootlessNetNS, error) {
 	// the cleanup will check if there are running containers
 	// if you run a several libpod instances with different root/runroot directories this check will fail
 	// we want one netns for each libpod static dir so we use the hash to prevent name collisions
-	hash := sha1.Sum([]byte(r.config.Engine.StaticDir))
+	hash := sha256.Sum256([]byte(r.config.Engine.StaticDir))
 	netnsName := fmt.Sprintf("%s-%x", rootlessNetNsName, hash[:10])
 
 	path := filepath.Join(nsDir, netnsName)
@@ -483,7 +488,7 @@ func (r *Runtime) GetRootlessNetNs(new bool) (*RootlessNetNS, error) {
 		pid := strconv.Itoa(cmd.Process.Pid)
 		err = ioutil.WriteFile(filepath.Join(rootlessNetNsDir, rootlessNetNsSilrp4netnsPidFile), []byte(pid), 0700)
 		if err != nil {
-			errors.Wrap(err, "unable to write rootless-netns slirp4netns pid file")
+			return nil, errors.Wrap(err, "unable to write rootless-netns slirp4netns pid file")
 		}
 
 		defer func() {
@@ -574,7 +579,7 @@ func (r *Runtime) GetRootlessNetNs(new bool) (*RootlessNetNS, error) {
 	// lets add /usr/sbin to $PATH ourselves.
 	path = os.Getenv("PATH")
 	if !strings.Contains(path, "/usr/sbin") {
-		path = path + ":/usr/sbin"
+		path += ":/usr/sbin"
 		os.Setenv("PATH", path)
 	}
 
@@ -649,10 +654,7 @@ func (r *Runtime) configureNetNS(ctr *Container, ctrNS ns.NetNS) (status map[str
 		return nil, nil
 	}
 
-	netOpts, err := ctr.getNetworkOptions(networks)
-	if err != nil {
-		return nil, err
-	}
+	netOpts := ctr.getNetworkOptions(networks)
 	netStatus, err := r.setUpNetwork(ctrNS.Path(), netOpts)
 	if err != nil {
 		return nil, err
@@ -810,10 +812,7 @@ func (r *Runtime) teardownCNI(ctr *Container) error {
 	}
 
 	if !ctr.config.NetMode.IsSlirp4netns() && len(networks) > 0 {
-		netOpts, err := ctr.getNetworkOptions(networks)
-		if err != nil {
-			return err
-		}
+		netOpts := ctr.getNetworkOptions(networks)
 		return r.teardownNetwork(ctr.state.NetNS.Path(), netOpts)
 	}
 	return nil
@@ -993,8 +992,18 @@ func (c *Container) getContainerNetworkInfo() (*define.InspectNetworkSettings, e
 		return nil, err
 	}
 
-	// We can't do more if the network is down.
 	if c.state.NetNS == nil {
+		if networkNSPath := c.joinedNetworkNSPath(); networkNSPath != "" {
+			if result, err := c.inspectJoinedNetworkNS(networkNSPath); err == nil {
+				// fallback to dummy configuration
+				settings.InspectBasicNetworkConfig = resultToBasicNetworkConfig(result)
+				return settings, nil
+			}
+			// do not propagate error inspecting a joined network ns
+			logrus.Errorf("Inspecting network namespace: %s of container %s: %v", networkNSPath, c.ID(), err)
+		}
+		// We can't do more if the network is down.
+
 		// We still want to make dummy configurations for each CNI net
 		// the container joined.
 		if len(networks) > 0 {
@@ -1031,14 +1040,8 @@ func (c *Container) getContainerNetworkInfo() (*define.InspectNetworkSettings, e
 			result := netStatus[name]
 			addedNet := new(define.InspectAdditionalNetwork)
 			addedNet.NetworkID = name
-
-			basicConfig, err := resultToBasicNetworkConfig(result)
-			if err != nil {
-				return nil, err
-			}
 			addedNet.Aliases = opts.Aliases
-
-			addedNet.InspectBasicNetworkConfig = basicConfig
+			addedNet.InspectBasicNetworkConfig = resultToBasicNetworkConfig(result)
 
 			settings.Networks[name] = addedNet
 		}
@@ -1058,25 +1061,94 @@ func (c *Container) getContainerNetworkInfo() (*define.InspectNetworkSettings, e
 
 	if len(netStatus) == 1 {
 		for _, status := range netStatus {
-			basicConfig, err := resultToBasicNetworkConfig(status)
-			if err != nil {
-				return nil, err
-			}
-			settings.InspectBasicNetworkConfig = basicConfig
+			settings.InspectBasicNetworkConfig = resultToBasicNetworkConfig(status)
 		}
 	}
 	return settings, nil
 }
 
+func (c *Container) joinedNetworkNSPath() string {
+	for _, namespace := range c.config.Spec.Linux.Namespaces {
+		if namespace.Type == spec.NetworkNamespace {
+			return namespace.Path
+		}
+	}
+	return ""
+}
+
+func (c *Container) inspectJoinedNetworkNS(networkns string) (q types.StatusBlock, retErr error) {
+	var result types.StatusBlock
+	err := ns.WithNetNSPath(networkns, func(_ ns.NetNS) error {
+		ifaces, err := net.Interfaces()
+		if err != nil {
+			return err
+		}
+		routes, err := netlink.RouteList(nil, netlink.FAMILY_ALL)
+		if err != nil {
+			return err
+		}
+		var gateway net.IP
+		for _, route := range routes {
+			// default gateway
+			if route.Dst == nil {
+				gateway = route.Gw
+			}
+		}
+		result.Interfaces = make(map[string]types.NetInterface)
+		for _, iface := range ifaces {
+			if iface.Flags&net.FlagLoopback != 0 {
+				continue
+			}
+			addrs, err := iface.Addrs()
+			if err != nil {
+				continue
+			}
+			if len(addrs) == 0 {
+				continue
+			}
+			subnets := make([]types.NetAddress, 0, len(addrs))
+			for _, address := range addrs {
+				if ipnet, ok := address.(*net.IPNet); ok {
+					if ipnet.IP.IsLinkLocalMulticast() || ipnet.IP.IsLinkLocalUnicast() {
+						continue
+					}
+					subnet := types.NetAddress{
+						IPNet: types.IPNet{
+							IPNet: *ipnet,
+						},
+					}
+					if ipnet.Contains(gateway) {
+						subnet.Gateway = gateway
+					}
+					subnets = append(subnets, subnet)
+				}
+			}
+			result.Interfaces[iface.Name] = types.NetInterface{
+				Subnets:    subnets,
+				MacAddress: types.HardwareAddr(iface.HardwareAddr),
+			}
+		}
+		return nil
+	})
+	return result, err
+}
+
 // resultToBasicNetworkConfig produces an InspectBasicNetworkConfig from a CNI
 // result
-func resultToBasicNetworkConfig(result types.StatusBlock) (define.InspectBasicNetworkConfig, error) {
+func resultToBasicNetworkConfig(result types.StatusBlock) define.InspectBasicNetworkConfig {
 	config := define.InspectBasicNetworkConfig{}
-	for _, netInt := range result.Interfaces {
+	interfaceNames := make([]string, 0, len(result.Interfaces))
+	for interfaceName := range result.Interfaces {
+		interfaceNames = append(interfaceNames, interfaceName)
+	}
+	// ensure consistent inspect results by sorting
+	sort.Strings(interfaceNames)
+	for _, interfaceName := range interfaceNames {
+		netInt := result.Interfaces[interfaceName]
 		for _, netAddress := range netInt.Subnets {
 			size, _ := netAddress.IPNet.Mask.Size()
 			if netAddress.IPNet.IP.To4() != nil {
-				//ipv4
+				// ipv4
 				if config.IPAddress == "" {
 					config.IPAddress = netAddress.IPNet.IP.String()
 					config.IPPrefixLen = size
@@ -1085,7 +1157,7 @@ func resultToBasicNetworkConfig(result types.StatusBlock) (define.InspectBasicNe
 					config.SecondaryIPAddresses = append(config.SecondaryIPAddresses, define.Address{Addr: netAddress.IPNet.IP.String(), PrefixLength: size})
 				}
 			} else {
-				//ipv6
+				// ipv6
 				if config.GlobalIPv6Address == "" {
 					config.GlobalIPv6Address = netAddress.IPNet.IP.String()
 					config.GlobalIPv6PrefixLen = size
@@ -1101,7 +1173,7 @@ func resultToBasicNetworkConfig(result types.StatusBlock) (define.InspectBasicNe
 			config.AdditionalMacAddresses = append(config.AdditionalMacAddresses, netInt.MacAddress.String())
 		}
 	}
-	return config, nil
+	return config
 }
 
 type logrusDebugWriter struct {
@@ -1195,6 +1267,42 @@ func (c *Container) NetworkDisconnect(nameOrID, netName string, force bool) erro
 		for _, ip := range oldStatus.DNSServerIPs {
 			stringIPs = append(stringIPs, ip.String())
 		}
+		if len(stringIPs) > 0 {
+			logrus.Debugf("Removing DNS Servers %v from resolv.conf", stringIPs)
+			if err := c.removeNameserver(stringIPs); err != nil {
+				return err
+			}
+		}
+
+		// update /etc/hosts file
+		if file, ok := c.state.BindMounts[config.DefaultHostsFile]; ok {
+			// sync the names with c.getHostsEntries()
+			names := []string{c.Hostname(), c.config.Name}
+			rm := etchosts.GetNetworkHostEntries(map[string]types.StatusBlock{netName: oldStatus}, names...)
+			if len(rm) > 0 {
+				// make sure to lock this file to prevent concurrent writes when
+				// this is used a net dependency container
+				lock, err := lockfile.GetLockfile(file)
+				if err != nil {
+					return fmt.Errorf("failed to lock hosts file: %w", err)
+				}
+				logrus.Debugf("Remove /etc/hosts entries %v", rm)
+				lock.Lock()
+				err = etchosts.Remove(file, rm)
+				lock.Unlock()
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	// Update resolv.conf if required
+	if statusExist {
+		stringIPs := make([]string, 0, len(oldStatus.DNSServerIPs))
+		for _, ip := range oldStatus.DNSServerIPs {
+			stringIPs = append(stringIPs, ip.String())
+		}
 		if len(stringIPs) == 0 {
 			return nil
 		}
@@ -1274,6 +1382,13 @@ func (c *Container) NetworkConnect(nameOrID, netName string, netOpts types.PerNe
 		return errors.New("when adding aliases, results must be of length 1")
 	}
 
+	// we need to get the old host entries before we add the new one to the status
+	// if we do not add do it here we will get the wrong existing entries which will throw of the logic
+	// we could also copy the map but this does not seem worth it
+	// sync the hostNames with c.getHostsEntries()
+	hostNames := []string{c.Hostname(), c.config.Name}
+	oldHostEntries := etchosts.GetNetworkHostEntries(networkStatus, hostNames...)
+
 	// update network status
 	if networkStatus == nil {
 		networkStatus = make(map[string]types.StatusBlock, 1)
@@ -1307,12 +1422,31 @@ func (c *Container) NetworkConnect(nameOrID, netName string, netOpts types.PerNe
 		}
 		stringIPs = append(stringIPs, ip.String())
 	}
-	if len(stringIPs) == 0 {
-		return nil
+	if len(stringIPs) > 0 {
+		logrus.Debugf("Adding DNS Servers %v to resolv.conf", stringIPs)
+		if err := c.addNameserver(stringIPs); err != nil {
+			return err
+		}
 	}
-	logrus.Debugf("Adding DNS Servers %v to resolv.conf", stringIPs)
-	if err := c.addNameserver(stringIPs); err != nil {
-		return err
+
+	// update /etc/hosts file
+	if file, ok := c.state.BindMounts[config.DefaultHostsFile]; ok {
+		// make sure to lock this file to prevent concurrent writes when
+		// this is used a net dependency container
+		lock, err := lockfile.GetLockfile(file)
+		if err != nil {
+			return fmt.Errorf("failed to lock hosts file: %w", err)
+		}
+		new := etchosts.GetNetworkHostEntries(results, hostNames...)
+		logrus.Debugf("Add /etc/hosts entries %v", new)
+		// use special AddIfExists API to make sure we only add new entries if an old one exists
+		// see the AddIfExists() comment for more information
+		lock.Lock()
+		err = etchosts.AddIfExists(file, oldHostEntries, new)
+		lock.Unlock()
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -1390,7 +1524,7 @@ func ocicniPortsToNetTypesPorts(ports []types.OCICNIPortMapping) []types.PortMap
 			ports[i].Protocol == currentPort.Protocol &&
 			ports[i].HostPort-int32(currentPort.Range) == int32(currentPort.HostPort) &&
 			ports[i].ContainerPort-int32(currentPort.Range) == int32(currentPort.ContainerPort) {
-			currentPort.Range = currentPort.Range + 1
+			currentPort.Range++
 		} else {
 			newPorts = append(newPorts, currentPort)
 			currentPort = types.PortMapping{

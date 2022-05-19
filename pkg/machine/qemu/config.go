@@ -5,17 +5,34 @@ package qemu
 
 import (
 	"time"
+
+	"github.com/containers/podman/v4/pkg/machine"
+)
+
+const (
+	// FCOS streams
+	// Testing FCOS stream
+	Testing string = "testing"
+	// Next FCOS stream
+	Next string = "next"
+	// Stable FCOS stream
+	Stable string = "stable"
+
+	// Max length of fully qualified socket path
+
 )
 
 type Provider struct{}
 
-type MachineVM struct {
+// Deprecated: MachineVMV1 is being deprecated in favor a more flexible and informative
+// structure
+type MachineVMV1 struct {
 	// CPUs to be assigned to the VM
 	CPUs uint64
 	// The command line representation of the qemu command
 	CmdLine []string
 	// Mounts is the list of remote filesystems to mount
-	Mounts []Mount
+	Mounts []machine.Mount
 	// IdentityPath is the fq path to the ssh priv key
 	IdentityPath string
 	// IgnitionFilePath is the fq path to the .ign file
@@ -33,7 +50,7 @@ type MachineVM struct {
 	// SSH port for user networking
 	Port int
 	// QMPMonitor is the qemu monitor object for sending commands
-	QMPMonitor Monitor
+	QMPMonitor Monitorv1
 	// RemoteUsername of the vm user
 	RemoteUsername string
 	// Whether this machine should run in a rootful or rootless manner
@@ -42,15 +59,38 @@ type MachineVM struct {
 	UID int
 }
 
-type Mount struct {
-	Type     string
-	Tag      string
-	Source   string
-	Target   string
-	ReadOnly bool
+type MachineVM struct {
+	// ConfigPath is the path to the configuration file
+	ConfigPath machine.VMFile
+	// The command line representation of the qemu command
+	CmdLine []string
+	// HostUser contains info about host user
+	machine.HostUser
+	// ImageConfig describes the bootable image
+	machine.ImageConfig
+	// Mounts is the list of remote filesystems to mount
+	Mounts []machine.Mount
+	// Name of VM
+	Name string
+	// PidFilePath is the where the PID file lives
+	PidFilePath machine.VMFile
+	// QMPMonitor is the qemu monitor object for sending commands
+	QMPMonitor Monitor
+	// ReadySocket tells host when vm is booted
+	ReadySocket machine.VMFile
+	// ResourceConfig is physical attrs of the VM
+	machine.ResourceConfig
+	// SSHConfig for accessing the remote vm
+	machine.SSHConfig
+	// Starting tells us whether the machine is running or if we have just dialed it to start it
+	Starting bool
+	// Created contains the original created time instead of querying the file mod time
+	Created time.Time
+	// LastUp contains the last recorded uptime
+	LastUp time.Time
 }
 
-type Monitor struct {
+type Monitorv1 struct {
 	//	Address portion of the qmp monitor (/tmp/tmp.sock)
 	Address string
 	// Network portion of the qmp monitor (unix)
@@ -59,8 +99,17 @@ type Monitor struct {
 	Timeout time.Duration
 }
 
+type Monitor struct {
+	//	Address portion of the qmp monitor (/tmp/tmp.sock)
+	Address machine.VMFile
+	// Network portion of the qmp monitor (unix)
+	Network string
+	// Timeout in seconds for qmp monitor transactions
+	Timeout time.Duration
+}
+
 var (
 	// defaultQMPTimeout is the timeout duration for the
-	// qmp monitor interactions
-	defaultQMPTimeout time.Duration = 2 * time.Second
+	// qmp monitor interactions.
+	defaultQMPTimeout = 2 * time.Second
 )

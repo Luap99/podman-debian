@@ -1,3 +1,4 @@
+//go:build !remote
 // +build !remote
 
 // build for play kube is not supported on remote yet.
@@ -28,7 +29,6 @@ var _ = Describe("Podman play kube with build", func() {
 		}
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
 	})
 
 	AfterEach(func() {

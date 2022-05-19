@@ -1,3 +1,4 @@
+//go:build amd64 || arm64
 // +build amd64 arm64
 
 package machine
@@ -19,6 +20,8 @@ import (
 const (
 	githubURL = "http://github.com/fedora-cloud/docker-brew-fedora/"
 )
+
+var fedoraxzRegex = regexp.MustCompile(`fedora[^\"]+xz`)
 
 type FedoraDownload struct {
 	Download
@@ -58,7 +61,10 @@ func (f FedoraDownload) Get() *Download {
 func (f FedoraDownload) HasUsableCache() (bool, error) {
 	info, err := os.Stat(f.LocalPath)
 	if err != nil {
-		return false, nil
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
 	}
 	return info.Size() == f.Size, nil
 }
@@ -92,12 +98,8 @@ func getFedoraDownload(releaseStream string) (string, *url.URL, int64, error) {
 		return "", nil, -1, err
 	}
 
-	rx, err := regexp.Compile(`fedora[^\"]+xz`)
-	if err != nil {
-		return "", nil, -1, err
-	}
-	file := rx.FindString(string(body))
-	if len(file) <= 0 {
+	file := fedoraxzRegex.FindString(string(body))
+	if len(file) == 0 {
 		return "", nil, -1, fmt.Errorf("could not locate Fedora download at %s", dirURL)
 	}
 

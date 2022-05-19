@@ -15,9 +15,9 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/containers/storage/pkg/parsers/kernel"
-	. "github.com/onsi/ginkgo"       //nolint:golint,stylecheck
-	. "github.com/onsi/gomega"       //nolint:golint,stylecheck
-	. "github.com/onsi/gomega/gexec" //nolint:golint,stylecheck
+	. "github.com/onsi/ginkgo"       //nolint:revive,stylecheck
+	. "github.com/onsi/gomega"       //nolint:revive,stylecheck
+	. "github.com/onsi/gomega/gexec" //nolint:revive,stylecheck
 )
 
 type NetworkBackend int
@@ -27,6 +27,8 @@ const (
 	CNI NetworkBackend = iota
 	// Netavark network backend
 	Netavark NetworkBackend = iota
+	// Env variable for creating time files.
+	EnvTimeDir = "_PODMAN_TIME_DIR"
 )
 
 func (n NetworkBackend) ToString() string {
@@ -96,13 +98,22 @@ func (p *PodmanTest) PodmanAsUserBase(args []string, uid, gid uint32, cwd string
 	if p.RemoteTest {
 		podmanBinary = p.RemotePodmanBinary
 	}
-	runCmd := append(wrapper, podmanBinary)
-	if p.NetworkBackend == Netavark {
+
+	if timeDir := os.Getenv(EnvTimeDir); timeDir != "" {
+		timeFile, err := ioutil.TempFile(timeDir, ".time")
+		if err != nil {
+			Fail(fmt.Sprintf("Error creating time file: %v", err))
+		}
+		timeArgs := []string{"-f", "%M", "-o", timeFile.Name()}
+		timeCmd := append([]string{"/usr/bin/time"}, timeArgs...)
+		wrapper = append(timeCmd, wrapper...)
+	}
+	runCmd := wrapper
+	runCmd = append(runCmd, podmanBinary)
+	if !p.RemoteTest && p.NetworkBackend == Netavark {
 		runCmd = append(runCmd, []string{"--network-backend", "netavark"}...)
 	}
-	if p.RemoteTest {
-		podmanOptions = append([]string{"--remote", "--url", p.RemoteSocket}, podmanOptions...)
-	}
+
 	if env == nil {
 		fmt.Printf("Running: %s %s\n", strings.Join(runCmd, " "), strings.Join(podmanOptions, " "))
 	} else {
@@ -368,6 +379,7 @@ func CreateTempDirInTempDir() (string, error) {
 // SystemExec is used to exec a system command to check its exit code or output
 func SystemExec(command string, args []string) *PodmanSession {
 	c := exec.Command(command, args...)
+	fmt.Println("Execing " + c.String() + "\n")
 	session, err := Start(c, GinkgoWriter, GinkgoWriter)
 	if err != nil {
 		Fail(fmt.Sprintf("unable to run command: %s %s", command, strings.Join(args, " ")))
@@ -379,6 +391,7 @@ func SystemExec(command string, args []string) *PodmanSession {
 // StartSystemExec is used to start exec a system command
 func StartSystemExec(command string, args []string) *PodmanSession {
 	c := exec.Command(command, args...)
+	fmt.Println("Execing " + c.String() + "\n")
 	session, err := Start(c, GinkgoWriter, GinkgoWriter)
 	if err != nil {
 		Fail(fmt.Sprintf("unable to run command: %s %s", command, strings.Join(args, " ")))
@@ -426,20 +439,20 @@ func tagOutputToMap(imagesOutput []string) map[string]map[string]bool {
 // GetHostDistributionInfo returns a struct with its distribution Name and version
 func GetHostDistributionInfo() HostOS {
 	f, err := os.Open(OSReleasePath)
-	defer f.Close()
 	if err != nil {
 		return HostOS{}
 	}
+	defer f.Close()
 
 	l := bufio.NewScanner(f)
 	host := HostOS{}
 	host.Arch = runtime.GOARCH
 	for l.Scan() {
 		if strings.HasPrefix(l.Text(), "ID=") {
-			host.Distribution = strings.Replace(strings.TrimSpace(strings.Join(strings.Split(l.Text(), "=")[1:], "")), "\"", "", -1)
+			host.Distribution = strings.ReplaceAll(strings.TrimSpace(strings.Join(strings.Split(l.Text(), "=")[1:], "")), "\"", "")
 		}
 		if strings.HasPrefix(l.Text(), "VERSION_ID=") {
-			host.Version = strings.Replace(strings.TrimSpace(strings.Join(strings.Split(l.Text(), "=")[1:], "")), "\"", "", -1)
+			host.Version = strings.ReplaceAll(strings.TrimSpace(strings.Join(strings.Split(l.Text(), "=")[1:], "")), "\"", "")
 		}
 	}
 	return host
@@ -476,8 +489,13 @@ func IsCommandAvailable(command string) bool {
 // WriteJSONFile write json format data to a json file
 func WriteJSONFile(data []byte, filePath string) error {
 	var jsonData map[string]interface{}
-	json.Unmarshal(data, &jsonData)
-	formatJSON, _ := json.MarshalIndent(jsonData, "", "	")
+	if err := json.Unmarshal(data, &jsonData); err != nil {
+		return err
+	}
+	formatJSON, err := json.MarshalIndent(jsonData, "", "	")
+	if err != nil {
+		return err
+	}
 	return ioutil.WriteFile(filePath, formatJSON, 0644)
 }
 

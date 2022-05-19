@@ -8,6 +8,7 @@ import (
 	"github.com/containers/common/pkg/secrets"
 	"github.com/containers/image/v5/manifest"
 	"github.com/containers/podman/v4/pkg/namespaces"
+	"github.com/containers/podman/v4/pkg/specgen"
 	"github.com/containers/storage"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 )
@@ -119,6 +120,10 @@ type ContainerRootFSConfig struct {
 	// with the size specified in ShmSize and populate this with the path of
 	// said tmpfs.
 	ShmDir string `json:"ShmDir,omitempty"`
+	// NoShmShare indicates whether /dev/shm can be shared with other containers
+	NoShmShare bool `json:"NOShmShare,omitempty"`
+	// NoShm indicates whether a tmpfs should be created and mounted on  /dev/shm
+	NoShm bool `json:"NoShm,omitempty"`
 	// ShmSize is the size of the container's SHM. Only used if ShmDir was
 	// not set manually at time of creation.
 	ShmSize int64 `json:"shmSize"`
@@ -165,6 +170,10 @@ type ContainerRootFSConfig struct {
 	Volatile bool `json:"volatile,omitempty"`
 	// Passwd allows to user to override podman's passwd/group file setup
 	Passwd *bool `json:"passwd,omitempty"`
+	// ChrootDirs is an additional set of directories that need to be
+	// treated as root directories. Standard bind mounts will be mounted
+	// into paths relative to these directories.
+	ChrootDirs []string `json:"chroot_directories,omitempty"`
 }
 
 // ContainerSecurityConfig is an embedded sub-config providing security configuration
@@ -375,8 +384,8 @@ type ContainerMiscConfig struct {
 	IsInfra bool `json:"pause"`
 	// SdNotifyMode tells libpod what to do with a NOTIFY_SOCKET if passed
 	SdNotifyMode string `json:"sdnotifyMode,omitempty"`
-	// Systemd tells libpod to setup the container in systemd mode
-	Systemd bool `json:"systemd"`
+	// Systemd tells libpod to setup the container in systemd mode, a value of nil denotes false
+	Systemd *bool `json:"systemd,omitempty"`
 	// HealthCheckConfig has the health check command and related timings
 	HealthCheckConfig *manifest.Schema2HealthConfig `json:"healthcheck"`
 	// PreserveFDs is a number of additional file descriptors (in addition
@@ -399,15 +408,23 @@ type ContainerMiscConfig struct {
 	// InitContainerType specifies if the container is an initcontainer
 	// and if so, what type: always or once are possible non-nil entries
 	InitContainerType string `json:"init_container_type,omitempty"`
+	// PasswdEntry specifies arbitrary data to append to a file.
+	PasswdEntry string `json:"passwd_entry,omitempty"`
 }
 
+// InfraInherit contains the compatible options inheritable from the infra container
 type InfraInherit struct {
-	InfraSecurity     ContainerSecurityConfig
-	InfraLabels       []string                  `json:"labelopts,omitempty"`
-	InfraVolumes      []*ContainerNamedVolume   `json:"namedVolumes,omitempty"`
-	InfraOverlay      []*ContainerOverlayVolume `json:"overlayVolumes,omitempty"`
-	InfraImageVolumes []*ContainerImageVolume   `json:"ctrImageVolumes,omitempty"`
-	InfraUserVolumes  []string                  `json:"userVolumes,omitempty"`
-	InfraResources    *spec.LinuxResources      `json:"resources,omitempty"`
-	InfraDevices      []spec.LinuxDevice        `json:"device_host_src,omitempty"`
+	ApparmorProfile    string                   `json:"apparmor_profile,omitempty"`
+	CapAdd             []string                 `json:"cap_add,omitempty"`
+	CapDrop            []string                 `json:"cap_drop,omitempty"`
+	HostDeviceList     []spec.LinuxDevice       `json:"host_device_list,omitempty"`
+	ImageVolumes       []*specgen.ImageVolume   `json:"image_volumes,omitempty"`
+	InfraResources     *spec.LinuxResources     `json:"resource_limits,omitempty"`
+	Mounts             []spec.Mount             `json:"mounts,omitempty"`
+	NoNewPrivileges    bool                     `json:"no_new_privileges,omitempty"`
+	OverlayVolumes     []*specgen.OverlayVolume `json:"overlay_volumes,omitempty"`
+	SeccompPolicy      string                   `json:"seccomp_policy,omitempty"`
+	SeccompProfilePath string                   `json:"seccomp_profile_path,omitempty"`
+	SelinuxOpts        []string                 `json:"selinux_opts,omitempty"`
+	Volumes            []*specgen.NamedVolume   `json:"volumes,omitempty"`
 }

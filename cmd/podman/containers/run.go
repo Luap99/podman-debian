@@ -18,7 +18,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/term"
 )
 
 var (
@@ -61,7 +61,7 @@ func runFlags(cmd *cobra.Command) {
 	flags := cmd.Flags()
 
 	flags.SetInterspersed(false)
-	common.DefineCreateFlags(cmd, &cliVals, false)
+	common.DefineCreateFlags(cmd, &cliVals, false, false)
 	common.DefineNetFlags(cmd)
 
 	flags.SetNormalizeFunc(utils.AliasFlags)
@@ -112,7 +112,7 @@ func run(cmd *cobra.Command, args []string) error {
 	var err error
 
 	// TODO: Breaking change should be made fatal in next major Release
-	if cliVals.TTY && cliVals.Interactive && !terminal.IsTerminal(int(os.Stdin.Fd())) {
+	if cliVals.TTY && cliVals.Interactive && !term.IsTerminal(int(os.Stdin.Fd())) {
 		logrus.Warnf("The input device is not a TTY. The --tty and --interactive flags might not work properly")
 	}
 
@@ -197,7 +197,7 @@ func run(cmd *cobra.Command, args []string) error {
 	s.Passwd = &runOpts.Passwd
 	runOpts.Spec = s
 
-	if _, err := createPodIfNecessary(cmd, s, cliVals.Net); err != nil {
+	if err := createPodIfNecessary(cmd, s, cliVals.Net); err != nil {
 		return err
 	}
 

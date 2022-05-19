@@ -680,7 +680,7 @@ func generateMultiDocKubeYaml(kubeObjects []string, pathname string) error {
 	return writeYaml(multiKube, pathname)
 }
 
-func createSecret(podmanTest *PodmanTestIntegration, name string, value []byte) {
+func createSecret(podmanTest *PodmanTestIntegration, name string, value []byte) { //nolint:unparam
 	secretFilePath := filepath.Join(podmanTest.TempDir, "secret")
 	err := ioutil.WriteFile(secretFilePath, value, 0755)
 	Expect(err).To(BeNil())
@@ -1078,7 +1078,7 @@ func withVolumeMount(mountPath string, readonly bool) ctrOption {
 	}
 }
 
-func withEnv(name, value, valueFrom, refName, refKey string, optional bool) ctrOption {
+func withEnv(name, value, valueFrom, refName, refKey string, optional bool) ctrOption { //nolint:unparam
 	return func(c *Ctr) {
 		e := Env{
 			Name:      name,
@@ -1206,8 +1206,6 @@ var _ = Describe("Podman play kube", func() {
 		}
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
-
 		kubeYaml = filepath.Join(podmanTest.TempDir, "kube.yaml")
 	})
 
@@ -1670,6 +1668,32 @@ var _ = Describe("Podman play kube", func() {
 		Expect(err).To(BeNil())
 
 		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml, "--configmap", cmYamlPathname})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(Exit(0))
+
+		inspect := podmanTest.Podman([]string{"inspect", getCtrNameInPod(pod), "--format", "'{{ .Config.Env }}'"})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect).Should(Exit(0))
+		Expect(inspect.OutputToString()).To(ContainSubstring(`FOO=foo`))
+	})
+
+	It("podman play kube test env value from configmap and --replace should reuse the configmap volume", func() {
+		SkipIfRemote("configmap list is not supported as a param")
+		cmYamlPathname := filepath.Join(podmanTest.TempDir, "foo-cm.yaml")
+		cm := getConfigMap(withConfigMapName("foo"), withConfigMapData("FOO", "foo"))
+		err := generateKubeYaml("configmap", cm, cmYamlPathname)
+		Expect(err).To(BeNil())
+
+		pod := getPod(withCtr(getCtr(withEnv("FOO", "", "configmap", "foo", "FOO", false))))
+		err = generateKubeYaml("pod", pod, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml, "--configmap", cmYamlPathname})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(Exit(0))
+
+		// create pod again with --replace
+		kube = podmanTest.Podman([]string{"play", "kube", "--replace", kubeYaml, "--configmap", cmYamlPathname})
 		kube.WaitWithDefaultTimeout()
 		Expect(kube).Should(Exit(0))
 
@@ -2194,7 +2218,7 @@ spec:
 		Expect(ctr[0].Config.WorkingDir).To(ContainSubstring("/etc"))
 		Expect(ctr[0].Config.Labels).To(HaveKeyWithValue("key1", ContainSubstring("value1")))
 		Expect(ctr[0].Config.Labels).To(HaveKeyWithValue("key1", ContainSubstring("value1")))
-		Expect(ctr[0].Config.StopSignal).To(Equal(uint(51)))
+		Expect(ctr[0].Config).To(HaveField("StopSignal", uint(51)))
 	})
 
 	// Deployment related tests
@@ -2502,7 +2526,7 @@ VOLUME %s`, ALPINE, hostPathDir+"/")
 		// only one will be mounted. Host path volumes take precedence.
 		ctrJSON := inspect.InspectContainerToJSON()
 		Expect(ctrJSON[0].Mounts).To(HaveLen(1))
-		Expect(ctrJSON[0].Mounts[0].Type).To(Equal("bind"))
+		Expect(ctrJSON[0].Mounts[0]).To(HaveField("Type", "bind"))
 
 	})
 
@@ -2718,6 +2742,7 @@ MemoryReservation: {{ .HostConfig.MemoryReservation }}`})
 	})
 
 	It("podman play kube applies log driver to containers", func() {
+		SkipIfInContainer("journald inside a container doesn't work")
 		pod := getPod()
 		err := generateKubeYaml("pod", pod, kubeYaml)
 		Expect(err).To(BeNil())
@@ -2753,11 +2778,7 @@ MemoryReservation: {{ .HostConfig.MemoryReservation }}`})
 	})
 
 	It("podman play kube test with HostNetwork", func() {
-		if !strings.Contains(podmanTest.OCIRuntime, "crun") {
-			Skip("Test only works on crun")
-		}
-
-		pod := getPod(withHostNetwork())
+		pod := getPod(withHostNetwork(), withCtr(getCtr(withCmd([]string{"readlink", "/proc/self/ns/net"}), withArg(nil))))
 		err := generateKubeYaml("pod", pod, kubeYaml)
 		Expect(err).To(BeNil())
 
@@ -2769,6 +2790,17 @@ MemoryReservation: {{ .HostConfig.MemoryReservation }}`})
 		inspect.WaitWithDefaultTimeout()
 		Expect(inspect).Should(Exit(0))
 		Expect(inspect.OutputToString()).To(Equal("true"))
+
+		ns := SystemExec("readlink", []string{"/proc/self/ns/net"})
+		ns.WaitWithDefaultTimeout()
+		Expect(ns).Should(Exit(0))
+		netns := ns.OutputToString()
+		Expect(netns).ToNot(BeEmpty())
+
+		logs := podmanTest.Podman([]string{"logs", getCtrNameInPod(pod)})
+		logs.WaitWithDefaultTimeout()
+		Expect(logs).Should(Exit(0))
+		Expect(logs.OutputToString()).To(Equal(netns))
 	})
 
 	It("podman play kube persistentVolumeClaim", func() {
@@ -2969,7 +3001,7 @@ invalid kube kind
 
 	It("podman play kube with auto update annotations for all containers", func() {
 		ctr01Name := "ctr01"
-		ctr02Name := "ctr02"
+		ctr02Name := "infra"
 		podName := "foo"
 		autoUpdateRegistry := "io.containers.autoupdate"
 		autoUpdateRegistryValue := "registry"
@@ -3039,7 +3071,7 @@ invalid kube kind
 		inspect = podmanTest.Podman([]string{"inspect", podName + "-" + ctr02Name, "--format", "'{{.Config.Labels}}'"})
 		inspect.WaitWithDefaultTimeout()
 		Expect(inspect).Should(Exit(0))
-		Expect(inspect.OutputToString()).To(ContainSubstring(`map[]`))
+		Expect(inspect.OutputToString()).NotTo(ContainSubstring(autoUpdateRegistry + ":" + autoUpdateRegistryValue))
 	})
 
 	It("podman play kube teardown", func() {
@@ -3148,8 +3180,10 @@ invalid kube kind
 		Expect(ls).Should(Exit(0))
 		Expect(ls.OutputToStringArray()).To(HaveLen(1))
 
-		containerLen := podmanTest.Podman([]string{"pod", "inspect", pod.Name, "--format", "'{{len .Containers}}'"})
-
+		containerLen := podmanTest.Podman([]string{"pod", "inspect", pod.Name, "--format", "{{len .Containers}}"})
+		containerLen.WaitWithDefaultTimeout()
+		Expect(containerLen).Should(Exit(0))
+		Expect(containerLen.OutputToString()).To(Equal("2"))
 		ctr01Name := "ctr01"
 		ctr02Name := "ctr02"
 
@@ -3167,7 +3201,7 @@ invalid kube kind
 		replace.WaitWithDefaultTimeout()
 		Expect(replace).Should(Exit(0))
 
-		newContainerLen := podmanTest.Podman([]string{"pod", "inspect", newPod.Name, "--format", "'{{len .Containers}}'"})
+		newContainerLen := podmanTest.Podman([]string{"pod", "inspect", newPod.Name, "--format", "{{len .Containers}}"})
 		newContainerLen.WaitWithDefaultTimeout()
 		Expect(newContainerLen).Should(Exit(0))
 		Expect(newContainerLen.OutputToString()).NotTo(Equal(containerLen.OutputToString()))

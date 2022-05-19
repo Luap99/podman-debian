@@ -1,4 +1,5 @@
-//+build linux
+//go:build linux
+// +build linux
 
 package libpod
 
@@ -8,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/podman/v4/libpod/define"
@@ -258,7 +260,7 @@ func redirectResponseToOutputStreams(outputStream, errorStream io.Writer, writeO
 				}
 			}
 		}
-		if er == io.EOF {
+		if errors.Is(er, io.EOF) || errors.Is(er, syscall.ECONNRESET) {
 			break
 		}
 		if er != nil {
@@ -273,11 +275,15 @@ func readStdio(conn *net.UnixConn, streams *define.AttachStreams, receiveStdoutE
 	var err error
 	select {
 	case err = <-receiveStdoutError:
-		conn.CloseWrite()
+		if err := conn.CloseWrite(); err != nil {
+			logrus.Errorf("Failed to close stdin: %v", err)
+		}
 		return err
 	case err = <-stdinDone:
 		if err == define.ErrDetach {
-			conn.CloseWrite()
+			if err := conn.CloseWrite(); err != nil {
+				logrus.Errorf("Failed to close stdin: %v", err)
+			}
 			return err
 		}
 		if err == nil {

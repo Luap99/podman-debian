@@ -94,7 +94,7 @@ func imageListFlagSet(cmd *cobra.Command) {
 
 	formatFlagName := "format"
 	flags.StringVar(&listFlag.format, formatFlagName, "", "Change the output format to JSON or a Go template")
-	_ = cmd.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteFormat(entities.ImageSummary{}))
+	_ = cmd.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteFormat(&imageReporter{}))
 
 	flags.BoolVar(&listFlag.digests, "digests", false, "Show digests")
 	flags.BoolVarP(&listFlag.noHeading, "noheading", "n", false, "Do not print column headings")
@@ -225,7 +225,7 @@ func sortImages(imageS []*entities.ImageSummary) ([]imageReporter, error) {
 				h.ImageSummary = *e
 				h.Repository, h.Tag, err = tokenRepoTag(tag)
 				if err != nil {
-					return nil, errors.Wrapf(err, "error parsing repository tag %q:", tag)
+					return nil, errors.Wrapf(err, "error parsing repository tag: %q", tag)
 				}
 				if h.Tag == "<none>" {
 					untagged = append(untagged, h)

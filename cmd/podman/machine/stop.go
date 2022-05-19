@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/libpod/events"
 	"github.com/containers/podman/v4/pkg/machine"
 	"github.com/spf13/cobra"
 )
@@ -40,7 +41,7 @@ func stop(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 && len(args[0]) > 0 {
 		vmName = args[0]
 	}
-	provider := getSystemDefaultProvider()
+	provider := GetSystemDefaultProvider()
 	vm, err = provider.LoadVMByName(vmName)
 	if err != nil {
 		return err
@@ -49,5 +50,6 @@ func stop(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	fmt.Printf("Machine %q stopped successfully\n", vmName)
+	newMachineEvent(events.Stop, events.Event{Name: vmName})
 	return nil
 }

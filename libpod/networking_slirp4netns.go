@@ -1,3 +1,4 @@
+//go:build linux
 // +build linux
 
 package libpod
@@ -81,12 +82,15 @@ func checkSlirpFlags(path string) (*slirpFeatures, error) {
 }
 
 func parseSlirp4netnsNetworkOptions(r *Runtime, extraOptions []string) (*slirp4netnsNetworkOptions, error) {
-	slirpOptions := append(r.config.Engine.NetworkCmdOptions, extraOptions...)
+	slirpOptions := make([]string, 0, len(r.config.Engine.NetworkCmdOptions)+len(extraOptions))
+	slirpOptions = append(slirpOptions, r.config.Engine.NetworkCmdOptions...)
+	slirpOptions = append(slirpOptions, extraOptions...)
 	slirp4netnsOpts := &slirp4netnsNetworkOptions{
 		// overwrite defaults
 		disableHostLoopback: true,
 		mtu:                 slirp4netnsMTU,
 		noPivotRoot:         r.config.Engine.NoPivotRoot,
+		enableIPv6:          true,
 	}
 	for _, o := range slirpOptions {
 		parts := strings.SplitN(o, "=", 2)
@@ -215,8 +219,7 @@ func (r *Runtime) setupSlirp4netns(ctr *Container, netns ns.NetNS) error {
 		var err error
 		path, err = exec.LookPath("slirp4netns")
 		if err != nil {
-			logrus.Errorf("Could not find slirp4netns, the network namespace won't be configured: %v", err)
-			return nil
+			return fmt.Errorf("could not find slirp4netns, the network namespace can't be configured: %w", err)
 		}
 	}
 
@@ -337,7 +340,7 @@ func (r *Runtime) setupSlirp4netns(ctr *Container, netns ns.NetNS) error {
 					return err
 				}
 
-				// wait until slirp4nets is ready before reseting this value
+				// wait until slirp4nets is ready before resetting this value
 				slirpReadyWg.Wait()
 				return ioutil.WriteFile(ipv6ConfDefaultAcceptDadSysctl, orgValue, 0644)
 			})

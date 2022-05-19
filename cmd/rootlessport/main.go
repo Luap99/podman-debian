@@ -1,3 +1,6 @@
+//go:build linux
+// +build linux
+
 package main
 
 import (
@@ -253,9 +256,9 @@ func serve(listener net.Listener, pm rkport.Manager) {
 		ctx := context.TODO()
 		err = handler(ctx, conn, pm)
 		if err != nil {
-			conn.Write([]byte(err.Error()))
+			_, _ = conn.Write([]byte(err.Error()))
 		} else {
-			conn.Write([]byte("OK"))
+			_, _ = conn.Write([]byte("OK"))
 		}
 		conn.Close()
 	}
@@ -307,15 +310,26 @@ func exposePorts(pm rkport.Manager, portMappings []types.PortMapping, childIP st
 					ChildPort:  int(port.ContainerPort + i),
 					ChildIP:    childIP,
 				}
-				if err := rkportutil.ValidatePortSpec(spec, nil); err != nil {
-					return err
-				}
-				if _, err := pm.AddPort(ctx, spec); err != nil {
-					return err
+
+				for _, spec = range splitDualStackSpecIfWsl(spec) {
+					if err := validateAndAddPort(ctx, pm, spec); err != nil {
+						return err
+					}
 				}
 			}
 		}
 	}
+	return nil
+}
+
+func validateAndAddPort(ctx context.Context, pm rkport.Manager, spec rkport.Spec) error {
+	if err := rkportutil.ValidatePortSpec(spec, nil); err != nil {
+		return err
+	}
+	if _, err := pm.AddPort(ctx, spec); err != nil {
+		return err
+	}
+
 	return nil
 }
 

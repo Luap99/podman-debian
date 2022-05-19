@@ -439,7 +439,7 @@ func (r *ConmonOCIRuntime) startExec(c *Container, sessionID string, options *Ex
 	// 	}
 	// }
 
-	conmonEnv := r.configureConmonEnv(c, runtimeDir)
+	conmonEnv := r.configureConmonEnv(runtimeDir)
 
 	var filesToClose []*os.File
 	if options.PreserveFDs > 0 {
@@ -462,7 +462,7 @@ func (r *ConmonOCIRuntime) startExec(c *Container, sessionID string, options *Ex
 		Setpgid: true,
 	}
 
-	err = startCommandGivenSelinux(execCmd, c)
+	err = startCommand(execCmd, c)
 
 	// We don't need children pipes  on the parent side
 	errorhandling.CloseQuiet(childSyncPipe)
@@ -766,13 +766,11 @@ func prepareProcessExec(c *Container, options *ExecOptions, env []string, sessio
 	if execUser.Uid == 0 {
 		pspec.Capabilities.Effective = pspec.Capabilities.Bounding
 		pspec.Capabilities.Permitted = pspec.Capabilities.Bounding
-	} else {
-		if user == c.config.User {
-			pspec.Capabilities.Effective = ctrSpec.Process.Capabilities.Effective
-			pspec.Capabilities.Inheritable = ctrSpec.Process.Capabilities.Effective
-			pspec.Capabilities.Permitted = ctrSpec.Process.Capabilities.Effective
-			pspec.Capabilities.Ambient = ctrSpec.Process.Capabilities.Effective
-		}
+	} else if user == c.config.User {
+		pspec.Capabilities.Effective = ctrSpec.Process.Capabilities.Effective
+		pspec.Capabilities.Inheritable = ctrSpec.Process.Capabilities.Effective
+		pspec.Capabilities.Permitted = ctrSpec.Process.Capabilities.Effective
+		pspec.Capabilities.Ambient = ctrSpec.Process.Capabilities.Effective
 	}
 
 	hasHomeSet := false

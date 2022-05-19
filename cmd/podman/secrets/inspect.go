@@ -36,7 +36,7 @@ func init() {
 	flags := inspectCmd.Flags()
 	formatFlagName := "format"
 	flags.StringVar(&format, formatFlagName, "", "Format volume output using Go template")
-	_ = inspectCmd.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteFormat(entities.SecretInfoReport{}))
+	_ = inspectCmd.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteFormat(&entities.SecretInfoReport{}))
 }
 
 func inspect(cmd *cobra.Command, args []string) error {
@@ -61,7 +61,9 @@ func inspect(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		defer w.Flush()
-		tmpl.Execute(w, inspected)
+		if err := tmpl.Execute(w, inspected); err != nil {
+			return err
+		}
 	} else {
 		buf, err := json.MarshalIndent(inspected, "", "    ")
 		if err != nil {
@@ -76,7 +78,7 @@ func inspect(cmd *cobra.Command, args []string) error {
 				fmt.Fprintf(os.Stderr, "error inspecting secret: %v\n", err)
 			}
 		}
-		return errors.Errorf("error inspecting secret: %v", errs[0])
+		return errors.Errorf("inspecting secret: %v", errs[0])
 	}
 	return nil
 }

@@ -167,7 +167,7 @@ func NewRuntime(ctx context.Context, options ...RuntimeOption) (*Runtime, error)
 	if err != nil {
 		return nil, err
 	}
-	return newRuntimeFromConfig(ctx, conf, options...)
+	return newRuntimeFromConfig(conf, options...)
 }
 
 // NewRuntimeFromConfig creates a new container runtime using the given
@@ -176,10 +176,10 @@ func NewRuntime(ctx context.Context, options ...RuntimeOption) (*Runtime, error)
 // An error will be returned if the configuration file at the given path does
 // not exist or cannot be loaded
 func NewRuntimeFromConfig(ctx context.Context, userConfig *config.Config, options ...RuntimeOption) (*Runtime, error) {
-	return newRuntimeFromConfig(ctx, userConfig, options...)
+	return newRuntimeFromConfig(userConfig, options...)
 }
 
-func newRuntimeFromConfig(ctx context.Context, conf *config.Config, options ...RuntimeOption) (*Runtime, error) {
+func newRuntimeFromConfig(conf *config.Config, options ...RuntimeOption) (*Runtime, error) {
 	runtime := new(Runtime)
 
 	if conf.Engine.OCIRuntime == "" {
@@ -210,6 +210,10 @@ func newRuntimeFromConfig(ctx context.Context, conf *config.Config, options ...R
 	}
 
 	if err := shutdown.Register("libpod", func(sig os.Signal) error {
+		// For `systemctl stop podman.service` support, exit code should be 0
+		if sig == syscall.SIGTERM {
+			os.Exit(0)
+		}
 		os.Exit(1)
 		return nil
 	}); err != nil && errors.Cause(err) != shutdown.ErrHandlerExists {
@@ -220,7 +224,7 @@ func newRuntimeFromConfig(ctx context.Context, conf *config.Config, options ...R
 		return nil, errors.Wrapf(err, "error starting shutdown signal handler")
 	}
 
-	if err := makeRuntime(ctx, runtime); err != nil {
+	if err := makeRuntime(runtime); err != nil {
 		return nil, err
 	}
 
@@ -288,7 +292,7 @@ func getLockManager(runtime *Runtime) (lock.Manager, error) {
 
 // Make a new runtime based on the given configuration
 // Sets up containers/storage, state store, OCI runtime
-func makeRuntime(ctx context.Context, runtime *Runtime) (retErr error) {
+func makeRuntime(runtime *Runtime) (retErr error) {
 	// Find a working conmon binary
 	cPath, err := findConmon(runtime.config.Engine.ConmonPath)
 	if err != nil {
@@ -546,6 +550,10 @@ func makeRuntime(ctx context.Context, runtime *Runtime) (retErr error) {
 				// Check if the pause process was created.  If it was created, then
 				// move it to its own systemd scope.
 				utils.MovePauseProcessToScope(pausePid)
+
+				// gocritic complains because defer is not run on os.Exit()
+				// However this is fine because the lock is released anyway when the process exits
+				//nolint:gocritic
 				os.Exit(ret)
 			}
 		}
@@ -594,7 +602,7 @@ func makeRuntime(ctx context.Context, runtime *Runtime) (retErr error) {
 	runtime.valid = true
 
 	if runtime.doMigrate {
-		if err := runtime.migrate(ctx); err != nil {
+		if err := runtime.migrate(); err != nil {
 			return err
 		}
 	}
@@ -1136,7 +1144,7 @@ func (r *Runtime) getVolumePlugin(name string) (*plugin.VolumePlugin, error) {
 	return plugin.GetVolumePlugin(name, pluginPath)
 }
 
-// GetSecretsStoreageDir returns the directory that the secrets manager should take
+// GetSecretsStorageDir returns the directory that the secrets manager should take
 func (r *Runtime) GetSecretsStorageDir() string {
 	return filepath.Join(r.store.GraphRoot(), "secrets")
 }
@@ -1184,7 +1192,17 @@ func (r *Runtime) Network() nettypes.ContainerNetwork {
 	return r.network
 }
 
-// Network returns the network interface which is used by the runtime
+// GetDefaultNetworkName returns the network interface which is used by the runtime
 func (r *Runtime) GetDefaultNetworkName() string {
 	return r.config.Network.DefaultNetwork
+}
+
+// RemoteURI returns the API server URI
+func (r *Runtime) RemoteURI() string {
+	return r.config.Engine.RemoteURI
+}
+
+// SetRemoteURI records the API server URI
+func (r *Runtime) SetRemoteURI(uri string) {
+	r.config.Engine.RemoteURI = uri
 }

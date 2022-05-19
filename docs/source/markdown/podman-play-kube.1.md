@@ -24,7 +24,7 @@ Only two volume types are supported by play kube, the *hostPath* and *persistent
 
 Note: When playing a kube YAML with init containers, the init container will be created with init type value `always`.
 
-Note: *hostPath* volume types created by play kube will be given an SELinux private label (Z)
+Note: *hostPath* volume types created by play kube will be given an SELinux shared label (z), bind mounts are not relabeled (use `chcon -t container_file_t -R <directory>`).
 
 Note: If the `:latest` tag is used, Podman will attempt to pull the image from a registry. If the image was built locally with Podman or Buildah, it will have `localhost` as the domain, in that case, Podman will use the image from the local store even if it has the `:latest` tag.
 
@@ -72,9 +72,11 @@ disable builds.
 
 `Kubernetes ConfigMap`
 
-Kubernetes ConfigMap can be referred as a source of environment variables in Pods or Deployments.
+Kubernetes ConfigMap can be referred as a source of environment variables or volumes in Pods or Deployments.
+ConfigMaps aren't a standalone object in Podman; instead, when a container uses a ConfigMap, Podman will create environment variables or volumes as needed.
 
-For example ConfigMap defined in following YAML:
+For example, the following YAML document defines a ConfigMap and then uses it in a Pod:
+
 ```
 apiVersion: v1
 kind: ConfigMap
@@ -82,14 +84,11 @@ metadata:
   name: foo
 data:
     FOO: bar
-```
-
-can be referred in a Pod in following way:
-```
+---
 apiVersion: v1
 kind: Pod
 metadata:
-...
+  name: foobar
 spec:
   containers:
   - command:
@@ -106,6 +105,11 @@ and as a result environment variable `FOO` will be set to `bar` for container `c
 
 ## OPTIONS
 
+#### **--annotation**=*key=value*
+
+Add an annotation to the container or pod. The format is key=value.
+The **--annotation** option can be set multiple times.
+
 #### **--authfile**=*path*
 
 Path of the authentication file. Default is ${XDG\_RUNTIME\_DIR}/containers/auth.json, which is set using `podman login`.
@@ -116,7 +120,7 @@ environment variable. `export REGISTRY_AUTH_FILE=path`
 
 #### **--build**
 
-Build images even if they are found in the local storage. Use `--build=false` to completely disable builds.
+Build images even if they are found in the local storage. Use `--build=false` to completely disable builds. (This option is not available with the remote Podman client)
 
 #### **--cert-dir**=*path*
 
@@ -125,9 +129,13 @@ Please refer to containers-certs.d(5) for details. (This option is not available
 
 #### **--configmap**=*path*
 
-Use Kubernetes configmap YAML at path to provide a source for environment variable values within the containers of the pod.
+Use Kubernetes configmap YAML at path to provide a source for environment variable values within the containers of the pod.  (This option is not available with the remote Podman client)
 
 Note: The *--configmap* option can be used multiple times or a comma-separated list of paths can be used to pass multiple Kubernetes configmap YAMLs.
+
+#### **--context-dir**=*path*
+
+Use *path* as the build context directory for each image. Requires --build option be true. (This option is not available with the remote Podman client)
 
 #### **--creds**
 
@@ -139,6 +147,10 @@ value can be entered.  The password is entered without echo.
 
 Tears down the pods that were created by a previous run of `play kube`.  The pods are stopped and then
 removed.  Any volumes created are left intact.
+
+#### **--help**, **-h**
+
+Print usage statement
 
 #### **--ip**=*IP address*
 
@@ -176,7 +188,7 @@ Note: When joining multiple networks you should use the **--network name:mac=\<m
 Change the network mode of the pod. The host network mode should be configured in the YAML file.
 Valid _mode_ values are:
 
-- **bridge[:OPTIONS,...]**: Create a network stack on the default bridge. This is the default for rootfull containers. It is possible to specify these additional options:
+- **bridge[:OPTIONS,...]**: Create a network stack on the default bridge. This is the default for rootful containers. It is possible to specify these additional options:
   - **alias=name**: Add network-scoped alias for the container.
   - **ip=IPv4**: Specify a static ipv4 address for this container.
   - **ip=IPv6**: Specify a static ipv6 address for this container.
@@ -188,12 +200,12 @@ Valid _mode_ values are:
 - **none**: Create a network namespace for the container but do not configure network interfaces for it, thus the container has no network connectivity.
 - **container:**_id_: Reuse another container's network stack.
 - **ns:**_path_: Path to a network namespace to join.
-- **private**: Create a new namespace for the container. This will use the **bridge** mode for rootfull containers and **slirp4netns** for rootless ones.
-- **slirp4netns[:OPTIONS,...]**: use **slirp4netns**(1) to create a user network stack. This is the default for rootless containers. It is possible to specify these additional options:
-  - **allow_host_loopback=true|false**: Allow the slirp4netns to reach the host loopback IP (`10.0.2.2`, which is added to `/etc/hosts` as `host.containers.internal` for your convenience). Default is false.
+- **private**: Create a new namespace for the container. This will use the **bridge** mode for rootful containers and **slirp4netns** for rootless ones.
+- **slirp4netns[:OPTIONS,...]**: use **slirp4netns**(1) to create a user network stack. This is the default for rootless containers. It is possible to specify these additional options, they can also be set with `network_cmd_options` in containers.conf:
+  - **allow_host_loopback=true|false**: Allow the slirp4netns to reach the host loopback IP (`10.0.2.2`). Default is false.
   - **mtu=MTU**: Specify the MTU to use for this network. (Default is `65520`).
   - **cidr=CIDR**: Specify ip range to use for this network. (Default is `10.0.2.0/24`).
-  - **enable_ipv6=true|false**: Enable IPv6. Default is false. (Required for `outbound_addr6`).
+  - **enable_ipv6=true|false**: Enable IPv6. Default is true. (Required for `outbound_addr6`).
   - **outbound_addr=INTERFACE**: Specify the outbound interface slirp should bind to (ipv4 traffic only).
   - **outbound_addr=IPv4**: Specify the outbound ipv4 address slirp should bind to.
   - **outbound_addr6=INTERFACE**: Specify the outbound interface slirp should bind to (ipv6 traffic only).
@@ -204,7 +216,10 @@ Valid _mode_ values are:
 
 #### **--no-hosts**
 
-Do not create /etc/hosts within the pod's containers, instead use the version from the image
+Do not create /etc/hosts for the pod.
+By default, Podman will manage /etc/hosts, adding the container's own IP address and any hosts from **--add-host**.
+**--no-hosts** disables this, and the image's **/etc/host** will be preserved unmodified.
+This option conflicts with host added in the Kubernetes YAML.
 
 #### **--quiet**, **-q**
 
@@ -227,10 +242,6 @@ Start the pod after creating it, set to false to only create it.
 Require HTTPS and verify certificates when contacting registries (default: true). If explicitly set to true,
 then TLS verification will be used. If set to false, then TLS verification will not be used. If not specified,
 TLS verification will be used unless the target registry is listed as an insecure registry in registries.conf.
-
-#### **--help**, **-h**
-
-Print usage statement
 
 ## EXAMPLES
 

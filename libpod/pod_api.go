@@ -593,7 +593,7 @@ func (p *Pod) Inspect() (*define.InspectPodData, error) {
 			return nil, err
 		}
 		infraConfig = new(define.InspectPodInfraConfig)
-		infraConfig.HostNetwork = !infra.config.ContainerNetworkConfig.UseImageHosts
+		infraConfig.HostNetwork = p.NetworkMode() == "host"
 		infraConfig.StaticIP = infra.config.ContainerNetworkConfig.StaticIP
 		infraConfig.NoManageResolvConf = infra.config.UseImageResolvConf
 		infraConfig.NoManageHosts = infra.config.UseImageHosts
@@ -602,8 +602,8 @@ func (p *Pod) Inspect() (*define.InspectPodData, error) {
 		infraConfig.CPUSetCPUs = p.ResourceLim().CPU.Cpus
 		infraConfig.PidNS = p.PidMode()
 		infraConfig.UserNS = p.UserNSMode()
-		namedVolumes, mounts := infra.sortUserVolumes(infra.config.Spec)
-		inspectMounts, err = infra.GetInspectMounts(namedVolumes, infra.config.ImageVolumes, mounts)
+		namedVolumes, mounts := infra.SortUserVolumes(infra.config.Spec)
+		inspectMounts, err = infra.GetMounts(namedVolumes, infra.config.ImageVolumes, mounts)
 		infraSecurity = infra.GetSecurityOptions()
 		if err != nil {
 			return nil, err

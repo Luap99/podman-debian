@@ -52,8 +52,8 @@ func GenerateContainerFilterFuncs(filter string, filterValues []string, r *libpo
 		}, nil
 	case "status":
 		for _, filterValue := range filterValues {
-			if !util.StringInSlice(filterValue, []string{"created", "running", "paused", "stopped", "exited", "unknown"}) {
-				return nil, errors.Errorf("%s is not a valid status", filterValue)
+			if _, err := define.StringToContainerStatus(filterValue); err != nil {
+				return nil, err
 			}
 		}
 		return func(c *libpod.Container) bool {
@@ -213,8 +213,10 @@ func GenerateContainerFilterFuncs(filter string, filterValues []string, r *libpo
 		for _, val := range filterValues {
 			net, err := r.Network().NetworkInspect(val)
 			if err != nil {
-				// ignore not found errors
-				break
+				if errors.Is(err, define.ErrNoSuchNetwork) {
+					continue
+				}
+				return nil, err
 			}
 			inputNetNames = append(inputNetNames, net.Name)
 		}
@@ -268,7 +270,7 @@ func GenerateContainerFilterFuncs(filter string, filterValues []string, r *libpo
 				invalidPolicyNames = append(invalidPolicyNames, policy)
 			}
 		}
-		var filterValueError error = nil
+		var filterValueError error
 		if len(invalidPolicyNames) > 0 {
 			errPrefix := "invalid restart policy"
 			if len(invalidPolicyNames) > 1 {

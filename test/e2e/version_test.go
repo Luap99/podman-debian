@@ -30,7 +30,7 @@ var _ = Describe("Podman version", func() {
 		podmanTest.Cleanup()
 		f := CurrentGinkgoTestDescription()
 		processTestResult(f)
-		podmanTest.SeedImages()
+
 	})
 
 	It("podman version", func() {
@@ -87,7 +87,15 @@ var _ = Describe("Podman version", func() {
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
+		session = podmanTest.Podman([]string{"version", "--format", "{{ .Client.Os }}"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
 		session = podmanTest.Podman([]string{"version", "--format", "{{ .Server.Version }}"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		session = podmanTest.Podman([]string{"version", "--format", "{{ .Server.Os }}"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
