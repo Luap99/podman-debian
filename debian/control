@@ -38,6 +38,7 @@ Build-Depends: debhelper-compat (= 13)
     ,golang-github-go-logr-logr-dev
     ,golang-github-google-shlex-dev
     ,golang-github-google-uuid-dev
+    ,golang-github-gorilla-schema-dev
     ,golang-github-hashicorp-go-multierror-dev
     ,golang-github-influxdata-tail-dev (>= 1.0.0+git20180327.c434825-2~) | golang-github-hpcloud-tail-dev
     ,golang-github-json-iterator-go-dev
