@@ -16,11 +16,8 @@ Files-Included:
     vendor/github.com/coreos/stream-metadata-go
     vendor/github.com/digitalocean
     vendor/github.com/docker/go-plugins-helpers
-    vendor/github.com/gorilla/schema
     vendor/github.com/moby/sys
     vendor/github.com/uber/jaeger-client-go
-    vendor/k8s.io/api
-    vendor/k8s.io/apimachinery
 
 Files: *
 Copyright:
