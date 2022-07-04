@@ -1,3 +1,11 @@
+libpod (4.1.1+ds1-2) experimental; urgency=medium
+
+  * organize GOLANG_EXCLUDES and GOLANG_TEST_EXCLUDES
+  * add patches fix-test-TestEnvVarValue-NN.patch, fixes
+    Test failures for !amd64, !arm64 Closes: #1014309
+
+ -- Reinhard Tartler <siretart@tauware.de>  Mon, 04 Jul 2022 12:07:31 -0400
+
 libpod (4.1.1+ds1-1) experimental; urgency=medium
 
   * New upstream release
