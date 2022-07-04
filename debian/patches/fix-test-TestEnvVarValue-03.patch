@@ -1,0 +1,35 @@
+From 5b1867923e1f1787e0675e9a808c3385b6348eee Mon Sep 17 00:00:00 2001
+From: Paul Holzinger <pholzing@redhat.com>
+Date: Mon, 4 Jul 2022 17:32:13 +0200
+Subject: [PATCH 2/3] TestEnvVarValue: fix assertion
+
+assert.Equal() already follows to pointer and compares by value so we
+can just directly pass the values. This will make errors much more
+obvious. Also remove the fmt.Println() since the error now contains the
+values.
+
+Signed-off-by: Paul Holzinger <pholzing@redhat.com>
+---
+ pkg/specgen/generate/kube/play_test.go | 4 +---
+ 1 file changed, 1 insertion(+), 3 deletions(-)
+
+--- a/pkg/specgen/generate/kube/play_test.go
++++ b/pkg/specgen/generate/kube/play_test.go
+@@ -2,7 +2,6 @@
+ 
+ import (
+ 	"encoding/json"
+-	"fmt"
+ 	"io/ioutil"
+ 	"math"
+ 	"os"
+@@ -783,8 +782,7 @@
+ 			if test.expected == nilString {
+ 				assert.Nil(t, result)
+ 			} else {
+-				fmt.Println(*result, test.expected)
+-				assert.Equal(t, &(test.expected), result)
++				assert.Equal(t, test.expected, *result)
+ 			}
+ 		})
+ 	}
