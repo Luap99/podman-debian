@@ -1,3 +1,9 @@
+libpod (4.1.1+ds1-3) experimental; urgency=medium
+
+  * reorganize dependencies for networking stack
+
+ -- Reinhard Tartler <siretart@tauware.de>  Fri, 05 Aug 2022 20:47:56 +0200
+
 libpod (4.1.1+ds1-2) experimental; urgency=medium
 
   * organize GOLANG_EXCLUDES and GOLANG_TEST_EXCLUDES
