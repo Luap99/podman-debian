@@ -1,3 +1,9 @@
+libpod (4.2.0+ds1-2) experimental; urgency=medium
+
+  * tighten dependency on golang-github-opencontainers-runc-dev
+
+ -- Reinhard Tartler <siretart@tauware.de>  Wed, 17 Aug 2022 18:51:09 +0200
+
 libpod (4.2.0+ds1-1) experimental; urgency=medium
 
   * New upstream release
