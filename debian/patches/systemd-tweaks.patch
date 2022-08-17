@@ -1,5 +1,0 @@
-From: Michael Biebl <biebl@debian.org>
-Subject: Please don't enable podman-auto-update.service in default.target
-Date: Tue, 26 Jan 2021 11:46:06 +0100
-Bugs-Debian: https://bugs.debian.org/981097
-

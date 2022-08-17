@@ -1,4 +1,1 @@
 test--skip-TestPostDeleteHooks.patch
-fix-test-TestEnvVarValue-01.patch
-fix-test-TestEnvVarValue-02.patch
-fix-test-TestEnvVarValue-03.patch
