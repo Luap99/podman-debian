@@ -142,7 +142,10 @@ exec_container() {
     # Line-separated arguments which include shell-escaped special characters
     declare -a envargs
     while read -r var_val; do
-        envargs+=("-e $var_val")
+        # Pass "-e VAR" on the command line, not "-e VAR=value". Podman can
+        # do a much better job of transmitting the value than we can,
+        # especially when value includes spaces.
+        envargs+=("-e" "$(awk -F= '{print $1}' <<<$var_val)")
     done <<<"$(passthrough_envars)"
 
     # VM Images and Container images are built using (nearly) identical operations.
@@ -233,6 +236,16 @@ function _run_build() {
     make clean
     make vendor
     make podman-release  # includes podman, podman-remote, and docs
+
+    # Last-minute confirmation that we're testing the desired runtime.
+    # This Can't Possibly Fail™ in regular CI; only when updating VMs.
+    # $CI_DESIRED_RUNTIME must be defined in .cirrus.yml.
+    req_env_vars CI_DESIRED_RUNTIME
+    runtime=$(bin/podman info --format '{{.Host.OCIRuntime.Name}}')
+    # shellcheck disable=SC2154
+    if [[ "$runtime" != "$CI_DESIRED_RUNTIME" ]]; then
+        die "Built podman is using '$runtime'; this CI environment requires $CI_DESIRED_RUNTIME"
+    fi
 }
 
 function _run_altbuild() {
@@ -312,10 +325,18 @@ function _run_release() {
     if [[ -n "$dev" ]]; then
         die "Releases must never contain '-dev' in output of 'podman info' ($dev)"
     fi
+
+    commit=$(bin/podman info --format='{{.Version.GitCommit}}' | tr -d '[:space:]')
+    if [[ -z "$commit" ]]; then
+        die "Releases must contain a non-empty Version.GitCommit in 'podman info'"
+    fi
     msg "All OK"
 }
 
 
+# ***WARNING*** ***WARNING*** ***WARNING*** ***WARNING***
+#    Please see gitlab comment in setup_environment.sh
+# ***WARNING*** ***WARNING*** ***WARNING*** ***WARNING***
 function _run_gitlab() {
     rootless_uid=$(id -u)
     systemctl enable --now --user podman.socket
@@ -369,6 +390,13 @@ dotest() {
 
     make ${localremote}${testsuite} PODMAN_SERVER_LOG=$PODMAN_SERVER_LOG \
         |& logformatter
+}
+
+_run_machine() {
+    # TODO: This is a manually-triggered task, if that ever changes need to
+    # add something like:
+    # _bail_if_test_can_be_skipped docs test/e2e test/system test/python
+    make localmachine |& logformatter
 }
 
 # Optimization: will exit if the only PR diffs are under docs/ or tests/

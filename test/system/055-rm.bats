@@ -52,10 +52,20 @@ load helpers
 }
 
 @test "podman rm <-> run --rm race" {
+    OCIDir=/run/$(podman_runtime)
+
+    if is_rootless; then
+        OCIDir=/run/user/$(id -u)/$(podman_runtime)
+    fi
+
     # A container's lock is released before attempting to stop it.  This opens
     # the window for race conditions that led to #9479.
     run_podman run --rm -d $IMAGE sleep infinity
+    local cid="$output"
     run_podman rm -af
+
+    # Check the OCI runtime directory has removed.
+    is "$(ls $OCIDir | grep $cid)" "" "The OCI runtime directory should have been removed"
 }
 
 @test "podman rm --depend" {
@@ -84,6 +94,13 @@ load helpers
     rand=$(random_string 30)
     ( sleep 3; run_podman rm -t 0 -f $rand ) &
     run_podman 137 run --name $rand $IMAGE sleep 30
+}
+
+@test "podman container rm --force bogus" {
+    run_podman 1 container rm bogus
+    is "$output" "Error: no container with name or ID \"bogus\" found: no such container" "Should print error"
+    run_podman container rm --force bogus
+    is "$output" "" "Should print no output"
 }
 
 # vim: filetype=sh

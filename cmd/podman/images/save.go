@@ -2,6 +2,8 @@ package images
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"strings"
 
@@ -12,13 +14,11 @@ import (
 	"github.com/containers/podman/v4/cmd/podman/registry"
 	"github.com/containers/podman/v4/libpod/define"
 	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
 
 var (
-	validFormats    = []string{define.OCIManifestDir, define.OCIArchive, define.V2s2ManifestDir, define.V2s2Archive}
 	containerConfig = registry.PodmanConfig()
 )
 
@@ -32,14 +32,14 @@ var (
 		RunE:  save,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
-				return errors.Errorf("need at least 1 argument")
+				return errors.New("need at least 1 argument")
 			}
 			format, err := cmd.Flags().GetString("format")
 			if err != nil {
 				return err
 			}
-			if !util.StringInSlice(format, validFormats) {
-				return errors.Errorf("format value must be one of %s", strings.Join(validFormats, " "))
+			if !util.StringInSlice(format, common.ValidSaveFormats) {
+				return fmt.Errorf("format value must be one of %s", strings.Join(common.ValidSaveFormats, " "))
 			}
 			return nil
 		},
@@ -104,13 +104,13 @@ func save(cmd *cobra.Command, args []string) (finalErr error) {
 		succeeded = false
 	)
 	if cmd.Flag("compress").Changed && (saveOpts.Format != define.OCIManifestDir && saveOpts.Format != define.V2s2ManifestDir) {
-		return errors.Errorf("--compress can only be set when --format is either 'oci-dir' or 'docker-dir'")
+		return errors.New("--compress can only be set when --format is either 'oci-dir' or 'docker-dir'")
 	}
 	if len(saveOpts.Output) == 0 {
 		saveOpts.Quiet = true
 		fi := os.Stdout
 		if term.IsTerminal(int(fi.Fd())) {
-			return errors.Errorf("refusing to save to terminal. Use -o flag or redirect")
+			return errors.New("refusing to save to terminal. Use -o flag or redirect")
 		}
 		pipePath, cleanup, err := setupPipe()
 		if err != nil {

@@ -7,14 +7,14 @@ PODMAN=${PODMAN:-podman}
 PODMAN_TEST_IMAGE_REGISTRY=${PODMAN_TEST_IMAGE_REGISTRY:-"quay.io"}
 PODMAN_TEST_IMAGE_USER=${PODMAN_TEST_IMAGE_USER:-"libpod"}
 PODMAN_TEST_IMAGE_NAME=${PODMAN_TEST_IMAGE_NAME:-"testimage"}
-PODMAN_TEST_IMAGE_TAG=${PODMAN_TEST_IMAGE_TAG:-"20210610"}
+PODMAN_TEST_IMAGE_TAG=${PODMAN_TEST_IMAGE_TAG:-"20220615"}
 PODMAN_TEST_IMAGE_FQN="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/$PODMAN_TEST_IMAGE_NAME:$PODMAN_TEST_IMAGE_TAG"
 PODMAN_TEST_IMAGE_ID=
 
 # Remote image that we *DO NOT* fetch or keep by default; used for testing pull
 # This has changed in 2021, from 0 through 3, various iterations of getting
 # multiarch to work. It should change only very rarely.
-PODMAN_NONLOCAL_IMAGE_TAG=${PODMAN_NONLOCAL_IMAGE_TAG:-"00000003"}
+PODMAN_NONLOCAL_IMAGE_TAG=${PODMAN_NONLOCAL_IMAGE_TAG:-"00000004"}
 PODMAN_NONLOCAL_IMAGE_FQN="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/$PODMAN_TEST_IMAGE_NAME:$PODMAN_NONLOCAL_IMAGE_TAG"
 
 # Because who wants to spell that out each time?
@@ -284,13 +284,44 @@ function random_free_port() {
 
     local port
     for port in $(shuf -i ${range}); do
-        if ! { exec {unused_fd}<> /dev/tcp/127.0.0.1/$port; } &>/dev/null; then
+        if port_is_free $port; then
             echo $port
             return
         fi
     done
 
     die "Could not find open port in range $range"
+}
+
+function random_free_port_range() {
+    local size=${1?Usage: random_free_port_range SIZE (as in, number of ports)}
+
+    local maxtries=10
+    while [[ $maxtries -gt 0 ]]; do
+        local firstport=$(random_free_port)
+        local lastport=
+        for i in $(seq 1 $((size - 1))); do
+            lastport=$((firstport + i))
+            if ! port_is_free $lastport; then
+                echo "# port $lastport is in use; trying another." >&3
+                lastport=
+                break
+            fi
+        done
+        if [[ -n "$lastport" ]]; then
+            echo "$firstport-$lastport"
+            return
+        fi
+
+        maxtries=$((maxtries - 1))
+    done
+
+    die "Could not find free port range with size $size"
+}
+
+function port_is_free() {
+     local port=${1?Usage: port_is_free PORT}
+    ! { exec {unused_fd}<> /dev/tcp/127.0.0.1/$port; } &>/dev/null
 }
 
 ###################
@@ -390,6 +421,32 @@ function pause_image() {
     # it emits the command invocation to stdout, hence the redirection.
     run_podman version --format "{{.Server.Version}}-{{.Server.Built}}" >/dev/null
     echo "localhost/podman-pause:$output"
+}
+
+# Wait for the pod (1st arg) to transition into the state (2nd arg)
+function _ensure_pod_state() {
+    for i in {0..5}; do
+        run_podman pod inspect $1 --format "{{.State}}"
+        if [[ $output == "$2" ]]; then
+            return
+        fi
+        sleep 0.5
+    done
+
+    die "Timed out waiting for pod $1 to enter state $2"
+}
+
+# Wait for the container's (1st arg) running state (2nd arg)
+function _ensure_container_running() {
+    for i in {0..20}; do
+        run_podman container inspect $1 --format "{{.State.Running}}"
+        if [[ $output == "$2" ]]; then
+            return
+        fi
+        sleep 0.5
+    done
+
+    die "Timed out waiting for container $1 to enter state running=$2"
 }
 
 ###########################
@@ -583,7 +640,7 @@ function assert() {
     fi
 
     # This is a multi-line message, which may in turn contain multi-line
-    # output, so let's format it ourself, readably
+    # output, so let's format it ourself to make it more readable.
     local actual_split
     IFS=$'\n' read -rd '' -a actual_split <<<"$actual_string" || true
     printf "#/vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv\n"    >&2
@@ -633,7 +690,7 @@ function is() {
     fi
 
     # This is a multi-line message, which may in turn contain multi-line
-    # output, so let's format it ourself, readably
+    # output, so let's format it ourself to make it more readable.
     local -a actual_split
     readarray -t actual_split <<<"$actual"
     printf "#/vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv\n" >&2

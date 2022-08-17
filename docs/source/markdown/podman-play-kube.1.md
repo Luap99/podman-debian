@@ -20,9 +20,9 @@ Currently, the supported Kubernetes kinds are:
 
 `Kubernetes Pods or Deployments`
 
-Only two volume types are supported by play kube, the *hostPath* and *persistentVolumeClaim* volume types. For the *hostPath* volume type, only the  *default (empty)*, *DirectoryOrCreate*, *Directory*, *FileOrCreate*, *File*, and *Socket* subtypes are supported. The *CharDevice* and *BlockDevice* subtypes are not supported. Podman interprets the value of *hostPath* *path* as a file path when it contains at least one forward slash, otherwise Podman treats the value as the name of a named volume. When using a *persistentVolumeClaim*, the value for *claimName* is the name for the Podman named volume.
+Only two volume types are supported by play kube, the *hostPath* and *persistentVolumeClaim* volume types. For the *hostPath* volume type, only the  *default (empty)*, *DirectoryOrCreate*, *Directory*, *FileOrCreate*, *File*, *Socket*, *CharDevice* and *BlockDevice* subtypes are supported. Podman interprets the value of *hostPath* *path* as a file path when it contains at least one forward slash, otherwise Podman treats the value as the name of a named volume. When using a *persistentVolumeClaim*, the value for *claimName* is the name for the Podman named volume.
 
-Note: When playing a kube YAML with init containers, the init container will be created with init type value `always`.
+Note: When playing a kube YAML with init containers, the init container will be created with init type value `once`. To change the default type, use the `io.podman.annotations.init.container.type` annotation to set the type to `always`.
 
 Note: *hostPath* volume types created by play kube will be given an SELinux shared label (z), bind mounts are not relabeled (use `chcon -t container_file_t -R <directory>`).
 
@@ -103,6 +103,19 @@ spec:
 
 and as a result environment variable `FOO` will be set to `bar` for container `container-1`.
 
+### Systemd Integration
+
+A Kubernetes YAML can be executed in systemd via the `podman-kube@.service` systemd template.  The template's argument is the path to the YAML file.  Given a `workload.yaml` file in the home directory, it can be executed as follows:
+
+```
+$ escaped=$(systemd-escape ~/sysadmin.yaml)
+$ systemctl --user start podman-kube@$escaped.service
+$ systemctl --user is-active podman-kube@$escaped.service
+active
+```
+
+Note that the path to the YAML file must be escaped via `systemd-escape`.
+
 ## OPTIONS
 
 #### **--annotation**=*key=value*
@@ -157,11 +170,11 @@ Print usage statement
 Assign a static ip address to the pod. This option can be specified several times when play kube creates more than one pod.
 Note: When joining multiple networks you should use the **--network name:ip=\<ip\>** syntax.
 
-#### **--log-driver**=driver
+#### **--log-driver**=*driver*
 
 Set logging driver for all created containers.
 
-#### **--log-opt**=*name*=*value*
+#### **--log-opt**=*name=value*
 
 Set custom logging configuration. The following *name*s are supported:
 
@@ -243,6 +256,45 @@ Require HTTPS and verify certificates when contacting registries (default: true)
 then TLS verification will be used. If set to false, then TLS verification will not be used. If not specified,
 TLS verification will be used unless the target registry is listed as an insecure registry in registries.conf.
 
+#### **--userns**=*mode*
+
+Set the user namespace mode for the container. It defaults to the **PODMAN_USERNS** environment variable. An empty value ("") means user namespaces are disabled unless an explicit mapping is set with the **--uidmap** and **--gidmap** options.
+
+Rootless user --userns=Key mappings:
+
+Key       | Host User |  Container User
+----------|---------------|---------------------
+""        |$UID           |0 (Default User account mapped to root user in container.)
+keep-id   |$UID           |$UID (Map user account to same UID within container.)
+auto      |$UID           | nil (Host User UID is not mapped into container.)
+nomap     |$UID           | nil (Host User UID is not mapped into container.)
+
+Valid _mode_ values are:
+
+**auto**[:_OPTIONS,..._]: automatically create a unique user namespace.
+
+The `--userns=auto` flag, requires that the user name `containers` and a range of subordinate user ids that the Podman container is allowed to use be specified in the /etc/subuid and /etc/subgid files.
+
+Example: `containers:2147483647:2147483648`.
+
+Podman allocates unique ranges of UIDs and GIDs from the `containers` subordinate user ids. The size of the ranges is based on the number of UIDs required in the image. The number of UIDs and GIDs can be overridden with the `size` option. The `auto` options currently does not work in rootless mode
+
+  Valid `auto` options:
+
+  - *gidmapping*=_CONTAINER_GID:HOST_GID:SIZE_: to force a GID mapping to be present in the user namespace.
+  - *size*=_SIZE_: to specify an explicit size for the automatic user namespace. e.g. `--userns=auto:size=8192`. If `size` is not specified, `auto` will estimate a size for the user namespace.
+  - *uidmapping*=_CONTAINER_UID:HOST_UID:SIZE_: to force a UID mapping to be present in the user namespace.
+
+**container:**_id_: join the user namespace of the specified container.
+
+**host**: create a new namespace for the container.
+
+**keep-id**: creates a user namespace where the current rootless user's UID:GID are mapped to the same values in the container. This option is not allowed for containers created by the root user.
+
+**nomap**: creates a user namespace where the current rootless user's UID:GID are not mapped into the container. This option is not allowed for containers created by the root user.
+
+**ns:**_namespace_: run the pod in the given existing user namespace.
+
 ## EXAMPLES
 
 Recreate the pod and containers as described in a file called `demo.yml`
@@ -281,7 +333,7 @@ $ podman play kube demo.yml --network net1:ip=10.89.1.5 --network net2:ip=10.89.
 52182811df2b1e73f36476003a66ec872101ea59034ac0d4d3a7b40903b955a6
 ```
 
-Please take into account that CNI networks must be created first using podman-network-create(1).
+Please take into account that networks must be created first using podman-network-create(1).
 
 ## SEE ALSO
 **[podman(1)](podman.1.md)**, **[podman-play(1)](podman-play.1.md)**, **[podman-network-create(1)](podman-network-create.1.md)**, **[podman-generate-kube(1)](podman-generate-kube.1.md)**, **[containers-certs.d(5)](https://github.com/containers/image/blob/main/docs/containers-certs.d.5.md)**

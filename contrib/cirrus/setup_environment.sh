@@ -99,11 +99,28 @@ esac
 if ((CONTAINER==0)); then  # Not yet running inside a container
     # Discovered reemergence of BFQ scheduler bug in kernel 5.8.12-200
     # which causes a kernel panic when system is under heavy I/O load.
-    # Previously discovered in F32beta and confirmed fixed. It's been
-    # observed in F31 kernels as well.  Deploy workaround for all VMs
-    # to ensure a more stable I/O scheduler (elevator).
-    echo "mq-deadline" > /sys/block/sda/queue/scheduler
-    warn "I/O scheduler: $(cat /sys/block/sda/queue/scheduler)"
+    # Disable the I/O scheduler (a.k.a. elevator) for all environments,
+    # leaving optimization up to underlying storage infrastructure.
+    testfs="/"  # mountpoint that experiences the most I/O during testing
+    msg "Querying block device owning partition hosting the '$testfs' filesystem"
+    # Need --nofsroot b/c btrfs appends subvolume label to `source` name
+    testdev=$(findmnt --canonicalize --noheadings --nofsroot \
+              --output source --mountpoint $testfs)
+    msg "    found partition: '$testdev'"
+    testdisk=$(lsblk --noheadings --output pkname --paths $testdev)
+    msg "    found block dev: '$testdisk'"
+    testsched="/sys/block/$(basename $testdisk)/queue/scheduler"
+    if [[ -n "$testdev" ]] && [[ -n "$testdisk" ]] && [[ -e "$testsched" ]]; then
+        msg "    Found active I/O scheduler: $(cat $testsched)"
+        if [[ ! "$(<$testsched)" =~ \[none\]  ]]; then
+            msg "    Disabling elevator for '$testsched'"
+            echo "none" > "$testsched"
+        else
+            msg "    Elevator already disabled"
+        fi
+    else
+        warn "Sys node for elevator doesn't exist: '$testsched'"
+    fi
 fi
 
 # Which distribution are we testing on.
@@ -121,6 +138,9 @@ case "$OS_RELEASE_ID" in
         # CNI networking available.  Upgrading from one to the other is
         # not supported at this time.  Support execution of the upgrade
         # tests in F36 and later, by disabling Netavark and enabling CNI.
+        #
+        # OS_RELEASE_VER is defined by automation-library
+        # shellcheck disable=SC2154
         if [[ "$OS_RELEASE_VER" -ge 36 ]] && \
            [[ "$TEST_FLAVOR" != "upgrade_test" ]];
         then
@@ -183,10 +203,11 @@ esac
 # Required to be defined by caller: Are we testing as root or a regular user
 case "$PRIV_NAME" in
     root)
-        if [[ "$TEST_FLAVOR" = "sys" ]]; then
+        if [[ "$TEST_FLAVOR" = "sys" || "$TEST_FLAVOR" = "apiv2" ]]; then
             # Used in local image-scp testing
             setup_rootless
             echo "PODMAN_ROOTLESS_USER=$ROOTLESS_USER" >> /etc/ci_environment
+            echo "PODMAN_ROOTLESS_UID=$ROOTLESS_UID" >> /etc/ci_environment
         fi
         ;;
     rootless)
@@ -200,6 +221,7 @@ esac
 
 if [[ -n "$ROOTLESS_USER" ]]; then
     echo "ROOTLESS_USER=$ROOTLESS_USER" >> /etc/ci_environment
+    echo "ROOTLESS_UID=$ROOTLESS_UID" >> /etc/ci_environment
 fi
 
 # Required to be defined by caller: Are we testing podman or podman-remote client
@@ -217,6 +239,7 @@ case "$TEST_FLAVOR" in
     validate)
         dnf install -y $PACKAGE_DOWNLOAD_DIR/python3*.rpm
         # For some reason, this is also needed for validation
+        make install.tools
         make .install.pre-commit
         ;;
     automation) ;;
@@ -226,10 +249,12 @@ case "$TEST_FLAVOR" in
         if [[ "$ALT_NAME" =~ RPM ]]; then
             bigto dnf install -y glibc-minimal-langpack go-rpm-macros rpkg rpm-build shadow-utils-subid-devel
         fi
+        make install.tools
         ;;
     docker-py)
         remove_packaged_podman_files
-        make && make install PREFIX=/usr ETCDIR=/etc
+        make install.tools
+        make install PREFIX=/usr ETCDIR=/etc
 
         msg "Installing previously downloaded/cached packages"
         dnf install -y $PACKAGE_DOWNLOAD_DIR/python3*.rpm
@@ -239,13 +264,17 @@ case "$TEST_FLAVOR" in
         pip install --requirement $GOSRC/test/python/requirements.txt
         ;;
     build) make clean ;;
-    unit) ;;
+    unit)
+        make install.tools
+        ;;
     compose_v2)
+        make install.tools
         dnf -y remove docker-compose
         curl -SL https://github.com/docker/compose/releases/download/v2.2.3/docker-compose-linux-x86_64 -o /usr/local/bin/docker-compose
         chmod +x /usr/local/bin/docker-compose
         ;& # Continue with next item
     apiv2)
+        make install.tools
         msg "Installing previously downloaded/cached packages"
         dnf install -y $PACKAGE_DOWNLOAD_DIR/python3*.rpm
         virtualenv .venv/requests
@@ -254,7 +283,8 @@ case "$TEST_FLAVOR" in
         pip install --requirement $GOSRC/test/apiv2/python/requirements.txt
         ;&  # continue with next item
     compose)
-        rpm -ivh $PACKAGE_DOWNLOAD_DIR/podman-docker*
+        make install.tools
+        dnf install -y $PACKAGE_DOWNLOAD_DIR/podman-docker*
         ;&  # continue with next item
     int) ;&
     sys) ;&
@@ -262,6 +292,7 @@ case "$TEST_FLAVOR" in
     bud) ;&
     bindings) ;&
     endpoint)
+        make install.tools
         # Use existing host bits when testing is to happen inside a container
         # since this script will run again in that environment.
         # shellcheck disable=SC2154
@@ -270,11 +301,11 @@ case "$TEST_FLAVOR" in
                 die "Refusing to config. host-test in container";
             fi
             remove_packaged_podman_files
-            make && make install PREFIX=/usr ETCDIR=/etc
+            make install PREFIX=/usr ETCDIR=/etc
         elif [[ "$TEST_ENVIRON" == "container" ]]; then
             if ((CONTAINER)); then
                 remove_packaged_podman_files
-                make && make install PREFIX=/usr ETCDIR=/etc
+                make install PREFIX=/usr ETCDIR=/etc
             fi
         else
             die "Invalid value for \$TEST_ENVIRON=$TEST_ENVIRON"
@@ -282,16 +313,40 @@ case "$TEST_FLAVOR" in
 
         install_test_configs
         ;;
+    machine)
+        dnf install -y $PACKAGE_DOWNLOAD_DIR/podman-gvproxy*
+        remove_packaged_podman_files
+        make install.tools
+        make install PREFIX=/usr ETCDIR=/etc
+        install_test_configs
+        ;;
     gitlab)
-        # This only runs on Ubuntu for now
+        # ***WARNING*** ***WARNING*** ***WARNING*** ***WARNING***
+        # This sets up a special ubuntu environment exclusively for
+        # running the upstream gitlab-runner unit tests through
+        # podman as a drop-in replacement for the Docker daemon.
+        # Test and setup information can be found here:
+        # https://gitlab.com/gitlab-org/gitlab-runner/-/issues/27270#note_499585550
+        #
+        # Unless you know what you're doing, and/or are in contact
+        # with the upstream gitlab-runner developers/community,
+        # please don't make changes willy-nilly to this setup.
+        # It's designed to follow upstream gitlab-runner development
+        # and alert us if any podman change breaks their foundation.
+        #
+        # That said, if this task does break in strange ways or requires
+        # updates you're unsure of.  Please consult with the upstream
+        # community through an issue near the one linked above.  If
+        # an extended period of breakage is expected, please un-comment
+        # the related `allow_failures: $CI == $CI` line in `.cirrus.yml`.
+        # ***WARNING*** ***WARNING*** ***WARNING*** ***WARNING***
+
         if [[ "$OS_RELEASE_ID" != "ubuntu" ]]; then
             die "This test only runs on Ubuntu due to sheer laziness"
         fi
 
-        # Ref: https://gitlab.com/gitlab-org/gitlab-runner/-/issues/27270#note_499585550
-
         remove_packaged_podman_files
-        make && make install PREFIX=/usr ETCDIR=/etc
+        make install PREFIX=/usr ETCDIR=/etc
 
         msg "Installing docker and containerd"
         # N/B: Tests check/expect `docker info` output, and this `!= podman info`
@@ -324,7 +379,10 @@ case "$TEST_FLAVOR" in
             docker.io/gitlab/gitlab-runner-helper:x86_64-latest-pwsh
         ;;
     swagger) ;&  # use next item
-    consistency) make clean ;;
+    consistency)
+        make clean
+        make install.tools
+        ;;
     release) ;;
     *) die_unknown TEST_FLAVOR
 esac

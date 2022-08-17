@@ -1,8 +1,9 @@
-package e2e
+package e2e_test
 
 import (
 	"io/ioutil"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/containers/podman/v4/pkg/machine"
@@ -44,9 +45,9 @@ var _ = Describe("podman machine init", func() {
 
 		Expect(len(inspectBefore)).To(BeNumerically(">", 0))
 		testMachine := inspectBefore[0]
-		Expect(testMachine.VM.Name).To(Equal(mb.names[0]))
-		Expect(testMachine.VM.CPUs).To(Equal(uint64(1)))
-		Expect(testMachine.VM.Memory).To(Equal(uint64(2048)))
+		Expect(testMachine.Name).To(Equal(mb.names[0]))
+		Expect(testMachine.Resources.CPUs).To(Equal(uint64(1)))
+		Expect(testMachine.Resources.Memory).To(Equal(uint64(2048)))
 
 	})
 
@@ -61,7 +62,7 @@ var _ = Describe("podman machine init", func() {
 		Expect(len(inspectBefore)).To(BeNumerically(">", 0))
 		Expect(err).To(BeNil())
 		Expect(len(inspectBefore)).To(BeNumerically(">", 0))
-		Expect(inspectBefore[0].VM.Name).To(Equal(mb.names[0]))
+		Expect(inspectBefore[0].Name).To(Equal(mb.names[0]))
 
 		s := startMachine{}
 		ssession, err := mb.setCmd(s).setTimeout(time.Minute * 10).run()
@@ -77,9 +78,9 @@ var _ = Describe("podman machine init", func() {
 	})
 
 	It("machine init with cpus, disk size, memory, timezone", func() {
-		name := randomString(12)
+		name := randomString()
 		i := new(initMachine)
-		session, err := mb.setName(name).setCmd(i.withImagePath(mb.imagePath).withCPUs(2).withDiskSize(102).withMemory(4000).withTimezone("Pacific/Honolulu")).run()
+		session, err := mb.setName(name).setCmd(i.withImagePath(mb.imagePath).withCPUs(2).withDiskSize(102).withMemory(4096).withTimezone("Pacific/Honolulu")).run()
 		Expect(err).To(BeNil())
 		Expect(session).To(Exit(0))
 
@@ -101,10 +102,13 @@ var _ = Describe("podman machine init", func() {
 		Expect(diskSession.outputToString()).To(ContainSubstring("102 GiB"))
 
 		sshMemory := sshMachine{}
-		memorySession, err := mb.setName(name).setCmd(sshMemory.withSSHComand([]string{"cat", "/proc/meminfo", "|", "numfmt", "--field", "2", "--from-unit=Ki", "--to-unit=Mi", "|", "sed", "'s/ kB/M/g'", "|", "grep", "MemTotal"})).run()
+		memorySession, err := mb.setName(name).setCmd(sshMemory.withSSHComand([]string{"cat", "/proc/meminfo", "|", "grep", "-i", "'memtotal'", "|", "grep", "-o", "'[[:digit:]]*'"})).run()
 		Expect(err).To(BeNil())
 		Expect(memorySession).To(Exit(0))
-		Expect(memorySession.outputToString()).To(ContainSubstring("3824"))
+		foundMemory, err := strconv.Atoi(memorySession.outputToString())
+		Expect(err).To(BeNil())
+		Expect(foundMemory).To(BeNumerically(">", 3800000))
+		Expect(foundMemory).To(BeNumerically("<", 4200000))
 
 		sshTimezone := sshMachine{}
 		timezoneSession, err := mb.setName(name).setCmd(sshTimezone.withSSHComand([]string{"date"})).run()
@@ -121,7 +125,7 @@ var _ = Describe("podman machine init", func() {
 		mount := tmpDir + ":/testmountdir"
 		defer os.RemoveAll(tmpDir)
 
-		name := randomString(12)
+		name := randomString()
 		i := new(initMachine)
 		session, err := mb.setName(name).setCmd(i.withImagePath(mb.imagePath).withVolume(mount)).run()
 		Expect(err).To(BeNil())

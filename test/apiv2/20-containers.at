@@ -16,7 +16,12 @@ podman pull $ENV_WORKDIR_IMG &>/dev/null
 # Ensure clean slate
 podman rm -a -f &>/dev/null
 
-t GET "libpod/containers/json (at start: clean slate)" 200 length=0
+t GET "libpod/containers/json (at start: clean slate)" 200 \
+  "[]" \
+  length=0
+# check content type: https://github.com/containers/podman/issues/14647
+response_headers=$(cat "$WORKDIR/curl.headers.out")
+like "$response_headers" ".*Content-Type: application/json.*" "header does not contain application/json"
 
 # Regression test for #12904 (race condition in logging code)
 mytext="hi-there-$(random_string 15)"
@@ -95,6 +100,17 @@ fi
 
 t DELETE libpod/containers/$cid 200 .[0].Id=$cid
 
+# Issue #14676: make sure the stats show the memory limit specified for the container
+if root; then
+    CTRNAME=ctr-with-limit
+    podman run --name $CTRNAME -d -m 512m -v /tmp:/tmp $IMAGE top
+
+    t GET libpod/containers/$CTRNAME/stats?stream=false 200 \
+    .memory_stats.limit=536870912
+
+    podman rm -f $CTRNAME
+fi
+
 # Issue #6799: it should be possible to start a container, even w/o args.
 t POST libpod/containers/create?name=test_noargs Image=${IMAGE} 201 \
   .Id~[0-9a-f]\\{64\\}
@@ -107,7 +123,8 @@ t GET    libpod/containers/${cid}/json 200 \
   .Id=$cid \
   .State.Status~\\\(exited\\\|stopped\\\) \
   .State.Running=false \
-  .State.ExitCode=0
+  .State.ExitCode=0 \
+  .Config.Umask=0022 # regression check for #15036
 t DELETE libpod/containers/$cid 200 .[0].Id=$cid
 
 CNAME=myfoo
@@ -486,3 +503,27 @@ done
 
 stop_service
 start_service
+
+# Our states are different from Docker's.
+# Regression test for #14700 (Docker compat returning unknown "initialized" for status.status) to ensure the stay compatible
+podman create --name status-test $IMAGE sh -c "sleep 3"
+t GET containers/status-test/json 200 .State.Status="created"
+
+podman init status-test
+t GET containers/status-test/json 200 .State.Status="created"
+
+podman start status-test
+t GET containers/status-test/json 200 .State.Status="running"
+
+podman pause status-test
+t GET containers/status-test/json 200 .State.Status="paused"
+
+podman unpause status-test
+t GET containers/status-test/json 200 .State.Status="running"
+
+podman stop status-test &
+sleep 1
+t GET containers/status-test/json 200 .State.Status="stopping"
+
+sleep 3
+t GET containers/status-test/json 200 .State.Status="exited"

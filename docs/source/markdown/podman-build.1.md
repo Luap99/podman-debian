@@ -91,10 +91,72 @@ instructions read from the Containerfiles in the same way that environment
 variables are, but which will not be added to environment variable list in the
 resulting image's configuration.
 
+#### **--build-context**=*name=value*
+
+Specify an additional build context using its short name and its location.
+Additional build contexts can be referenced in the same manner as we access
+different stages in COPY instruction.
+
+Valid values could be:
+
+* Local directory – e.g. --build-context project2=../path/to/project2/src (This option is not available with the remote Podman client. On Podman machine setup (i.e macOS and Winows) path must exists on the machine VM)
+* HTTP URL to a tarball – e.g. --build-context src=https://example.org/releases/src.tar
+* Container image – specified with a container-image:// prefix, e.g. --build-context alpine=container-image://alpine:3.15, (also accepts docker://, docker-image://)
+
+On the Containerfile side, you can reference the build context on all
+commands that accept the “from” parameter. Here’s how that might look:
+
+```dockerfile
+FROM [name]
+COPY --from=[name] ...
+RUN --mount=from=[name] …
+```
+
+The value of [name] is matched with the following priority order:
+
+* Named build context defined with --build-context [name]=..
+* Stage defined with AS [name] inside Containerfile
+* Image [name], either local or in a remote registry
+
 #### **--cache-from**
 
-Images to utilize as potential cache sources. Podman does not currently support
-caching so this is a NOOP. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
+Repository to utilize as a potential cache source. When specified, Buildah will try to look for
+cache images in the specified repository and will attempt to pull cache images instead of actually
+executing the build steps locally. Buildah will only attempt to pull previously cached images if they
+are considered as valid cache hits.
+
+Use the `--cache-to` option to populate a remote repository with cache content.
+
+Example
+
+```bash
+# populate a cache and also consult it
+buildah build -t test --layers --cache-to registry/myrepo/cache --cache-from registry/myrepo/cache .
+```
+
+Note: `--cache-from` option is ignored unless `--layers` is specified.
+
+#### **--cache-to**
+
+Set this flag to specify a remote repository that will be used to store cache images. Buildah will attempt to
+push newly built cache image to the remote repository.
+
+Note: Use the `--cache-from` option in order to use cache content in a remote repository.
+
+Example
+
+```bash
+# populate a cache and also consult it
+buildah build -t test --layers --cache-to registry/myrepo/cache --cache-from registry/myrepo/cache .
+```
+
+Note: `--cache-to` option is ignored unless `--layers` is specified.
+
+#### **--cache-ttl**
+
+Limit the use of cached images to only consider images with created timestamps less than *duration* ago.
+For example if `--cache-ttl=1h` is specified, Buildah will only consider intermediate cache images which are created
+under the duration of one hour, and intermediate cache images outside this duration will be ignored.
 
 #### **--cap-add**=*CAP\_xxx*
 
@@ -139,6 +201,10 @@ that the cgroup namespace in which `buildah` itself is being run should be reuse
 This option is added to be aligned with other containers CLIs.
 Podman doesn't communicate with a daemon or a remote server.
 Thus, compressing the data before sending it is irrelevant to Podman. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
+
+#### **--cpp-flag**=*flags*
+
+Set additional flags to pass to the C Preprocessor cpp(1). Containerfiles ending with a ".in" suffix will be preprocessed via cpp(1). This option can be used to pass additional flags to cpp.Note: You can also set default CPPFLAGS by setting the BUILDAH_CPPFLAGS environment variable (e.g., export BUILDAH_CPPFLAGS="-DDEBUG").
 
 #### **--cpu-period**=*limit*
 
@@ -228,7 +294,7 @@ keys and/or certificates. Decryption will be tried with all keys. If the key is
 protected by a passphrase, it is required to be passed in the argument and
 omitted otherwise.
 
-#### **--device**=_host-device_[**:**_container-device_][**:**_permissions_]
+#### **--device**=*host-device[:container-device][:permissions]*
 
 Add a host device to the container. Optional *permissions* parameter
 can be used to specify device permissions, it is combination of
@@ -236,13 +302,13 @@ can be used to specify device permissions, it is combination of
 
 Example: **--device=/dev/sdc:/dev/xvdc:rwm**.
 
-Note: if _host_device_ is a symbolic link then it will be resolved first.
+Note: if *host-device* is a symbolic link then it will be resolved first.
 The container will only store the major and minor numbers of the host device.
 
 Note: if the user only has access rights via a group, accessing the device
 from inside a rootless container will fail. The **[crun(1)](https://github.com/containers/crun/tree/main/crun.1.md)** runtime offers a
 workaround for this by adding the option
-#### **--annotation run.oci.keep_original_groups=1**.
+**--annotation run.oci.keep_original_groups=1**.
 
 #### **--disable-compression**, **-D**
 
@@ -280,7 +346,7 @@ Set custom DNS options to be used during the build.
 
 Set custom DNS search domains to be used during the build.
 
-#### **--env** *env[=value]*
+#### **--env**=*env[=value]*
 
 Add a value (e.g. env=*value*) to the built image.  Can be used multiple times.
 If neither `=` nor a `*value*` are specified, but *env* is set in the current
@@ -396,8 +462,18 @@ BUILDAH\_LAYERS environment variable. `export BUILDAH_LAYERS=true`
 
 Log output which would be sent to standard output and standard error to the
 specified file instead of to standard output and standard error.
+This option is not supported on the remote client, including Mac and Windows
+(excluding WSL2) machines.
 
-#### **--manifest** "manifest"
+#### **--logsplit**=*bool-value*
+
+If `--logfile` and `--platform` are specified, the `--logsplit` option allows
+end-users to split the log file for each platform into different files in the
+following format: `${logfile}_${platform-os}_${platform-arch}`.
+This option is not supported on the remote client, including Mac and Windows
+(excluding WSL2) machines.
+
+#### **--manifest**=*manifest*
 
 Name of the manifest list to which the image will be added. Creates the manifest list
 if it does not exist. This option is useful for building multi architecture images.
@@ -451,13 +527,22 @@ By default, Podman will manage _/etc/hosts_, adding the container's own IP addre
 **--no-hosts** disables this, and the image's _/etc/hosts_ will be preserved unmodified.
 This option conflicts with **--add-host**.
 
+#### **--omit-history**
+
+Omit build history information in the built image. (default false).
+
+This option is useful for the cases where end users explicitly
+want to set `--omit-history` to omit the optional `History` from
+built images or when working with images built using build tools that
+do not include `History` information in their images.
+
 #### **--os**=*string*
 
 Set the OS of the image to be built, and that of the base image to be pulled,
 if the build uses one, instead of using the current operating system of the
 build host.
 
-#### **--os-feature** *feature*
+#### **--os-feature**=*feature*
 
 Set the name of a required operating system *feature* for the image which will
 be built.  By default, if the image is not based on *scratch*, the base image's
@@ -467,7 +552,7 @@ is typically only meaningful when the image's OS is Windows.
 If *feature* has a trailing `-`, then the *feature* is removed from the set of
 required features which will be listed in the image.
 
-#### **--os-version** *version*
+#### **--os-version**=*version*
 
 Set the exact required operating system *version* for the image which will be
 built.  By default, if the image is not based on *scratch*, the base image's
@@ -475,7 +560,7 @@ required OS version is kept, if the base image specified one.  This option is
 typically only meaningful when the image's OS is Windows, and is typically set in
 Windows base images, so using this option is usually unnecessary.
 
-#### **--output**, **-o**=""
+#### **--output**, **-o**=*output-opts*
 
 Output destination (format: type=local,dest=path)
 
@@ -503,9 +588,9 @@ that the PID namespace in which `podman` itself is being run should be reused,
 or it can be the path to a PID namespace which is already in use by another
 process.
 
-#### **--platform**="OS/ARCH[/VARIANT][,...]"
+#### **--platform**=*os/arch[/variant][,...]*
 
-Set the OS/ARCH of the built image (and its base image, if your build uses one)
+Set the *os/arch* of the built image (and its base image, if your build uses one)
 to the provided value instead of using the current operating system and
 architecture of the host (for example `linux/arm`). If `--platform` is set,
 then the values of the `--arch`, `--os`, and `--variant` options will be
@@ -516,8 +601,8 @@ comma-separated list of values as its argument.  When more than one platform is
 specified, the `--manifest` option should be used instead of the `--tag`
 option.
 
-OS/ARCH pairs are those used by the Go Programming Language.  In several cases
-the ARCH value for a platform differs from one produced by other tools such as
+Os/arch pairs are those used by the Go Programming Language.  In several cases
+the *arch* value for a platform differs from one produced by other tools such as
 the `arch` command.  Valid OS and architecture name combinations are listed as
 values for $GOOS and $GOARCH at https://golang.org/doc/install/source#environment,
 and can also be found by running `go tool dist list`.
@@ -526,27 +611,14 @@ While `podman build` is happy to use base images and build images for any
 platform that exists, `RUN` instructions will not be able to succeed without
 the help of emulation provided by packages like `qemu-user-static`.
 
-#### **--pull**
+#### **--pull**=*policy*
 
-When the option is enabled or set explicitly to `true` (with *--pull=true*)
-pull the image from the first registry it is found in as listed in registries.conf.
-Raise an error if the image could not be pulled, even if the image is present locally.
+Pull image policy. The default is **always**.
 
-If the option is disabled (with *--pull=false*), pull the image from the
-registry only if the image is not present locally. Raise an error if the image is not
-in the registries and not present locally.
-
-If the pull option is set to `always` (with *--pull=always*),
-pull the image from the first registry it is found in as listed in registries.conf.
-Raise an error if not found in the registries, even if the image is present locally.
-
-If the pull option is set to `missing` (with *--pull=missing*),
-Pull the image only if it is not present in the local storage.  Raise an error if it
-could neither be found in the local storage or on a registry.
-
-If the pull option is set to `never` (with *--pull=never*),
-Do not pull the image from the registry, use only the local version. Raise an error
-if the image is not present locally.
+- **always**, **true**: Always pull the image and throw an error if the pull fails.
+- **missing**: Pull the image only if it could not be found in the local containers storage.  Throw an error if no image could be found and the pull fails.
+- **never**, **false**: Never pull the image but use the one from the local containers storage.  Throw an error if no image could be found.
+- **newer**: Pull if the image on the registry is newer than the one in the local containers storage.  An image is considered to be newer when the digests are different.  Comparing the time stamps is prone to errors.  Pull errors are suppressed if a local image was found.
 
 #### **--quiet**, **-q**
 
@@ -618,7 +690,7 @@ layers are not squashed.
 Squash all of the new image's layers (including those inherited from a base
 image) into a single new layer.
 
-#### **--ssh**=*default|id[=socket>|[,]*
+#### **--ssh**=*default* | *id[=socket>*
 
 SSH agent socket or keys to expose to the build.
 The socket path can be left empty to use the value of `default=$SSH_AUTH_SOCK`
@@ -646,7 +718,7 @@ Set the target build stage to build.  When building a Containerfile with
 multiple build stages, --target can be used to specify an intermediate build
 stage by name as the final stage for the resulting image. Commands after the target stage will be skipped.
 
-#### **--timestamp** *seconds*
+#### **--timestamp**=*seconds*
 
 Set the create timestamp to seconds since epoch to allow for deterministic
 builds (defaults to current time). By default, the created timestamp is changed
@@ -657,12 +729,14 @@ specified and therefore not changed, allowing the image's sha256 hash to remain 
 same. All files committed to the layers of the image will be created with the
 timestamp.
 
+If the only instruction in a Containerfile is `FROM`, this flag has no effect.
+
 #### **--tls-verify**
 
 Require HTTPS and verify certificates when talking to container registries
 (defaults to true). (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
 
-#### **--ulimit**=*type*=*soft-limit*[:*hard-limit*]
+#### **--ulimit**=*type=soft-limit[:hard-limit]*
 
 Specifies resource limits to apply to processes launched when processing `RUN`
 instructions. This option can be specified multiple times.  Recognized resource
@@ -683,7 +757,7 @@ types include:
   "sigpending": maximum number of pending signals (ulimit -i)
   "stack": maximum stack size (ulimit -s)
 
-#### **--unsetenv** *env*
+#### **--unsetenv**=*env*
 
 Unset environment variables from the final image.
 
@@ -777,19 +851,20 @@ that the UTS namespace in which `podman` itself is being run should be reused,
 or it can be the path to a UTS namespace which is already in use by another
 process.
 
-#### **--variant**=""
+#### **--variant**=*variant*
 
 Set the architecture variant of the image to be built, and that of the base
 image to be pulled, if the build uses one, to the provided value instead of
 using the architecture variant of the build host.
 
-#### **--volume**, **-v**[=*[HOST-DIR:CONTAINER-DIR[:OPTIONS]]*]
+#### **--volume**, **-v**=*[HOST-DIR:CONTAINER-DIR[:OPTIONS]]*
 
-   Create a bind mount. If you specify, ` -v /HOST-DIR:/CONTAINER-DIR`, Podman
-   bind mounts `/HOST-DIR` in the host to `/CONTAINER-DIR` in the Podman
-   container. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
+Create a bind mount. If you specify `-v /HOST-DIR:/CONTAINER-DIR`, Podman
+bind mounts `/HOST-DIR` in the host to `/CONTAINER-DIR` in the Podman
+container. (This option is not available with the remote Podman client,
+including Mac and Windows (excluding WSL2) machines)
 
-   The `OPTIONS` are a comma-separated list and can be: <sup>[[1]](#Footnote1)</sup>
+The `OPTIONS` are a comma-separated list and can be: <sup>[[1]](#Footnote1)</sup>
 
    * [rw|ro]
    * [z|Z|O]

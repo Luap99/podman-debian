@@ -1,6 +1,8 @@
-package e2e
+package e2e_test
 
 import (
+	"strconv"
+
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -20,14 +22,14 @@ var _ = Describe("podman machine set", func() {
 	})
 
 	It("set machine cpus, disk, memory", func() {
-		name := randomString(12)
+		name := randomString()
 		i := new(initMachine)
 		session, err := mb.setName(name).setCmd(i.withImagePath(mb.imagePath)).run()
 		Expect(err).To(BeNil())
 		Expect(session).To(Exit(0))
 
 		set := setMachine{}
-		setSession, err := mb.setName(name).setCmd(set.withCPUs(2).withDiskSize(102).withMemory(4000)).run()
+		setSession, err := mb.setName(name).setCmd(set.withCPUs(2).withDiskSize(102).withMemory(4096)).run()
 		Expect(err).To(BeNil())
 		Expect(setSession).To(Exit(0))
 
@@ -54,10 +56,13 @@ var _ = Describe("podman machine set", func() {
 		Expect(diskSession.outputToString()).To(ContainSubstring("102 GiB"))
 
 		sshMemory := sshMachine{}
-		memorySession, err := mb.setName(name).setCmd(sshMemory.withSSHComand([]string{"cat", "/proc/meminfo", "|", "numfmt", "--field", "2", "--from-unit=Ki", "--to-unit=Mi", "|", "sed", "'s/ kB/M/g'", "|", "grep", "MemTotal"})).run()
+		memorySession, err := mb.setName(name).setCmd(sshMemory.withSSHComand([]string{"cat", "/proc/meminfo", "|", "grep", "-i", "'memtotal'", "|", "grep", "-o", "'[[:digit:]]*'"})).run()
 		Expect(err).To(BeNil())
 		Expect(memorySession).To(Exit(0))
-		Expect(memorySession.outputToString()).To(ContainSubstring("3824"))
+		foundMemory, err := strconv.Atoi(memorySession.outputToString())
+		Expect(err).To(BeNil())
+		Expect(foundMemory).To(BeNumerically(">", 3800000))
+		Expect(foundMemory).To(BeNumerically("<", 4200000))
 
 		// Setting a running machine results in 125
 		runner, err := mb.setName(name).setCmd(set.withCPUs(4)).run()
@@ -66,7 +71,7 @@ var _ = Describe("podman machine set", func() {
 	})
 
 	It("no settings should change if no flags", func() {
-		name := randomString(12)
+		name := randomString()
 		i := new(initMachine)
 		session, err := mb.setName(name).setCmd(i.withImagePath(mb.imagePath)).run()
 		Expect(err).To(BeNil())

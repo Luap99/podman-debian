@@ -2,15 +2,13 @@ package containers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
-	"github.com/containers/common/pkg/cgroups"
 	"github.com/containers/podman/v4/cmd/podman/common"
 	"github.com/containers/podman/v4/cmd/podman/registry"
 	"github.com/containers/podman/v4/cmd/podman/utils"
 	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/containers/podman/v4/pkg/rootless"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -65,15 +63,9 @@ func pause(cmd *cobra.Command, args []string) error {
 	var (
 		errs utils.OutputErrors
 	)
-	if rootless.IsRootless() && !registry.IsRemote() {
-		cgroupv2, _ := cgroups.IsCgroup2UnifiedMode()
-		if !cgroupv2 {
-			return errors.New("pause is not supported for cgroupv1 rootless containers")
-		}
-	}
 
 	if len(args) < 1 && !pauseOpts.All {
-		return errors.Errorf("you must provide at least one container name or id")
+		return errors.New("you must provide at least one container name or id")
 	}
 	responses, err := registry.ContainerEngine().ContainerPause(context.Background(), args, pauseOpts)
 	if err != nil {

@@ -1,6 +1,7 @@
 package containers
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -14,7 +15,6 @@ import (
 	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/containers/podman/v4/utils"
 	"github.com/docker/go-units"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
@@ -105,7 +105,7 @@ func checkStatOptions(cmd *cobra.Command, args []string) error {
 		opts++
 	}
 	if opts > 1 {
-		return errors.Errorf("--all, --latest and containers cannot be used together")
+		return errors.New("--all, --latest and containers cannot be used together")
 	}
 	return nil
 }
@@ -244,10 +244,10 @@ func combineBytesValues(a, b uint64) string {
 
 func outputJSON(stats []containerStats) error {
 	type jstat struct {
-		Id         string `json:"id"` // nolint
+		Id         string `json:"id"` //nolint:revive,stylecheck
 		Name       string `json:"name"`
 		CPUTime    string `json:"cpu_time"`
-		CpuPercent string `json:"cpu_percent"` // nolint
+		CpuPercent string `json:"cpu_percent"` //nolint:revive,stylecheck
 		AverageCPU string `json:"avg_cpu"`
 		MemUsage   string `json:"mem_usage"`
 		MemPerc    string `json:"mem_percent"`

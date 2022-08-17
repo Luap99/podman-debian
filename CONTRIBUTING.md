@@ -70,7 +70,7 @@ $ cd $GOPATH/src/github.com/containers/podman
 
 ### Deal with make
 
-Podman use a Makefile to realize common action like building etc...
+Podman uses a Makefile to realize common actions like building etc...
 
 You can list available actions by using:
 ```shell
@@ -93,7 +93,7 @@ You need install some dependencies before building a binary.
 #### Fedora
 
   ```shell
-  $ sudo dnf install gpgme-devel libseccomp-devel.x86_64 libseccomp-devel.x86_64 systemd-devel
+  $ sudo dnf install gpgme-devel libseccomp-devel.x86_64 systemd-devel
   $ export PKG_CONFIG_PATH="/usr/lib/pkgconfig"
   ```
 
@@ -103,8 +103,8 @@ To test your changes do `make binaries` to generate your binaries.
 
 Your binaries are created inside the `bin/` directory and you can test your changes:
 ```shell
-$ bin/podman -h
-bin/podman -h
+$ bin/podman --help
+bin/podman --help
 NAME:
    podman - manage pods and images
 
@@ -150,7 +150,7 @@ Regardless of the type of PR, all PRs should include:
 * additional testcases. Ideally, they should fail w/o your code change applied.
   (With a few exceptions, CI hooks will block your PR unless your change
   includes files named `*_test.go` or under the `test/` subdirectory. To
-  bypass this block, include the string `[NO TESTS NEEDED]` in your
+  bypass this block, include the string `[NO NEW TESTS NEEDED]` in your
   commit message).
 * documentation changes.
 

@@ -25,6 +25,7 @@ Supported filters:
 | label      | Filter by network with (or without, in the case of label!=[...] is used) the specified labels.   |
 | name       | Filter by network name (accepts `regex`).                                                        |
 | until      | Filter by networks created before given timestamp.                                               |
+| dangling   | Filter by networks with no containers attached.                                                  |
 
 
 The `driver` filter accepts values: `bridge`, `macvlan`, `ipvlan`.
@@ -32,6 +33,8 @@ The `driver` filter accepts values: `bridge`, `macvlan`, `ipvlan`.
 The `label` *filter* accepts two formats. One is the `label`=*key* or `label`=*key*=*value*, which shows images with the specified labels. The other format is the `label!`=*key* or `label!`=*key*=*value*, which shows images without the specified labels.
 
 The `until` *filter* can be Unix timestamps, date formatted timestamps, or Go duration strings (e.g. 10m, 1h30m) computed relative to the machine’s time.
+
+The `dangling` *filter* accepts values `true` or `false`.
 
 #### **--format**=*format*
 
@@ -74,8 +77,8 @@ Display networks
 $ podman network ls
 NETWORK ID    NAME         DRIVER
 88a7120ee19d  podman       bridge
-6dd508dbf8cd  cni-podman6  bridge
-8e35c2cd3bf6  cni-podman5  macvlan
+6dd508dbf8cd  podman6  bridge
+8e35c2cd3bf6  podman5  macvlan
 ```
 
 Display only network names
@@ -98,7 +101,7 @@ List networks with their subnets
 ```
 $ podman network ls --format "{{.Name}}: {{range .Subnets}}{{.Subnet}} {{end}}"
 podman: 10.88.0.0/16
-cni-podman3: 10.89.30.0/24 fde4:f86f:4aab:e68f::/64
+podman3: 10.89.30.0/24 fde4:f86f:4aab:e68f::/64
 macvlan:
 ```
 

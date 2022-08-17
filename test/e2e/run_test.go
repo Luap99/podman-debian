@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/containers/common/pkg/cgroups"
+	"github.com/containers/podman/v4/libpod/define"
 	"github.com/containers/podman/v4/pkg/rootless"
 	. "github.com/containers/podman/v4/test/utils"
 	"github.com/containers/storage/pkg/stringid"
@@ -72,8 +73,30 @@ var _ = Describe("Podman run", func() {
 		Expect(session.OutputToString()).To(ContainSubstring("graphRootMounted=1"))
 	})
 
+	It("podman run from manifest list", func() {
+		session := podmanTest.Podman([]string{"manifest", "create", "localhost/test:latest"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		session = podmanTest.Podman([]string{"build", "-f", "build/Containerfile.with-platform", "--platform", "linux/amd64,linux/arm64", "--manifest", "localhost/test:latest"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		session = podmanTest.Podman([]string{"run", "--platform", "linux/arm64", "localhost/test", "uname", "-a"})
+		session.WaitWithDefaultTimeout()
+		exitCode := session.ExitCode()
+		// CI could either support requested platform or not, if it supports then output should contain `aarch64`
+		// if not run should fail with a very specific error i.e `Exec format error` anything other than this should
+		// be marked as failure of test.
+		if exitCode == 0 {
+			Expect(session.OutputToString()).To(ContainSubstring("aarch64"))
+		} else {
+			Expect(session.ErrorToString()).To(ContainSubstring("Exec format error"))
+		}
+	})
+
 	It("podman run a container based on a complex local image name", func() {
-		imageName := strings.TrimPrefix(nginx, "quay.io/")
+		imageName := strings.TrimPrefix(NGINX_IMAGE, "quay.io/")
 		session := podmanTest.Podman([]string{"run", imageName, "ls"})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ErrorToString()).ToNot(ContainSubstring("Trying to pull"))
@@ -118,10 +141,10 @@ var _ = Describe("Podman run", func() {
 	})
 
 	It("podman run a container based on on a short name with localhost", func() {
-		tag := podmanTest.Podman([]string{"tag", nginx, "localhost/libpod/alpine_nginx:latest"})
+		tag := podmanTest.Podman([]string{"tag", NGINX_IMAGE, "localhost/libpod/alpine_nginx:latest"})
 		tag.WaitWithDefaultTimeout()
 
-		rmi := podmanTest.Podman([]string{"rmi", nginx})
+		rmi := podmanTest.Podman([]string{"rmi", NGINX_IMAGE})
 		rmi.WaitWithDefaultTimeout()
 
 		session := podmanTest.Podman([]string{"run", "libpod/alpine_nginx:latest", "ls"})
@@ -131,10 +154,10 @@ var _ = Describe("Podman run", func() {
 	})
 
 	It("podman container run a container based on on a short name with localhost", func() {
-		tag := podmanTest.Podman([]string{"image", "tag", nginx, "localhost/libpod/alpine_nginx:latest"})
+		tag := podmanTest.Podman([]string{"image", "tag", NGINX_IMAGE, "localhost/libpod/alpine_nginx:latest"})
 		tag.WaitWithDefaultTimeout()
 
-		rmi := podmanTest.Podman([]string{"image", "rm", nginx})
+		rmi := podmanTest.Podman([]string{"image", "rm", NGINX_IMAGE})
 		rmi.WaitWithDefaultTimeout()
 
 		session := podmanTest.Podman([]string{"container", "run", "libpod/alpine_nginx:latest", "ls"})
@@ -175,7 +198,7 @@ var _ = Describe("Podman run", func() {
 
 		lock := GetPortLock("5000")
 		defer lock.Unlock()
-		session := podmanTest.Podman([]string{"run", "-d", "--name", "registry", "-p", "5000:5000", registry, "/entrypoint.sh", "/etc/docker/registry/config.yml"})
+		session := podmanTest.Podman([]string{"run", "-d", "--name", "registry", "-p", "5000:5000", REGISTRY_IMAGE, "/entrypoint.sh", "/etc/docker/registry/config.yml"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
@@ -286,19 +309,20 @@ var _ = Describe("Podman run", func() {
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
 		conData := result.InspectContainerToJSON()
-		Expect(conData[0]).To(HaveField("Path", "/dev/init"))
+		Expect(conData[0]).To(HaveField("Path", define.ContainerInitPath))
 		Expect(conData[0].Config.Annotations).To(HaveKeyWithValue("io.podman.annotations.init", "TRUE"))
 	})
 
 	It("podman run a container with --init and --init-path", func() {
-		session := podmanTest.Podman([]string{"run", "--name", "test", "--init", "--init-path", "/usr/libexec/podman/catatonit", ALPINE, "ls"})
+		// Also bind-mount /dev (#14251).
+		session := podmanTest.Podman([]string{"run", "-v", "/dev:/dev", "--name", "test", "--init", "--init-path", "/usr/libexec/podman/catatonit", ALPINE, "ls"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		result := podmanTest.Podman([]string{"inspect", "test"})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
 		conData := result.InspectContainerToJSON()
-		Expect(conData[0]).To(HaveField("Path", "/dev/init"))
+		Expect(conData[0]).To(HaveField("Path", define.ContainerInitPath))
 		Expect(conData[0].Config.Annotations).To(HaveKeyWithValue("io.podman.annotations.init", "TRUE"))
 	})
 
@@ -690,8 +714,7 @@ USER bin`, BB)
 	})
 
 	It("podman run device-read-bps test", func() {
-		SkipIfRootless("FIXME: requested cgroup controller `io` is not available")
-		SkipIfRootlessCgroupsV1("Setting device-read-bps not supported on cgroupv1 for rootless users")
+		SkipIfRootless("Setting device-read-bps not supported for rootless users")
 
 		var session *PodmanSessionIntegration
 
@@ -709,8 +732,7 @@ USER bin`, BB)
 	})
 
 	It("podman run device-write-bps test", func() {
-		SkipIfRootless("FIXME: requested cgroup controller `io` is not available")
-		SkipIfRootlessCgroupsV1("Setting device-write-bps not supported on cgroupv1 for rootless users")
+		SkipIfRootless("Setting device-write-bps not supported for rootless users")
 
 		var session *PodmanSessionIntegration
 
@@ -727,8 +749,7 @@ USER bin`, BB)
 	})
 
 	It("podman run device-read-iops test", func() {
-		SkipIfRootless("FIXME: requested cgroup controller `io` is not available")
-		SkipIfRootlessCgroupsV1("Setting device-read-iops not supported on cgroupv1 for rootless users")
+		SkipIfRootless("Setting device-read-iops not supported for rootless users")
 		var session *PodmanSessionIntegration
 
 		if CGROUPSV2 {
@@ -745,8 +766,7 @@ USER bin`, BB)
 	})
 
 	It("podman run device-write-iops test", func() {
-		SkipIfRootless("FIXME: requested cgroup controller `io` is not available")
-		SkipIfRootlessCgroupsV1("Setting device-write-iops not supported on cgroupv1 for rootless users")
+		SkipIfRootless("Setting device-write-iops not supported for rootless users")
 		var session *PodmanSessionIntegration
 
 		if CGROUPSV2 {
@@ -1017,7 +1037,7 @@ echo -n %s >%s
 	})
 
 	It("podman run with built-in volume image", func() {
-		session := podmanTest.Podman([]string{"run", "--rm", redis, "ls"})
+		session := podmanTest.Podman([]string{"run", "--rm", REDIS_IMAGE, "ls"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
@@ -1082,7 +1102,7 @@ USER mail`, BB)
 		Expect(session).Should(Exit(0))
 		ctrID := session.OutputToString()
 
-		// check that the read only option works
+		// check that the read-only option works
 		session = podmanTest.Podman([]string{"run", "--volumes-from", ctrID + ":ro", ALPINE, "touch", mountpoint + "abc.txt"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(1))
@@ -1106,13 +1126,13 @@ USER mail`, BB)
 		Expect(session).Should(Exit(125))
 		Expect(session.ErrorToString()).To(ContainSubstring("cannot set :z more than once in mount options"))
 
-		// create new read only volume
+		// create new read-only volume
 		session = podmanTest.Podman([]string{"create", "--volume", vol + ":" + mountpoint + ":ro", ALPINE, "cat", mountpoint + filename})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		ctrID = session.OutputToString()
 
-		// check if the original volume was mounted as read only that --volumes-from also mount it as read only
+		// check if the original volume was mounted as read-only that --volumes-from also mount it as read-only
 		session = podmanTest.Podman([]string{"run", "--volumes-from", ctrID, ALPINE, "touch", mountpoint + "abc.txt"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(1))
@@ -1120,7 +1140,7 @@ USER mail`, BB)
 	})
 
 	It("podman run --volumes-from flag with built-in volumes", func() {
-		session := podmanTest.Podman([]string{"create", redis, "sh"})
+		session := podmanTest.Podman([]string{"create", REDIS_IMAGE, "sh"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		ctrID := session.OutputToString()
@@ -1214,6 +1234,7 @@ USER mail`, BB)
 	})
 
 	It("podman run --mount type=bind,bind-nonrecursive", func() {
+		// crun: mount `/` to `/host`: Invalid argument
 		SkipIfRootless("FIXME: rootless users are not allowed to mount bind-nonrecursive (Could this be a Kernel bug?")
 		session := podmanTest.Podman([]string{"run", "--mount", "type=bind,bind-nonrecursive,slave,src=/,target=/host", fedoraMinimal, "findmnt", "-nR", "/host"})
 		session.WaitWithDefaultTimeout()
@@ -1635,7 +1656,7 @@ USER mail`, BB)
 		session = podmanTest.Podman([]string{"run", "--umask", "9999", "--rm", ALPINE, "sh", "-c", "umask"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).To(ExitWithError())
-		Expect(session.ErrorToString()).To(ContainSubstring("Invalid umask"))
+		Expect(session.ErrorToString()).To(ContainSubstring("invalid umask"))
 	})
 
 	It("podman run makes workdir from image", func() {
@@ -1677,24 +1698,24 @@ WORKDIR /madethis`, BB)
 	})
 
 	It("podman run container with --pull missing and only pull once", func() {
-		session := podmanTest.Podman([]string{"run", "--pull", "missing", cirros, "ls"})
+		session := podmanTest.Podman([]string{"run", "--pull", "missing", CIRROS_IMAGE, "ls"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(session.ErrorToString()).To(ContainSubstring("Trying to pull"))
 
-		session = podmanTest.Podman([]string{"run", "--pull", "missing", cirros, "ls"})
+		session = podmanTest.Podman([]string{"run", "--pull", "missing", CIRROS_IMAGE, "ls"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(session.ErrorToString()).ToNot(ContainSubstring("Trying to pull"))
 	})
 
 	It("podman run container with --pull missing should pull image multiple times", func() {
-		session := podmanTest.Podman([]string{"run", "--pull", "always", cirros, "ls"})
+		session := podmanTest.Podman([]string{"run", "--pull", "always", CIRROS_IMAGE, "ls"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(session.ErrorToString()).To(ContainSubstring("Trying to pull"))
 
-		session = podmanTest.Podman([]string{"run", "--pull", "always", cirros, "ls"})
+		session = podmanTest.Podman([]string{"run", "--pull", "always", CIRROS_IMAGE, "ls"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(session.ErrorToString()).To(ContainSubstring("Trying to pull"))

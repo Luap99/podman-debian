@@ -2,6 +2,7 @@ package pods
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -13,7 +14,6 @@ import (
 	"github.com/containers/podman/v4/libpod/define"
 	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/containers/podman/v4/pkg/specgenutil"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
@@ -93,6 +93,9 @@ func removePods(namesOrIDs []string, rmOptions entities.PodRmOptions, printIDs b
 
 	responses, err := registry.ContainerEngine().PodRm(context.Background(), namesOrIDs, rmOptions)
 	if err != nil {
+		if rmOptions.Force && strings.Contains(err.Error(), define.ErrNoSuchPod.Error()) {
+			return nil
+		}
 		setExitCode(err)
 		return err
 	}
@@ -104,19 +107,17 @@ func removePods(namesOrIDs []string, rmOptions entities.PodRmOptions, printIDs b
 				fmt.Println(r.Id)
 			}
 		} else {
+			if rmOptions.Force && strings.Contains(r.Err.Error(), define.ErrNoSuchPod.Error()) {
+				continue
+			}
 			setExitCode(r.Err)
 			errs = append(errs, r.Err)
 		}
 	}
 	return errs.PrintErrors()
 }
-
 func setExitCode(err error) {
-	cause := errors.Cause(err)
-	switch {
-	case cause == define.ErrNoSuchPod:
-		registry.SetExitCode(1)
-	case strings.Contains(cause.Error(), define.ErrNoSuchPod.Error()):
+	if errors.Is(err, define.ErrNoSuchPod) || strings.Contains(err.Error(), define.ErrNoSuchPod.Error()) {
 		registry.SetExitCode(1)
 	}
 }

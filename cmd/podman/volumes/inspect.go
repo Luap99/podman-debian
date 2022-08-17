@@ -1,12 +1,13 @@
 package volumes
 
 import (
+	"errors"
+
 	"github.com/containers/podman/v4/cmd/podman/common"
 	"github.com/containers/podman/v4/cmd/podman/inspect"
 	"github.com/containers/podman/v4/cmd/podman/registry"
 	"github.com/containers/podman/v4/libpod/define"
 	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
@@ -48,6 +49,6 @@ func volumeInspect(cmd *cobra.Command, args []string) error {
 	if (inspectOpts.All && len(args) > 0) || (!inspectOpts.All && len(args) < 1) {
 		return errors.New("provide one or more volume names or use --all")
 	}
-	inspectOpts.Type = inspect.VolumeType
+	inspectOpts.Type = common.VolumeType
 	return inspect.Inspect(args, *inspectOpts)
 }

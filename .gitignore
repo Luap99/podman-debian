@@ -4,6 +4,7 @@
 /build/
 /conmon/
 contrib/spec/podman.spec
+contrib/systemd/*/*.service
 *.coverprofile
 coverprofile
 /.coverage
@@ -33,10 +34,10 @@ release.txt
 /test/goecho/goecho
 /test/version/version
 /test/testvol/testvol
+/test/tools/build
 .vscode*
 tags
 result
 # Necessary to prevent hack/tree-status.sh false-positive
 /*runner_stats.log
-.install.goimports
 .generate-bindings

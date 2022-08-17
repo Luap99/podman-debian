@@ -4,18 +4,28 @@
 podman\-pod\-create - Create a new pod
 
 ## SYNOPSIS
-**podman pod create** [*options*]
+**podman pod create** [*options*] [*name*]
 
 ## DESCRIPTION
 
 Creates an empty pod, or unit of multiple containers, and prepares it to have
-containers added to it. The pod id is printed to STDOUT. You can then use
-**podman create --pod `<pod_id|pod_name>` ...** to add containers to the pod, and
-**podman pod start `<pod_id|pod_name>`** to start the pod.
+containers added to it. The pod can be created with a specific name. If a name
+is not given a random name is generated. The pod id is printed to STDOUT. You
+can then use **podman create --pod `<pod_id|pod_name>` ...** to add containers
+to the pod, and **podman pod start `<pod_id|pod_name>`** to start the pod.
+
+The operator can identify a pod in three ways:
+UUID long identifier (“f78375b1c487e03c9438c729345e54db9d20cfa2ac1fc3494b6eb60872e74778”)
+UUID short identifier (“f78375b1c487”)
+Name (“jonah”)
+
+podman generates a UUID for each pod, and if a name is not assigned
+to the container with **--name** then a random string name will be generated
+for it. The name is useful any place you need to identify a pod.
 
 ## OPTIONS
 
-#### **--add-host**=_host_:_ip_
+#### **--add-host**=*host:ip*
 
 Add a custom host-to-IP mapping (host:ip)
 
@@ -42,7 +52,7 @@ Examples of the List Format:
 0-4,9           # bits 0, 1, 2, 3, 4, and 9 set
 0-2,7,12-14     # bits 0, 1, 2, 7, 12, 13, and 14 set
 
-#### **--device**=_host-device_[**:**_container-device_][**:**_permissions_]
+#### **--device**=*host-device[:container-device][:permissions]*
 
 Add a host device to the pod. Optional *permissions* parameter
 can be used to specify device permissions. It is a combination of
@@ -50,7 +60,7 @@ can be used to specify device permissions. It is a combination of
 
 Example: **--device=/dev/sdc:/dev/xvdc:rwm**.
 
-Note: if _host_device_ is a symbolic link then it will be resolved first.
+Note: if *host-device* is a symbolic link then it will be resolved first.
 The pod will only store the major and minor numbers of the host device.
 
 Note: the pod implements devices by storing the initial configuration passed by the user and recreating the device on each container added to the pod.
@@ -75,6 +85,15 @@ Set custom DNS options in the /etc/resolv.conf file that will be shared between 
 
 Set custom DNS search domains in the /etc/resolv.conf file that will be shared between all containers in the pod.
 
+#### **--exit-policy**=**continue** | *stop*
+
+Set the exit policy of the pod when the last container exits.  Supported policies are:
+
+| Exit Policy        | Description                                                                 |
+| ------------------ | --------------------------------------------------------------------------- |
+| *continue*         | The pod continues running when the last container exits. Used by default.   |
+| *stop*             | The pod is stopped when the last container exits. Used in `play kube`.      |
+
 #### **--gidmap**=*container_gid:host_gid:amount*
 
 GID map for the user namespace. Using this flag will run the container with user namespace enabled. It conflicts with the `--userns` and `--subgidname` flags.
@@ -83,7 +102,7 @@ GID map for the user namespace. Using this flag will run the container with user
 
 Print usage statement.
 
-#### **--hostname**=name
+#### **--hostname**=*name*
 
 Set a hostname to the pod
 
@@ -125,7 +144,7 @@ The address must be within the network's IPv6 address pool.
 
 To specify multiple static IPv6 addresses per pod, set multiple networks using the **--network** option with a static IPv6 address specified for each using the `ip6` mode for that option.
 
-#### **--label**=*label*, **-l**
+#### **--label**, **-l**=*label*
 
 Add metadata to a pod (e.g., --label com.example.key=value).
 
@@ -145,8 +164,18 @@ according to RFC4862.
 
 To specify multiple static MAC addresses per pod, set multiple networks using the **--network** option with a static MAC address specified for each using the `mac` mode for that option.
 
+#### **--memory**, **-m**=*limit*
 
-#### **--name**=*name*, **-n**
+Memory limit (format: `<number>[<unit>]`, where unit = b (bytes), k (kibibytes), m (mebibytes), or g (gibibytes))
+
+Constrains the memory available to a container. If the host
+supports swap memory, then the **-m** memory setting can be larger than physical
+RAM. If a limit of 0 is specified (not using **-m**), the container's memory is
+not limited. The actual limit may be rounded up to a multiple of the operating
+system's page size (the value would be very large, that's millions of trillions).
+
+
+#### **--name**, **-n**=*name*
 
 Assign a name to the pod.
 
@@ -185,9 +214,12 @@ Valid _mode_ values are:
 
 #### **--network-alias**=*alias*
 
-Add a network-scoped alias for the pod, setting the alias for all networks that the pod joins. To set a name only for a specific network, use the alias option as described under the **--network** option.
-Network aliases work only with the bridge networking mode. This option can be specified multiple times.
-NOTE: A container will only have access to aliases on the first network that it joins. This is a limitation that will be removed in a later release.
+Add a network-scoped alias for the pod, setting the alias for all networks that the container joins. To set a
+name only for a specific network, use the alias option as described under the **--network** option.
+If the network has DNS enabled (`podman network inspect -f {{.DNSEnabled}} <name>`),
+these aliases can be used for name resolution on the given network. This option can be specified multiple times.
+NOTE: When using CNI a pod will only have access to aliases on the first network that it joins. This limitation does
+not exist with netavark/aardvark-dns.
 
 #### **--no-hosts**
 
@@ -208,11 +240,11 @@ Set the PID mode for the pod. The default is to create a private PID namespace f
 
 Write the pod ID to the file.
 
-#### **--publish**, **-p**=[[_ip_:][_hostPort_]:]_containerPort_[/_protocol_]
+#### **--publish**, **-p**=*[[ip:][hostPort]:]containerPort[/protocol]*
 
 Publish a container's port, or range of ports, within this pod to the host.
 
-Both hostPort and containerPort can be specified as a range of ports.
+Both *hostPort* and *containerPort* can be specified as a range of ports.
 When specifying ranges for both, the number of container ports in the
 range must match the number of host ports in the range.
 
@@ -264,29 +296,26 @@ Note: Labeling can be disabled for all pods/containers by setting label=false in
 - `proc-opts=OPTIONS` : Comma-separated list of options to use for the /proc mount. More details for the
   possible mount options are specified in the **proc(5)** man page.
 
-- **unmask**=_ALL_ or _/path/1:/path/2_, or shell expanded paths (/proc/*): Paths to unmask separated by a colon. If set to **ALL**, it will unmask all the paths that are masked or made read only by default.
-  The default masked paths are **/proc/acpi, /proc/kcore, /proc/keys, /proc/latency_stats, /proc/sched_debug, /proc/scsi, /proc/timer_list, /proc/timer_stats, /sys/firmware, and /sys/fs/selinux.**  The default paths that are read only are **/proc/asound, /proc/bus, /proc/fs, /proc/irq, /proc/sys, /proc/sysrq-trigger, /sys/fs/cgroup**.
+- **unmask**=_ALL_ or _/path/1:/path/2_, or shell expanded paths (/proc/*): Paths to unmask separated by a colon. If set to **ALL**, it will unmask all the paths that are masked or made read-only by default.
+  The default masked paths are **/proc/acpi, /proc/kcore, /proc/keys, /proc/latency_stats, /proc/sched_debug, /proc/scsi, /proc/timer_list, /proc/timer_stats, /sys/firmware, and /sys/fs/selinux.**  The default paths that are read-only are **/proc/asound, /proc/bus, /proc/fs, /proc/irq, /proc/sys, /proc/sysrq-trigger, /sys/fs/cgroup**.
 
 Note: Labeling can be disabled for all containers by setting label=false in the **containers.conf** (`/etc/containers/containers.conf` or `$HOME/.config/containers/containers.conf`) file.
 
 #### **--share**=*namespace*
 
-A comma-separated list of kernel namespaces to share. If none or "" is specified, no namespaces will be shared. The namespaces to choose from are cgroup, ipc, net, pid, uts.
-
-The operator can identify a pod in three ways:
-UUID long identifier (“f78375b1c487e03c9438c729345e54db9d20cfa2ac1fc3494b6eb60872e74778”)
-UUID short identifier (“f78375b1c487”)
-Name (“jonah”)
-
-podman generates a UUID for each pod, and if a name is not assigned
-to the container with **--name** then a random string name will be generated
-for it. The name is useful any place you need to identify a pod.
+A comma-separated list of kernel namespaces to share. If none or "" is specified, no namespaces will be shared and the infra container will not be created unless expiclity specified via **--infra=true**. The namespaces to choose from are cgroup, ipc, net, pid, uts. If the option is prefixed with a "+" then the namespace is appended to the default list, otherwise it replaces the default list. Defaults matches Kubernetes default (ipc, net, uts)
 
 #### **--share-parent**
 
 This boolean determines whether or not all containers entering the pod will use the pod as their cgroup parent. The default value of this flag is true. If you are looking to share the cgroup namespace rather than a cgroup parent in a pod, use **--share**
 
 Note: This options conflict with **--share=cgroup** since that would set the pod as the cgroup parent but enter the container into the same cgroupNS as the infra container.
+
+#### **--shm-size**=*size*
+
+Size of `/dev/shm` (format: `<number>[<unit>]`, where unit = b (bytes), k (kibibytes), m (mebibytes), or g (gibibytes))
+If the unit is omitted, the system uses bytes. If the size is omitted, the system uses `64m`.
+When size is `0`, there is no limit on the amount of memory used for IPC by the pod. This option conflicts with **--ipc=host** when running containers.
 
 #### **--subgidname**=*name*
 
@@ -296,7 +325,8 @@ Name for GID map from the `/etc/subgid` file. Using this flag will run the conta
 
 Name for UID map from the `/etc/subuid` file. Using this flag will run the container with user namespace enabled. This flag conflicts with `--userns` and `--uidmap`.
 
-#### **--sysctl**=_name_=_value_
+
+#### **--sysctl**=*name=value*
 
 Configure namespace kernel parameters for all containers in the pod.
 
@@ -318,7 +348,7 @@ For the network namespace, only sysctls beginning with net.\* are allowed.
 
 Note: if the network namespace is not shared within the pod, these sysctls are not allowed.
 
-#### **--uidmap**=*container_uid*:*from_uid*:*amount*
+#### **--uidmap**=*container_uid:from_uid:amount*
 
 Run the container in a new user namespace using the supplied mapping. This
 option conflicts with the **--userns** and **--subuidname** options. This
@@ -350,11 +380,19 @@ Valid _mode_ values are:
 
   - *host*: run in the user namespace of the caller. The processes running in the container will have the same privileges on the host as any other process launched by the calling user (default).
 
-  - *keep-id*: creates a user namespace where the current rootless user's UID:GID are mapped to the same values in the container. This option is ignored for containers created by the root user.
+  - *keep-id*: creates a user namespace where the current rootless user's UID:GID are mapped to the same values in the container. This option is not allowed for containers created by the root user.
 
-  - *nomap*: creates a user namespace where the current rootless user's UID:GID are not mapped into the container. This option is ignored for containers created by the root user.
+  - *nomap*: creates a user namespace where the current rootless user's UID:GID are not mapped into the container. This option is not allowed for containers created by the root user.
 
-#### **--volume**, **-v**[=*[[SOURCE-VOLUME|HOST-DIR:]CONTAINER-DIR[:OPTIONS]]*]
+#### **--uts**=*mode*
+
+Set the UTS namespace mode for the pod. The following values are supported:
+
+- **host**: use the host's UTS namespace inside the pod.
+- **private**: create a new namespace for the pod (default).
+- **ns:[path]**: run the pod in the given existing UTS namespace.
+
+#### **--volume**, **-v**=*[[SOURCE-VOLUME|HOST-DIR:]CONTAINER-DIR[:OPTIONS]]*
 
 Create a bind mount. If you specify, ` -v /HOST-DIR:/CONTAINER-DIR`, Podman
 bind mounts `/HOST-DIR` in the host to `/CONTAINER-DIR` in the Podman
@@ -513,7 +551,7 @@ change propagation properties of source mount. Say `/` is source mount for
 Note: if the user only has access rights via a group, accessing the volume
 from inside a rootless pod will fail.
 
-#### **--volumes-from**[=*CONTAINER*[:*OPTIONS*]]
+#### **--volumes-from**=*container[:options]]*
 
 Mount volumes from the specified container(s). Used to share volumes between
 containers and pods. The *options* is a comma-separated list with the following available elements:
@@ -552,9 +590,11 @@ that data on the target.
 ```
 $ podman pod create --name test
 
+$ podman pod create mypod
+
 $ podman pod create --infra=false
 
-$ podman pod create --infra-command /top
+$ podman pod create --infra-command /top toppod
 
 $ podman pod create --publish 8443:443
 
@@ -566,7 +606,7 @@ $ podman pod create --network net1:ip=10.89.1.5 --network net2:ip=10.89.10.10
 ```
 
 ## SEE ALSO
-**[podman(1)](podman.1.md)**, **[podman-pod(1)](podman-pod.1.md)**, **containers.conf(1)**
+**[podman(1)](podman.1.md)**, **[podman-pod(1)](podman-pod.1.md)**, **[podman-play-kube(1)](podman-play-kube.1.md)**, **containers.conf(1)**
 
 
 ## HISTORY

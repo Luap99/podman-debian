@@ -4,7 +4,7 @@
 package machine
 
 import (
-	errors2 "errors"
+	"errors"
 	"io/ioutil"
 	"net"
 	"net/url"
@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/containers/storage/pkg/homedir"
-	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
 
@@ -55,6 +54,7 @@ type Provider interface {
 	IsValidVMName(name string) (bool, error)
 	CheckExclusiveActiveVM() (bool, string, error)
 	RemoveAndCleanMachines() error
+	VMType() string
 }
 
 type RemoteConnectionType string
@@ -73,6 +73,7 @@ type Download struct {
 	Arch                  string
 	Artifact              string
 	CompressionType       string
+	CacheDir              string
 	Format                string
 	ImageName             string
 	LocalPath             string
@@ -139,16 +140,18 @@ type VM interface {
 type DistributionDownload interface {
 	HasUsableCache() (bool, error)
 	Get() *Download
+	CleanCache() error
 }
 type InspectInfo struct {
-	ConfigPath VMFile
-	Created    time.Time
-	Image      ImageConfig
-	LastUp     time.Time
-	Name       string
-	Resources  ResourceConfig
-	SSHConfig  SSHConfig
-	State      Status
+	ConfigPath     VMFile
+	ConnectionInfo ConnectionConfig
+	Created        time.Time
+	Image          ImageConfig
+	LastUp         time.Time
+	Name           string
+	Resources      ResourceConfig
+	SSHConfig      SSHConfig
+	State          Status
 }
 
 func (rc RemoteConnectionType) MakeSSHURL(host, path, port, userName string) url.URL {
@@ -171,6 +174,19 @@ func (rc RemoteConnectionType) MakeSSHURL(host, path, port, userName string) url
 	return uri
 }
 
+// GetCacheDir returns the dir where VM images are downladed into when pulled
+func GetCacheDir(vmType string) (string, error) {
+	dataDir, err := GetDataDir(vmType)
+	if err != nil {
+		return "", err
+	}
+	cacheDir := filepath.Join(dataDir, "cache")
+	if _, err := os.Stat(cacheDir); !errors.Is(err, os.ErrNotExist) {
+		return cacheDir, nil
+	}
+	return cacheDir, os.MkdirAll(cacheDir, 0755)
+}
+
 // GetDataDir returns the filepath where vm images should
 // live for podman-machine.
 func GetDataDir(vmType string) (string, error) {
@@ -179,7 +195,7 @@ func GetDataDir(vmType string) (string, error) {
 		return "", err
 	}
 	dataDir := filepath.Join(dataDirPrefix, vmType)
-	if _, err := os.Stat(dataDir); !os.IsNotExist(err) {
+	if _, err := os.Stat(dataDir); !errors.Is(err, os.ErrNotExist) {
 		return dataDir, nil
 	}
 	mkdirErr := os.MkdirAll(dataDir, 0755)
@@ -204,7 +220,7 @@ func GetConfDir(vmType string) (string, error) {
 		return "", err
 	}
 	confDir := filepath.Join(confDirPrefix, vmType)
-	if _, err := os.Stat(confDir); !os.IsNotExist(err) {
+	if _, err := os.Stat(confDir); !errors.Is(err, os.ErrNotExist) {
 		return confDir, nil
 	}
 	mkdirErr := os.MkdirAll(confDir, 0755)
@@ -254,11 +270,11 @@ func (m *VMFile) GetPath() string {
 // the actual path
 func (m *VMFile) Delete() error {
 	if m.Symlink != nil {
-		if err := os.Remove(*m.Symlink); err != nil && !errors2.Is(err, os.ErrNotExist) {
+		if err := os.Remove(*m.Symlink); err != nil && !errors.Is(err, os.ErrNotExist) {
 			logrus.Errorf("unable to remove symlink %q", *m.Symlink)
 		}
 	}
-	if err := os.Remove(m.Path); err != nil && !errors2.Is(err, os.ErrNotExist) {
+	if err := os.Remove(m.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return nil
@@ -272,14 +288,14 @@ func (m *VMFile) Read() ([]byte, error) {
 // NewMachineFile is a constructor for VMFile
 func NewMachineFile(path string, symlink *string) (*VMFile, error) {
 	if len(path) < 1 {
-		return nil, errors2.New("invalid machine file path")
+		return nil, errors.New("invalid machine file path")
 	}
 	if symlink != nil && len(*symlink) < 1 {
-		return nil, errors2.New("invalid symlink path")
+		return nil, errors.New("invalid symlink path")
 	}
 	mf := VMFile{Path: path}
 	if symlink != nil && len(path) > maxSocketPathLength {
-		if err := mf.makeSymlink(symlink); err != nil && !errors2.Is(err, os.ErrExist) {
+		if err := mf.makeSymlink(symlink); err != nil && !errors.Is(err, os.ErrExist) {
 			return nil, err
 		}
 	}
@@ -289,13 +305,13 @@ func NewMachineFile(path string, symlink *string) (*VMFile, error) {
 // makeSymlink for macOS creates a symlink in $HOME/.podman/
 // for a machinefile like a socket
 func (m *VMFile) makeSymlink(symlink *string) error {
-	homedir, err := os.UserHomeDir()
+	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return err
 	}
-	sl := filepath.Join(homedir, ".podman", *symlink)
+	sl := filepath.Join(homeDir, ".podman", *symlink)
 	// make the symlink dir and throw away if it already exists
-	if err := os.MkdirAll(filepath.Dir(sl), 0700); err != nil && !errors2.Is(err, os.ErrNotExist) {
+	if err := os.MkdirAll(filepath.Dir(sl), 0700); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	m.Symlink = &sl
@@ -337,4 +353,10 @@ type SSHConfig struct {
 	Port int
 	// RemoteUsername of the vm user
 	RemoteUsername string
+}
+
+// ConnectionConfig contains connections like sockets, etc.
+type ConnectionConfig struct {
+	// PodmanSocket is the exported podman service socket
+	PodmanSocket *VMFile `json:"PodmanSocket"`
 }

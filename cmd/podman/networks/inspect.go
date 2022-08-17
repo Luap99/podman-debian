@@ -13,8 +13,8 @@ var (
 	networkinspectDescription = `Inspect network`
 	networkinspectCommand     = &cobra.Command{
 		Use:               "inspect [options] NETWORK [NETWORK...]",
-		Short:             "Displays the raw CNI network configuration for one or more networks.",
-		Long:              networkinspectDescription,
+		Long:              "Displays the network configuration for one or more networks.",
+		Short:             networkinspectDescription,
 		RunE:              networkInspect,
 		Example:           `podman network inspect podman`,
 		Args:              cobra.MinimumNArgs(1),
@@ -37,6 +37,6 @@ func init() {
 }
 
 func networkInspect(_ *cobra.Command, args []string) error {
-	inspectOpts.Type = inspect.NetworkType
+	inspectOpts.Type = common.NetworkType
 	return inspect.Inspect(args, *inspectOpts)
 }

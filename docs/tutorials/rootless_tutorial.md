@@ -19,11 +19,11 @@ or for all commands by changing the value for the "Default OCI runtime" in the `
 
 ### Installing Podman
 
-For installing Podman, please see the [installation instructions](https://github.com/containers/podman/blob/main/install.md).
+For installing Podman, please see the [installation instructions](https://podman.io/getting-started/installation).
 
 ### Building Podman
 
-For building Podman, please see the [installation instructions](https://github.com/containers/podman/blob/main/install.md#building-from-scratch).
+For building Podman, please see the [build instructions](https://podman.io/getting-started/installation#building-from-scratch).
 
 ### Install `slirp4netns`
 
@@ -81,10 +81,10 @@ If you update either `/etc/subuid` or `/etc/subgid`, you need to stop all the ru
 Rather than updating the files directly, the `usermod` program can be used to assign UIDs and GIDs to a user.
 
 ```
-usermod --add-subuids 200000-201000 --add-subgids 200000-201000 johndoe
+usermod --add-subuids 100000-165535 --add-subgids 100000-165535 johndoe
 grep johndoe /etc/subuid /etc/subgid
-/etc/subuid:johndoe:200000:1001
-/etc/subgid:johndoe:200000:1001
+/etc/subuid:johndoe:100000:65536
+/etc/subgid:johndoe:100000:65536
 ```
 
 ### Enable unprivileged `ping`

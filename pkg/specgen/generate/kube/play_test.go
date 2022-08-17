@@ -2,10 +2,7 @@ package kube
 
 import (
 	"encoding/json"
-	"fmt"
-	"io/ioutil"
 	"math"
-	"os"
 	"runtime"
 	"strconv"
 	"testing"
@@ -31,7 +28,7 @@ func createSecrets(t *testing.T, d string) *secrets.SecretsManager {
 		data, err := json.Marshal(s.Data)
 		assert.NoError(t, err)
 
-		_, err = secretsManager.Store(s.ObjectMeta.Name, data, driver, driverOpts)
+		_, err = secretsManager.Store(s.ObjectMeta.Name, data, driver, driverOpts, nil)
 		assert.NoError(t, err)
 	}
 
@@ -39,9 +36,7 @@ func createSecrets(t *testing.T, d string) *secrets.SecretsManager {
 }
 
 func TestEnvVarsFrom(t *testing.T) {
-	d, err := ioutil.TempDir("", "secrets")
-	assert.NoError(t, err)
-	defer os.RemoveAll(d)
+	d := t.TempDir()
 	secretsManager := createSecrets(t, d)
 
 	tests := []struct {
@@ -191,9 +186,7 @@ func TestEnvVarsFrom(t *testing.T) {
 }
 
 func TestEnvVarValue(t *testing.T) {
-	d, err := ioutil.TempDir("", "secrets")
-	assert.NoError(t, err)
-	defer os.RemoveAll(d)
+	d := t.TempDir()
 	secretsManager := createSecrets(t, d)
 	stringNumCPUs := strconv.Itoa(runtime.NumCPU())
 
@@ -783,8 +776,7 @@ func TestEnvVarValue(t *testing.T) {
 			if test.expected == nilString {
 				assert.Nil(t, result)
 			} else {
-				fmt.Println(*result, test.expected)
-				assert.Equal(t, &(test.expected), result)
+				assert.Equal(t, test.expected, *result)
 			}
 		})
 	}

@@ -3,6 +3,7 @@ package libpod
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -13,7 +14,6 @@ import (
 	"github.com/containers/podman/v4/pkg/specgen"
 	"github.com/containers/podman/v4/pkg/specgen/generate"
 	"github.com/containers/podman/v4/pkg/specgenutil"
-	"github.com/pkg/errors"
 )
 
 // CreateContainer takes a specgenerator and makes a container. It returns
@@ -31,10 +31,13 @@ func CreateContainer(w http.ResponseWriter, r *http.Request) {
 		ContainerNetworkConfig: specgen.ContainerNetworkConfig{
 			UseImageHosts: conf.Containers.NoHosts,
 		},
+		ContainerSecurityConfig: specgen.ContainerSecurityConfig{
+			Umask: conf.Containers.Umask,
+		},
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&sg); err != nil {
-		utils.Error(w, http.StatusInternalServerError, errors.Wrap(err, "Decode()"))
+		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("decode(): %w", err))
 		return
 	}
 	if sg.Passwd == nil {

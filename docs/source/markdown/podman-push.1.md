@@ -65,7 +65,7 @@ Please refer to containers-certs.d(5) for details. (This option is not available
 Compress tarball image layers when pushing to a directory using the 'dir' transport. (default is same compression type, compressed or uncompressed, as source)
 Note: This flag can only be set when using the **dir** transport
 
-#### **--compression-format** *COMPRESSION*
+#### **--compression-format**=**gzip** | *zstd* | *zstd:chunked*
 
 Specifies the compression format to use.  Supported values are: `gzip`, `zstd` and `zstd:chunked`.  The default is `gzip`.
 
@@ -75,7 +75,7 @@ The [username[:password]] to use to authenticate with the registry if required.
 If one or both values are not supplied, a command line prompt will appear and the
 value can be entered.  The password is entered without echo.
 
-#### **--digestfile** *Digestfile*
+#### **--digestfile**=*Digestfile*
 
 After copying the image, write the digest of the resulting image to the file.  (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
 
@@ -95,11 +95,19 @@ When writing the output image, suppress progress output
 
 #### **--remove-signatures**
 
-Discard any pre-existing signatures in the image. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
+Discard any pre-existing signatures in the image.
 
 #### **--sign-by**=*key*
 
-Add a signature at the destination using the specified key. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
+Add a “simple signing” signature at the destination using the specified key. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
+
+#### **--sign-by-sigstore-private-key**=*path*
+
+Add a sigstore signature at the destination using a private key at the specified path. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
+
+#### **--sign-passphrase-file**=*path*
+
+If signing the image (using either **--sign-by** or **--sign-by-sigstore-private-key**), read the passphrase to use from the specified path.
 
 #### **--tls-verify**
 

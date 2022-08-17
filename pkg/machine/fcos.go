@@ -13,11 +13,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/coreos/stream-metadata-go/fedoracoreos"
 	"github.com/coreos/stream-metadata-go/release"
 	"github.com/coreos/stream-metadata-go/stream"
-	"github.com/pkg/errors"
 
 	digest "github.com/opencontainers/go-digest"
 	"github.com/sirupsen/logrus"
@@ -54,7 +54,7 @@ func NewFcosDownloader(vmType, vmName, imageStream string) (DistributionDownload
 		return nil, err
 	}
 
-	dataDir, err := GetDataDir(vmType)
+	cacheDir, err := GetCacheDir(vmType)
 	if err != nil {
 		return nil, err
 	}
@@ -63,15 +63,20 @@ func NewFcosDownloader(vmType, vmName, imageStream string) (DistributionDownload
 		Download: Download{
 			Arch:      getFcosArch(),
 			Artifact:  artifact,
+			CacheDir:  cacheDir,
 			Format:    Format,
 			ImageName: imageName,
-			LocalPath: filepath.Join(dataDir, imageName),
+			LocalPath: filepath.Join(cacheDir, imageName),
 			Sha256sum: info.Sha256Sum,
 			URL:       url,
 			VMName:    vmName,
 		},
 	}
-	fcd.Download.LocalUncompressedFile = fcd.getLocalUncompressedName()
+	dataDir, err := GetDataDir(vmType)
+	if err != nil {
+		return nil, err
+	}
+	fcd.Download.LocalUncompressedFile = fcd.getLocalUncompressedFile(dataDir)
 	return fcd, nil
 }
 
@@ -109,6 +114,13 @@ func (f FcosDownload) HasUsableCache() (bool, error) {
 	return sum.Encoded() == f.Sha256sum, nil
 }
 
+func (f FcosDownload) CleanCache() error {
+	// Set cached image to expire after 2 weeks
+	// FCOS refreshes around every 2 weeks, assume old images aren't needed
+	expire := 14 * 24 * time.Hour
+	return removeImageAfterExpire(f.CacheDir, expire)
+}
+
 func getFcosArch() string {
 	var arch string
 	// TODO fill in more architectures
@@ -139,7 +151,7 @@ func getStreamURL(streamType string) url2.URL {
 
 // This should get Exported and stay put as it will apply to all fcos downloads
 // getFCOS parses fedoraCoreOS's stream and returns the image download URL and the release version
-func GetFCOSDownload(imageStream string) (*FcosDownloadInfo, error) { //nolint:staticcheck
+func GetFCOSDownload(imageStream string) (*FcosDownloadInfo, error) {
 	var (
 		fcosstable stream.Stream
 		altMeta    release.Release
@@ -156,7 +168,7 @@ func GetFCOSDownload(imageStream string) (*FcosDownloadInfo, error) { //nolint:s
 	case "stable":
 		streamType = fedoracoreos.StreamStable
 	default:
-		return nil, errors.Errorf("invalid stream %s: valid streams are `testing` and `stable`", imageStream)
+		return nil, fmt.Errorf("invalid stream %s: valid streams are `testing` and `stable`", imageStream)
 	}
 	streamurl := getStreamURL(streamType)
 	resp, err := http.Get(streamurl.String())

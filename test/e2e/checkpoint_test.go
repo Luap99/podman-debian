@@ -23,8 +23,29 @@ import (
 
 func getRunString(input []string) []string {
 	// CRIU does not work with seccomp correctly on RHEL7 : seccomp=unconfined
-	runString := []string{"run", "-it", "--security-opt", "seccomp=unconfined", "-d", "--ip", GetRandomIPAddress()}
+	runString := []string{"run", "--security-opt", "seccomp=unconfined", "-d", "--ip", GetRandomIPAddress()}
 	return append(runString, input...)
+}
+
+// FIXME FIXME FIXME: workaround for #14653, please remove this function
+// and all calls to it once that bug is fixed.
+func fixmeFixme14653(podmanTest *PodmanTestIntegration, cid string) {
+	if !IsRemote() {
+		// Race condition only affects podman-remote
+		return
+	}
+
+	// Wait for container to truly go away
+	for i := 0; i < 5; i++ {
+		ps := podmanTest.Podman([]string{"container", "exists", cid})
+		ps.WaitWithDefaultTimeout()
+		if ps.ExitCode() == 1 {
+			// yay, it's gone
+			return
+		}
+		time.Sleep(time.Second)
+	}
+	// Fall through. Container still exists, but return anyway.
 }
 
 var _ = Describe("Podman checkpoint", func() {
@@ -201,6 +222,26 @@ var _ = Describe("Podman checkpoint", func() {
 		Expect(result).Should(Exit(0))
 		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(1))
 		Expect(podmanTest.GetContainerStatus()).To(ContainSubstring("Up"))
+
+		// Restore a container which name is equal to a image name (#15055)
+		localRunString = getRunString([]string{"--name", "alpine", "quay.io/libpod/alpine:latest", "top"})
+		session = podmanTest.Podman(localRunString)
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		result = podmanTest.Podman([]string{"container", "checkpoint", "alpine"})
+		result.WaitWithDefaultTimeout()
+
+		Expect(result).Should(Exit(0))
+		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(1))
+		Expect(podmanTest.GetContainerStatus()).To(ContainSubstring("Exited"))
+
+		result = podmanTest.Podman([]string{"container", "restore", "alpine"})
+		result.WaitWithDefaultTimeout()
+
+		Expect(result).Should(Exit(0))
+		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(2))
+		Expect(podmanTest.GetContainerStatus()).To(ContainSubstring("Up"))
 	})
 
 	It("podman pause a checkpointed container by id", func() {
@@ -318,7 +359,7 @@ var _ = Describe("Podman checkpoint", func() {
 	It("podman checkpoint container with established tcp connections", func() {
 		// Broken on Ubuntu.
 		SkipIfNotFedora()
-		localRunString := getRunString([]string{redis})
+		localRunString := getRunString([]string{REDIS_IMAGE})
 		session := podmanTest.Podman(localRunString)
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
@@ -478,6 +519,7 @@ var _ = Describe("Podman checkpoint", func() {
 		// As the container has been started with '--rm' it will be completely
 		// cleaned up after checkpointing.
 		Expect(result).Should(Exit(0))
+		fixmeFixme14653(podmanTest, cid)
 		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(0))
 		Expect(podmanTest.NumberOfContainers()).To(Equal(0))
 
@@ -530,6 +572,7 @@ var _ = Describe("Podman checkpoint", func() {
 		// As the container has been started with '--rm' it will be completely
 		// cleaned up after checkpointing.
 		Expect(result).Should(Exit(0))
+		fixmeFixme14653(podmanTest, cid)
 		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(0))
 		Expect(podmanTest.NumberOfContainers()).To(Equal(0))
 
@@ -548,6 +591,7 @@ var _ = Describe("Podman checkpoint", func() {
 		// As the container has been started with '--rm' it will be completely
 		// cleaned up after checkpointing.
 		Expect(result).Should(Exit(0))
+		fixmeFixme14653(podmanTest, cid)
 		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(0))
 		Expect(podmanTest.NumberOfContainers()).To(Equal(0))
 
@@ -566,6 +610,7 @@ var _ = Describe("Podman checkpoint", func() {
 		// As the container has been started with '--rm' it will be completely
 		// cleaned up after checkpointing.
 		Expect(result).Should(Exit(0))
+		fixmeFixme14653(podmanTest, cid)
 		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(0))
 		Expect(podmanTest.NumberOfContainers()).To(Equal(0))
 
@@ -584,6 +629,7 @@ var _ = Describe("Podman checkpoint", func() {
 		// As the container has been started with '--rm' it will be completely
 		// cleaned up after checkpointing.
 		Expect(result).Should(Exit(0))
+		fixmeFixme14653(podmanTest, cid)
 		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(0))
 		Expect(podmanTest.NumberOfContainers()).To(Equal(0))
 
@@ -645,6 +691,7 @@ var _ = Describe("Podman checkpoint", func() {
 		result.WaitWithDefaultTimeout()
 
 		Expect(result).Should(Exit(0))
+		fixmeFixme14653(podmanTest, cid)
 		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(0))
 		Expect(podmanTest.NumberOfContainers()).To(Equal(0))
 
@@ -694,6 +741,7 @@ var _ = Describe("Podman checkpoint", func() {
 		result.WaitWithDefaultTimeout()
 
 		Expect(result).Should(Exit(0))
+		fixmeFixme14653(podmanTest, cid)
 		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(0))
 		Expect(podmanTest.NumberOfContainers()).To(Equal(0))
 
@@ -735,6 +783,7 @@ var _ = Describe("Podman checkpoint", func() {
 		result.WaitWithDefaultTimeout()
 
 		Expect(result).Should(Exit(0))
+		fixmeFixme14653(podmanTest, cid)
 		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(0))
 		Expect(podmanTest.NumberOfContainers()).To(Equal(0))
 
@@ -772,6 +821,7 @@ var _ = Describe("Podman checkpoint", func() {
 		result.WaitWithDefaultTimeout()
 
 		Expect(result).Should(Exit(0))
+		fixmeFixme14653(podmanTest, cid)
 		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(0))
 		Expect(podmanTest.NumberOfContainers()).To(Equal(0))
 
@@ -821,6 +871,7 @@ var _ = Describe("Podman checkpoint", func() {
 		// As the container has been started with '--rm' it will be completely
 		// cleaned up after checkpointing.
 		Expect(result).Should(Exit(0))
+		fixmeFixme14653(podmanTest, cid)
 		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(0))
 		Expect(podmanTest.NumberOfContainers()).To(Equal(0))
 
@@ -890,6 +941,7 @@ var _ = Describe("Podman checkpoint", func() {
 		result = podmanTest.Podman([]string{"container", "checkpoint", cid, "-e", checkpointFileName})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
+		fixmeFixme14653(podmanTest, cid)
 		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(0))
 		Expect(podmanTest.NumberOfContainers()).To(Equal(0))
 
@@ -1020,7 +1072,7 @@ var _ = Describe("Podman checkpoint", func() {
 	It("podman checkpoint and restore container with different port mappings", func() {
 		randomPort, err := utils.GetRandomPort()
 		Expect(err).ShouldNot(HaveOccurred())
-		localRunString := getRunString([]string{"-p", fmt.Sprintf("%d:6379", randomPort), "--rm", redis})
+		localRunString := getRunString([]string{"-p", fmt.Sprintf("%d:6379", randomPort), "--rm", REDIS_IMAGE})
 		session := podmanTest.Podman(localRunString)
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
@@ -1044,6 +1096,7 @@ var _ = Describe("Podman checkpoint", func() {
 		// As the container has been started with '--rm' it will be completely
 		// cleaned up after checkpointing.
 		Expect(result).Should(Exit(0))
+		fixmeFixme14653(podmanTest, cid)
 		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(0))
 		Expect(podmanTest.NumberOfContainers()).To(Equal(0))
 
@@ -1140,6 +1193,7 @@ var _ = Describe("Podman checkpoint", func() {
 			// As the container has been started with '--rm' it will be completely
 			// cleaned up after checkpointing.
 			Expect(result).To(Exit(0))
+			fixmeFixme14653(podmanTest, cid)
 			Expect(podmanTest.NumberOfContainersRunning()).To(Equal(1))
 			Expect(podmanTest.NumberOfContainers()).To(Equal(1))
 
@@ -1252,6 +1306,7 @@ var _ = Describe("Podman checkpoint", func() {
 		// As the container has been started with '--rm' it will be completely
 		// cleaned up after checkpointing.
 		Expect(result).Should(Exit(0))
+		fixmeFixme14653(podmanTest, cid)
 		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(0))
 		Expect(podmanTest.NumberOfContainers()).To(Equal(0))
 
@@ -1296,6 +1351,7 @@ var _ = Describe("Podman checkpoint", func() {
 		// As the container has been started with '--rm' it will be completely
 		// cleaned up after checkpointing.
 		Expect(result).Should(Exit(0))
+		fixmeFixme14653(podmanTest, cid)
 		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(0))
 		Expect(podmanTest.NumberOfContainers()).To(Equal(0))
 
@@ -1324,11 +1380,11 @@ var _ = Describe("Podman checkpoint", func() {
 	})
 
 	It("podman checkpoint and restore containers with --print-stats", func() {
-		session1 := podmanTest.Podman(getRunString([]string{redis}))
+		session1 := podmanTest.Podman(getRunString([]string{REDIS_IMAGE}))
 		session1.WaitWithDefaultTimeout()
 		Expect(session1).Should(Exit(0))
 
-		session2 := podmanTest.Podman(getRunString([]string{redis, "top"}))
+		session2 := podmanTest.Podman(getRunString([]string{REDIS_IMAGE, "top"}))
 		session2.WaitWithDefaultTimeout()
 		Expect(session2).Should(Exit(0))
 
@@ -1416,11 +1472,8 @@ var _ = Describe("Podman checkpoint", func() {
 	})
 
 	It("podman checkpoint and restore container with --file-locks", func() {
-		if !strings.Contains(podmanTest.OCIRuntime, "runc") {
-			// TODO: Enable test for crun when this feature has been released
-			// https://github.com/containers/crun/pull/783
-			Skip("FIXME: requires crun >= 1.4")
-		}
+		// Broken on Ubuntu in this branch.
+		SkipIfNotFedora()
 		localRunString := getRunString([]string{"--name", "test_name", ALPINE, "flock", "test.lock", "sleep", "100"})
 		session := podmanTest.Podman(localRunString)
 		session.WaitWithDefaultTimeout()
@@ -1489,6 +1542,7 @@ var _ = Describe("Podman checkpoint", func() {
 		// As the container has been started with '--rm' it will be completely
 		// cleaned up after checkpointing.
 		Expect(result).Should(Exit(0))
+		fixmeFixme14653(podmanTest, cid)
 		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(0))
 		Expect(podmanTest.NumberOfContainers()).To(Equal(0))
 
@@ -1516,6 +1570,93 @@ var _ = Describe("Podman checkpoint", func() {
 
 		// Remove exported checkpoint
 		os.Remove(fileName)
+	})
+
+	It("podman checkpoint container with export and verify non-default runtime", func() {
+		SkipIfRemote("podman-remote does not support --runtime flag")
+		// This test triggers the edge case where:
+		// 1. Default runtime is crun
+		// 2. Container is created with runc
+		// 3. Checkpoint without setting --runtime into archive
+		// 4. Restore without setting --runtime from archive
+		// It should be expected that podman identifies runtime
+		// from the checkpoint archive.
+
+		// Prevent --runtime arg from being set to force using default
+		// runtime unless explicitly set through passed args.
+		preservedMakeOptions := podmanTest.PodmanMakeOptions
+		podmanTest.PodmanMakeOptions = func(args []string, noEvents, noCache bool) []string {
+			defaultArgs := preservedMakeOptions(args, noEvents, noCache)
+			for i := range args {
+				// Runtime is set explicitly, so we should keep --runtime arg.
+				if args[i] == "--runtime" {
+					return defaultArgs
+				}
+			}
+			updatedArgs := make([]string, 0)
+			for i := 0; i < len(defaultArgs); i++ {
+				// Remove --runtime arg, letting podman fall back to its default
+				if defaultArgs[i] == "--runtime" {
+					i++
+				} else {
+					updatedArgs = append(updatedArgs, defaultArgs[i])
+				}
+			}
+			return updatedArgs
+		}
+
+		for _, runtime := range []string{"runc", "crun"} {
+			if err := exec.Command(runtime, "--help").Run(); err != nil {
+				Skip(fmt.Sprintf("%s not found in PATH; this test requires both runc and crun", runtime))
+			}
+		}
+
+		// Detect default runtime
+		session := podmanTest.Podman([]string{"info", "--format", "{{.Host.OCIRuntime.Name}}"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		if defaultRuntime := session.OutputToString(); defaultRuntime != "crun" {
+			Skip(fmt.Sprintf("Default runtime is %q; this test requires crun to be default", defaultRuntime))
+		}
+
+		// Force non-default runtime "runc"
+		localRunString := getRunString([]string{"--runtime", "runc", "--rm", ALPINE, "top"})
+		session = podmanTest.Podman(localRunString)
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(1))
+		cid := session.OutputToString()
+
+		session = podmanTest.Podman([]string{"inspect", "--format", "{{.OCIRuntime}}", cid})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToString()).To(Equal("runc"))
+
+		checkpointExportPath := "/tmp/checkpoint-" + cid + ".tar.gz"
+
+		session = podmanTest.Podman([]string{"container", "checkpoint", cid, "-e", checkpointExportPath})
+		session.WaitWithDefaultTimeout()
+		// As the container has been started with '--rm' it will be completely
+		// cleaned up after checkpointing.
+		Expect(session).Should(Exit(0))
+		fixmeFixme14653(podmanTest, cid)
+		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(0))
+		Expect(podmanTest.NumberOfContainers()).To(Equal(0))
+
+		session = podmanTest.Podman([]string{"container", "restore", "-i", checkpointExportPath})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(1))
+		Expect(podmanTest.GetContainerStatus()).To(ContainSubstring("Up"))
+
+		// The restored container should have the same runtime as the original container
+		session = podmanTest.Podman([]string{"inspect", "--format", "{{.OCIRuntime}}", cid})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToString()).To(Equal("runc"))
+
+		// Remove exported checkpoint
+		os.Remove(checkpointExportPath)
 	})
 
 	It("podman checkpoint container with export and try to change the runtime", func() {
@@ -1573,6 +1714,7 @@ var _ = Describe("Podman checkpoint", func() {
 		// As the container has been started with '--rm' it will be completely
 		// cleaned up after checkpointing.
 		Expect(result).Should(Exit(0))
+		fixmeFixme14653(podmanTest, cid)
 		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(0))
 		Expect(podmanTest.NumberOfContainers()).To(Equal(0))
 
@@ -1651,6 +1793,7 @@ var _ = Describe("Podman checkpoint", func() {
 		// As the container has been started with '--rm' it will be completely
 		// cleaned up after checkpointing.
 		Expect(result).Should(Exit(0))
+		fixmeFixme14653(podmanTest, cid)
 		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(0))
 		Expect(podmanTest.NumberOfContainers()).To(Equal(0))
 

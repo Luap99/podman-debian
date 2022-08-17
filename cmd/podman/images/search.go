@@ -1,6 +1,7 @@
 package images
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -12,7 +13,6 @@ import (
 	"github.com/containers/podman/v4/cmd/podman/common"
 	"github.com/containers/podman/v4/cmd/podman/registry"
 	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
@@ -83,8 +83,7 @@ func searchFlags(cmd *cobra.Command) {
 
 	filterFlagName := "filter"
 	flags.StringSliceVarP(&searchOptions.Filters, filterFlagName, "f", []string{}, "Filter output based on conditions provided (default [])")
-	// TODO add custom filter function
-	_ = cmd.RegisterFlagCompletionFunc(filterFlagName, completion.AutocompleteNone)
+	_ = cmd.RegisterFlagCompletionFunc(filterFlagName, common.AutocompleteImageSearchFilters)
 
 	formatFlagName := "format"
 	flags.StringVar(&searchOptions.Format, formatFlagName, "", "Change the output format to JSON or a Go template")
@@ -112,11 +111,11 @@ func imageSearch(cmd *cobra.Command, args []string) error {
 	case 1:
 		searchTerm = args[0]
 	default:
-		return errors.Errorf("search requires exactly one argument")
+		return errors.New("search requires exactly one argument")
 	}
 
 	if searchOptions.ListTags && len(searchOptions.Filters) != 0 {
-		return errors.Errorf("filters are not applicable to list tags result")
+		return errors.New("filters are not applicable to list tags result")
 	}
 
 	// TLS verification in c/image is controlled via a `types.OptionalBool`
@@ -156,7 +155,7 @@ func imageSearch(cmd *cobra.Command, args []string) error {
 	switch {
 	case searchOptions.ListTags:
 		if len(searchOptions.Filters) != 0 {
-			return errors.Errorf("filters are not applicable to list tags result")
+			return errors.New("filters are not applicable to list tags result")
 		}
 		if isJSON {
 			listTagsEntries := buildListTagsJSON(searchReport)
@@ -182,7 +181,7 @@ func imageSearch(cmd *cobra.Command, args []string) error {
 	if rpt.RenderHeaders {
 		hdrs := report.Headers(entities.ImageSearchReport{}, nil)
 		if err := rpt.Execute(hdrs); err != nil {
-			return errors.Wrapf(err, "failed to write report column headers")
+			return fmt.Errorf("failed to write report column headers: %w", err)
 		}
 	}
 	return rpt.Execute(searchReport)

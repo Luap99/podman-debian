@@ -322,7 +322,7 @@ EOF
     is "$output" "" "output from pod create should be empty"
 
     run_podman 125 pod create --infra-name "$infra_name"
-    assert "$output" =~ "^Error: .*: the container name \"$infra_name\" is already in use by .* You have to remove that container to be able to reuse that name.: that name is already in use" \
+    assert "$output" =~ "^Error: .*: the container name \"$infra_name\" is already in use by .* You have to remove that container to be able to reuse that name: that name is already in use" \
            "Trying to create two pods with same infra-name"
 
     run_podman pod rm -f $pod_name
@@ -332,11 +332,18 @@ EOF
 @test "podman pod create --share" {
     local pod_name="$(random_string 10 | tr A-Z a-z)"
     run_podman 125 pod create --share bogus --name $pod_name
-    is "$output" ".*Invalid kernel namespace to share: bogus. Options are: cgroup, ipc, net, pid, uts or none" \
+    is "$output" ".*invalid kernel namespace to share: bogus. Options are: cgroup, ipc, net, pid, uts or none" \
        "pod test for bogus --share option"
     run_podman pod create --share ipc --name $pod_name
+    run_podman pod inspect $pod_name --format "{{.SharedNamespaces}}"
+    is "$output" "[ipc]"
     run_podman run --rm --pod $pod_name --hostname foobar $IMAGE hostname
     is "$output" "foobar" "--hostname should work with non share UTS namespace"
+    run_podman pod create --share +pid --replace --name $pod_name
+    run_podman pod inspect $pod_name --format "{{.SharedNamespaces}}"
+    for ns in uts pid ipc net; do
+        is "$output" ".*$ns"
+    done
 }
 
 @test "podman pod create --pod new:$POD --hostname" {
@@ -387,26 +394,134 @@ EOF
     is "$output" "false" "Default network sharing should be false"
     run_podman pod rm test
 
-    run_podman pod create --name test --share ipc  --network private
+    run_podman pod create --share ipc  --network private test
     run_podman pod inspect test --format {{.InfraConfig.HostNetwork}}
     is "$output" "false" "Private network sharing with only ipc should be false"
     run_podman pod rm test
 
-    run_podman pod create --name test --share net  --network private
-    run_podman pod inspect test --format {{.InfraConfig.HostNetwork}}
+    local name="$(random_string 10 | tr A-Z a-z)"
+    run_podman pod create --name $name --share net  --network private
+    run_podman pod inspect $name --format {{.InfraConfig.HostNetwork}}
     is "$output" "false" "Private network sharing with only net should be false"
-    run_podman pod rm test
 
-    run_podman pod create --name test --share net --network host
-    run_podman pod inspect test --format {{.InfraConfig.HostNetwork}}
+    run_podman pod create --share net --network host --replace $name
+    run_podman pod inspect $name --format {{.InfraConfig.HostNetwork}}
     is "$output" "true" "Host network sharing with only net should be true"
-    run_podman pod rm test
+    run_podman pod rm $name
 
     run_podman pod create --name test --share ipc --network host
     run_podman pod inspect test --format {{.InfraConfig.HostNetwork}}
     is "$output" "true" "Host network sharing with only ipc should be true"
     run_podman pod rm test
+}
 
+@test "pod exit policies" {
+    # Test setting exit policies
+    run_podman pod create
+    podID="$output"
+    run_podman pod inspect $podID --format "{{.ExitPolicy}}"
+    is "$output" "continue" "default exit policy"
+    run_podman pod rm $podID
+
+    run_podman pod create --exit-policy stop
+    podID="$output"
+    run_podman pod inspect $podID --format "{{.ExitPolicy}}"
+    is "$output" "stop" "custom exit policy"
+    run_podman pod rm $podID
+
+    run_podman 125 pod create --exit-policy invalid
+    is "$output" "Error: .*error running pod create option: invalid pod exit policy: \"invalid\"" "invalid exit policy"
+
+    # Test exit-policy behaviour
+    run_podman pod create --exit-policy continue
+    podID="$output"
+    run_podman run --pod $podID $IMAGE true
+    run_podman pod inspect $podID --format "{{.State}}"
+    _ensure_pod_state $podID Degraded
+    run_podman pod rm $podID
+
+    run_podman pod create --exit-policy stop
+    podID="$output"
+    run_podman run --pod $podID $IMAGE true
+    run_podman pod inspect $podID --format "{{.State}}"
+    _ensure_pod_state $podID Exited
+    run_podman pod rm $podID
+}
+
+@test "pod exit policies - play kube" {
+    # play-kube sets the exit policy to "stop"
+    local name="$(random_string 10 | tr A-Z a-z)"
+
+    kubeFile="apiVersion: v1
+kind: Pod
+metadata:
+  name: $name-pod
+spec:
+  containers:
+  - command:
+    - \"true\"
+    image: $IMAGE
+    name: ctr
+  restartPolicy: OnFailure"
+
+    echo "$kubeFile" > $PODMAN_TMPDIR/test.yaml
+    run_podman play kube $PODMAN_TMPDIR/test.yaml
+    run_podman pod inspect $name-pod --format "{{.ExitPolicy}}"
+    is "$output" "stop" "custom exit policy"
+    _ensure_pod_state $name-pod Exited
+    run_podman pod rm $name-pod
+}
+
+@test "pod resource limits" {
+    skip_if_remote "resource limits only implemented on non-remote"
+    if is_rootless; then
+        skip "only meaningful for rootful"
+    fi
+
+    local name1="resources1"
+    run_podman --cgroup-manager=systemd pod create --name=$name1 --cpus=5 --memory=10m
+    run_podman --cgroup-manager=systemd pod start $name1
+    run_podman pod inspect --format '{{.CgroupPath}}' $name1
+    local path1="$output"
+    local actual1=$(< /sys/fs/cgroup/$path1/cpu.max)
+    is "$actual1" "500000 100000" "resource limits set properly"
+    local actual2=$(< /sys/fs/cgroup/$path1/memory.max)
+    is "$actual2" "10485760" "resource limits set properly"
+    run_podman pod --cgroup-manager=systemd rm -f $name1
+
+    local name2="resources2"
+    run_podman --cgroup-manager=cgroupfs pod create --cpus=5 --memory=10m --name=$name2
+    run_podman --cgroup-manager=cgroupfs pod start $name2
+    run_podman pod inspect --format '{{.CgroupPath}}' $name2
+    local path2="$output"
+    local actual2=$(< /sys/fs/cgroup/$path2/cpu.max)
+    is "$actual2" "500000 100000" "resource limits set properly"
+    local actual2=$(< /sys/fs/cgroup/$path2/memory.max)
+    is "$actual2" "10485760" "resource limits set properly"
+    run_podman --cgroup-manager=cgroupfs pod rm $name2
+}
+
+@test "podman pod ps doesn't race with pod rm" {
+    # create a few pods
+    for i in {0..10}; do
+        run_podman pod create
+    done
+
+    # and delete them
+    $PODMAN pod rm -a &
+
+    # pod ps should not fail while pods are deleted
+    run_podman pod ps -q
+
+    # wait for pod rm -a
+    wait
+}
+
+@test "podman pod rm --force bogus" {
+    run_podman 1 pod rm bogus
+    is "$output" "Error: .*bogus.*: no such pod" "Should print error"
+    run_podman pod rm --force bogus
+    is "$output" "" "Should print no output"
 }
 
 # vim: filetype=sh

@@ -2,6 +2,7 @@ package pods
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -16,7 +17,6 @@ import (
 	"github.com/containers/podman/v4/cmd/podman/containers"
 	"github.com/containers/podman/v4/cmd/podman/parse"
 	"github.com/containers/podman/v4/cmd/podman/registry"
-	"github.com/containers/podman/v4/cmd/podman/validate"
 	"github.com/containers/podman/v4/libpod/define"
 	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/containers/podman/v4/pkg/errorhandling"
@@ -24,7 +24,6 @@ import (
 	"github.com/containers/podman/v4/pkg/specgenutil"
 	"github.com/containers/podman/v4/pkg/util"
 	"github.com/docker/docker/pkg/parsers"
-	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -36,12 +35,14 @@ var (
   You can then start it at any time with the  podman pod start <pod_id> command. The pod will be created with the initial state 'created'.`
 
 	createCommand = &cobra.Command{
-		Use:               "create [options]",
-		Args:              validate.NoArgs,
+		Use:               "create [options] [NAME]",
+		Args:              cobra.MaximumNArgs(1),
 		Short:             "Create a new empty pod",
 		Long:              podCreateDescription,
 		RunE:              create,
 		ValidArgsFunction: completion.AutocompleteNone,
+		Example: `podman pod create
+  podman pod create --label foo=bar mypod`,
 	}
 )
 
@@ -63,6 +64,7 @@ func init() {
 	})
 	flags := createCommand.Flags()
 	flags.SetInterspersed(false)
+	common.DefineCreateDefaults(&infraOptions)
 	common.DefineCreateFlags(createCommand, &infraOptions, true, false)
 	common.DefineNetFlags(createCommand)
 
@@ -71,6 +73,10 @@ func init() {
 	nameFlagName := "name"
 	flags.StringVarP(&createOptions.Name, nameFlagName, "n", "", "Assign a name to the pod")
 	_ = createCommand.RegisterFlagCompletionFunc(nameFlagName, completion.AutocompleteNone)
+
+	policyFlag := "exit-policy"
+	flags.StringVarP(&createOptions.ExitPolicy, policyFlag, "", string(containerConfig.Engine.PodExitPolicy), "Behaviour when the last container exits")
+	_ = createCommand.RegisterFlagCompletionFunc(policyFlag, common.AutocompletePodExitPolicy)
 
 	infraImageFlagName := "infra-image"
 	var defInfraImage string
@@ -111,20 +117,32 @@ func create(cmd *cobra.Command, args []string) error {
 		rawImageName string
 		podName      string
 	)
+	if len(args) > 0 {
+		if len(createOptions.Name) > 0 {
+			return fmt.Errorf("cannot specify --name and NAME at the same time")
+		}
+		createOptions.Name = args[0]
+	}
 	labelFile = infraOptions.LabelFile
 	labels = infraOptions.Label
 	createOptions.Labels, err = parse.GetAllLabels(labelFile, labels)
 	if err != nil {
-		return errors.Wrapf(err, "unable to process labels")
+		return fmt.Errorf("unable to process labels: %w", err)
 	}
 
 	if cmd.Flag("infra-image").Changed {
 		imageName = infraImage
 	}
 	img := imageName
+
+	if !cmd.Flag("infra").Changed && (share == "none" || share == "") {
+		// we do not want an infra container when not sharing namespaces
+		createOptions.Infra = false
+	}
+
 	if !createOptions.Infra {
 		if cmd.Flag("no-hosts").Changed {
-			return fmt.Errorf("cannot specify no-hosts without an infra container")
+			return fmt.Errorf("cannot specify --no-hosts without an infra container")
 		}
 		flags := cmd.Flags()
 		createOptions.Net, err = common.NetFlagsToNetOptions(nil, *flags)
@@ -153,9 +171,14 @@ func create(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if strings.Contains(share, "cgroup") && shareParent {
-			return errors.Wrapf(define.ErrInvalidArg, "cannot define the pod as the cgroup parent at the same time as joining the infra container's cgroupNS")
+			return fmt.Errorf("cannot define the pod as the cgroup parent at the same time as joining the infra container's cgroupNS: %w", define.ErrInvalidArg)
 		}
-		createOptions.Share = strings.Split(share, ",")
+
+		if strings.HasPrefix(share, "+") {
+			createOptions.Share = append(createOptions.Share, strings.Split(specgen.DefaultKernelNamespaces, ",")...)
+			share = share[1:]
+		}
+		createOptions.Share = append(createOptions.Share, strings.Split(share, ",")...)
 		createOptions.ShareParent = &shareParent
 		if cmd.Flag("infra-command").Changed {
 			// Only send content to server side if user changed defaults
@@ -176,10 +199,10 @@ func create(cmd *cobra.Command, args []string) error {
 	if cmd.Flag("pod-id-file").Changed {
 		podIDFD, err = util.OpenExclusiveFile(podIDFile)
 		if err != nil && os.IsExist(err) {
-			return errors.Errorf("pod id file exists. Ensure another pod is not using it or delete %s", podIDFile)
+			return fmt.Errorf("pod id file exists. Ensure another pod is not using it or delete %s", podIDFile)
 		}
 		if err != nil {
-			return errors.Errorf("opening pod-id-file %s", podIDFile)
+			return fmt.Errorf("opening pod-id-file %s", podIDFile)
 		}
 		defer errorhandling.CloseQuiet(podIDFD)
 		defer errorhandling.SyncQuiet(podIDFD)
@@ -187,7 +210,7 @@ func create(cmd *cobra.Command, args []string) error {
 
 	if len(createOptions.Net.PublishPorts) > 0 {
 		if !createOptions.Infra {
-			return errors.Errorf("you must have an infra container to publish port bindings to the host")
+			return fmt.Errorf("you must have an infra container to publish port bindings to the host")
 		}
 	}
 
@@ -214,7 +237,7 @@ func create(cmd *cobra.Command, args []string) error {
 	ret, err := parsers.ParseUintList(copy)
 	copy = ""
 	if err != nil {
-		return errors.Wrapf(err, "could not parse list")
+		return fmt.Errorf("could not parse list: %w", err)
 	}
 	var vals []int
 	for ind, val := range ret {
@@ -260,6 +283,7 @@ func create(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+
 		podSpec.Volumes = podSpec.InfraContainerSpec.Volumes
 		podSpec.ImageVolumes = podSpec.InfraContainerSpec.ImageVolumes
 		podSpec.OverlayVolumes = podSpec.InfraContainerSpec.OverlayVolumes
@@ -284,7 +308,7 @@ func create(cmd *cobra.Command, args []string) error {
 
 	if len(podIDFile) > 0 {
 		if err = ioutil.WriteFile(podIDFile, []byte(response.Id), 0644); err != nil {
-			return errors.Wrapf(err, "failed to write pod ID to file")
+			return fmt.Errorf("failed to write pod ID to file: %w", err)
 		}
 	}
 	fmt.Println(response.Id)

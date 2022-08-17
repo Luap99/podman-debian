@@ -1,6 +1,7 @@
 package pods
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -16,7 +17,6 @@ import (
 	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/containers/podman/v4/pkg/errorhandling"
 	"github.com/containers/podman/v4/pkg/util"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
@@ -98,6 +98,12 @@ func init() {
 	)
 	_ = kubeCmd.RegisterFlagCompletionFunc(logOptFlagName, common.AutocompleteLogOpt)
 
+	usernsFlagName := "userns"
+	flags.StringVar(&kubeOptions.Userns, usernsFlagName, os.Getenv("PODMAN_USERNS"),
+		"User namespace to use",
+	)
+	_ = kubeCmd.RegisterFlagCompletionFunc(usernsFlagName, common.AutocompleteUserNamespace)
+
 	flags.BoolVar(&kubeOptions.NoHosts, "no-hosts", false, "Do not create /etc/hosts within the pod's containers, instead use the version from the image")
 	flags.BoolVarP(&kubeOptions.Quiet, "quiet", "q", false, "Suppress output information when pulling images")
 	flags.BoolVar(&kubeOptions.TLSVerifyCLI, "tls-verify", true, "Require HTTPS and verify certificates when contacting registries")
@@ -132,6 +138,15 @@ func init() {
 		contextDirFlagName := "context-dir"
 		flags.StringVar(&kubeOptions.ContextDir, contextDirFlagName, "", "Path to top level of context directory")
 		_ = kubeCmd.RegisterFlagCompletionFunc(contextDirFlagName, completion.AutocompleteDefault)
+
+		// NOTE: The service-container flag is marked as hidden as it
+		// is purely designed for running play-kube in systemd units.
+		// It is not something users should need to know or care about.
+		//
+		// Having a flag rather than an env variable is cleaner.
+		serviceFlagName := "service-container"
+		flags.BoolVar(&kubeOptions.ServiceContainer, serviceFlagName, false, "Starts a service container before all pods")
+		_ = flags.MarkHidden("service-container")
 
 		flags.StringVar(&kubeOptions.SignaturePolicy, "signature-policy", "", "`Pathname` of signature policy file (not usually used)")
 
@@ -173,14 +188,14 @@ func kube(cmd *cobra.Command, args []string) error {
 	for _, annotation := range annotations {
 		splitN := strings.SplitN(annotation, "=", 2)
 		if len(splitN) > 2 {
-			return errors.Errorf("annotation %q must include an '=' sign", annotation)
+			return fmt.Errorf("annotation %q must include an '=' sign", annotation)
 		}
 		if kubeOptions.Annotations == nil {
 			kubeOptions.Annotations = make(map[string]string)
 		}
 		annotation := splitN[1]
 		if len(annotation) > define.MaxKubeAnnotation {
-			return errors.Errorf("annotation exceeds maximum size, %d, of kubernetes annotation: %s", define.MaxKubeAnnotation, annotation)
+			return fmt.Errorf("annotation exceeds maximum size, %d, of kubernetes annotation: %s", define.MaxKubeAnnotation, annotation)
 		}
 		kubeOptions.Annotations[splitN[0]] = annotation
 	}
@@ -220,7 +235,7 @@ func teardown(yamlfile string) error {
 	defer f.Close()
 	reports, err := registry.ContainerEngine().PlayKubeDown(registry.GetContext(), f, *options)
 	if err != nil {
-		return errors.Wrap(err, yamlfile)
+		return fmt.Errorf("%v: %w", yamlfile, err)
 	}
 
 	// Output stopped pods
@@ -258,7 +273,7 @@ func playkube(yamlfile string) error {
 	defer f.Close()
 	report, err := registry.ContainerEngine().PlayKube(registry.GetContext(), f, kubeOptions.PlayKubeOptions)
 	if err != nil {
-		return errors.Wrap(err, yamlfile)
+		return fmt.Errorf("%s: %w", yamlfile, err)
 	}
 	// Print volumes report
 	for i, volume := range report.Volumes {
@@ -305,7 +320,7 @@ func playkube(yamlfile string) error {
 	}
 
 	if ctrsFailed > 0 {
-		return errors.Errorf("failed to start %d containers", ctrsFailed)
+		return fmt.Errorf("failed to start %d containers", ctrsFailed)
 	}
 
 	return nil
