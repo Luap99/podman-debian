@@ -1,0 +1,11 @@
+--- a/pkg/bindings/generator/generator.go
++++ b/pkg/bindings/generator/generator.go
+@@ -171,7 +171,7 @@
+ 		}
+ 
+ 		// go import file
+-		goimport := exec.Command("../../../test/tools/build/goimports", "-w", out.Name())
++		goimport := exec.Command("goimports", "-w", out.Name())
+ 		goimport.Stderr = os.Stdout
+ 		if err := goimport.Run(); err != nil {
+ 			fmt.Println(err)
