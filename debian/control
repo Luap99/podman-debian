@@ -103,6 +103,7 @@ Depends: ${misc:Depends}, ${shlibs:Depends}
 Breaks: buildah (<< 1.10.1-6), slirp4netns (<< 0.4.1), fuse-overlayfs (<< 0.7.1)
 Recommends: ${misc:Recommends}
     ,buildah (>= 1.26)
+    ,dbus-user-session
     ,fuse-overlayfs (>= 1.0.0~)
     ,slirp4netns (>= 0.4.1~)
     ,catatonit | tini | dumb-init
