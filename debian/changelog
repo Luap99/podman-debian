@@ -1,3 +1,17 @@
+libpod (4.2.0+ds1-3) experimental; urgency=medium
+
+  * Force using golang-go to avoid compilation failures with gcc-go
+  * Confirmed updated components allow podman to work, thanks to
+    Bastian Blank (Closes: #1012053), and is compiled against a
+    containers/common that is more mindful regarding foreign-arch
+    images (Closes: #1009376)
+  * Confirmed fix: "starting rootless container fails with: can't get final
+    child's PID from pipe: EOF", code change likely already in 4.1
+    thanks to Gabriel Filion (Closes: #1007022).
+  * Make podman recommend 'dbus-user-session', Closes: #1009747
+
+ -- Reinhard Tartler <siretart@tauware.de>  Fri, 19 Aug 2022 09:43:54 +0200
+
 libpod (4.2.0+ds1-2) experimental; urgency=medium
 
   * tighten dependency on golang-github-opencontainers-runc-dev
