@@ -9,7 +9,7 @@ Build-Depends: debhelper-compat (= 13)
     ,conmon
     ,dh-golang
     ,go-md2man
-    ,golang-any
+    ,golang-go
     ,golang-dbus-dev (>= 5.0.2~)
     ,golang-ginkgo-dev
     ,golang-github-appc-cni-dev (>= 0.8)
