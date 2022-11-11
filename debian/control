@@ -85,6 +85,7 @@ Build-Depends: debhelper-compat (= 13)
     ,libdevmapper-dev
     ,libglib2.0-dev
     ,libostree-dev
+    ,libsubid-dev
 # sphinx docs:
 #   ,python3-recommonmark
 Homepage: https://github.com/containers/podman
