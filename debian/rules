@@ -35,7 +35,7 @@ export DH_GOLANG_TEST_EXCLUDES := $(DH_GOLANG_EXCLUDES) \
 export HOME=$(CURDIR)/debian/tmp
 
 ## https://podman.io/getting-started/installation#build-tags
-BUILDTAGS := apparmor,ostree,seccomp,selinux,systemd
+BUILDTAGS := apparmor,ostree,seccomp,selinux,systemd,libsubid
 # containers_image_openpgp
 
 %:
