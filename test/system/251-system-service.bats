@@ -14,9 +14,21 @@ function teardown() {
     basic_teardown
 }
 
+@test "podman systerm service <bad_scheme_uri> returns error" {
+    skip_if_remote "podman system service unavailable over remote"
+    run_podman 125 system service localhost:9292
+    is "$output" "Error: API Service endpoint scheme \"localhost\" is not supported. Try tcp://localhost:9292 or unix:/localhost:9292"
+
+    run_podman 125 system service myunix.sock
+    is "$output" "Error: API Service endpoint scheme \"\" is not supported. Try tcp://myunix.sock or unix:/myunix.sock"
+}
 
 @test "podman-system-service containers survive service stop" {
     skip_if_remote "podman system service unavailable over remote"
+    local runtime=$(podman_runtime)
+    if [[ "$runtime" != "crun" ]]; then
+        skip "survival code only implemented in crun; you're using $runtime"
+    fi
 
     port=$(random_free_port)
     URL=tcp://127.0.0.1:$port

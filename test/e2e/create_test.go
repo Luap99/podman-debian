@@ -2,7 +2,6 @@ package integration
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -242,7 +241,7 @@ var _ = Describe("Podman create", func() {
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(125))
 
-		tmpDir, err := ioutil.TempDir("", "")
+		tmpDir, err := os.MkdirTemp("", "")
 		Expect(err).To(BeNil())
 		defer os.RemoveAll(tmpDir)
 
@@ -438,6 +437,7 @@ var _ = Describe("Podman create", func() {
 	})
 
 	It("podman create with -m 1000000 sets swap to 2000000", func() {
+		SkipIfRootlessCgroupsV1("Not supported for rootless + CgroupsV1")
 		numMem := 1000000
 		ctrName := "testCtr"
 		session := podmanTest.Podman([]string{"create", "-t", "-m", fmt.Sprintf("%db", numMem), "--name", ctrName, ALPINE, "/bin/sh"})
@@ -452,6 +452,7 @@ var _ = Describe("Podman create", func() {
 	})
 
 	It("podman create --cpus 5 sets nanocpus", func() {
+		SkipIfRootlessCgroupsV1("Not supported for rootless + CgroupsV1")
 		numCpus := 5
 		nanoCPUs := numCpus * 1000000000
 		ctrName := "testCtr"
@@ -593,7 +594,7 @@ var _ = Describe("Podman create", func() {
 		pod.WaitWithDefaultTimeout()
 		Expect(pod).Should(Exit(0))
 
-		netName := "pod" + stringid.GenerateNonCryptoID()
+		netName := "pod" + stringid.GenerateRandomID()
 		session := podmanTest.Podman([]string{"network", "create", netName})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))

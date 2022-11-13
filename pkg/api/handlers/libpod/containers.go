@@ -1,15 +1,16 @@
 package libpod
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"strings"
 
 	"github.com/containers/podman/v4/libpod"
 	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/api/handlers"
 	"github.com/containers/podman/v4/pkg/api/handlers/compat"
 	"github.com/containers/podman/v4/pkg/api/handlers/utils"
 	api "github.com/containers/podman/v4/pkg/api/types"
@@ -17,6 +18,7 @@ import (
 	"github.com/containers/podman/v4/pkg/domain/infra/abi"
 	"github.com/containers/podman/v4/pkg/util"
 	"github.com/gorilla/schema"
+	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
 )
 
@@ -245,7 +247,7 @@ func Checkpoint(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if query.Export {
-		f, err := ioutil.TempFile("", "checkpoint")
+		f, err := os.CreateTemp("", "checkpoint")
 		if err != nil {
 			utils.InternalServerError(w, err)
 			return
@@ -263,16 +265,16 @@ func Checkpoint(w http.ResponseWriter, r *http.Request) {
 		utils.InternalServerError(w, err)
 		return
 	}
+	if len(reports) != 1 {
+		utils.InternalServerError(w, fmt.Errorf("expected 1 restore report but got %d", len(reports)))
+		return
+	}
+	if reports[0].Err != nil {
+		utils.InternalServerError(w, reports[0].Err)
+		return
+	}
 
 	if !query.Export {
-		if len(reports) != 1 {
-			utils.InternalServerError(w, fmt.Errorf("expected 1 restore report but got %d", len(reports)))
-			return
-		}
-		if reports[0].Err != nil {
-			utils.InternalServerError(w, reports[0].Err)
-			return
-		}
 		utils.WriteResponse(w, http.StatusOK, reports[0])
 		return
 	}
@@ -303,6 +305,7 @@ func Restore(w http.ResponseWriter, r *http.Request) {
 		PrintStats      bool   `schema:"printStats"`
 		FileLocks       bool   `schema:"fileLocks"`
 		PublishPorts    string `schema:"publishPorts"`
+		Pod             string `schema:"pod"`
 	}{
 		// override any golang type defaults
 	}
@@ -322,11 +325,12 @@ func Restore(w http.ResponseWriter, r *http.Request) {
 		PrintStats:      query.PrintStats,
 		FileLocks:       query.FileLocks,
 		PublishPorts:    strings.Fields(query.PublishPorts),
+		Pod:             query.Pod,
 	}
 
 	var names []string
 	if query.Import {
-		t, err := ioutil.TempFile("", "restore")
+		t, err := os.CreateTemp("", "restore")
 		if err != nil {
 			utils.InternalServerError(w, err)
 			return
@@ -389,6 +393,28 @@ func InitContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	utils.WriteResponse(w, http.StatusNoContent, "")
+}
+
+func UpdateContainer(w http.ResponseWriter, r *http.Request) {
+	name := utils.GetName(r)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
+	ctr, err := runtime.LookupContainer(name)
+	if err != nil {
+		utils.ContainerNotFound(w, name, err)
+		return
+	}
+
+	options := &handlers.UpdateEntities{Resources: &specs.LinuxResources{}}
+	if err := json.NewDecoder(r.Body).Decode(&options.Resources); err != nil {
+		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("decode(): %w", err))
+		return
+	}
+	err = ctr.Update(options.Resources)
+	if err != nil {
+		utils.InternalServerError(w, err)
+		return
+	}
+	utils.WriteResponse(w, http.StatusCreated, ctr.ID())
 }
 
 func ShouldRestart(w http.ResponseWriter, r *http.Request) {

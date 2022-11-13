@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +18,7 @@ import (
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/image/v5/docker/reference"
+	"github.com/containers/image/v5/types"
 	encconfig "github.com/containers/ocicrypt/config"
 	enchelpers "github.com/containers/ocicrypt/helpers"
 	"github.com/containers/podman/v4/cmd/podman/common"
@@ -206,6 +206,24 @@ func build(cmd *cobra.Command, args []string) error {
 		return errors.New("'--output' option is not supported in remote mode")
 	}
 
+	if buildOpts.Network == "none" {
+		if cmd.Flag("dns").Changed {
+			return errors.New("the --dns option cannot be used with --network=none")
+		}
+		if cmd.Flag("dns-option").Changed {
+			return errors.New("the --dns-option option cannot be used with --network=none")
+		}
+		if cmd.Flag("dns-search").Changed {
+			return errors.New("the --dns-search option cannot be used with --network=none")
+		}
+	}
+
+	if cmd.Flag("network").Changed {
+		if buildOpts.Network != "host" && buildOpts.Isolation == buildahDefine.IsolationChroot.String() {
+			return fmt.Errorf("cannot set --network other than host with --isolation %s", buildOpts.Isolation)
+		}
+	}
+
 	// Extract container files from the CLI (i.e., --file/-f) first.
 	var containerFiles []string
 	for _, f := range buildOpts.File {
@@ -222,7 +240,7 @@ func build(cmd *cobra.Command, args []string) error {
 		// The context directory could be a URL.  Try to handle that.
 		tempDir, subDir, err := buildahDefine.TempDirForURL("", "buildah", args[0])
 		if err != nil {
-			return fmt.Errorf("error prepping temporary context directory: %w", err)
+			return fmt.Errorf("prepping temporary context directory: %w", err)
 		}
 		if tempDir != "" {
 			// We had to download it to a temporary directory.
@@ -237,7 +255,7 @@ func build(cmd *cobra.Command, args []string) error {
 			// Nope, it was local.  Use it as is.
 			absDir, err := filepath.Abs(args[0])
 			if err != nil {
-				return fmt.Errorf("error determining path to directory %q: %w", args[0], err)
+				return fmt.Errorf("determining path to directory %q: %w", args[0], err)
 			}
 			contextDir = absDir
 		}
@@ -253,7 +271,7 @@ func build(cmd *cobra.Command, args []string) error {
 			}
 			absFile, err := filepath.Abs(containerFiles[i])
 			if err != nil {
-				return fmt.Errorf("error determining path to file %q: %w", containerFiles[i], err)
+				return fmt.Errorf("determining path to file %q: %w", containerFiles[i], err)
 			}
 			contextDir = filepath.Dir(absFile)
 			containerFiles[i] = absFile
@@ -614,6 +632,9 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 		timestamp := time.Unix(flags.Timestamp, 0).UTC()
 		opts.Timestamp = &timestamp
 	}
+	if c.Flag("skip-unused-stages").Changed {
+		opts.SkipUnusedStages = types.NewOptionalBool(flags.SkipUnusedStages)
+	}
 
 	return &entities.BuildOptions{BuildOptions: opts}, nil
 }
@@ -635,7 +656,7 @@ func getDecryptConfig(decryptionKeys []string) (*encconfig.DecryptConfig, error)
 
 func parseDockerignore(ignoreFile string) ([]string, error) {
 	excludes := []string{}
-	ignore, err := ioutil.ReadFile(ignoreFile)
+	ignore, err := os.ReadFile(ignoreFile)
 	if err != nil {
 		return excludes, err
 	}

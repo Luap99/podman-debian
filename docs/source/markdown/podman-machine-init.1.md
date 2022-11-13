@@ -1,4 +1,4 @@
-% podman-machine-init(1)
+% podman-machine-init 1
 
 ## NAME
 podman\-machine\-init - Initialize a new virtual machine
@@ -75,6 +75,12 @@ API forwarding, if available, will follow this setting.
 Set the timezone for the machine and containers.  Valid values are `local` or
 a `timezone` such as `America/Chicago`.  A value of `local`, which is the default,
 means to use the timezone of the machine host.
+
+#### **--username**
+
+Username to use for executing commands in remote VM. Default value is `core`
+for FCOS and `user` for Fedora (default on Windows hosts). Should match the one
+used inside the resulting VM image.
 
 #### **--volume**, **-v**=*source:target[:options]*
 

@@ -1,23 +1,20 @@
 package connection
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/url"
 	"os"
 	"regexp"
+	"strings"
 
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/config"
+	"github.com/containers/common/pkg/ssh"
 	"github.com/containers/podman/v4/cmd/podman/registry"
 	"github.com/containers/podman/v4/cmd/podman/system"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/domain/utils"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"golang.org/x/crypto/ssh"
 )
 
 var (
@@ -41,6 +38,17 @@ var (
   `,
 	}
 
+	createCmd = &cobra.Command{
+		Use:               "create [options] NAME DESTINATION",
+		Args:              cobra.ExactArgs(1),
+		Short:             addCmd.Short,
+		Long:              addCmd.Long,
+		RunE:              create,
+		ValidArgsFunction: completion.AutocompleteNone,
+	}
+
+	dockerPath string
+
 	cOpts = struct {
 		Identity string
 		Port     int
@@ -54,7 +62,6 @@ func init() {
 		Command: addCmd,
 		Parent:  system.ConnectionCmd,
 	})
-
 	flags := addCmd.Flags()
 
 	portFlagName := "port"
@@ -70,10 +77,34 @@ func init() {
 	_ = addCmd.RegisterFlagCompletionFunc(socketPathFlagName, completion.AutocompleteDefault)
 
 	flags.BoolVarP(&cOpts.Default, "default", "d", false, "Set connection to be default")
+
+	registry.Commands = append(registry.Commands, registry.CliCommand{
+		Command: createCmd,
+		Parent:  system.ContextCmd,
+	})
+
+	flags = createCmd.Flags()
+	dockerFlagName := "docker"
+	flags.StringVar(&dockerPath, dockerFlagName, "", "Description of the context")
+
+	_ = createCmd.RegisterFlagCompletionFunc(dockerFlagName, completion.AutocompleteNone)
+	flags.String("description", "", "Ignored.  Just for script compatibility")
+	flags.String("from", "", "Ignored.  Just for script compatibility")
+	flags.String("kubernetes", "", "Ignored.  Just for script compatibility")
+	flags.String("default-stack-orchestrator", "", "Ignored.  Just for script compatibility")
 }
 
 func add(cmd *cobra.Command, args []string) error {
 	// Default to ssh schema if none given
+
+	entities := &ssh.ConnectionCreateOptions{
+		Port:     cOpts.Port,
+		Path:     args[1],
+		Identity: cOpts.Identity,
+		Name:     args[0],
+		Socket:   cOpts.UDSPath,
+		Default:  cOpts.Default,
+	}
 	dest := args[1]
 	if match, err := regexp.Match("^[A-Za-z][A-Za-z0-9+.-]*://", []byte(dest)); err != nil {
 		return fmt.Errorf("invalid destination: %w", err)
@@ -89,30 +120,20 @@ func add(cmd *cobra.Command, args []string) error {
 		uri.Path = cmd.Flag("socket-path").Value.String()
 	}
 
+	var sshMode ssh.EngineMode
+	containerConfig := registry.PodmanConfig()
+
+	flag := containerConfig.SSHMode
+
+	sshMode = ssh.DefineMode(flag)
+
+	if sshMode == ssh.InvalidMode {
+		return fmt.Errorf("invalid ssh mode")
+	}
+
 	switch uri.Scheme {
 	case "ssh":
-		if uri.User.Username() == "" {
-			if uri.User, err = utils.GetUserInfo(uri); err != nil {
-				return err
-			}
-		}
-
-		if cmd.Flags().Changed("port") {
-			uri.Host = net.JoinHostPort(uri.Hostname(), cmd.Flag("port").Value.String())
-		}
-
-		if uri.Port() == "" {
-			uri.Host = net.JoinHostPort(uri.Hostname(), cmd.Flag("port").DefValue)
-		}
-		iden := ""
-		if cmd.Flags().Changed("identity") {
-			iden = cOpts.Identity
-		}
-		if uri.Path == "" || uri.Path == "/" {
-			if uri.Path, err = getUDS(uri, iden); err != nil {
-				return err
-			}
-		}
+		return ssh.Create(entities, sshMode)
 	case "unix":
 		if cmd.Flags().Changed("identity") {
 			return errors.New("--identity option not supported for unix scheme")
@@ -177,40 +198,58 @@ func add(cmd *cobra.Command, args []string) error {
 	return cfg.Write()
 }
 
-func getUDS(uri *url.URL, iden string) (string, error) {
-	cfg, err := utils.ValidateAndConfigure(uri, iden)
+func create(cmd *cobra.Command, args []string) error {
+	dest, err := translateDest(dockerPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to validate: %w", err)
+		return err
 	}
-	dial, err := ssh.Dial("tcp", uri.Host, cfg)
-	if err != nil {
-		return "", fmt.Errorf("failed to connect: %w", err)
-	}
-	defer dial.Close()
-
-	session, err := dial.NewSession()
-	if err != nil {
-		return "", fmt.Errorf("failed to create new ssh session on %q: %w", uri.Host, err)
-	}
-	defer session.Close()
-
-	// Override podman binary for testing etc
-	podman := "podman"
-	if v, found := os.LookupEnv("PODMAN_BINARY"); found {
-		podman = v
-	}
-	infoJSON, err := utils.ExecRemoteCommand(dial, podman+" info --format=json")
-	if err != nil {
-		return "", err
+	if match, err := regexp.Match("^[A-Za-z][A-Za-z0-9+.-]*://", []byte(dest)); err != nil {
+		return fmt.Errorf("invalid destination: %w", err)
+	} else if !match {
+		dest = "ssh://" + dest
 	}
 
-	var info define.Info
-	if err := json.Unmarshal(infoJSON, &info); err != nil {
-		return "", fmt.Errorf("failed to parse 'podman info' results: %w", err)
+	uri, err := url.Parse(dest)
+	if err != nil {
+		return err
 	}
 
-	if info.Host.RemoteSocket == nil || len(info.Host.RemoteSocket.Path) == 0 {
-		return "", fmt.Errorf("remote podman %q failed to report its UDS socket", uri.Host)
+	cfg, err := config.ReadCustomConfig()
+	if err != nil {
+		return err
 	}
-	return info.Host.RemoteSocket.Path, nil
+
+	dst := config.Destination{
+		URI: uri.String(),
+	}
+
+	if cfg.Engine.ServiceDestinations == nil {
+		cfg.Engine.ServiceDestinations = map[string]config.Destination{
+			args[0]: dst,
+		}
+		cfg.Engine.ActiveService = args[0]
+	} else {
+		cfg.Engine.ServiceDestinations[args[0]] = dst
+	}
+	return cfg.Write()
+}
+
+func translateDest(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	split := strings.SplitN(path, "=", 2)
+	if len(split) == 1 {
+		return split[0], nil
+	}
+	if split[0] != "host" {
+		return "", fmt.Errorf("\"host\" is requited for --docker option")
+	}
+	// "host=tcp://myserver:2376,ca=~/ca-file,cert=~/cert-file,key=~/key-file"
+	vals := strings.Split(split[1], ",")
+	if len(vals) > 1 {
+		return "", fmt.Errorf("--docker additional options %q not supported", strings.Join(vals[1:], ","))
+	}
+	// for now we ignore other fields specified on command line
+	return vals[0], nil
 }

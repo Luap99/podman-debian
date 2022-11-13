@@ -69,7 +69,6 @@ func newServer(runtime *libpod.Runtime, listener net.Listener, opts entities.Ser
 		logrus.Debugf("CORS Headers were set to %q", opts.CorsHeaders)
 	}
 
-	logrus.Infof("API service listening on %q", listener.Addr())
 	router := mux.NewRouter().UseEncodedPath()
 	tracker := idle.NewTracker(opts.Timeout)
 
@@ -130,7 +129,7 @@ func newServer(runtime *libpod.Runtime, listener net.Listener, opts entities.Ser
 		server.registerMonitorHandlers,
 		server.registerNetworkHandlers,
 		server.registerPingHandlers,
-		server.registerPlayHandlers,
+		server.registerKubeHandlers,
 		server.registerPluginsHandlers,
 		server.registerPodsHandlers,
 		server.registerSecretHandlers,

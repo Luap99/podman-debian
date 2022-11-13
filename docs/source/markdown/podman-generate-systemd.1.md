@@ -1,4 +1,4 @@
-% podman-generate-systemd(1)
+% podman-generate-systemd 1
 
 ## NAME
 podman\-generate\-systemd - Generate systemd unit file(s) for a container or pod
@@ -26,7 +26,7 @@ therefore the overridden default value._
 A Kubernetes YAML can be executed in systemd via the `podman-kube@.service` systemd template.  The template's argument is the path to the YAML file.  Given a `workload.yaml` file in the home directory, it can be executed as follows:
 
 ```
-$ escaped=$(systemd-escape ~/sysadmin.yaml)
+$ escaped=$(systemd-escape ~/workload.yaml)
 $ systemctl --user start podman-kube@$escaped.service
 $ systemctl --user is-active podman-kube@$escaped.service
 active
@@ -43,6 +43,12 @@ User-defined dependencies will be appended to the generated unit file, but any e
 #### **--container-prefix**=*prefix*
 
 Set the systemd unit name prefix for containers. The default is *container*.
+
+#### **--env**, **-e**=*env*
+
+Set environment variables to the systemd unit files.
+
+If an environment variable is specified without a value, Podman will check the host environment for a value and set the variable only if it is set on the host. As a special case, if an environment variable ending in __*__ is specified without a value, Podman will search the host environment for variables starting with the prefix and will add those variables to the systemd unit files.
 
 #### **--files**, **-f**
 
@@ -62,7 +68,7 @@ Use the name of the container for the start, stop, and description in the unit f
 
 Using this flag will yield unit files that do not expect containers and pods to exist.  Instead, new containers and pods are created based on their configuration files.  The unit files are created best effort and may need to be further edited; please review the generated files carefully before using them in production.
 
-Note that `--new` only works on containers and pods created directly via Podman (i.e., `podman [container] {create,run}` or `podman pod create`).  It does not work on containers or pods created via the REST API or via `podman play kube`.
+Note that `--new` only works on containers and pods created directly via Podman (i.e., `podman [container] {create,run}` or `podman pod create`).  It does not work on containers or pods created via the REST API or via `podman kube play`.
 
 #### **--no-header**
 
@@ -79,7 +85,9 @@ Set the systemd unit requires (`Requires=`) option. Similar to wants, but declar
 #### **--restart-policy**=*policy*
 
 Set the systemd restart policy.  The restart-policy must be one of: "no", "on-success", "on-failure", "on-abnormal",
-"on-watchdog", "on-abort", or "always".  The default policy is *on-failure*.
+"on-watchdog", "on-abort", or "always".  The default policy is *on-failure* unless the container was created with a custom restart policy.
+
+Note that generating a unit without `--new` on a container with a custom restart policy can lead to issues on shutdown; systemd will attempt to stop the unit while Podman tries to restart it.  It is recommended to to create the container without `--restart` and use the `--restart-policy` option instead when generating the unit file.
 
 #### **--restart-sec**=*time*
 
@@ -133,7 +141,8 @@ RequiresMountsFor=/var/run/container/storage
 [Service]
 Restart=always
 ExecStart=/usr/bin/podman start de1e3223b1b888bc02d0962dd6cb5855eb00734061013ffdd3479d225abacdc6
-ExecStop=/usr/bin/podman stop -t 1 de1e3223b1b888bc02d0962dd6cb5855eb00734061013ffdd3479d225abacdc6
+ExecStop=/usr/bin/podman stop \
+        -t 1 de1e3223b1b888bc02d0962dd6cb5855eb00734061013ffdd3479d225abacdc6
 KillMode=none
 Type=forking
 PIDFile=/run/user/1000/overlay-containers/de1e3223b1b888bc02d0962dd6cb5855eb00734061013ffdd3479d225abacdc6/userdata/conmon.pid
@@ -163,14 +172,19 @@ RequiresMountsFor=/var/run/container/storage
 Environment=PODMAN_SYSTEMD_UNIT=%n
 Restart=on-failure
 ExecStartPre=/bin/rm -f %t/%n-pid %t/%n-cid
-ExecStart=/usr/local/bin/podman run
-	--conmon-pidfile %t/%n-pid
-	--cidfile %t/%n-cid
-	--cgroups=no-conmon
-	-d
+ExecStart=/usr/local/bin/podman run \
+        --conmon-pidfile %t/%n-pid \
+	--cidfile %t/%n-cid \
+	--cgroups=no-conmon \
+	-d \
 	-dit alpine
-ExecStop=/usr/local/bin/podman stop --ignore --cidfile %t/%n-cid -t 10
-ExecStopPost=/usr/local/bin/podman rm --ignore -f --cidfile %t/%n-cid
+ExecStop=/usr/local/bin/podman stop \
+        --ignore \
+        --cidfile %t/%n-cid -t 10
+ExecStopPost=/usr/local/bin/podman rm \
+        --ignore \
+        -f \
+	--cidfile %t/%n-cid
 PIDFile=%t/%n-pid
 KillMode=none
 Type=forking
@@ -209,7 +223,8 @@ RequiresMountsFor=/var/run/container/storage
 [Service]
 Restart=on-failure
 ExecStart=/usr/bin/podman start 77a818221650-infra
-ExecStop=/usr/bin/podman stop -t 10 77a818221650-infra
+ExecStop=/usr/bin/podman stop \
+        -t 10 77a818221650-infra
 KillMode=none
 Type=forking
 PIDFile=/run/user/1000/overlay-containers/ccfd5c71a088768774ca7bd05888d55cc287698dde06f475c8b02f696a25adcd/userdata/conmon.pid

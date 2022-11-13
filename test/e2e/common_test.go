@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"math/rand"
 	"net"
 	"net/url"
@@ -144,7 +143,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 		}
 		f.Close()
 	}
-	path, err := ioutil.TempDir("", "libpodlock")
+	path, err := os.MkdirTemp("", "libpodlock")
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
@@ -306,7 +305,7 @@ func PodmanTestCreateUtil(tempDir string, remote bool) *PodmanTestIntegration {
 		// happens. So, use a podman-%s.sock-lock empty file as a marker.
 		tries := 0
 		for {
-			uuid := stringid.GenerateNonCryptoID()
+			uuid := stringid.GenerateRandomID()
 			lockPath := fmt.Sprintf("%s-%s.sock-lock", pathPrefix, uuid)
 			lockFile, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0700)
 			if err == nil {
@@ -571,7 +570,7 @@ func (s *PodmanSessionIntegration) InspectContainerToJSON() []define.InspectCont
 func (s *PodmanSessionIntegration) InspectPodToJSON() define.InspectPodData {
 	var i define.InspectPodData
 	err := jsoniter.Unmarshal(s.Out.Contents(), &i)
-	Expect(err).To(BeNil())
+	Expect(err).ToNot(HaveOccurred())
 	return i
 }
 
@@ -875,7 +874,7 @@ func writeConf(conf []byte, confPath string) {
 			fmt.Println(err)
 		}
 	}
-	if err := ioutil.WriteFile(confPath, conf, 0o777); err != nil {
+	if err := os.WriteFile(confPath, conf, 0o777); err != nil {
 		fmt.Println(err)
 	}
 }
@@ -894,7 +893,7 @@ func generateNetworkConfig(p *PodmanTestIntegration) (string, string) {
 		conf string
 	)
 	// generate a random name to prevent conflicts with other tests
-	name := "net" + stringid.GenerateNonCryptoID()
+	name := "net" + stringid.GenerateRandomID()
 	if p.NetworkBackend != Netavark {
 		path = filepath.Join(p.NetworkConfigDir, fmt.Sprintf("%s.conflist", name))
 		conf = fmt.Sprintf(`{
@@ -967,7 +966,7 @@ func (s *PodmanSessionIntegration) jq(jqCommand string) (string, error) {
 
 func (p *PodmanTestIntegration) buildImage(dockerfile, imageName string, layers string, label string) string {
 	dockerfilePath := filepath.Join(p.TempDir, "Dockerfile")
-	err := ioutil.WriteFile(dockerfilePath, []byte(dockerfile), 0755)
+	err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0755)
 	Expect(err).To(BeNil())
 	cmd := []string{"build", "--pull-never", "--layers=" + layers, "--file", dockerfilePath}
 	if label != "" {
@@ -1030,7 +1029,7 @@ func ncz(port int) bool {
 }
 
 func createNetworkName(name string) string {
-	return name + stringid.GenerateNonCryptoID()[:10]
+	return name + stringid.GenerateRandomID()[:10]
 }
 
 var IPRegex = `(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}`

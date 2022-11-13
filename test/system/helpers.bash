@@ -36,20 +36,6 @@ fi
 # That way individual tests can override with their own setup/teardown,
 # while retaining the ability to include these if they so desire.
 
-# Some CI systems set this to runc, overriding the default crun.
-if [[ -n $OCI_RUNTIME ]]; then
-    if [[ -z $CONTAINERS_CONF ]]; then
-        # FIXME: BATS provides no mechanism for end-of-run cleanup[1]; how
-        # can we avoid leaving this file behind when we finish?
-        #   [1] https://github.com/bats-core/bats-core/issues/39
-        export CONTAINERS_CONF=$(mktemp --tmpdir=${BATS_TMPDIR:-/tmp} podman-bats-XXXXXXX.containers.conf)
-        cat >$CONTAINERS_CONF <<EOF
-[engine]
-runtime="$OCI_RUNTIME"
-EOF
-    fi
-fi
-
 # Setup helper: establish a test environment with exactly the images needed
 function basic_setup() {
     # Clean up all containers
@@ -191,6 +177,15 @@ function run_podman() {
     # without "quotes", multiple lines are glommed together into one
     if [ -n "$output" ]; then
         echo "$output"
+
+        # FIXME FIXME FIXME: instrumenting to track down #15488. Please
+        # remove once that's fixed. We include the args because, remember,
+        # bats only shows output on error; it's possible that the first
+        # instance of the metacopy warning happens in a test that doesn't
+        # check output, hence doesn't fail.
+        if [[ "$output" =~ Ignoring.global.metacopy.option ]]; then
+            echo "# YO! metacopy warning triggered by: podman $*" >&3
+        fi
     fi
     if [ "$status" -ne 0 ]; then
         echo -n "[ rc=$status ";
@@ -342,11 +337,32 @@ function wait_for_port() {
     die "Timed out waiting for $host:$port"
 }
 
+###################
+#  wait_for_file  #  Returns once file is available on host
+###################
+function wait_for_file() {
+    local file=$1                       # The path to the file
+    local _timeout=${2:-5}              # Optional; default 5 seconds
+
+    # Wait
+    while [ $_timeout -gt 0 ]; do
+        test -e $file && return
+        sleep 1
+        _timeout=$(( $_timeout - 1 ))
+    done
+
+    die "Timed out waiting for $file"
+}
+
 # END   podman helpers
 ###############################################################################
 # BEGIN miscellaneous tools
 
 # Shortcuts for common needs:
+function no_ssh() {
+    [ "$(man ssh)" -ne 0 ]
+}
+
 function is_ubuntu() {
     grep -qiw ubuntu /etc/os-release
 }
@@ -377,6 +393,10 @@ function is_netavark() {
         return 0
     fi
     return 1
+}
+
+function is_aarch64() {
+    [ "$(uname -m)" == "aarch64" ]
 }
 
 # Returns the OCI runtime *basename* (typically crun or runc). Much as we'd
@@ -466,6 +486,17 @@ function _add_label_if_missing() {
 }
 
 ######################
+#  skip_if_no_ssh #  ...with an optional message
+######################
+function skip_if_no_ssh() {
+    if no_ssh; then
+        local msg=$(_add_label_if_missing "$1" "ssh")
+        skip "${msg:-not applicable with no ssh binary}"
+    fi
+}
+
+
+######################
 #  skip_if_rootless  #  ...with an optional message
 ######################
 function skip_if_rootless() {
@@ -543,6 +574,12 @@ function skip_if_root_ubuntu {
                  skip "Cannot run this test on rootful ubuntu, usually due to user errors"
             fi
         fi
+    fi
+}
+
+function skip_if_aarch64 {
+    if is_aarch64; then
+        skip "${msg:-Cannot run this test on aarch64 systems}"
     fi
 }
 
@@ -864,6 +901,60 @@ function _podman_commands() {
     # &>/dev/null prevents duplicate output
     run_podman help "$@" &>/dev/null
     awk '/^Available Commands:/{ok=1;next}/^Options:/{ok=0}ok { print $1 }' <<<"$output" | grep .
+}
+
+###############################
+#  _build_health_check_image  #  Builds a container image with a configured health check
+###############################
+#
+# The health check will fail once the /uh-oh file exists.
+#
+# First argument is the desired name of the image
+# Second argument, if present and non-null, forces removal of the /uh-oh file once the check failed; this way the container can be restarted
+#
+
+function _build_health_check_image {
+    local imagename="$1"
+    local cleanfile=""
+
+    if [[ ! -z "$2" ]]; then
+        cleanfile="rm -f /uh-oh"
+    fi
+    # Create an image with a healthcheck script; said script will
+    # pass until the file /uh-oh gets created (by us, via exec)
+    cat >${PODMAN_TMPDIR}/healthcheck <<EOF
+#!/bin/sh
+
+if test -e /uh-oh; then
+    echo "Uh-oh on stdout!"
+    echo "Uh-oh on stderr!" >&2
+    ${cleanfile}
+    exit 1
+else
+    echo "Life is Good on stdout"
+    echo "Life is Good on stderr" >&2
+    exit 0
+fi
+EOF
+
+    cat >${PODMAN_TMPDIR}/entrypoint <<EOF
+#!/bin/sh
+
+trap 'echo Received SIGTERM, finishing; exit' SIGTERM; echo WAITING; while :; do sleep 0.1; done
+EOF
+
+    cat >${PODMAN_TMPDIR}/Containerfile <<EOF
+FROM $IMAGE
+
+COPY healthcheck /healthcheck
+COPY entrypoint  /entrypoint
+
+RUN  chmod 755 /healthcheck /entrypoint
+
+CMD ["/entrypoint"]
+EOF
+
+    run_podman build -t $imagename ${PODMAN_TMPDIR}
 }
 
 # END   miscellaneous tools

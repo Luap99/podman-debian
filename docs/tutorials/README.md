@@ -1,4 +1,4 @@
-![PODMAN logo](../../logo/podman-logo-source.svg)
+![PODMAN logo](https://raw.githubusercontent.com/containers/common/main/logos/podman-logo-full-vert.png)
 
 # Podman Tutorials
 
@@ -31,3 +31,7 @@ Learn how to set up and use image signing with Podman.
 **[Basic Networking](basic_networking.md)**
 
 A basic guide to common network setups with Podman
+
+**[Socket activation](socket_activation.md)**
+
+Learn how to run containers that support socket activation.

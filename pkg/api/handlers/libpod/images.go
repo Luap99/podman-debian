@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"strconv"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/containers/buildah"
 	"github.com/containers/common/libimage"
+	"github.com/containers/common/pkg/ssh"
 	"github.com/containers/image/v5/manifest"
 	"github.com/containers/podman/v4/libpod"
 	"github.com/containers/podman/v4/libpod/define"
@@ -181,7 +181,7 @@ func ExportImage(w http.ResponseWriter, r *http.Request) {
 
 	switch query.Format {
 	case define.OCIArchive, define.V2s2Archive:
-		tmpfile, err := ioutil.TempFile("", "api.tar")
+		tmpfile, err := os.CreateTemp("", "api.tar")
 		if err != nil {
 			utils.Error(w, http.StatusInternalServerError, fmt.Errorf("unable to create tempfile: %w", err))
 			return
@@ -192,7 +192,7 @@ func ExportImage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case define.OCIManifestDir, define.V2s2ManifestDir:
-		tmpdir, err := ioutil.TempDir("", "save")
+		tmpdir, err := os.MkdirTemp("", "save")
 		if err != nil {
 			utils.Error(w, http.StatusInternalServerError, fmt.Errorf("unable to create tempdir: %w", err))
 			return
@@ -278,7 +278,7 @@ func ExportImages(w http.ResponseWriter, r *http.Request) {
 
 	switch query.Format {
 	case define.V2s2Archive, define.OCIArchive:
-		tmpfile, err := ioutil.TempFile("", "api.tar")
+		tmpfile, err := os.CreateTemp("", "api.tar")
 		if err != nil {
 			utils.Error(w, http.StatusInternalServerError, fmt.Errorf("unable to create tempfile: %w", err))
 			return
@@ -289,7 +289,7 @@ func ExportImages(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case define.OCIManifestDir, define.V2s2ManifestDir:
-		tmpdir, err := ioutil.TempDir("", "save")
+		tmpdir, err := os.MkdirTemp("", "save")
 		if err != nil {
 			utils.Error(w, http.StatusInternalServerError, fmt.Errorf("unable to create tmpdir: %w", err))
 			return
@@ -328,7 +328,7 @@ func ExportImages(w http.ResponseWriter, r *http.Request) {
 func ImagesLoad(w http.ResponseWriter, r *http.Request) {
 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 
-	tmpfile, err := ioutil.TempFile("", "libpod-images-load.tar")
+	tmpfile, err := os.CreateTemp("", "libpod-images-load.tar")
 	if err != nil {
 		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("unable to create tempfile: %w", err))
 		return
@@ -377,7 +377,7 @@ func ImagesImport(w http.ResponseWriter, r *http.Request) {
 	// Check if we need to load the image from a URL or from the request's body.
 	source := query.URL
 	if len(query.URL) == 0 {
-		tmpfile, err := ioutil.TempFile("", "libpod-images-import.tar")
+		tmpfile, err := os.CreateTemp("", "libpod-images-import.tar")
 		if err != nil {
 			utils.Error(w, http.StatusInternalServerError, fmt.Errorf("unable to create tempfile: %w", err))
 			return
@@ -547,6 +547,7 @@ func ImagesBatchRemove(w http.ResponseWriter, r *http.Request) {
 		Ignore         bool     `schema:"ignore"`
 		LookupManifest bool     `schema:"lookupManifest"`
 		Images         []string `schema:"images"`
+		NoPrune        bool     `schema:"noprune"`
 	}{}
 
 	if err := decoder.Decode(&query, r.URL.Query()); err != nil {
@@ -554,7 +555,7 @@ func ImagesBatchRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	opts := entities.ImageRemoveOptions{All: query.All, Force: query.Force, Ignore: query.Ignore, LookupManifest: query.LookupManifest}
+	opts := entities.ImageRemoveOptions{All: query.All, Force: query.Force, Ignore: query.Ignore, LookupManifest: query.LookupManifest, NoPrune: query.NoPrune}
 	imageEngine := abi.ImageEngine{Libpod: runtime}
 	rmReport, rmErrors := imageEngine.Remove(r.Context(), query.Images, opts)
 	strErrs := errorhandling.ErrorsToStrings(rmErrors)
@@ -617,7 +618,7 @@ func ImageScp(w http.ResponseWriter, r *http.Request) {
 
 	sourceArg := utils.GetName(r)
 
-	rep, source, dest, _, err := domainUtils.ExecuteTransfer(sourceArg, query.Destination, []string{}, query.Quiet)
+	rep, source, dest, _, err := domainUtils.ExecuteTransfer(sourceArg, query.Destination, []string{}, query.Quiet, ssh.GolangMode)
 	if err != nil {
 		utils.Error(w, http.StatusInternalServerError, err)
 		return

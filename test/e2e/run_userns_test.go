@@ -2,12 +2,12 @@ package integration
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/user"
 	"strings"
 
 	. "github.com/containers/podman/v4/test/utils"
+	"github.com/containers/storage"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -40,6 +40,33 @@ var _ = Describe("Podman UserNS support", func() {
 		f := CurrentGinkgoTestDescription()
 		processTestResult(f)
 
+	})
+
+	// Note: Lot of tests for build with --userns=auto are already there in buildah
+	// but they are skipped in podman CI because bud tests are executed in rootfull
+	// environment ( where mappings for the `containers` user is not present in /etc/subuid )
+	// causing them to skip hence this is a redundant test for sanity to make sure
+	// we don't break this feature for podman-remote.
+	It("podman build with --userns=auto", func() {
+		u, err := user.Current()
+		Expect(err).To(BeNil())
+		name := u.Name
+		if name == "root" {
+			name = "containers"
+		}
+		content, err := os.ReadFile("/etc/subuid")
+		if err != nil {
+			Skip("cannot read /etc/subuid")
+		}
+		if !strings.Contains(string(content), name) {
+			Skip("cannot find mappings for the current user")
+		}
+		session := podmanTest.Podman([]string{"build", "-f", "build/Containerfile.userns-auto", "-t", "test", "--userns=auto"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		// `1024` is the default size or length of the range of user IDs
+		// that is mapped between the two user namespaces by --userns=auto.
+		Expect(session.OutputToString()).To(ContainSubstring(fmt.Sprintf("%d", storage.AutoUserNsMinSize)))
 	})
 
 	It("podman uidmapping and gidmapping", func() {
@@ -85,6 +112,16 @@ var _ = Describe("Podman UserNS support", func() {
 		Expect(session).Should(Exit(0))
 		uid := fmt.Sprintf("%d", os.Geteuid())
 		Expect(session.OutputToString()).To(ContainSubstring(uid))
+
+		session = podmanTest.Podman([]string{"run", "--userns=keep-id:uid=10,gid=12", "alpine", "sh", "-c", "echo $(id -u):$(id -g)"})
+		session.WaitWithDefaultTimeout()
+		if os.Geteuid() == 0 {
+			Expect(session).Should(Exit(125))
+			return
+		}
+
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToString()).To(ContainSubstring("10:12"))
 	})
 
 	It("podman --userns=keep-id check passwd", func() {
@@ -143,7 +180,7 @@ var _ = Describe("Podman UserNS support", func() {
 			name = "containers"
 		}
 
-		content, err := ioutil.ReadFile("/etc/subuid")
+		content, err := os.ReadFile("/etc/subuid")
 		if err != nil {
 			Skip("cannot read /etc/subuid")
 		}
@@ -157,6 +194,8 @@ var _ = Describe("Podman UserNS support", func() {
 			session.WaitWithDefaultTimeout()
 			Expect(session).Should(Exit(0))
 			l := session.OutputToString()
+			// `1024` is the default size or length of the range of user IDs
+			// that is mapped between the two user namespaces by --userns=auto.
 			Expect(l).To(ContainSubstring("1024"))
 			m[l] = l
 		}
@@ -173,7 +212,7 @@ var _ = Describe("Podman UserNS support", func() {
 			name = "containers"
 		}
 
-		content, err := ioutil.ReadFile("/etc/subuid")
+		content, err := os.ReadFile("/etc/subuid")
 		if err != nil {
 			Skip("cannot read /etc/subuid")
 		}
@@ -211,7 +250,7 @@ var _ = Describe("Podman UserNS support", func() {
 			name = "containers"
 		}
 
-		content, err := ioutil.ReadFile("/etc/subuid")
+		content, err := os.ReadFile("/etc/subuid")
 		if err != nil {
 			Skip("cannot read /etc/subuid")
 		}
@@ -240,7 +279,7 @@ var _ = Describe("Podman UserNS support", func() {
 			name = "containers"
 		}
 
-		content, err := ioutil.ReadFile("/etc/subuid")
+		content, err := os.ReadFile("/etc/subuid")
 		if err != nil {
 			Skip("cannot read /etc/subuid")
 		}

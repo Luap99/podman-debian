@@ -1,4 +1,4 @@
-% podman(1)
+% podman 1
 
 ## NAME
 podman - Simple management tool for pods, containers and images
@@ -43,8 +43,8 @@ Remote connections use local containers.conf for default.
 #### **--events-backend**=*type*
 
 Backend to use for storing events. Allowed values are **file**, **journald**, and
-**none**. When *file* is specified, the events are stored under a subdirectory
-of the *tmpdir* location (see **--tmpdir** below).
+**none**. When *file* is specified, the events are stored under
+`<tmpdir>/events/events.log` (see **--tmpdir** below).
 
 #### **--help**, **-h**
 
@@ -133,6 +133,12 @@ for cgroup V2, the default runtime is `crun`, the manpage to consult is `crun(8)
 Note: Do not pass the leading `--` to the flag. To pass the runc flag `--log-format json`
 to podman build, the option given would be `--runtime-flag log-format=json`.
 
+
+#### **--ssh**=*value*
+
+This option allows the user to change the ssh mode, meaning that rather than using the default **golang** mode, one can instead use **--ssh=native**
+to use the installed ssh binary and config file declared in containers.conf.
+
 #### **--storage-driver**=*value*
 
 Storage driver.  The default storage driver for UID 0 is configured in /etc/containers/storage.conf (`$HOME/.config/containers/storage.conf` in rootless mode), and is *vfs* for non-root users when *fuse-overlayfs* is not available.  The `STORAGE_DRIVER` environment variable overrides the default.  The --storage-driver specified driver overrides all.
@@ -152,7 +158,7 @@ On remote clients, including Mac and Windows (excluding WSL2) machines, logging 
 
 #### **--tmpdir**
 
-Path to the tmp directory, for libpod runtime content.
+Path to the tmp directory, for libpod runtime content. Defaults to `$XDG\_RUNTIME\_DIR/libpod/tmp` as rootless and `run/libpod/tmp` as rootful.
 
 NOTE --tmpdir is not used for the temporary storage of downloaded images.  Use the environment variable `TMPDIR` to change the temporary storage location of downloaded container images. Podman defaults to use `/var/tmp`.
 
@@ -325,7 +331,7 @@ the exit codes follow the `chroot` standard, see below:
 | [podman-mount(1)](podman-mount.1.md)             | Mount a working container's root filesystem.                                |
 | [podman-network(1)](podman-network.1.md)         | Manage Podman networks.                                                     |
 | [podman-pause(1)](podman-pause.1.md)             | Pause one or more containers.                                               |
-| [podman-play(1)](podman-play.1.md)               | Play containers, pods or volumes based on a structured input file.          |
+| [podman-kube(1)](podman-kube.1.md)               | Play containers, pods or volumes based on a structured input file.          |
 | [podman-pod(1)](podman-pod.1.md)                 | Management tool for groups of containers, called pods.                      |
 | [podman-port(1)](podman-port.1.md)               | List port mappings for a container.                                         |
 | [podman-ps(1)](podman-ps.1.md)                   | Prints out information about containers.                                    |
@@ -349,6 +355,7 @@ the exit codes follow the `chroot` standard, see below:
 | [podman-unpause(1)](podman-unpause.1.md)         | Unpause one or more containers.                                             |
 | [podman-unshare(1)](podman-unshare.1.md)         | Run a command inside of a modified user namespace.                          |
 | [podman-untag(1)](podman-untag.1.md)             | Removes one or more names from a locally-stored image.                      |
+| [podman-update(1)](podman-update.1.md)           | Updates the cgroup configuration of a given container.                      |
 | [podman-version(1)](podman-version.1.md)         | Display the Podman version information.                                     |
 | [podman-volume(1)](podman-volume.1.md)           | Simple management tool for volumes.                                         |
 | [podman-wait(1)](podman-wait.1.md)               | Wait on one or more containers to stop and print their exit codes.          |

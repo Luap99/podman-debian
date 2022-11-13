@@ -89,7 +89,7 @@ func restService(flags *pflag.FlagSet, cfg *entities.PodmanConfig, opts entities
 				return fmt.Errorf("unable to create socket %v: %w", host, err)
 			}
 		default:
-			logrus.Debugf("Attempting API Service endpoint scheme %q", uri.Scheme)
+			return fmt.Errorf("API Service endpoint scheme %q is not supported. Try tcp://%s or unix:/%s", uri.Scheme, opts.URI, opts.URI)
 		}
 		libpodRuntime.SetRemoteURI(uri.String())
 	}
@@ -105,7 +105,9 @@ func restService(flags *pflag.FlagSet, cfg *entities.PodmanConfig, opts entities
 	}
 
 	if err := utils.MaybeMoveToSubCgroup(); err != nil {
-		return err
+		// it is a best effort operation, so just print the
+		// error for debugging purposes.
+		logrus.Debugf("Could not move to subcgroup: %v", err)
 	}
 
 	servicereaper.Start()

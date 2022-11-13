@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	url2 "net/url"
 	"os"
@@ -191,7 +190,7 @@ func Decompress(localPath, uncompressedPath string) error {
 	if err != nil {
 		return err
 	}
-	sourceFile, err := ioutil.ReadFile(localPath)
+	sourceFile, err := os.ReadFile(localPath)
 	if err != nil {
 		return err
 	}
@@ -213,8 +212,8 @@ func decompressXZ(src string, output io.WriteCloser) error {
 	var read io.Reader
 	var cmd *exec.Cmd
 	// Prefer xz utils for fastest performance, fallback to go xi2 impl
-	if _, err := exec.LookPath("xzcat"); err == nil {
-		cmd = exec.Command("xzcat", "-k", src)
+	if _, err := exec.LookPath("xz"); err == nil {
+		cmd = exec.Command("xz", "-d", "-c", "-k", src)
 		read, err = cmd.StdoutPipe()
 		if err != nil {
 			return err

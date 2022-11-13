@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 
+# This script is intended to be a convenience, to be called from the
+# Makefile `.install.golangci-lint` target.  Any other usage is not recommended.
+
 die() { echo "${1:-No error message given} (from $(basename $0))"; exit 1; }
 
 [ -n "$VERSION" ] || die "\$VERSION is empty or undefined"
 
 function install() {
     echo "Installing golangci-lint v$VERSION into $BIN"
-    curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s v$VERSION
+    curl -sSL --retry 5 https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s v$VERSION
 }
 
 # Undocumented behavior: golangci-lint installer requires $BINDIR in env,

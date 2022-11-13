@@ -61,9 +61,9 @@ load helpers
     is "$output" "$random_2" "curl 127.0.0.1:/index2.txt"
 
     # Verify http contents: wget from a second container
-    run_podman run --rm --net=host $IMAGE wget -qO - $SERVER/index.txt
+    run_podman run --rm --net=host --http-proxy=false $IMAGE wget -qO - $SERVER/index.txt
     is "$output" "$random_1" "podman wget /index.txt"
-    run_podman run --rm --net=host $IMAGE wget -qO - $SERVER/index2.txt
+    run_podman run --rm --net=host --http-proxy=false $IMAGE wget -qO - $SERVER/index2.txt
     is "$output" "$random_2" "podman wget /index2.txt"
 
     # Tests #4889 - two-argument form of "podman ports" was broken
@@ -84,6 +84,7 @@ load helpers
 
 # Issue #5466 - port-forwarding doesn't work with this option and -d
 @test "podman networking: port with --userns=keep-id for rootless or --uidmap=* for rootful" {
+    skip_if_cgroupsv1 "FIXME: #15025: run --uidmap fails on cgroups v1"
     for cidr in "" "$(random_rfc1918_subnet).0/24"; do
         myport=$(random_free_port 52000-52999)
         if [[ -z $cidr ]]; then
@@ -744,6 +745,7 @@ EOF
 }
 
 @test "podman run /etc/* permissions" {
+    skip_if_cgroupsv1 "FIXME: #15025: run --uidmap fails on cgroups v1"
     userns="--userns=keep-id"
     if ! is_rootless; then
         userns="--uidmap=0:1111111:65536 --gidmap=0:1111111:65536"
@@ -763,6 +765,16 @@ EOF
     is "$output" "Error: unable to find network with name or ID bogus: network not found" "Should print error"
     run_podman network rm --force bogus
     is "$output" "" "Should print no output"
+}
+
+@test "podman network rm --dns-option " {
+    dns_opt=dns$(random_string)
+    run_podman run --rm --dns-opt=${dns_opt} $IMAGE cat /etc/resolv.conf
+    is "$output" ".*options ${dns_opt}" "--dns-opt was added"
+
+    dns_opt=dns$(random_string)
+    run_podman run --rm --dns-option=${dns_opt} $IMAGE cat /etc/resolv.conf
+    is "$output" ".*options ${dns_opt}" "--dns-option was added"
 }
 
 # vim: filetype=sh

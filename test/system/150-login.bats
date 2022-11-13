@@ -52,7 +52,7 @@ function setup() {
     mkdir -p $AUTHDIR
 
     # Registry image; copy of docker.io, but on our own registry
-    local REGISTRY_IMAGE="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/registry:2.7"
+    local REGISTRY_IMAGE="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/registry:2.8"
 
     # Pull registry image, but into a separate container storage
     mkdir -p ${PODMAN_LOGIN_WORKDIR}/root
@@ -122,7 +122,7 @@ function setup() {
                --password-stdin \
                $registry <<< "x${PODMAN_LOGIN_PASS}"
     is "$output" \
-       "Error: error logging into \"$registry\": invalid username/password" \
+       "Error: logging into \"$registry\": invalid username/password" \
        'output from podman login'
 }
 

@@ -96,6 +96,11 @@ func saveFlags(cmd *cobra.Command) {
 
 	flags.BoolVarP(&saveOpts.Quiet, "quiet", "q", false, "Suppress the output")
 	flags.BoolVarP(&saveOpts.MultiImageArchive, "multi-image-archive", "m", containerConfig.Engine.MultiImageArchive, "Interpret additional arguments as images not tags and create a multi-image-archive (only for docker-archive)")
+
+	if !registry.IsRemote() {
+		flags.StringVar(&saveOpts.SignaturePolicy, "signature-policy", "", "Path to a signature-policy file")
+		_ = flags.MarkHidden("signature-policy")
+	}
 }
 
 func save(cmd *cobra.Command, args []string) (finalErr error) {
@@ -103,8 +108,8 @@ func save(cmd *cobra.Command, args []string) (finalErr error) {
 		tags      []string
 		succeeded = false
 	)
-	if cmd.Flag("compress").Changed && (saveOpts.Format != define.OCIManifestDir && saveOpts.Format != define.V2s2ManifestDir) {
-		return errors.New("--compress can only be set when --format is either 'oci-dir' or 'docker-dir'")
+	if cmd.Flag("compress").Changed && saveOpts.Format != define.V2s2ManifestDir {
+		return errors.New("--compress can only be set when --format is 'docker-dir'")
 	}
 	if len(saveOpts.Output) == 0 {
 		saveOpts.Quiet = true

@@ -38,6 +38,7 @@ MANDIR ?= ${PREFIX}/share/man
 SHAREDIR_CONTAINERS ?= ${PREFIX}/share/containers
 ETCDIR ?= ${PREFIX}/etc
 TMPFILESDIR ?= ${PREFIX}/lib/tmpfiles.d
+USERTMPFILESDIR ?= ${PREFIX}/share/user-tmpfiles.d
 MODULESLOADDIR ?= ${PREFIX}/lib/modules-load.d
 SYSTEMDDIR ?= ${PREFIX}/lib/systemd/system
 USERSYSTEMDDIR ?= ${PREFIX}/lib/systemd/user
@@ -77,7 +78,12 @@ BUILDTAGS_CROSS ?= containers_image_openpgp exclude_graphdriver_btrfs exclude_gr
 CONTAINER_RUNTIME := $(shell command -v podman 2> /dev/null || echo docker)
 OCI_RUNTIME ?= ""
 
-MANPAGES_MD ?= $(wildcard docs/source/markdown/*.md)
+# The 'sort' below is crucial: without it, 'make docs' behaves differently
+# on the first run than on subsequent ones, because the generated .md
+MANPAGES_SOURCE_DIR = docs/source/markdown
+MANPAGES_MD_IN ?= $(wildcard $(MANPAGES_SOURCE_DIR)/*.md.in)
+MANPAGES_MD_GENERATED ?= $(MANPAGES_MD_IN:%.md.in=%.md)
+MANPAGES_MD ?= $(sort $(wildcard $(MANPAGES_SOURCE_DIR)/*.md) $(MANPAGES_MD_GENERATED))
 MANPAGES ?= $(MANPAGES_MD:%.md=%)
 MANPAGES_DEST ?= $(subst markdown,man, $(subst source,build,$(MANPAGES)))
 
@@ -261,10 +267,10 @@ test/version/version: version/version.go
 
 .PHONY: codespell
 codespell:
-	codespell -S bin,vendor,.git,go.sum,.cirrus.yml,"RELEASE_NOTES.md,*.xz,*.gz,*.ps1,*.tar,swagger.yaml,*.tgz,bin2img,*ico,*.png,*.1,*.5,copyimg,*.orig,apidoc.go" -L pullrequest,uint,iff,od,seeked,splitted,marge,erro,hist,ether -w
+	codespell -S bin,vendor,.git,go.sum,.cirrus.yml,"RELEASE_NOTES.md,*.xz,*.gz,*.ps1,*.tar,swagger.yaml,*.tgz,bin2img,*ico,*.png,*.1,*.5,copyimg,*.orig,apidoc.go" -L clos,ans,pullrequest,uint,iff,od,seeked,splitted,marge,erro,hist,ether -w
 
 .PHONY: validate
-validate: lint .gitvalidation validate.completions man-page-check swagger-check tests-included tests-expect-exit
+validate: lint .gitvalidation validate.completions man-page-check swagger-check tests-included tests-expect-exit pr-removes-fixed-skips
 
 .PHONY: build-all-new-commits
 build-all-new-commits:
@@ -279,8 +285,9 @@ vendor:
 
 .PHONY: vendor-in-container
 vendor-in-container:
-	podman run --privileged --rm --env HOME=/root \
+	podman run --rm --env HOME=/root \
 		-v $(CURDIR):/src -w /src \
+		--security-opt label=disable \
 		docker.io/library/golang:1.17 \
 		make vendor
 
@@ -416,17 +423,24 @@ completions: podman podman-remote
 pkg/api/swagger.yaml:
 	make -C pkg/api
 
+$(MANPAGES_MD_GENERATED): %.md: %.md.in $(MANPAGES_SOURCE_DIR)/options/*.md
+	hack/markdown-preprocess $<
+
 $(MANPAGES): %: %.md .install.md2man docdir
 
-### sed is used to filter http/s links as well as relative links
-### replaces "\" at the end of a line with two spaces
-### this ensures that manpages are renderd correctly
-
-	@$(SED) -e 's/\((podman[^)]*\.md\(#.*\)\?)\)//g' \
-	 -e 's/\[\(podman[^]]*\)\]/\1/g' \
-		 -e 's/\[\([^]]*\)](http[^)]\+)/\1/g' \
-	 -e 's;<\(/\)\?\(a\|a\s\+[^>]*\|sup\)>;;g' \
-	 -e 's/\\$$/  /g' $<  | \
+# This does a bunch of filtering needed for man pages:
+#  1. Strip markdown link targets like '[podman(1)](podman.1.md)'
+#     to just '[podman(1)]', because man pages have no link mechanism;
+#  2. Then remove the brackets: '[podman(1)]' -> 'podman(1)';
+#  3. Then do the same for all other markdown links,
+#     like '[cgroups(7)](https://.....)'  -> just 'cgroups(7)';
+#  4. Remove HTML-ish stuff like '<sup>..</sup>' and '<a>..</a>'
+#  5. Replace "\" (backslash) at EOL with two spaces (no idea why)
+	@$(SED) -e 's/\((podman[^)]*\.md\(#.*\)\?)\)//g'    \
+	       -e 's/\[\(podman[^]]*\)\]/\1/g'              \
+	       -e 's/\[\([^]]*\)](http[^)]\+)/\1/g'         \
+	       -e 's;<\(/\)\?\(a\|a\s\+[^>]*\|sup\)>;;g'    \
+	       -e 's/\\$$/  /g' $<                         |\
 	$(GOMD2MAN) -in /dev/stdin -out $(subst source/markdown,build/man,$@)
 
 .PHONY: docdir
@@ -621,6 +635,10 @@ tests-expect-exit:
 		exit 1; \
 	fi
 
+.PHONY: pr-removes-fixed-skips
+pr-removes-fixed-skips:
+	contrib/cirrus/pr-removes-fixed-skips
+
 ###
 ### Release/Packaging targets
 ###
@@ -671,6 +689,9 @@ podman-remote-release-%.zip: test/version/version ## Build podman-remote for %=$
 			clean-binaries podman-remote; \
 	else \
 		$(MAKE) $(GOPLAT) podman-remote; \
+	fi
+	if [[ "$(GOOS)" == "windows" ]]; then \
+		$(MAKE) $(GOPLAT) TMPDIR="" win-sshproxy; \
 	fi
 	cp -r ./docs/build/remote/$(GOOS) "$(TMPDIR)/$(SUBDIR)/docs/"
 	cp ./contrib/remote/containers.conf "$(TMPDIR)/$(SUBDIR)/"
@@ -734,6 +755,8 @@ install.remote:
 	install ${SELINUXOPT} -d -m 755 $(DESTDIR)$(BINDIR)
 	install ${SELINUXOPT} -m 755 $(SRCBINDIR)/podman$(BINSFX) \
 		$(DESTDIR)$(BINDIR)/podman$(BINSFX)
+	test "${GOOS}" != "windows" || \
+		install -m 755 $(SRCBINDIR)/win-sshproxy.exe $(DESTDIR)$(BINDIR)
 	test -z "${SELINUXOPT}" || \
 		chcon --verbose --reference=$(DESTDIR)$(BINDIR)/podman-remote \
 		bin/podman-remote
@@ -779,8 +802,9 @@ install.completions:
 install.docker:
 	install ${SELINUXOPT} -d -m 755 $(DESTDIR)$(BINDIR)
 	install ${SELINUXOPT} -m 755 docker $(DESTDIR)$(BINDIR)/docker
-	install ${SELINUXOPT} -m 755 -d ${DESTDIR}${SYSTEMDDIR}  ${DESTDIR}${USERSYSTEMDDIR} ${DESTDIR}${TMPFILESDIR}
+	install ${SELINUXOPT} -m 755 -d ${DESTDIR}${SYSTEMDDIR}  ${DESTDIR}${USERSYSTEMDDIR} ${DESTDIR}${TMPFILESDIR} ${DESTDIR}${USERTMPFILESDIR}
 	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman-docker.conf -t ${DESTDIR}${TMPFILESDIR}
+	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman-docker.conf -t ${DESTDIR}${USERTMPFILESDIR}
 
 .PHONY: install.docker-docs
 install.docker-docs:
@@ -825,26 +849,38 @@ install.systemd:
 endif
 
 .PHONY: install.tools
-install.tools: .install.ginkgo .install.golangci-lint .install.bats ## Install needed tools
-	make -C test/tools
+install.tools: .install.ginkgo .install.golangci-lint .install.swagger ## Install needed tools
+	$(MAKE) -C test/tools
+
+.PHONY: .install.goimports
+.install.goimports:
+	$(MAKE) -C test/tools build/goimports
 
 .PHONY: .install.ginkgo
 .install.ginkgo:
 	$(GO) install $(BUILDFLAGS) ./vendor/github.com/onsi/ginkgo/ginkgo
 
+.PHONY: .install.gitvalidation
+.install.gitvalidation:
+	$(MAKE) -C test/tools build/git-validation
+
 .PHONY: .install.golangci-lint
 .install.golangci-lint:
-	VERSION=1.46.2 ./hack/install_golangci.sh
+	VERSION=1.49.0 ./hack/install_golangci.sh
+
+.PHONY: .install.swagger
+.install.swagger:
+	env VERSION=0.30.3 \
+		BINDIR=$(BINDIR) \
+		GOOS=$(GOOS) \
+		GOARCH=$(GOARCH) \
+		./hack/install_swagger.sh
 
 .PHONY: .install.md2man
 .install.md2man:
 	if [ ! -x "$(GOMD2MAN)" ]; then \
-		make -C test/tools build/go-md2man ; \
+		$(MAKE) -C test/tools build/go-md2man ; \
 	fi
-
-.PHONY: .install.bats
-.install.bats:
-	VERSION=v1.1.0 ./hack/install_bats.sh
 
 .PHONY: .install.pre-commit
 .install.pre-commit:

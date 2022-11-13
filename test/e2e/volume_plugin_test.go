@@ -60,7 +60,8 @@ var _ = Describe("Podman volume plugins", func() {
 		Expect(err).ToNot(HaveOccurred())
 
 		// Keep this distinct within tests to avoid multiple tests using the same plugin.
-		pluginName := "testvol1"
+		// This one verifies that the "image" plugin uses a volume plugin, not the "image" driver.
+		pluginName := "image"
 		plugin := podmanTest.Podman([]string{"run", "--security-opt", "label=disable", "-v", "/run/docker/plugins:/run/docker/plugins", "-v", fmt.Sprintf("%v:%v", pluginStatePath, pluginStatePath), "-d", volumeTest, "--sock-name", pluginName, "--path", pluginStatePath})
 		plugin.WaitWithDefaultTimeout()
 		Expect(plugin).Should(Exit(0))
@@ -76,6 +77,12 @@ var _ = Describe("Podman volume plugins", func() {
 		arrOutput := ls1.OutputToStringArray()
 		Expect(arrOutput).To(HaveLen(1))
 		Expect(arrOutput[0]).To(ContainSubstring(volName))
+
+		// Verify this is not an image volume.
+		inspect := podmanTest.Podman([]string{"volume", "inspect", volName, "--format", "{{.StorageID}}"})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect).Should(Exit(0))
+		Expect(inspect.OutputToString()).To(BeEmpty())
 
 		remove := podmanTest.Podman([]string{"volume", "rm", volName})
 		remove.WaitWithDefaultTimeout()
@@ -212,19 +219,19 @@ testvol5 = "/run/docker/plugins/testvol5.sock"`), 0o644)
 		plugin.WaitWithDefaultTimeout()
 		Expect(plugin).Should(Exit(0))
 
-		localvol := "local-" + stringid.GenerateNonCryptoID()
+		localvol := "local-" + stringid.GenerateRandomID()
 		// create local volume
 		session := podmanTest.Podman([]string{"volume", "create", localvol})
 		session.WaitWithDefaultTimeout()
 		Expect(session).To(Exit(0))
 
-		vol1 := "vol1-" + stringid.GenerateNonCryptoID()
+		vol1 := "vol1-" + stringid.GenerateRandomID()
 		session = podmanTest.Podman([]string{"volume", "create", "--driver", pluginName, vol1})
 		session.WaitWithDefaultTimeout()
 		Expect(session).To(Exit(0))
 
 		// now create volume in plugin without podman
-		vol2 := "vol2-" + stringid.GenerateNonCryptoID()
+		vol2 := "vol2-" + stringid.GenerateRandomID()
 		plugin = podmanTest.Podman([]string{"exec", ctrName, "/usr/local/bin/testvol", "--sock-name", pluginName, "create", vol2})
 		plugin.WaitWithDefaultTimeout()
 		Expect(plugin).Should(Exit(0))
@@ -255,5 +262,39 @@ Removed:
 		Expect(session).To(Exit(0))
 		Expect(session.OutputToStringArray()).To(ContainElements(localvol, vol2))
 		Expect(session.ErrorToString()).To(Equal("")) // make no errors are shown
+	})
+
+	It("volume driver timeouts test", func() {
+		podmanTest.AddImageToRWStore(volumeTest)
+
+		pluginStatePath := filepath.Join(podmanTest.TempDir, "volumes")
+		err := os.Mkdir(pluginStatePath, 0755)
+		Expect(err).ToNot(HaveOccurred())
+
+		// Keep this distinct within tests to avoid multiple tests using the same plugin.
+		pluginName := "testvol6"
+		plugin := podmanTest.Podman([]string{"run", "--security-opt", "label=disable", "-v", "/run/docker/plugins:/run/docker/plugins", "-v", fmt.Sprintf("%v:%v", pluginStatePath, pluginStatePath), "-d", volumeTest, "--sock-name", pluginName, "--path", pluginStatePath})
+		plugin.WaitWithDefaultTimeout()
+		Expect(plugin).Should(Exit(0))
+
+		volName := "testVolume1"
+		create := podmanTest.Podman([]string{"volume", "create", "--driver", pluginName, volName})
+		create.WaitWithDefaultTimeout()
+		Expect(create).Should(Exit(0))
+
+		volInspect := podmanTest.Podman([]string{"volume", "inspect", "--format", "{{ .Timeout }}", volName})
+		volInspect.WaitWithDefaultTimeout()
+		Expect(volInspect).Should(Exit(0))
+		Expect(volInspect.OutputToString()).To(ContainSubstring("15"))
+
+		volName2 := "testVolume2"
+		create2 := podmanTest.Podman([]string{"volume", "create", "--driver", pluginName, "--opt", "o=timeout=3", volName2})
+		create2.WaitWithDefaultTimeout()
+		Expect(create2).Should(Exit(0))
+
+		volInspect2 := podmanTest.Podman([]string{"volume", "inspect", "--format", "{{ .Timeout }}", volName2})
+		volInspect2.WaitWithDefaultTimeout()
+		Expect(volInspect2).Should(Exit(0))
+		Expect(volInspect2.OutputToString()).To(ContainSubstring("3"))
 	})
 })

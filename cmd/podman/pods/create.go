@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"runtime"
 	"sort"
@@ -17,6 +16,7 @@ import (
 	"github.com/containers/podman/v4/cmd/podman/containers"
 	"github.com/containers/podman/v4/cmd/podman/parse"
 	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/utils"
 	"github.com/containers/podman/v4/libpod/define"
 	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/containers/podman/v4/pkg/errorhandling"
@@ -26,7 +26,6 @@ import (
 	"github.com/docker/docker/pkg/parsers"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 )
 
 var (
@@ -65,7 +64,7 @@ func init() {
 	flags := createCommand.Flags()
 	flags.SetInterspersed(false)
 	common.DefineCreateDefaults(&infraOptions)
-	common.DefineCreateFlags(createCommand, &infraOptions, true, false)
+	common.DefineCreateFlags(createCommand, &infraOptions, entities.InfraMode)
 	common.DefineNetFlags(createCommand)
 
 	flags.BoolVar(&createOptions.Infra, "infra", true, "Create an infra container associated with the pod to share namespaces with")
@@ -99,14 +98,7 @@ func init() {
 	shareParentFlagName := "share-parent"
 	flags.BoolVar(&shareParent, shareParentFlagName, true, "Set the pod's cgroup as the cgroup parent for all containers joining the pod")
 
-	flags.SetNormalizeFunc(aliasNetworkFlag)
-}
-
-func aliasNetworkFlag(_ *pflag.FlagSet, name string) pflag.NormalizedName {
-	if name == "net" {
-		name = "network"
-	}
-	return pflag.NormalizedName(name)
+	flags.SetNormalizeFunc(utils.AliasFlags)
 }
 
 func create(cmd *cobra.Command, args []string) error {
@@ -307,7 +299,7 @@ func create(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(podIDFile) > 0 {
-		if err = ioutil.WriteFile(podIDFile, []byte(response.Id), 0644); err != nil {
+		if err = os.WriteFile(podIDFile, []byte(response.Id), 0644); err != nil {
 			return fmt.Errorf("failed to write pod ID to file: %w", err)
 		}
 	}

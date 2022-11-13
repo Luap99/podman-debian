@@ -71,27 +71,20 @@ fi
 
 cd "${GOSRC}/"
 
-# Defined by lib.sh: Does the host support cgroups v1 or v2
+# Defined by lib.sh: Does the host support cgroups v1 or v2? Use runc or crun
+# respectively.
+# **IMPORTANT**: $OCI_RUNTIME is a fakeout! It is used only in e2e tests.
+# For actual podman, as in system tests, we force runtime in containers.conf
 case "$CG_FS_TYPE" in
     tmpfs)
         if ((CONTAINER==0)); then
             warn "Forcing testing with runc instead of crun"
-            if [[ "$OS_RELEASE_ID" == "ubuntu" ]]; then
-                # Need b/c using cri-o-runc package from OBS
-                echo "OCI_RUNTIME=/usr/lib/cri-o-runc/sbin/runc" \
-                    >> /etc/ci_environment
-            else
-                echo "OCI_RUNTIME=runc" >> /etc/ci_environment
-            fi
+            echo "OCI_RUNTIME=runc" >> /etc/ci_environment
+            printf "[engine]\nruntime=\"runc\"\n" >>/etc/containers/containers.conf
         fi
         ;;
     cgroup2fs)
-        if ((CONTAINER==0)); then
-            # This is necessary since we've built/installed from source,
-            # which uses runc as the default.
-            warn "Forcing testing with crun instead of runc"
-            echo "OCI_RUNTIME=crun" >> /etc/ci_environment
-        fi
+        # Nothing to do: podman defaults to crun
         ;;
     *) die_unknown CG_FS_TYPE
 esac
@@ -235,25 +228,20 @@ esac
 # Required to be defined by caller: The primary type of testing that will be performed
 # shellcheck disable=SC2154
 case "$TEST_FLAVOR" in
-    ext_svc) ;;
     validate)
         dnf install -y $PACKAGE_DOWNLOAD_DIR/python3*.rpm
         # For some reason, this is also needed for validation
-        make install.tools
-        make .install.pre-commit
+        make .install.pre-commit .install.gitvalidation
         ;;
-    automation) ;;
     altbuild)
         # Defined in .cirrus.yml
         # shellcheck disable=SC2154
         if [[ "$ALT_NAME" =~ RPM ]]; then
             bigto dnf install -y glibc-minimal-langpack go-rpm-macros rpkg rpm-build shadow-utils-subid-devel
         fi
-        make install.tools
         ;;
     docker-py)
         remove_packaged_podman_files
-        make install.tools
         make install PREFIX=/usr ETCDIR=/etc
 
         msg "Installing previously downloaded/cached packages"
@@ -265,16 +253,14 @@ case "$TEST_FLAVOR" in
         ;;
     build) make clean ;;
     unit)
-        make install.tools
+        make .install.ginkgo
         ;;
     compose_v2)
-        make install.tools
         dnf -y remove docker-compose
         curl -SL https://github.com/docker/compose/releases/download/v2.2.3/docker-compose-linux-x86_64 -o /usr/local/bin/docker-compose
         chmod +x /usr/local/bin/docker-compose
         ;& # Continue with next item
     apiv2)
-        make install.tools
         msg "Installing previously downloaded/cached packages"
         dnf install -y $PACKAGE_DOWNLOAD_DIR/python3*.rpm
         virtualenv .venv/requests
@@ -283,16 +269,16 @@ case "$TEST_FLAVOR" in
         pip install --requirement $GOSRC/test/apiv2/python/requirements.txt
         ;&  # continue with next item
     compose)
-        make install.tools
         dnf install -y $PACKAGE_DOWNLOAD_DIR/podman-docker*
         ;&  # continue with next item
-    int) ;&
+    int)
+        make .install.ginkgo
+        ;&
     sys) ;&
     upgrade_test) ;&
     bud) ;&
     bindings) ;&
     endpoint)
-        make install.tools
         # Use existing host bits when testing is to happen inside a container
         # since this script will run again in that environment.
         # shellcheck disable=SC2154
@@ -316,7 +302,6 @@ case "$TEST_FLAVOR" in
     machine)
         dnf install -y $PACKAGE_DOWNLOAD_DIR/podman-gvproxy*
         remove_packaged_podman_files
-        make install.tools
         make install PREFIX=/usr ETCDIR=/etc
         install_test_configs
         ;;
@@ -368,7 +353,7 @@ case "$TEST_FLAVOR" in
         slug="gitlab.com/gitlab-org/gitlab-runner"
         helper_fqin="registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-latest-pwsh"
         ssh="ssh $ROOTLESS_USER@localhost -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o CheckHostIP=no env GOPATH=$GOPATH"
-        showrun $ssh go get -u github.com/jstemmer/go-junit-report
+        showrun $ssh go install github.com/jstemmer/go-junit-report/v2@v2.0.0
         showrun $ssh git clone https://$slug $GOPATH/src/$slug
         showrun $ssh make -C $GOPATH/src/$slug development_setup
         showrun $ssh bash -c "'cd $GOPATH/src/$slug && GOPATH=$GOPATH go get .'"
@@ -378,10 +363,8 @@ case "$TEST_FLAVOR" in
         showrun $ssh podman tag $helper_fqin \
             docker.io/gitlab/gitlab-runner-helper:x86_64-latest-pwsh
         ;;
-    swagger) ;&  # use next item
-    consistency)
-        make clean
-        make install.tools
+    swagger)
+        make .install.swagger
         ;;
     release) ;;
     *) die_unknown TEST_FLAVOR

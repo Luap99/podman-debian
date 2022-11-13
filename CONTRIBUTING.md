@@ -1,4 +1,4 @@
-![PODMAN logo](logo/podman-logo-source.svg)
+![PODMAN logo](https://raw.githubusercontent.com/containers/common/main/logos/podman-logo-full-vert.png)
 # Contributing to Podman
 
 We'd love to have you join the community! Below summarizes the processes
@@ -94,6 +94,13 @@ You need install some dependencies before building a binary.
 
   ```shell
   $ sudo dnf install gpgme-devel libseccomp-devel.x86_64 systemd-devel
+  $ export PKG_CONFIG_PATH="/usr/lib/pkgconfig"
+  ```
+
+#### Debian / Ubuntu
+
+  ```shell
+  $ sudo apt-get install -y libsystemd-dev libgpgme-dev libseccomp-dev
   $ export PKG_CONFIG_PATH="/usr/lib/pkgconfig"
   ```
 

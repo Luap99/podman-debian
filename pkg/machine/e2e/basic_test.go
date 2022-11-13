@@ -20,6 +20,8 @@ var _ = Describe("run basic podman commands", func() {
 	})
 
 	It("Basic ops", func() {
+		// golangci-lint has trouble with actually skipping tests marked Skip
+		// so skip it on cirrus envs and where CIRRUS_CI isn't set.
 		name := randomString()
 		i := new(initMachine)
 		session, err := mb.setName(name).setCmd(i.withImagePath(mb.imagePath).withNow()).run()

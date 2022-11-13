@@ -1,7 +1,6 @@
 package integration
 
 import (
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,6 +41,15 @@ var _ = Describe("Podman save", func() {
 		outfile := filepath.Join(podmanTest.TempDir, "alpine.tar")
 
 		save := podmanTest.Podman([]string{"save", "-o", outfile, ALPINE})
+		save.WaitWithDefaultTimeout()
+		Expect(save).Should(Exit(0))
+	})
+
+	It("podman save signature-policy flag", func() {
+		SkipIfRemote("--signature-policy N/A for remote")
+		outfile := filepath.Join(podmanTest.TempDir, "alpine.tar")
+
+		save := podmanTest.Podman([]string{"save", "--signature-policy", "/etc/containers/policy.json", "-o", outfile, ALPINE})
 		save.WaitWithDefaultTimeout()
 		Expect(save).Should(Exit(0))
 	})
@@ -153,6 +161,9 @@ var _ = Describe("Podman save", func() {
 		defer os.Setenv("GNUPGHOME", origGNUPGHOME)
 
 		port := 5000
+		portlock := GetPortLock(strconv.Itoa(port))
+		defer portlock.Unlock()
+
 		session := podmanTest.Podman([]string{"run", "-d", "--name", "registry", "-p", strings.Join([]string{strconv.Itoa(port), strconv.Itoa(port)}, ":"), REGISTRY_IMAGE})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
@@ -182,7 +193,7 @@ default-docker:
   sigstore: file:///var/lib/containers/sigstore
   sigstore-staging: file:///var/lib/containers/sigstore
 `
-		Expect(ioutil.WriteFile("/etc/containers/registries.d/default.yaml", []byte(sigstore), 0755)).To(BeNil())
+		Expect(os.WriteFile("/etc/containers/registries.d/default.yaml", []byte(sigstore), 0755)).To(BeNil())
 
 		session = podmanTest.Podman([]string{"tag", ALPINE, "localhost:5000/alpine"})
 		session.WaitWithDefaultTimeout()

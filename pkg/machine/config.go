@@ -5,7 +5,6 @@ package machine
 
 import (
 	"errors"
-	"io/ioutil"
 	"net"
 	"net/url"
 	"os"
@@ -66,6 +65,7 @@ var (
 	ErrVMAlreadyExists                           = errors.New("VM already exists")
 	ErrVMAlreadyRunning                          = errors.New("VM already running or starting")
 	ErrMultipleActiveVM                          = errors.New("only one VM can be active at a time")
+	ErrNotImplemented                            = errors.New("functionality not implemented")
 	ForwarderBinaryName                          = "gvproxy"
 )
 
@@ -174,7 +174,7 @@ func (rc RemoteConnectionType) MakeSSHURL(host, path, port, userName string) url
 	return uri
 }
 
-// GetCacheDir returns the dir where VM images are downladed into when pulled
+// GetCacheDir returns the dir where VM images are downloaded into when pulled
 func GetCacheDir(vmType string) (string, error) {
 	dataDir, err := GetDataDir(vmType)
 	if err != nil {
@@ -282,7 +282,7 @@ func (m *VMFile) Delete() error {
 
 // Read the contents of a given file and return in []bytes
 func (m *VMFile) Read() ([]byte, error) {
-	return ioutil.ReadFile(m.GetPath())
+	return os.ReadFile(m.GetPath())
 }
 
 // NewMachineFile is a constructor for VMFile

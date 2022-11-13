@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"net/url"
 	"os"
@@ -28,6 +27,76 @@ import (
 	. "github.com/onsi/gomega/gexec"
 	"github.com/opencontainers/selinux/go-selinux"
 )
+
+var secretYaml = `
+apiVersion: v1
+kind: Secret
+metadata:
+  name: newsecret
+type: Opaque
+data:
+  username: dXNlcg==
+  password: NTRmNDFkMTJlOGZh
+`
+
+var complexSecretYaml = `
+apiVersion: v1
+kind: Secret
+metadata:
+  name: newsecrettwo
+type: Opaque
+data:
+  username: Y2RvZXJuCg==
+  password: dGVzdGluZ3Rlc3RpbmcK
+  note: a3ViZSBzZWNyZXRzIGFyZSBjb29sIQo=
+`
+
+var secretPodYaml = `
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mypod
+spec:
+  containers:
+    - name: myctr
+      image: quay.io/libpod/alpine_nginx:latest
+      volumeMounts:
+        - name: foo
+          mountPath: /etc/foo
+          readOnly: true
+  volumes:
+    - name: foo
+      secret:
+        secretName: newsecret
+        optional: false
+`
+
+var secretPodYamlTwo = `
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mypod2
+spec:
+  containers:
+    - name: myctr
+      image: quay.io/libpod/alpine_nginx:latest
+      volumeMounts:
+        - name: foo
+          mountPath: /etc/foo
+          readOnly: true
+        - name: bar
+          mountPath: /etc/bar
+          readOnly: true
+  volumes:
+    - name: foo
+      secret:
+        secretName: newsecret
+        optional: false
+    - name: bar
+      secret:
+        secretName: newsecrettwo
+        optional: false
+`
 
 var unknownKindYaml = `
 apiVersion: v1
@@ -64,8 +133,6 @@ spec:
   containers:
   - name: podnameEqualsContainerNameYaml
     image: quay.io/libpod/alpine:latest
-    ports:
-    - containerPort: 80
 `
 
 var podWithoutAName = `
@@ -170,8 +237,6 @@ spec:
         - "1.5"
         name: alpine
         image: quay.io/libpod/alpine:latest
-        ports:
-        - containerPort: 80
         livenessProbe:
           exec:
             command:
@@ -205,8 +270,6 @@ spec:
         - "1.5"
         name: alpine
         image: quay.io/libpod/alpine:latest
-        ports:
-        - containerPort: 80
         livenessProbe:
           exec:
             command:
@@ -310,6 +373,9 @@ spec:
   restartPolicy: {{ .RestartPolicy }}
   hostname: {{ .Hostname }}
   hostNetwork: {{ .HostNetwork }}
+{{ if .HostUsers }}
+  hostUsers: {{ .HostUsers }}
+{{ end }}
   hostAliases:
 {{ range .HostAliases }}
   - hostnames:
@@ -439,6 +505,9 @@ spec:
   volumes:
   {{ range . }}
   - name: {{ .Name }}
+    {{- if (eq .VolumeType "EmptyDir") }}
+    emptyDir: {}
+    {{- end }}
     {{- if (eq .VolumeType "HostPath") }}
     hostPath:
       path: {{ .HostPath.Path }}
@@ -691,7 +760,7 @@ func generateMultiDocKubeYaml(kubeObjects []string, pathname string) error {
 
 func createSecret(podmanTest *PodmanTestIntegration, name string, value []byte) { //nolint:unparam
 	secretFilePath := filepath.Join(podmanTest.TempDir, "secret")
-	err := ioutil.WriteFile(secretFilePath, value, 0755)
+	err := os.WriteFile(secretFilePath, value, 0755)
 	Expect(err).To(BeNil())
 
 	secret := podmanTest.Podman([]string{"secret", "create", name, secretFilePath})
@@ -771,6 +840,7 @@ type Pod struct {
 	RestartPolicy   string
 	Hostname        string
 	HostNetwork     bool
+	HostUsers       *bool
 	HostAliases     []HostAlias
 	Ctrs            []*Ctr
 	InitCtrs        []*Ctr
@@ -892,6 +962,12 @@ func withVolume(v *Volume) podOption {
 func withHostNetwork() podOption {
 	return func(pod *Pod) {
 		pod.HostNetwork = true
+	}
+}
+
+func withHostUsers(val bool) podOption {
+	return func(pod *Pod) {
+		pod.HostUsers = &val
 	}
 }
 
@@ -1172,12 +1248,15 @@ type ConfigMap struct {
 	Optional bool
 }
 
+type EmptyDir struct{}
+
 type Volume struct {
 	VolumeType string
 	Name       string
 	HostPath
 	PersistentVolumeClaim
 	ConfigMap
+	EmptyDir
 }
 
 // getHostPathVolume takes a type and a location for a HostPath
@@ -1216,6 +1295,14 @@ func getConfigMapVolume(vName string, items []map[string]string, optional bool) 
 			Items:    items,
 			Optional: optional,
 		},
+	}
+}
+
+func getEmptyDirVolume() *Volume {
+	return &Volume{
+		VolumeType: "EmptyDir",
+		Name:       defaultVolName,
+		EmptyDir:   EmptyDir{},
 	}
 }
 
@@ -1348,7 +1435,7 @@ var _ = Describe("Podman play kube", func() {
 		conffile := filepath.Join(podmanTest.TempDir, "container.conf")
 
 		infraImage := "k8s.gcr.io/pause:3.2"
-		err := ioutil.WriteFile(conffile, []byte(fmt.Sprintf("[engine]\ninfra_image=\"%s\"\n", infraImage)), 0644)
+		err := os.WriteFile(conffile, []byte(fmt.Sprintf("[engine]\ninfra_image=\"%s\"\n", infraImage)), 0644)
 		Expect(err).To(BeNil())
 
 		os.Setenv("CONTAINERS_CONF", conffile)
@@ -2276,7 +2363,7 @@ spec:
 		tempdir, err = CreateTempDirInTempDir()
 		Expect(err).To(BeNil())
 
-		err := ioutil.WriteFile(conffile, []byte(testyaml), 0755)
+		err := os.WriteFile(conffile, []byte(testyaml), 0755)
 		Expect(err).To(BeNil())
 
 		kube := podmanTest.Podman([]string{"play", "kube", conffile})
@@ -2339,7 +2426,7 @@ spec:
 		err := generateKubeYaml("deployment", deployment, kubeYaml)
 		Expect(err).To(BeNil())
 
-		net := "playkube" + stringid.GenerateNonCryptoID()
+		net := "playkube" + stringid.GenerateRandomID()
 		session := podmanTest.Podman([]string{"network", "create", "--subnet", "10.25.31.0/24", net})
 		session.WaitWithDefaultTimeout()
 		defer podmanTest.removeNetwork(net)
@@ -2381,8 +2468,8 @@ spec:
 		err := generateKubeYaml("pod", pod, kubeYaml)
 		Expect(err).To(BeNil())
 
-		net1 := "net1" + stringid.GenerateNonCryptoID()
-		net2 := "net2" + stringid.GenerateNonCryptoID()
+		net1 := "net1" + stringid.GenerateRandomID()
+		net2 := "net2" + stringid.GenerateRandomID()
 
 		net := podmanTest.Podman([]string{"network", "create", "--subnet", "10.0.11.0/24", net1})
 		net.WaitWithDefaultTimeout()
@@ -2412,7 +2499,7 @@ spec:
 
 	It("podman play kube test with network portbindings", func() {
 		ip := "127.0.0.100"
-		port := "5000"
+		port := "8087"
 		ctr := getCtr(withHostIP(ip, port), withImage(BB))
 
 		pod := getPod(withCtr(ctr))
@@ -2426,7 +2513,7 @@ spec:
 		inspect := podmanTest.Podman([]string{"port", getCtrNameInPod(pod)})
 		inspect.WaitWithDefaultTimeout()
 		Expect(inspect).Should(Exit(0))
-		Expect(inspect.OutputToString()).To(Equal("5000/tcp -> 127.0.0.100:5000"))
+		Expect(inspect.OutputToString()).To(Equal("8087/tcp -> 127.0.0.100:8087"))
 	})
 
 	It("podman play kube test with nonexistent empty HostPath type volume", func() {
@@ -2515,6 +2602,36 @@ spec:
 		st, err := os.Stat(hostPathLocation)
 		Expect(err).To(BeNil())
 		Expect(st.Mode().IsDir()).To(Equal(true))
+	})
+
+	It("podman play kube test with DirectoryOrCreate HostPath type volume and non-existent directory path", func() {
+		hostPathLocation := filepath.Join(filepath.Join(tempdir, "dir1"), "dir2")
+
+		pod := getPod(withVolume(getHostPathVolume("DirectoryOrCreate", hostPathLocation)))
+		err := generateKubeYaml("pod", pod, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(Exit(0))
+
+		// the full path should have been created
+		st, err := os.Stat(hostPathLocation)
+		Expect(err).To(BeNil())
+		Expect(st.Mode().IsDir()).To(Equal(true))
+	})
+
+	It("podman play kube test with DirectoryOrCreate HostPath type volume and existent directory path", func() {
+		hostPathLocation := filepath.Join(filepath.Join(tempdir, "dir1"), "dir2")
+		Expect(os.MkdirAll(hostPathLocation, os.ModePerm)).To(BeNil())
+
+		pod := getPod(withVolume(getHostPathVolume("DirectoryOrCreate", hostPathLocation)))
+		err := generateKubeYaml("pod", pod, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(Exit(0))
 	})
 
 	It("podman play kube test with Socket HostPath type volume should fail if not socket", func() {
@@ -2690,6 +2807,43 @@ VOLUME %s`, ALPINE, hostPathDir+"/")
 		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
 		kube.WaitWithDefaultTimeout()
 		Expect(kube).Should(Exit(0))
+	})
+
+	It("podman play kube with emptyDir volume", func() {
+		podName := "test-pod"
+		ctrName1 := "vol-test-ctr"
+		ctrName2 := "vol-test-ctr-2"
+		ctr1 := getCtr(withVolumeMount("/test-emptydir", false), withImage(BB), withName(ctrName1))
+		ctr2 := getCtr(withVolumeMount("/test-emptydir-2", false), withImage(BB), withName(ctrName2))
+		pod := getPod(withPodName(podName), withVolume(getEmptyDirVolume()), withCtr(ctr1), withCtr(ctr2))
+		err = generateKubeYaml("pod", pod, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(Exit(0))
+
+		emptyDirCheck1 := podmanTest.Podman([]string{"exec", podName + "-" + ctrName1, "ls", "/test-emptydir"})
+		emptyDirCheck1.WaitWithDefaultTimeout()
+		Expect(emptyDirCheck1).Should(Exit(0))
+
+		emptyDirCheck2 := podmanTest.Podman([]string{"exec", podName + "-" + ctrName2, "ls", "/test-emptydir-2"})
+		emptyDirCheck2.WaitWithDefaultTimeout()
+		Expect(emptyDirCheck2).Should(Exit(0))
+
+		volList1 := podmanTest.Podman([]string{"volume", "ls", "-q"})
+		volList1.WaitWithDefaultTimeout()
+		Expect(volList1).Should(Exit(0))
+		Expect(volList1.OutputToString()).To(Equal(defaultVolName))
+
+		remove := podmanTest.Podman([]string{"pod", "rm", "-f", podName})
+		remove.WaitWithDefaultTimeout()
+		Expect(remove).Should(Exit(0))
+
+		volList2 := podmanTest.Podman([]string{"volume", "ls", "-q"})
+		volList2.WaitWithDefaultTimeout()
+		Expect(volList2).Should(Exit(0))
+		Expect(volList2.OutputToString()).To(Equal(""))
 	})
 
 	It("podman play kube applies labels to pods", func() {
@@ -2874,6 +3028,21 @@ MemoryReservation: {{ .HostConfig.MemoryReservation }}`})
 		logs.WaitWithDefaultTimeout()
 		Expect(logs).Should(Exit(0))
 		Expect(logs.OutputToString()).To(Equal(netns))
+	})
+
+	It("podman play kube test with kube default network", func() {
+		pod := getPod()
+		err := generateKubeYaml("pod", pod, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(Exit(0))
+
+		inspect := podmanTest.Podman([]string{"inspect", pod.Name, "--format", "{{ .InfraConfig.Networks }}"})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect).Should(Exit(0))
+		Expect(inspect.OutputToString()).To(Equal("[podman-default-kube-network]"))
 	})
 
 	It("podman play kube persistentVolumeClaim", func() {
@@ -3493,7 +3662,7 @@ ENV OPENJ9_JAVA_OPTIONS=%q
 			SkipIfRemote("cannot run in a remote setup")
 			address := url.URL{
 				Scheme: "tcp",
-				Host:   net.JoinHostPort("localhost", randomPort()),
+				Host:   net.JoinHostPort("localhost", "8080"),
 			}
 
 			session := podmanTest.Podman([]string{
@@ -3662,15 +3831,14 @@ ENV OPENJ9_JAVA_OPTIONS=%q
 		Expect((inspect.InspectContainerToJSON()[0]).HostConfig.LogConfig.Tag).To(Equal("{{.ImageName}}"))
 	})
 
-	// Check that --userns=auto creates a user namespace
-	It("podman play kube --userns=auto", func() {
+	It("podman play kube using a user namespace", func() {
 		u, err := user.Current()
 		Expect(err).To(BeNil())
 		name := u.Name
 		if name == "root" {
 			name = "containers"
 		}
-		content, err := ioutil.ReadFile("/etc/subuid")
+		content, err := os.ReadFile("/etc/subuid")
 		if err != nil {
 			Skip("cannot read /etc/subuid")
 		}
@@ -3678,7 +3846,7 @@ ENV OPENJ9_JAVA_OPTIONS=%q
 			Skip("cannot find mappings for the current user")
 		}
 
-		initialUsernsConfig, err := ioutil.ReadFile("/proc/self/uid_map")
+		initialUsernsConfig, err := os.ReadFile("/proc/self/uid_map")
 		Expect(err).To(BeNil())
 		if os.Geteuid() != 0 {
 			unshare := podmanTest.Podman([]string{"unshare", "cat", "/proc/self/uid_map"})
@@ -3710,6 +3878,26 @@ ENV OPENJ9_JAVA_OPTIONS=%q
 		usernsInCtr.WaitWithDefaultTimeout()
 		Expect(usernsInCtr).Should(Exit(0))
 		Expect(string(usernsInCtr.Out.Contents())).To(Not(Equal(string(initialUsernsConfig))))
+
+		// Now try with hostUsers in the pod spec
+		for _, hostUsers := range []bool{true, false} {
+			pod = getPod(withHostUsers(hostUsers))
+			err = generateKubeYaml("pod", pod, kubeYaml)
+			Expect(err).To(BeNil())
+
+			kube = podmanTest.PodmanNoCache([]string{"play", "kube", "--replace", kubeYaml})
+			kube.WaitWithDefaultTimeout()
+			Expect(kube).Should(Exit(0))
+
+			usernsInCtr = podmanTest.Podman([]string{"exec", getCtrNameInPod(pod), "cat", "/proc/self/uid_map"})
+			usernsInCtr.WaitWithDefaultTimeout()
+			Expect(usernsInCtr).Should(Exit(0))
+			if hostUsers {
+				Expect(string(usernsInCtr.Out.Contents())).To(Equal(string(initialUsernsConfig)))
+			} else {
+				Expect(string(usernsInCtr.Out.Contents())).To(Not(Equal(string(initialUsernsConfig))))
+			}
+		}
 	})
 
 	// Check the block devices are exposed inside container
@@ -3855,6 +4043,76 @@ ENV OPENJ9_JAVA_OPTIONS=%q
 		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
 		kube.WaitWithDefaultTimeout()
 		Expect(kube).Should(Exit(125))
+	})
+
+	It("podman play kube secret as volume support", func() {
+		err := writeYaml(secretYaml, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube := podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(Exit(0))
+
+		secretList := podmanTest.Podman([]string{"secret", "list"})
+		secretList.WaitWithDefaultTimeout()
+		Expect(secretList).Should(Exit(0))
+		Expect(secretList.OutputToString()).Should(ContainSubstring("newsecret"))
+
+		err = writeYaml(secretPodYaml, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube = podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(Exit(0))
+
+		exec := podmanTest.Podman([]string{"exec", "-it", "mypod-myctr", "cat", "/etc/foo/username"})
+		exec.WaitWithDefaultTimeout()
+		Expect(exec).Should(Exit(0))
+		Expect(exec.OutputToString()).Should(ContainSubstring("dXNlcg=="))
+
+		secretRm := podmanTest.Podman([]string{"secret", "rm", "newsecret"})
+		secretRm.WaitWithDefaultTimeout()
+		Expect(secretRm).Should(Exit(0))
+
+		podRm := podmanTest.Podman([]string{"pod", "rm", "-f", "mypod"})
+		podRm.WaitWithDefaultTimeout()
+		Expect(podRm).Should(Exit(0))
+
+		yamls := []string{secretYaml, secretPodYaml}
+		err = generateMultiDocKubeYaml(yamls, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube = podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(Exit(0))
+
+		// do not remove newsecret to test that we auto remove on collision
+
+		yamls = []string{secretYaml, complexSecretYaml}
+		err = generateMultiDocKubeYaml(yamls, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube = podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(Exit(0))
+
+		err = writeYaml(secretPodYamlTwo, kubeYaml)
+		Expect(err).To(BeNil())
+
+		kube = podmanTest.Podman([]string{"play", "kube", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(Exit(0))
+
+		exec = podmanTest.Podman([]string{"exec", "-it", "mypod2-myctr", "cat", "/etc/foo/username"})
+		exec.WaitWithDefaultTimeout()
+		Expect(exec).Should(Exit(0))
+		Expect(exec.OutputToString()).Should(ContainSubstring("dXNlcg=="))
+
+		exec = podmanTest.Podman([]string{"exec", "-it", "mypod2-myctr", "cat", "/etc/bar/username"})
+		exec.WaitWithDefaultTimeout()
+		Expect(exec).Should(Exit(0))
+		Expect(exec.OutputToString()).Should(ContainSubstring("Y2RvZXJuCg=="))
+
 	})
 
 })

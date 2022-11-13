@@ -72,7 +72,7 @@ func createFlags(cmd *cobra.Command) {
 
 	flags.SetInterspersed(false)
 	common.DefineCreateDefaults(&cliVals)
-	common.DefineCreateFlags(cmd, &cliVals, false, false)
+	common.DefineCreateFlags(cmd, &cliVals, entities.CreateMode)
 	common.DefineNetFlags(cmd)
 
 	flags.SetNormalizeFunc(utils.AliasFlags)
@@ -280,7 +280,7 @@ func CreateInit(c *cobra.Command, vals entities.ContainerCreateOptions, isInfra 
 	if c.Flag("shm-size").Changed {
 		vals.ShmSize = c.Flag("shm-size").Value.String()
 	}
-	if (c.Flag("dns").Changed || c.Flag("dns-opt").Changed || c.Flag("dns-search").Changed) && vals.Net != nil && (vals.Net.Network.NSMode == specgen.NoNetwork || vals.Net.Network.IsContainer()) {
+	if (c.Flag("dns").Changed || c.Flag("dns-option").Changed || c.Flag("dns-search").Changed) && vals.Net != nil && (vals.Net.Network.NSMode == specgen.NoNetwork || vals.Net.Network.IsContainer()) {
 		return vals, fmt.Errorf("conflicting options: dns and the network mode: " + string(vals.Net.Network.NSMode))
 	}
 	noHosts, err := c.Flags().GetBool("no-hosts")

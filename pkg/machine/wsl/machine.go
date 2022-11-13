@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"io/ioutil"
 	"net/url"
 	"os"
 	"os/exec"
@@ -44,7 +43,6 @@ const containersConf = `[containers]
 
 [engine]
 cgroup_manager = "cgroupfs"
-events_logger = "file"
 `
 
 const appendPort = `grep -q Port\ %d /etc/ssh/sshd_config || echo Port %d >> /etc/ssh/sshd_config`
@@ -424,7 +422,7 @@ func (v *MachineVM) writeConfig() error {
 	if err != nil {
 		return err
 	}
-	if err := ioutil.WriteFile(jsonFile, b, 0644); err != nil {
+	if err := os.WriteFile(jsonFile, b, 0644); err != nil {
 		return fmt.Errorf("could not write machine json config: %w", err)
 	}
 
@@ -639,13 +637,13 @@ func installScripts(dist string) error {
 }
 
 func checkAndInstallWSL(opts machine.InitOptions) (bool, error) {
-	if isWSLInstalled() {
+	if IsWSLInstalled() {
 		return true, nil
 	}
 
 	admin := hasAdminRights()
 
-	if !isWSLFeatureEnabled() {
+	if !IsWSLFeatureEnabled() {
 		return false, attemptFeatureInstall(opts, admin)
 	}
 
@@ -940,7 +938,7 @@ func (v *MachineVM) Set(_ string, opts machine.SetOptions) ([]error, error) {
 	if opts.Rootful != nil && v.Rootful != *opts.Rootful {
 		err := v.setRootful(*opts.Rootful)
 		if err != nil {
-			setErrors = append(setErrors, fmt.Errorf("error setting rootful option: %w", err))
+			setErrors = append(setErrors, fmt.Errorf("setting rootful option: %w", err))
 		} else {
 			v.Rootful = *opts.Rootful
 		}
@@ -1062,8 +1060,8 @@ func launchWinProxy(v *MachineVM) (bool, string, error) {
 		return globalName, "", err
 	}
 
-	return globalName, pipePrefix + waitPipe, waitPipeExists(waitPipe, 30, func() error {
-		active, exitCode := getProcessState(cmd.Process.Pid)
+	return globalName, pipePrefix + waitPipe, waitPipeExists(waitPipe, 80, func() error {
+		active, exitCode := machine.GetProcessState(cmd.Process.Pid)
 		if !active {
 			return fmt.Errorf("win-sshproxy.exe failed to start, exit code: %d (see windows event logs)", exitCode)
 		}
@@ -1100,15 +1098,16 @@ func waitPipeExists(pipeName string, retries int, checkFailure func() error) err
 		if fail := checkFailure(); fail != nil {
 			return fail
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(250 * time.Millisecond)
 	}
 
 	return err
 }
 
-func isWSLInstalled() bool {
-	cmd := exec.Command("wsl", "--status")
+func IsWSLInstalled() bool {
+	cmd := SilentExecCmd("wsl", "--status")
 	out, err := cmd.StdoutPipe()
+	cmd.Stderr = nil
 	if err != nil {
 		return false
 	}
@@ -1132,9 +1131,8 @@ func isWSLInstalled() bool {
 	return true
 }
 
-func isWSLFeatureEnabled() bool {
-	cmd := exec.Command("wsl", "--set-default-version", "2")
-	return cmd.Run() == nil
+func IsWSLFeatureEnabled() bool {
+	return SilentExec("wsl", "--set-default-version", "2") == nil
 }
 
 func isWSLRunning(dist string) (bool, error) {
@@ -1286,7 +1284,7 @@ func readWinProxyTid(v *MachineVM) (uint32, uint32, string, error) {
 	}
 
 	tidFile := filepath.Join(stateDir, winSshProxyTid)
-	contents, err := ioutil.ReadFile(tidFile)
+	contents, err := os.ReadFile(tidFile)
 	if err != nil {
 		return 0, 0, "", err
 	}

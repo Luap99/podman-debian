@@ -64,6 +64,33 @@ function teardown() {
 }
 
 
+@test "podman volume duplicates" {
+    vol1=${PODMAN_TMPDIR}/v1_$(random_string)
+    vol2=${PODMAN_TMPDIR}/v2_$(random_string)
+    mkdir $vol1 $vol2
+
+    # if volumes source and dest match then pass
+    run_podman run --rm -v $vol1:/vol1 -v $vol1:/vol1 $IMAGE /bin/true
+    run_podman 125 run --rm -v $vol1:$vol1 -v $vol2:$vol1 $IMAGE /bin/true
+    is "$output" "Error: $vol1: duplicate mount destination"  "diff volumes mounted on same dest should fail"
+
+    # if named volumes source and dest match then pass
+    run_podman run --rm -v vol1:/vol1 -v vol1:/vol1 $IMAGE /bin/true
+    run_podman 125 run --rm -v vol1:/vol1 -v vol2:/vol1 $IMAGE /bin/true
+    is "$output" "Error: /vol1: duplicate mount destination"  "diff named volumes mounted on same dest should fail"
+
+    # if tmpfs volumes source and dest match then pass
+    run_podman run --rm --tmpfs /vol1 --tmpfs /vol1 $IMAGE /bin/true
+    run_podman 125 run --rm --tmpfs $vol1 --tmpfs $vol1:ro $IMAGE /bin/true
+    is "$output" "Error: $vol1: duplicate mount destination"  "diff named volumes and tmpfs mounted on same dest should fail"
+
+    run_podman 125 run --rm -v vol2:/vol2 --tmpfs /vol2 $IMAGE /bin/true
+    is "$output" "Error: /vol2: duplicate mount destination"  "diff named volumes and tmpfs mounted on same dest should fail"
+
+    run_podman 125 run --rm -v $vol1:/vol1 --tmpfs /vol1 $IMAGE /bin/true
+    is "$output" "Error: /vol1: duplicate mount destination"  "diff named volumes and tmpfs mounted on same dest should fail"
+}
+
 # Filter volumes by name
 @test "podman volume filter --name" {
     suffix=$(random_string)
@@ -149,16 +176,16 @@ EOF
 
     # By default, volumes are mounted exec, but we have manually added the
     # noexec option. This should fail.
-    # ARGH. Unfortunately, runc (used for cgroups v1) produces a different error
+    # ARGH. Unfortunately, runc (used for cgroups v1) has different exit status
     local expect_rc=126
-    local expect_msg='.* OCI permission denied.*'
     if [[ $(podman_runtime) = "runc" ]]; then
         expect_rc=1
-        expect_msg='.* exec user process caused.*permission denied'
     fi
 
     run_podman ${expect_rc} run --rm --volume $myvolume:/vol:noexec,z $IMAGE /vol/myscript
-    is "$output" "$expect_msg" "run on volume, noexec"
+    # crun and runc emit different messages, and even runc is inconsistent
+    # with itself (output changed some time in 2022?). Deal with all.
+    assert "$output" =~ 'exec.* permission denied' "run on volume, noexec"
 
     # With the default, it should pass
     run_podman run --rm -v $myvolume:/vol:z $IMAGE /vol/myscript
@@ -315,11 +342,11 @@ EOF
 
     # List available volumes for pruning after using 1,2,3
     run_podman volume prune <<< N
-    is "$(echo $(sort <<<${lines[@]:1:3}))" "${v[4]} ${v[5]} ${v[6]}" "volume prune, with 1,2,3 in use, lists 4,5,6"
+    is "$(echo $(sort <<<${lines[*]:1:3}))" "${v[4]} ${v[5]} ${v[6]}" "volume prune, with 1,2,3 in use, lists 4,5,6"
 
     # List available volumes for pruning after using 1,2,3 and filtering; see #8913
     run_podman volume prune --filter label=mylabel <<< N
-    is "$(echo $(sort <<<${lines[@]:1:2}))" "${v[5]} ${v[6]}" "volume prune, with 1,2,3 in use and 4 filtered out, lists 5,6"
+    is "$(echo $(sort <<<${lines[*]:1:2}))" "${v[5]} ${v[6]}" "volume prune, with 1,2,3 in use and 4 filtered out, lists 5,6"
 
     # prune should remove v4
     run_podman volume prune --force

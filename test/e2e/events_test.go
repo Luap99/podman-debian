@@ -42,10 +42,7 @@ var _ = Describe("Podman events", func() {
 	// Perhaps a future version of this test would put events in a go func and send output back over a channel
 	// while events occur.
 
-	// These tests are only known to work on Fedora ATM.  Other distributions
-	// will be skipped.
 	It("podman events", func() {
-		SkipIfNotFedora()
 		_, ec, _ := podmanTest.RunLsContainer("")
 		Expect(ec).To(Equal(0))
 		result := podmanTest.Podman([]string{"events", "--stream=false"})
@@ -54,7 +51,6 @@ var _ = Describe("Podman events", func() {
 	})
 
 	It("podman events with an event filter", func() {
-		SkipIfNotFedora()
 		_, ec, _ := podmanTest.RunLsContainer("")
 		Expect(ec).To(Equal(0))
 		result := podmanTest.Podman([]string{"events", "--stream=false", "--filter", "event=start"})
@@ -81,7 +77,6 @@ var _ = Describe("Podman events", func() {
 	})
 
 	It("podman events with a type and filter container=id", func() {
-		SkipIfNotFedora()
 		_, ec, cid := podmanTest.RunLsContainer("")
 		Expect(ec).To(Equal(0))
 		result := podmanTest.Podman([]string{"events", "--stream=false", "--filter", "type=pod", "--filter", fmt.Sprintf("container=%s", cid)})
@@ -91,7 +86,6 @@ var _ = Describe("Podman events", func() {
 	})
 
 	It("podman events with a type", func() {
-		SkipIfNotFedora()
 		setup := podmanTest.Podman([]string{"run", "-dt", "--pod", "new:foobarpod", ALPINE, "top"})
 		setup.WaitWithDefaultTimeout()
 		stop := podmanTest.Podman([]string{"pod", "stop", "foobarpod"})
@@ -110,7 +104,6 @@ var _ = Describe("Podman events", func() {
 	})
 
 	It("podman events --since", func() {
-		SkipIfNotFedora()
 		_, ec, _ := podmanTest.RunLsContainer("")
 		Expect(ec).To(Equal(0))
 		result := podmanTest.Podman([]string{"events", "--stream=false", "--since", "1m"})
@@ -119,7 +112,6 @@ var _ = Describe("Podman events", func() {
 	})
 
 	It("podman events --until", func() {
-		SkipIfNotFedora()
 		_, ec, _ := podmanTest.RunLsContainer("")
 		Expect(ec).To(Equal(0))
 		result := podmanTest.Podman([]string{"events", "--stream=false", "--until", "1h"})
@@ -128,7 +120,6 @@ var _ = Describe("Podman events", func() {
 	})
 
 	It("podman events format", func() {
-		SkipIfNotFedora()
 		_, ec, _ := podmanTest.RunLsContainer("")
 		Expect(ec).To(Equal(0))
 
@@ -153,12 +144,19 @@ var _ = Describe("Podman events", func() {
 		event = events.Event{}
 		err = json.Unmarshal([]byte(jsonArr[0]), &event)
 		Expect(err).ToNot(HaveOccurred())
+
+		test = podmanTest.Podman([]string{"events", "--stream=false", "--filter=type=container", "--format", "ID: {{.ID}}"})
+		test.WaitWithDefaultTimeout()
+		Expect(test).To(Exit(0))
+		arr := test.OutputToStringArray()
+		Expect(len(arr)).To(BeNumerically(">", 1))
+		Expect(arr[0]).To(MatchRegexp("ID: [a-fA-F0-9]{64}"))
 	})
 
 	It("podman events --until future", func() {
-		name1 := stringid.GenerateNonCryptoID()
-		name2 := stringid.GenerateNonCryptoID()
-		name3 := stringid.GenerateNonCryptoID()
+		name1 := stringid.GenerateRandomID()
+		name2 := stringid.GenerateRandomID()
+		name3 := stringid.GenerateRandomID()
 		session := podmanTest.Podman([]string{"create", "--name", name1, ALPINE})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
@@ -214,6 +212,16 @@ var _ = Describe("Podman events", func() {
 		Expect(result).Should(Exit(0))
 		Expect(result.OutputToStringArray()).To(HaveLen(1))
 		Expect(result.OutputToString()).To(ContainSubstring("create"))
+
+		ctrName := "testCtr"
+		run := podmanTest.Podman([]string{"create", "--pod", id, "--name", ctrName, ALPINE, "top"})
+		run.WaitWithDefaultTimeout()
+		Expect(run).Should(Exit(0))
+
+		result2 := podmanTest.Podman([]string{"events", "--stream=false", "--filter", fmt.Sprintf("container=%s", ctrName), "--since", "30s"})
+		result2.WaitWithDefaultTimeout()
+		Expect(result2).Should(Exit(0))
+		Expect(result2.OutputToString()).To(ContainSubstring(fmt.Sprintf("pod_id=%s", id)))
 	})
 
 	It("podman events health_status generated", func() {
@@ -231,7 +239,7 @@ var _ = Describe("Podman events", func() {
 			time.Sleep(1 * time.Second)
 		}
 
-		result := podmanTest.Podman([]string{"events", "--stream=false", "--filter", "event=health_status"})
+		result := podmanTest.Podman([]string{"events", "--stream=false", "--filter", "event=health_status", "--since", "1m"})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
 		Expect(len(result.OutputToStringArray())).To(BeNumerically(">=", 1), "Number of health_status events")

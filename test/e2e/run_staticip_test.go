@@ -66,7 +66,7 @@ var _ = Describe("Podman run with --ip flag", func() {
 	})
 
 	It("Podman run with specified static IPv6 has correct IP", func() {
-		netName := "ipv6-" + stringid.GenerateNonCryptoID()
+		netName := "ipv6-" + stringid.GenerateRandomID()
 		ipv6 := "fd46:db93:aa76:ac37::10"
 		net := podmanTest.Podman([]string{"network", "create", "--subnet", "fd46:db93:aa76:ac37::/64", netName})
 		net.WaitWithDefaultTimeout()
@@ -105,6 +105,13 @@ var _ = Describe("Podman run with --ip flag", func() {
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
 
+		// We need to set "no_proxy" in proxy environment
+		if env, found := os.LookupEnv("no_proxy"); found {
+			defer os.Setenv("no_proxy", env)
+		} else {
+			defer os.Unsetenv("no_proxy")
+		}
+		os.Setenv("no_proxy", ip)
 		for retries := 20; retries > 0; retries-- {
 			response, err := http.Get(fmt.Sprintf("http://%s", ip))
 			if err == nil && response.StatusCode == http.StatusOK {

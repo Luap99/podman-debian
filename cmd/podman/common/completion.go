@@ -13,6 +13,7 @@ import (
 	libimageDefine "github.com/containers/common/libimage/define"
 	"github.com/containers/common/libnetwork/types"
 	"github.com/containers/common/pkg/config"
+	"github.com/containers/common/pkg/ssh"
 	"github.com/containers/image/v5/pkg/sysregistriesv2"
 	"github.com/containers/podman/v4/cmd/podman/registry"
 	"github.com/containers/podman/v4/libpod/define"
@@ -541,6 +542,10 @@ func AutocompleteForKube(cmd *cobra.Command, args []string, toComplete string) (
 	objs = append(objs, pods...)
 	objs = append(objs, volumes...)
 	return objs, cobra.ShellCompDirectiveNoFileComp
+}
+
+func AutocompleteForGenerate(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	return AutocompleteForKube(cmd, args, toComplete)
 }
 
 // AutocompleteContainersAndPods - Autocomplete container names and pod names.
@@ -1627,4 +1632,17 @@ func AutocompleteClone(cmd *cobra.Command, args []string, toComplete string) ([]
 		return getImages(cmd, toComplete)
 	}
 	return nil, cobra.ShellCompDirectiveNoFileComp
+}
+
+// AutocompleteSSH - Autocomplete ssh modes
+func AutocompleteSSH(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if !validCurrentCmdLine(cmd, args, toComplete) {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	return []string{string(ssh.GolangMode), string(ssh.NativeMode)}, cobra.ShellCompDirectiveNoFileComp
+}
+
+// AutocompleteHealthOnFailure - action to take once the container turns unhealthy.
+func AutocompleteHealthOnFailure(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	return define.SupportedHealthCheckOnFailureActions, cobra.ShellCompDirectiveNoFileComp
 }

@@ -2,7 +2,6 @@ package integration
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"strings"
 
@@ -67,6 +66,19 @@ var _ = Describe("Podman stop", func() {
 		finalCtrs.WaitWithDefaultTimeout()
 		Expect(finalCtrs).Should(Exit(0))
 		Expect(strings.TrimSpace(finalCtrs.OutputToString())).To(Equal(""))
+	})
+
+	It("podman stop single container by short id", func() {
+		session := podmanTest.RunTopContainer("test1")
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		cid := session.OutputToString()
+		shortID := cid[0:10]
+
+		session = podmanTest.Podman([]string{"stop", shortID})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToString()).To(Equal(shortID))
 	})
 
 	It("podman stop container by name", func() {
@@ -198,9 +210,13 @@ var _ = Describe("Podman stop", func() {
 		session := podmanTest.RunTopContainer("test1")
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
+		cid := session.OutputToString()
+
 		session = podmanTest.Podman([]string{"stop", "-l", "-t", "1"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
+		Expect(session.OutputToString()).To(Equal(cid))
+
 		finalCtrs := podmanTest.Podman([]string{"ps", "-q"})
 		finalCtrs.WaitWithDefaultTimeout()
 		Expect(finalCtrs).Should(Exit(0))
@@ -259,7 +275,7 @@ var _ = Describe("Podman stop", func() {
 
 	It("podman stop --cidfile", func() {
 
-		tmpDir, err := ioutil.TempDir("", "")
+		tmpDir, err := os.MkdirTemp("", "")
 		Expect(err).To(BeNil())
 		tmpFile := tmpDir + "cid"
 
@@ -283,7 +299,7 @@ var _ = Describe("Podman stop", func() {
 
 	It("podman stop multiple --cidfile", func() {
 
-		tmpDir, err := ioutil.TempDir("", "")
+		tmpDir, err := os.MkdirTemp("", "")
 		Expect(err).To(BeNil())
 		tmpFile1 := tmpDir + "cid-1"
 		tmpFile2 := tmpDir + "cid-2"

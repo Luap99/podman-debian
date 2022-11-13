@@ -2,7 +2,6 @@ package integration
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"os/user"
@@ -104,7 +103,7 @@ var _ = Describe("Podman Info", func() {
 		driver := `"overlay"`
 		storageOpt := `"/usr/bin/fuse-overlayfs"`
 		storageConf := []byte(fmt.Sprintf("[storage]\ndriver=%s\nrootless_storage_path=%s\n[storage.options]\nmount_program=%s", driver, rootlessStoragePath, storageOpt))
-		err = ioutil.WriteFile(configPath, storageConf, os.ModePerm)
+		err = os.WriteFile(configPath, storageConf, os.ModePerm)
 		Expect(err).To(BeNil())
 
 		u, err := user.Current()
@@ -151,5 +150,20 @@ var _ = Describe("Podman Info", func() {
 		Expect(session).To(Exit(0))
 		Expect(session.OutputToString()).To(ContainSubstring("memory"))
 		Expect(session.OutputToString()).To(ContainSubstring("pids"))
+	})
+
+	It("Podman info: check desired runtime", func() {
+		// defined in .cirrus.yml
+		want := os.Getenv("CI_DESIRED_RUNTIME")
+		if want == "" {
+			if os.Getenv("CIRRUS_CI") == "" {
+				Skip("CI_DESIRED_RUNTIME is not set--this is OK because we're not running under Cirrus")
+			}
+			Fail("CIRRUS_CI is set, but CI_DESIRED_RUNTIME is not! See #14912")
+		}
+		session := podmanTest.Podman([]string{"info", "--format", "{{.Host.OCIRuntime.Name}}"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).To(Exit(0))
+		Expect(session.OutputToString()).To(Equal(want))
 	})
 })

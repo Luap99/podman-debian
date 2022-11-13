@@ -7,6 +7,7 @@ import (
 
 	podmanRegistry "github.com/containers/podman/v4/hack/podman-registry-go"
 	. "github.com/containers/podman/v4/test/utils"
+	"github.com/containers/storage/pkg/archive"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -44,9 +45,23 @@ var _ = Describe("Podman manifest", func() {
 		processTestResult(f)
 	})
 	It("create w/o image", func() {
-		session := podmanTest.Podman([]string{"manifest", "create", "foo"})
-		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		for _, amend := range []string{"--amend", "-a"} {
+			session := podmanTest.Podman([]string{"manifest", "create", "foo"})
+			session.WaitWithDefaultTimeout()
+			Expect(session).Should(Exit(0))
+
+			session = podmanTest.Podman([]string{"manifest", "create", "foo"})
+			session.WaitWithDefaultTimeout()
+			Expect(session).To(ExitWithError())
+
+			session = podmanTest.Podman([]string{"manifest", "create", amend, "foo"})
+			session.WaitWithDefaultTimeout()
+			Expect(session).Should(Exit(0))
+
+			session = podmanTest.Podman([]string{"manifest", "rm", "foo"})
+			session.WaitWithDefaultTimeout()
+			Expect(session).Should(Exit(0))
+		}
 	})
 
 	It("create w/ image", func() {
@@ -294,6 +309,73 @@ var _ = Describe("Podman manifest", func() {
 			))
 	})
 
+	It("push with compression-format", func() {
+		SkipIfRemote("manifest push to dir not supported in remote mode")
+		session := podmanTest.Podman([]string{"manifest", "create", "foo"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		session = podmanTest.Podman([]string{"manifest", "add", "--all", "foo", imageList})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		dest := filepath.Join(podmanTest.TempDir, "pushed")
+		err := os.MkdirAll(dest, os.ModePerm)
+		Expect(err).To(BeNil())
+		defer func() {
+			os.RemoveAll(dest)
+		}()
+		session = podmanTest.Podman([]string{"push", "--compression-format=zstd", "foo", "oci:" + dest})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		foundZstdFile := false
+
+		blobsDir := filepath.Join(dest, "blobs", "sha256")
+
+		blobs, err := os.ReadDir(blobsDir)
+		Expect(err).To(BeNil())
+
+		for _, f := range blobs {
+			blobPath := filepath.Join(blobsDir, f.Name())
+
+			sourceFile, err := os.ReadFile(blobPath)
+			Expect(err).To(BeNil())
+
+			compressionType := archive.DetectCompression(sourceFile)
+			if compressionType == archive.Zstd {
+				foundZstdFile = true
+				break
+			}
+		}
+		Expect(foundZstdFile).To(BeTrue())
+	})
+
+	It("push progress", func() {
+		SkipIfRemote("manifest push to dir not supported in remote mode")
+
+		session := podmanTest.Podman([]string{"manifest", "create", "foo", imageList})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		dest := filepath.Join(podmanTest.TempDir, "pushed")
+		err := os.MkdirAll(dest, os.ModePerm)
+		Expect(err).To(BeNil())
+		defer func() {
+			os.RemoveAll(dest)
+		}()
+
+		session = podmanTest.Podman([]string{"push", "foo", "-q", "dir:" + dest})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(session.ErrorToString()).To(BeEmpty())
+
+		session = podmanTest.Podman([]string{"push", "foo", "dir:" + dest})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		output := session.ErrorToString()
+		Expect(output).To(ContainSubstring("Writing manifest list to image destination"))
+		Expect(output).To(ContainSubstring("Storing list signatures"))
+	})
+
 	It("authenticated push", func() {
 		registryOptions := &podmanRegistry.Options{
 			Image: "docker-archive:" + imageTarPath(REGISTRY_IMAGE),
@@ -337,6 +419,11 @@ var _ = Describe("Podman manifest", func() {
 		push = podmanTest.Podman([]string{"manifest", "push", "--tls-verify=false", "--creds=" + registry.User + ":" + registry.Password, "foo", "localhost:" + registry.Port + "/credstest"})
 		push.WaitWithDefaultTimeout()
 		Expect(push).Should(Exit(0))
+		output := push.ErrorToString()
+		Expect(output).To(ContainSubstring("Copying blob "))
+		Expect(output).To(ContainSubstring("Copying config "))
+		Expect(output).To(ContainSubstring("Writing manifest to image destination"))
+		Expect(output).To(ContainSubstring("Storing signatures"))
 
 		push = podmanTest.Podman([]string{"manifest", "push", "--tls-verify=false", "--creds=podmantest:wrongpasswd", "foo", "localhost:" + registry.Port + "/credstest"})
 		push.WaitWithDefaultTimeout()

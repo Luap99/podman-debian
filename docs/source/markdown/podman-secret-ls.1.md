@@ -1,4 +1,4 @@
-% podman-secret-ls(1)
+% podman-secret-ls 1
 
 ## NAME
 podman\-secret\-ls - List all available secrets
@@ -30,7 +30,11 @@ Format secret output using Go template.
 
 #### **--noheading**
 
-Omit the table headings from the listing of secrets.	.
+Omit the table headings from the listing of secrets.
+
+#### **--quiet**, **-q**
+
+Print secret IDs only.
 
 ## EXAMPLES
 

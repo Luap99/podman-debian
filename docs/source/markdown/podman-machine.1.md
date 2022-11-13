@@ -1,4 +1,4 @@
-% podman-machine(1)
+% podman-machine 1
 
 ## NAME
 podman\-machine - Manage Podman's virtual machine
@@ -15,6 +15,10 @@ tied to the Linux kernel. Podman machine must be used to manage MacOS and Window
 but can be optionally used on Linux.
 
 All `podman machine` commands are rootless only.
+
+NOTE: The podman-machine configuration file is managed under the
+`$XDG_CONFIG_HOME/containers/podman/machine/` directory. Changing the `$XDG_CONFIG_HOME`
+environment variable while the machines are running can lead to unexpected behavior.
 
 ## SUBCOMMANDS
 

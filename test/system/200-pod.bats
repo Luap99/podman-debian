@@ -2,12 +2,17 @@
 
 load helpers
 
+LOOPDEVICE=
+
 # This is a long ugly way to clean up pods and remove the pause image
 function teardown() {
     run_podman pod rm -f -t 0 -a
     run_podman rm -f -t 0 -a
     run_podman rmi --ignore $(pause_image)
     basic_teardown
+    if [[ -n "$LOOPDEVICE" ]]; then
+        losetup -d $LOOPDEVICE
+    fi
 }
 
 
@@ -56,7 +61,7 @@ function teardown() {
 
 
 @test "podman pod create - custom infra image" {
-    skip_if_remote "CONTAINERS_CONF only effects server side"
+    skip_if_remote "CONTAINERS_CONF only affects server side"
     image="i.do/not/exist:image"
     tmpdir=$PODMAN_TMPDIR/pod-test
     mkdir -p $tmpdir
@@ -216,7 +221,7 @@ EOF
                --add-host   "$add_host_n:$add_host_ip"   \
                --dns        "$dns_server"                \
                --dns-search "$dns_search"                \
-               --dns-opt    "$dns_opt"                   \
+               --dns-option "$dns_opt"                   \
                --publish    "$port_out:$port_in"         \
                --label      "${labelname}=${labelvalue}" \
                --infra-image   "$infra_image"            \
@@ -257,7 +262,7 @@ EOF
     run_podman run --rm --pod mypod $IMAGE cat /etc/resolv.conf
     is "$output" ".*nameserver $dns_server"  "--dns [server] was added"
     is "$output" ".*search $dns_search"      "--dns-search was added"
-    is "$output" ".*options $dns_opt"        "--dns-opt was added"
+    is "$output" ".*options $dns_opt"        "--dns-option was added"
 
     # pod inspect
     run_podman pod inspect --format '{{.Name}}: {{.ID}} : {{.NumContainers}} : {{.Labels}}' mypod
@@ -430,7 +435,7 @@ EOF
     run_podman pod rm $podID
 
     run_podman 125 pod create --exit-policy invalid
-    is "$output" "Error: .*error running pod create option: invalid pod exit policy: \"invalid\"" "invalid exit policy"
+    is "$output" "Error: .*running pod create option: invalid pod exit policy: \"invalid\"" "invalid exit policy"
 
     # Test exit-policy behaviour
     run_podman pod create --exit-policy continue
@@ -474,31 +479,51 @@ spec:
 
 @test "pod resource limits" {
     skip_if_remote "resource limits only implemented on non-remote"
-    if is_rootless; then
-        skip "only meaningful for rootful"
+    skip_if_rootless "resource limits only work with root"
+    skip_if_cgroupsv1 "resource limits only meaningful on cgroups V2"
+    skip_if_aarch64 "FIXME: #15074 - flakes often on aarch64"
+
+    # create loopback device
+    lofile=${PODMAN_TMPDIR}/disk.img
+    fallocate -l 1k  ${lofile}
+    LOOPDEVICE=$(losetup --show -f $lofile)
+
+    # tr needed because losetup seems to use %2d
+    lomajmin=$(losetup -l --noheadings --output MAJ:MIN $LOOPDEVICE | tr -d ' ')
+    run grep -w bfq /sys/block/$(basename ${LOOPDEVICE})/queue/scheduler
+    if [ $status -ne 0 ]; then
+        losetup -d $LOOPDEVICE
+        LOOPDEVICE=
+        skip "BFQ scheduler is not supported on the system"
     fi
+    echo bfq > /sys/block/$(basename ${LOOPDEVICE})/queue/scheduler
 
-    local name1="resources1"
-    run_podman --cgroup-manager=systemd pod create --name=$name1 --cpus=5 --memory=10m
-    run_podman --cgroup-manager=systemd pod start $name1
-    run_podman pod inspect --format '{{.CgroupPath}}' $name1
-    local path1="$output"
-    local actual1=$(< /sys/fs/cgroup/$path1/cpu.max)
-    is "$actual1" "500000 100000" "resource limits set properly"
-    local actual2=$(< /sys/fs/cgroup/$path1/memory.max)
-    is "$actual2" "10485760" "resource limits set properly"
-    run_podman pod --cgroup-manager=systemd rm -f $name1
+    # FIXME: #15464: blkio-weight-device not working
+    expected_limits="
+cpu.max         | 500000 100000
+memory.max      | 5242880
+memory.swap.max | 1068498944
+io.bfq.weight   | default 50
+io.max          | $lomajmin rbps=1048576 wbps=1048576 riops=max wiops=max
+"
 
-    local name2="resources2"
-    run_podman --cgroup-manager=cgroupfs pod create --cpus=5 --memory=10m --name=$name2
-    run_podman --cgroup-manager=cgroupfs pod start $name2
-    run_podman pod inspect --format '{{.CgroupPath}}' $name2
-    local path2="$output"
-    local actual2=$(< /sys/fs/cgroup/$path2/cpu.max)
-    is "$actual2" "500000 100000" "resource limits set properly"
-    local actual2=$(< /sys/fs/cgroup/$path2/memory.max)
-    is "$actual2" "10485760" "resource limits set properly"
-    run_podman --cgroup-manager=cgroupfs pod rm $name2
+    for cgm in systemd cgroupfs; do
+        local name=resources-$cgm
+        run_podman --cgroup-manager=$cgm pod create --name=$name --cpus=5 --memory=5m --memory-swap=1g --cpu-shares=1000 --cpuset-cpus=0 --cpuset-mems=0 --device-read-bps=${LOOPDEVICE}:1mb --device-write-bps=${LOOPDEVICE}:1mb --blkio-weight=50
+        run_podman --cgroup-manager=$cgm pod start $name
+        run_podman pod inspect --format '{{.CgroupPath}}' $name
+        local cgroup_path="$output"
+
+        while read unit expect; do
+            local actual=$(< /sys/fs/cgroup/$cgroup_path/$unit)
+            is "$actual" "$expect" "resource limit under $cgm: $unit"
+        done < <(parse_table "$expected_limits")
+        run_podman --cgroup-manager=$cgm pod rm -f $name
+    done
+
+    # Clean up, and prevent duplicate cleanup in teardown
+    losetup -d $LOOPDEVICE
+    LOOPDEVICE=
 }
 
 @test "podman pod ps doesn't race with pod rm" {

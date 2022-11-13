@@ -4,8 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/containers/image/v5/types"
@@ -26,7 +27,7 @@ func PushImage(w http.ResponseWriter, r *http.Request) {
 	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 
-	digestFile, err := ioutil.TempFile("", "digest.txt")
+	digestFile, err := os.CreateTemp("", "digest.txt")
 	if err != nil {
 		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("unable to create tempfile: %w", err))
 		return
@@ -69,7 +70,7 @@ func PushImage(w http.ResponseWriter, r *http.Request) {
 
 	possiblyNormalizedName, err := utils.NormalizeToDockerHub(r, imageName)
 	if err != nil {
-		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("error normalizing image: %w", err))
+		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("normalizing image: %w", err))
 		return
 	}
 	imageName = possiblyNormalizedName
@@ -186,7 +187,7 @@ loop: // break out of for/select infinite loop
 				break loop
 			}
 
-			digestBytes, err := ioutil.ReadAll(digestFile)
+			digestBytes, err := io.ReadAll(digestFile)
 			if err != nil {
 				report.Error = &jsonmessage.JSONError{
 					Message: err.Error(),

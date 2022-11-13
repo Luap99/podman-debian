@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -101,6 +100,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		ForceRm                 bool     `schema:"forcerm"`
 		From                    string   `schema:"from"`
 		HTTPProxy               bool     `schema:"httpproxy"`
+		IDMappingOptions        string   `schema:"idmappingoptions"`
 		IdentityLabel           bool     `schema:"identitylabel"`
 		Ignore                  bool     `schema:"ignore"`
 		Isolation               string   `schema:"isolation"`
@@ -130,6 +130,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		Secrets                 string   `schema:"secrets"`
 		SecurityOpt             string   `schema:"securityopt"`
 		ShmSize                 int      `schema:"shmsize"`
+		SkipUnusedStages        bool     `schema:"skipunusedstages"`
 		Squash                  bool     `schema:"squash"`
 		TLSVerify               bool     `schema:"tlsVerify"`
 		Tags                    []string `schema:"t"`
@@ -138,12 +139,13 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		Ulimits                 string   `schema:"ulimits"`
 		UnsetEnvs               []string `schema:"unsetenv"`
 	}{
-		Dockerfile:    "Dockerfile",
-		IdentityLabel: true,
-		Registry:      "docker.io",
-		Rm:            true,
-		ShmSize:       64 * 1024 * 1024,
-		TLSVerify:     true,
+		Dockerfile:       "Dockerfile",
+		IdentityLabel:    true,
+		Registry:         "docker.io",
+		Rm:               true,
+		ShmSize:          64 * 1024 * 1024,
+		TLSVerify:        true,
+		SkipUnusedStages: true,
 	}
 
 	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
@@ -181,7 +183,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	dockerFileSet := false
 	if utils.IsLibpodRequest(r) && query.Remote != "" {
 		// The context directory could be a URL.  Try to handle that.
-		anchorDir, err := ioutil.TempDir(parse.GetTempDir(), "libpod_builder")
+		anchorDir, err := os.MkdirTemp(parse.GetTempDir(), "libpod_builder")
 		if err != nil {
 			utils.InternalServerError(w, err)
 		}
@@ -342,7 +344,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	if len(tags) > 0 {
 		possiblyNormalizedName, err := utils.NormalizeToDockerHub(r, tags[0])
 		if err != nil {
-			utils.Error(w, http.StatusInternalServerError, fmt.Errorf("error normalizing image: %w", err))
+			utils.Error(w, http.StatusInternalServerError, fmt.Errorf("normalizing image: %w", err))
 			return
 		}
 		output = possiblyNormalizedName
@@ -375,7 +377,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	for i := 1; i < len(tags); i++ {
 		possiblyNormalizedTag, err := utils.NormalizeToDockerHub(r, tags[i])
 		if err != nil {
-			utils.Error(w, http.StatusInternalServerError, fmt.Errorf("error normalizing image: %w", err))
+			utils.Error(w, http.StatusInternalServerError, fmt.Errorf("normalizing image: %w", err))
 			return
 		}
 		additionalTags = append(additionalTags, possiblyNormalizedTag)
@@ -385,6 +387,14 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	if _, found := r.URL.Query()["additionalbuildcontexts"]; found {
 		if err := json.Unmarshal([]byte(query.AdditionalBuildContexts), &additionalBuildContexts); err != nil {
 			utils.BadRequest(w, "additionalbuildcontexts", query.AdditionalBuildContexts, err)
+			return
+		}
+	}
+
+	var idMappingOptions buildahDefine.IDMappingOptions
+	if _, found := r.URL.Query()["idmappingoptions"]; found {
+		if err := json.Unmarshal([]byte(query.IDMappingOptions), &idMappingOptions); err != nil {
+			utils.BadRequest(w, "idmappingoptions", query.IDMappingOptions, err)
 			return
 		}
 	}
@@ -569,7 +579,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	if fromImage != "" {
 		possiblyNormalizedName, err := utils.NormalizeToDockerHub(r, fromImage)
 		if err != nil {
-			utils.Error(w, http.StatusInternalServerError, fmt.Errorf("error normalizing image: %w", err))
+			utils.Error(w, http.StatusInternalServerError, fmt.Errorf("normalizing image: %w", err))
 			return
 		}
 		fromImage = possiblyNormalizedName
@@ -644,6 +654,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		Excludes:                       excludes,
 		ForceRmIntermediateCtrs:        query.ForceRm,
 		From:                           fromImage,
+		IDMappingOptions:               &idMappingOptions,
 		IgnoreUnrecognizedInstructions: query.Ignore,
 		Isolation:                      isolation,
 		Jobs:                           &jobs,
@@ -666,6 +677,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		RemoveIntermediateCtrs:         query.Rm,
 		ReportWriter:                   reporter,
 		RusageLogFile:                  query.RusageLogFile,
+		SkipUnusedStages:               types.NewOptionalBool(query.SkipUnusedStages),
 		Squash:                         query.Squash,
 		SystemContext:                  systemContext,
 		Target:                         query.Target,
@@ -694,7 +706,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		success bool
 	)
 
-	runCtx, cancel := context.WithCancel(context.Background())
+	runCtx, cancel := context.WithCancel(r.Context())
 	go func() {
 		defer cancel()
 		imageID, _, err = runtime.Build(r.Context(), buildOptions, containerFiles...)
@@ -720,7 +732,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	if logrus.IsLevelEnabled(logrus.DebugLevel) {
 		if v, found := os.LookupEnv("PODMAN_RETAIN_BUILD_ARTIFACT"); found {
 			if keep, _ := strconv.ParseBool(v); keep {
-				t, _ := ioutil.TempFile("", "build_*_server")
+				t, _ := os.CreateTemp("", "build_*_server")
 				defer t.Close()
 				body = io.MultiWriter(t, w)
 			}
@@ -842,7 +854,7 @@ func parseLibPodIsolation(isolation string) (buildah.Isolation, error) {
 
 func extractTarFile(r *http.Request) (string, error) {
 	// build a home for the request body
-	anchorDir, err := ioutil.TempDir("", "libpod_builder")
+	anchorDir, err := os.MkdirTemp("", "libpod_builder")
 	if err != nil {
 		return "", err
 	}

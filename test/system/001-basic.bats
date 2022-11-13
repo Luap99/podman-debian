@@ -29,6 +29,12 @@ function setup() {
     local built=$(expr "$output" : ".*Built: \+\(.*\)" | head -n1)
     local built_t=$(date --date="$built" +%s)
     assert "$built_t" -gt 1546300800 "Preposterous 'Built' time in podman version"
+
+    run_podman -v
+    is "$output" "podman.*version \+"               "'Version line' in output"
+
+    run_podman --config foobar version
+    is "$output" ".*The --config flag is ignored by Podman. Exists for Docker compatibility\+"		  "verify warning for --config option"
 }
 
 @test "podman info" {
@@ -50,14 +56,17 @@ function setup() {
 
 
 @test "podman --context emits reasonable output" {
+    if ! is_remote; then
+        skip "only applicable on podman-remote"
+    fi
     # All we care about here is that the command passes
     run_podman --context=default version
 
     # This one must fail
     run_podman 125 --context=swarm version
     is "$output" \
-       "Error: podman does not support swarm, the only --context value allowed is \"default\"" \
-       "--context=default or fail"
+       "Error: failed to resolve active destination: \"swarm\" service destination not found" \
+       "--context=swarm should fail"
 }
 
 @test "podman can pull an image" {
@@ -182,14 +191,44 @@ See 'podman version --help'" "podman version --remote"
 @test "podman --log-level recognizes log levels" {
     run_podman 1 --log-level=telepathic info
     is "$output" 'Log Level "telepathic" is not supported.*'
+
     run_podman --log-level=trace   info
+    if ! is_remote; then
+        # podman-remote does not do any trace logging
+        assert "$output" =~ " level=trace " "log-level=trace"
+    fi
+    assert "$output" =~ " level=debug " "log-level=trace includes debug"
+    assert "$output" =~ " level=info "  "log-level=trace includes info"
+    assert "$output" !~ " level=warn"   "log-level=trace does not show warn"
+
     run_podman --log-level=debug   info
+    assert "$output" !~ " level=trace " "log-level=debug does not show trace"
+    assert "$output" =~ " level=debug " "log-level=debug"
+    assert "$output" =~ " level=info "  "log-level=debug includes info"
+    assert "$output" !~ " level=warn"   "log-level=debug does not show warn"
+
     run_podman --log-level=info    info
+    assert "$output" !~ " level=trace " "log-level=info does not show trace"
+    assert "$output" !~ " level=debug " "log-level=info does not show debug"
+    assert "$output" =~ " level=info "  "log-level=info"
+
     run_podman --log-level=warn    info
+    assert "$output" !~ " level=" "log-level=warn shows no logs at all"
+
     run_podman --log-level=warning info
+    assert "$output" !~ " level=" "log-level=warning shows no logs at all"
+
     run_podman --log-level=error   info
-    run_podman --log-level=fatal   info
-    run_podman --log-level=panic   info
+    assert "$output" !~ " level=" "log-level=error shows no logs at all"
+
+    # docker compat
+    run_podman --debug   info
+    assert "$output" =~ " level=debug " "podman --debug gives debug output"
+    run_podman -D        info
+    assert "$output" =~ " level=debug " "podman -D gives debug output"
+
+    run_podman 1 --debug --log-level=panic info
+    is "$output" "Setting --log-level and --debug is not allowed"
 }
 
 # vim: filetype=sh

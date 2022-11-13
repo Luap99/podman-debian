@@ -2,7 +2,6 @@ package integration
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -78,13 +77,13 @@ var _ = Describe("Podman push", func() {
 
 		blobsDir := filepath.Join(bbdir, "blobs/sha256")
 
-		blobs, err := ioutil.ReadDir(blobsDir)
+		blobs, err := os.ReadDir(blobsDir)
 		Expect(err).To(BeNil())
 
 		for _, f := range blobs {
 			blobPath := filepath.Join(blobsDir, f.Name())
 
-			sourceFile, err := ioutil.ReadFile(blobPath)
+			sourceFile, err := os.ReadFile(blobPath)
 			Expect(err).To(BeNil())
 
 			compressionType := archive.DetectCompression(sourceFile)

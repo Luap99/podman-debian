@@ -4,8 +4,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -19,7 +19,7 @@ import (
 	"github.com/containers/storage/pkg/homedir"
 )
 
-//nolint
+// nolint
 type SHELLEXECUTEINFO struct {
 	cbSize         uint32
 	fMask          uint32
@@ -38,7 +38,7 @@ type SHELLEXECUTEINFO struct {
 	hProcess       syscall.Handle
 }
 
-//nolint
+// nolint
 type Luid struct {
 	lowPart  uint32
 	highPart int32
@@ -54,7 +54,7 @@ type TokenPrivileges struct {
 	privileges     [1]LuidAndAttributes
 }
 
-//nolint // Cleaner to refer to the official OS constant names, and consistent with syscall
+// nolint // Cleaner to refer to the official OS constant names, and consistent with syscall
 const (
 	SEE_MASK_NOCLOSEPROCESS         = 0x40
 	EWX_FORCEIFHUNG                 = 0x10
@@ -208,7 +208,7 @@ func reboot() error {
 		return fmt.Errorf("could not create data directory: %w", err)
 	}
 	commFile := filepath.Join(dataDir, "podman-relaunch.dat")
-	if err := ioutil.WriteFile(commFile, []byte(encoded), 0600); err != nil {
+	if err := os.WriteFile(commFile, []byte(encoded), 0600); err != nil {
 		return fmt.Errorf("could not serialize command state: %w", err)
 	}
 
@@ -262,34 +262,22 @@ func obtainShutdownPrivilege() error {
 
 	var hToken uintptr
 	if ret, _, err := OpenProcessToken.Call(uintptr(proc), TOKEN_ADJUST_PRIVILEGES|TOKEN_QUERY, uintptr(unsafe.Pointer(&hToken))); ret != 1 {
-		return fmt.Errorf("error opening process token: %w", err)
+		return fmt.Errorf("opening process token: %w", err)
 	}
 
 	var privs TokenPrivileges
 	if ret, _, err := LookupPrivilegeValue.Call(uintptr(0), uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(SeShutdownName))), uintptr(unsafe.Pointer(&(privs.privileges[0].luid)))); ret != 1 {
-		return fmt.Errorf("error looking up shutdown privilege: %w", err)
+		return fmt.Errorf("looking up shutdown privilege: %w", err)
 	}
 
 	privs.privilegeCount = 1
 	privs.privileges[0].attributes = SE_PRIVILEGE_ENABLED
 
 	if ret, _, err := AdjustTokenPrivileges.Call(hToken, 0, uintptr(unsafe.Pointer(&privs)), 0, uintptr(0), 0); ret != 1 {
-		return fmt.Errorf("error enabling shutdown privilege on token: %w", err)
+		return fmt.Errorf("enabling shutdown privilege on token: %w", err)
 	}
 
 	return nil
-}
-
-func getProcessState(pid int) (active bool, exitCode int) {
-	const da = syscall.STANDARD_RIGHTS_READ | syscall.PROCESS_QUERY_INFORMATION | syscall.SYNCHRONIZE
-	handle, err := syscall.OpenProcess(da, false, uint32(pid))
-	if err != nil {
-		return false, int(syscall.ERROR_PROC_NOT_FOUND)
-	}
-
-	var code uint32
-	syscall.GetExitCodeProcess(handle, &code)
-	return code == 259, int(code)
 }
 
 func addRunOnceRegistryEntry(command string) error {
@@ -354,4 +342,18 @@ func sendQuit(tid uint32) {
 	user32 := syscall.NewLazyDLL("user32.dll")
 	postMessage := user32.NewProc("PostThreadMessageW")
 	postMessage.Call(uintptr(tid), WM_QUIT, 0, 0)
+}
+
+func SilentExec(command string, args ...string) error {
+	cmd := exec.Command(command, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	return cmd.Run()
+}
+
+func SilentExecCmd(command string, args ...string) *exec.Cmd {
+	cmd := exec.Command(command, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
+	return cmd
 }

@@ -11,9 +11,9 @@ import (
 func (s *APIServer) registerContainersHandlers(r *mux.Router) error {
 	// swagger:operation POST /containers/create compat ContainerCreate
 	// ---
-	//   summary: Create a container
 	//   tags:
 	//    - containers (compat)
+	//   summary: Create a container
 	//   produces:
 	//   - application/json
 	//   parameters:
@@ -212,7 +212,6 @@ func (s *APIServer) registerContainersHandlers(r *mux.Router) error {
 	//  - in: query
 	//    name: signal
 	//    type: string
-	//    default: TERM
 	//    description: signal to be sent to container
 	//    default: SIGKILL
 	// produces:
@@ -678,9 +677,9 @@ func (s *APIServer) registerContainersHandlers(r *mux.Router) error {
 
 	// swagger:operation POST /libpod/containers/create libpod ContainerCreateLibpod
 	// ---
-	//   summary: Create a container
 	//   tags:
 	//    - containers
+	//   summary: Create a container
 	//   produces:
 	//   - application/json
 	//   parameters:
@@ -689,6 +688,7 @@ func (s *APIServer) registerContainersHandlers(r *mux.Router) error {
 	//      description: attributes for creating a container
 	//      schema:
 	//        $ref: "#/definitions/SpecGenerator"
+	//      required: true
 	//   responses:
 	//     201:
 	//       $ref: "#/responses/containerCreateResponse"
@@ -722,6 +722,7 @@ func (s *APIServer) registerContainersHandlers(r *mux.Router) error {
 	//    type: boolean
 	//    description: Include namespace information
 	//    default: false
+	//  - in: query
 	//    name: pod
 	//    type: boolean
 	//    default: false
@@ -896,7 +897,7 @@ func (s *APIServer) registerContainersHandlers(r *mux.Router) error {
 	//  - in: query
 	//    name: signal
 	//    type: string
-	//    default: TERM
+	//    default: SIGKILL
 	//    description: signal to be sent to container, either by integer or SIG_ name
 	// produces:
 	// - application/json
@@ -1290,11 +1291,6 @@ func (s *APIServer) registerContainersHandlers(r *mux.Router) error {
 	//    required: true
 	//    description: the name or ID of the container
 	//  - in: query
-	//    name: all
-	//    type: boolean
-	//    default: false
-	//    description: Stop all containers
-	//  - in: query
 	//    name: timeout
 	//    type: integer
 	//    default: 10
@@ -1520,6 +1516,10 @@ func (s *APIServer) registerContainersHandlers(r *mux.Router) error {
 	//    name: printStats
 	//    type: boolean
 	//    description: add restore statistics to the returned RestoreReport
+	//  - in: query
+	//    name: pod
+	//    type: string
+	//    description: pod to restore into
 	// produces:
 	// - application/json
 	// responses:
@@ -1625,5 +1625,33 @@ func (s *APIServer) registerContainersHandlers(r *mux.Router) error {
 	//   500:
 	//     $ref: "#/responses/internalError"
 	r.HandleFunc(VersionedPath("/libpod/containers/{name}/rename"), s.APIHandler(compat.RenameContainer)).Methods(http.MethodPost)
+	// swagger:operation POST /libpod/containers/{name}/update libpod ContainerUpdateLibpod
+	// ---
+	// tags:
+	//   - containers
+	// summary: Update an existing containers cgroup configuration
+	// description: Update an existing containers cgroup configuration.
+	// parameters:
+	//  - in: path
+	//    name: name
+	//    type: string
+	//    required: true
+	//    description: Full or partial ID or full name of the container to update
+	//  - in: body
+	//    name: resources
+	//    description: attributes for updating the container
+	//    schema:
+	//      $ref: "#/definitions/UpdateEntities"
+	// produces:
+	// - application/json
+	// responses:
+	//   responses:
+	//     201:
+	//       $ref: "#/responses/containerUpdateResponse"
+	//   404:
+	//     $ref: "#/responses/containerNotFound"
+	//   500:
+	//     $ref: "#/responses/internalError"
+	r.HandleFunc(VersionedPath("/libpod/containers/{name}/update"), s.APIHandler(libpod.UpdateContainer)).Methods(http.MethodPost)
 	return nil
 }

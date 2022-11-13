@@ -246,7 +246,7 @@ EOF
     # Now test COPY. That should fail.
     sed -i -e 's/ADD/COPY/' $tmpdir/Dockerfile
     run_podman 125 build -t copy_url $tmpdir
-    is "$output" ".*error building at STEP .*: source can't be a URL for COPY"
+    is "$output" ".* building at STEP .*: source can't be a URL for COPY"
 }
 
 
@@ -541,7 +541,7 @@ Labels.$label_name | $label_value
          this-file-does-not-match-anything-in-ignore-file
          comment
     )
-    for f in ${files[@]}; do
+    for f in "${files[@]}"; do
         # The magic '##-' strips off the '-' prefix
         echo "$f" > $tmpdir/${f##-}
     done
@@ -853,7 +853,7 @@ EOF
 
     run_podman 125 build -t build_test --pull-never $tmpdir
     is "$output" \
-       ".*Error: error creating build container: quay.io/libpod/nosuchimage:nosuchtag: image not known" \
+       ".*Error: creating build container: quay.io/libpod/nosuchimage:nosuchtag: image not known" \
        "--pull-never fails with expected error message"
 }
 
@@ -988,7 +988,7 @@ COPY ./ ./
 COPY subdir ./
 EOF
     run_podman 125 build -t build_test $tmpdir
-    is "$output" ".*Error: error building at STEP \"COPY subdir ./\"" ".dockerignore was ignored"
+    is "$output" ".*Error: building at STEP \"COPY subdir ./\"" ".dockerignore was ignored"
 }
 
 @test "podman build .containerignore and .dockerignore test" {

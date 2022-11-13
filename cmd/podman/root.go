@@ -12,6 +12,7 @@ import (
 
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/config"
+	"github.com/containers/common/pkg/ssh"
 	"github.com/containers/podman/v4/cmd/podman/common"
 	"github.com/containers/podman/v4/cmd/podman/registry"
 	"github.com/containers/podman/v4/cmd/podman/validate"
@@ -70,7 +71,11 @@ var (
 		DisableFlagsInUseLine: true,
 	}
 
-	logLevel       = "warn"
+	defaultLogLevel = "warn"
+	logLevel        = defaultLogLevel
+	dockerConfig    = ""
+	debug           bool
+
 	useSyslog      bool
 	requireCleanup = true
 )
@@ -81,6 +86,7 @@ func init() {
 		loggingHook,
 		syslogHook,
 		earlyInitHook,
+		configHook,
 	)
 
 	rootFlags(rootCmd, registry.PodmanConfig())
@@ -168,13 +174,9 @@ func persistentPreRunE(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// --connection is not as "special" as --remote so we can wait and process it here
-	conn := cmd.Root().LocalFlags().Lookup("connection")
-	if conn != nil && conn.Changed {
-		cfg.Engine.ActiveService = conn.Value.String()
-
+	setupConnection := func() error {
 		var err error
-		cfg.URI, cfg.Identity, err = cfg.ActiveDestination()
+		cfg.URI, cfg.Identity, cfg.MachineMode, err = cfg.ActiveDestination()
 		if err != nil {
 			return fmt.Errorf("failed to resolve active destination: %w", err)
 		}
@@ -185,6 +187,29 @@ func persistentPreRunE(cmd *cobra.Command, args []string) error {
 
 		if err := cmd.Root().LocalFlags().Set("identity", cfg.Identity); err != nil {
 			return fmt.Errorf("failed to override --identity flag: %w", err)
+		}
+		return nil
+	}
+
+	// --connection is not as "special" as --remote so we can wait and process it here
+	contextConn := cmd.Root().LocalFlags().Lookup("context")
+	conn := cmd.Root().LocalFlags().Lookup("connection")
+	if conn != nil && conn.Changed {
+		if contextConn != nil && contextConn.Changed {
+			return fmt.Errorf("use of --connection and --context at the same time is not allowed")
+		}
+		cfg.Engine.ActiveService = conn.Value.String()
+		if err := setupConnection(); err != nil {
+			return err
+		}
+	}
+	if contextConn != nil && contextConn.Changed {
+		service := contextConn.Value.String()
+		if service != "default" {
+			cfg.Engine.ActiveService = service
+			if err := setupConnection(); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -226,10 +251,6 @@ func persistentPreRunE(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	context := cmd.Root().LocalFlags().Lookup("context")
-	if context.Value.String() != "default" {
-		return errors.New("podman does not support swarm, the only --context value allowed is \"default\"")
-	}
 	if !registry.IsRemote() {
 		if cmd.Flag("cpu-profile").Changed {
 			f, err := os.Create(cfg.CPUProfile)
@@ -307,8 +328,21 @@ func persistentPostRunE(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func configHook() {
+	if dockerConfig != "" {
+		logrus.Warn("The --config flag is ignored by Podman. Exists for Docker compatibility")
+	}
+}
+
 func loggingHook() {
 	var found bool
+	if debug {
+		if logLevel != defaultLogLevel {
+			fmt.Fprintf(os.Stderr, "Setting --log-level and --debug is not allowed\n")
+			os.Exit(1)
+		}
+		logLevel = "debug"
+	}
 	for _, l := range common.LogLevels {
 		if l == strings.ToLower(logLevel) {
 			found = true
@@ -334,12 +368,19 @@ func loggingHook() {
 
 func rootFlags(cmd *cobra.Command, opts *entities.PodmanConfig) {
 	cfg := opts.Config
-	srv, uri, ident := resolveDestination()
+	srv, uri, ident, machine := resolveDestination()
 
 	lFlags := cmd.Flags()
 
+	// non configurable option to help ssh dialing
+	opts.MachineMode = machine
+
+	sshFlagName := "ssh"
+	lFlags.StringVar(&opts.SSHMode, sshFlagName, string(ssh.GolangMode), "define the ssh mode")
+	_ = cmd.RegisterFlagCompletionFunc(sshFlagName, common.AutocompleteSSH)
+
 	connectionFlagName := "connection"
-	lFlags.StringVarP(&opts.Engine.ActiveService, connectionFlagName, "c", srv, "Connection to use for remote Podman service")
+	lFlags.StringP(connectionFlagName, "c", srv, "Connection to use for remote Podman service")
 	_ = cmd.RegisterFlagCompletionFunc(connectionFlagName, common.AutocompleteSystemConnections)
 
 	urlFlagName := "url"
@@ -348,6 +389,8 @@ func rootFlags(cmd *cobra.Command, opts *entities.PodmanConfig) {
 	lFlags.StringVarP(&opts.URI, "host", "H", uri, "Used for Docker compatibility")
 	_ = lFlags.MarkHidden("host")
 
+	lFlags.StringVar(&dockerConfig, "config", "", "Ignored for Docker compatibility")
+	_ = lFlags.MarkHidden("config")
 	// Context option added just for compatibility with DockerCLI.
 	lFlags.String("context", "default", "Name of the context to use to connect to the daemon (This flag is a NOOP and provided solely for scripting compatibility.)")
 	_ = lFlags.MarkHidden("context")
@@ -460,6 +503,9 @@ func rootFlags(cmd *cobra.Command, opts *entities.PodmanConfig) {
 	pFlags.StringVar(&logLevel, logLevelFlagName, logLevel, fmt.Sprintf("Log messages above specified level (%s)", strings.Join(common.LogLevels, ", ")))
 	_ = rootCmd.RegisterFlagCompletionFunc(logLevelFlagName, common.AutocompleteLogLevel)
 
+	lFlags.BoolVarP(&debug, "debug", "D", false, "Docker compatibility, force setting of log-level")
+	_ = lFlags.MarkHidden("debug")
+
 	// Only create these flags for ABI connections
 	if !registry.IsRemote() {
 		runtimeflagFlagName := "runtime-flag"
@@ -470,26 +516,26 @@ func rootFlags(cmd *cobra.Command, opts *entities.PodmanConfig) {
 	}
 }
 
-func resolveDestination() (string, string, string) {
+func resolveDestination() (string, string, string, bool) {
 	if uri, found := os.LookupEnv("CONTAINER_HOST"); found {
 		var ident string
 		if v, found := os.LookupEnv("CONTAINER_SSHKEY"); found {
 			ident = v
 		}
-		return "", uri, ident
+		return "", uri, ident, false
 	}
 
 	cfg, err := config.ReadCustomConfig()
 	if err != nil {
 		logrus.Warning(fmt.Errorf("unable to read local containers.conf: %w", err))
-		return "", registry.DefaultAPIAddress(), ""
+		return "", registry.DefaultAPIAddress(), "", false
 	}
 
-	uri, ident, err := cfg.ActiveDestination()
+	uri, ident, machine, err := cfg.ActiveDestination()
 	if err != nil {
-		return "", registry.DefaultAPIAddress(), ""
+		return "", registry.DefaultAPIAddress(), "", false
 	}
-	return cfg.Engine.ActiveService, uri, ident
+	return cfg.Engine.ActiveService, uri, ident, machine
 }
 
 func formatError(err error) string {

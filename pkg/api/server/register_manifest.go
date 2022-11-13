@@ -75,6 +75,11 @@ func (s *APIServer) registerManifestHandlers(r *mux.Router) error {
 	//    type: boolean
 	//    default: true
 	//    description: Require HTTPS and verify signatures when contacting registries.
+	//  - in: query
+	//    name: quiet
+	//    description: "silences extra stream data on push"
+	//    type: boolean
+	//    default: true
 	// responses:
 	//   200:
 	//     schema:
@@ -112,6 +117,10 @@ func (s *APIServer) registerManifestHandlers(r *mux.Router) error {
 	//   name: all
 	//   type: boolean
 	//   description: add all contents if given list
+	// - in: query
+	//   name: amend
+	//   type: boolean
+	//   description: modify an existing list if one with the desired name already exists
 	// - in: body
 	//   name: options
 	//   description: options for new manifest

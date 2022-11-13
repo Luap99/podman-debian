@@ -163,18 +163,57 @@ var _ = Describe("Podman volume create", func() {
 		Expect(inspectOpts.OutputToString()).To(Equal(optionStrFormatExpect))
 	})
 
-	It("podman create volume with o=timeout", func() {
-		volName := "testVol"
-		timeout := 10
-		timeoutStr := "10"
-		session := podmanTest.Podman([]string{"volume", "create", "--opt", fmt.Sprintf("o=timeout=%d", timeout), volName})
-		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+	It("image-backed volume basic functionality", func() {
+		podmanTest.AddImageToRWStore(fedoraMinimal)
+		volName := "testvol"
+		volCreate := podmanTest.Podman([]string{"volume", "create", "--driver", "image", "--opt", fmt.Sprintf("image=%s", fedoraMinimal), volName})
+		volCreate.WaitWithDefaultTimeout()
+		Expect(volCreate).Should(Exit(0))
 
-		inspectTimeout := podmanTest.Podman([]string{"volume", "inspect", "--format", "{{ .Timeout }}", volName})
-		inspectTimeout.WaitWithDefaultTimeout()
-		Expect(inspectTimeout).Should(Exit(0))
-		Expect(inspectTimeout.OutputToString()).To(Equal(timeoutStr))
+		runCmd := podmanTest.Podman([]string{"run", "-v", fmt.Sprintf("%s:/test", volName), ALPINE, "cat", "/test/etc/redhat-release"})
+		runCmd.WaitWithDefaultTimeout()
+		Expect(runCmd).Should(Exit(0))
+		Expect(runCmd.OutputToString()).To(ContainSubstring("Fedora"))
 
+		rmCmd := podmanTest.Podman([]string{"rmi", "--force", fedoraMinimal})
+		rmCmd.WaitWithDefaultTimeout()
+		Expect(rmCmd).Should(Exit(0))
+
+		psCmd := podmanTest.Podman([]string{"ps", "-aq"})
+		psCmd.WaitWithDefaultTimeout()
+		Expect(psCmd).Should(Exit(0))
+		Expect(psCmd.OutputToString()).To(BeEmpty())
+
+		volumesCmd := podmanTest.Podman([]string{"volume", "ls", "-q"})
+		volumesCmd.WaitWithDefaultTimeout()
+		Expect(volumesCmd).Should(Exit(0))
+		Expect(volumesCmd.OutputToString()).To(Not(ContainSubstring(volName)))
+	})
+
+	It("image-backed volume force removal", func() {
+		podmanTest.AddImageToRWStore(fedoraMinimal)
+		volName := "testvol"
+		volCreate := podmanTest.Podman([]string{"volume", "create", "--driver", "image", "--opt", fmt.Sprintf("image=%s", fedoraMinimal), volName})
+		volCreate.WaitWithDefaultTimeout()
+		Expect(volCreate).Should(Exit(0))
+
+		runCmd := podmanTest.Podman([]string{"run", "-v", fmt.Sprintf("%s:/test", volName), ALPINE, "cat", "/test/etc/redhat-release"})
+		runCmd.WaitWithDefaultTimeout()
+		Expect(runCmd).Should(Exit(0))
+		Expect(runCmd.OutputToString()).To(ContainSubstring("Fedora"))
+
+		rmCmd := podmanTest.Podman([]string{"volume", "rm", "--force", volName})
+		rmCmd.WaitWithDefaultTimeout()
+		Expect(rmCmd).Should(Exit(0))
+
+		psCmd := podmanTest.Podman([]string{"ps", "-aq"})
+		psCmd.WaitWithDefaultTimeout()
+		Expect(psCmd).Should(Exit(0))
+		Expect(psCmd.OutputToString()).To(BeEmpty())
+
+		volumesCmd := podmanTest.Podman([]string{"volume", "ls", "-q"})
+		volumesCmd.WaitWithDefaultTimeout()
+		Expect(volumesCmd).Should(Exit(0))
+		Expect(volumesCmd.OutputToString()).To(Not(ContainSubstring(volName)))
 	})
 })

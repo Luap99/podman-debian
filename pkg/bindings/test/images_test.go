@@ -1,11 +1,14 @@
 package bindings_test
 
 import (
+	"bytes"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
+	podmanRegistry "github.com/containers/podman/v4/hack/podman-registry-go"
 	"github.com/containers/podman/v4/pkg/bindings"
 	"github.com/containers/podman/v4/pkg/bindings/containers"
 	"github.com/containers/podman/v4/pkg/bindings/images"
@@ -362,9 +365,14 @@ var _ = Describe("Podman images", func() {
 	It("Image Pull", func() {
 		rawImage := "docker.io/library/busybox:latest"
 
-		pulledImages, err := images.Pull(bt.conn, rawImage, nil)
+		var writer bytes.Buffer
+		pullOpts := new(images.PullOptions).WithProgressWriter(&writer)
+		pulledImages, err := images.Pull(bt.conn, rawImage, pullOpts)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(len(pulledImages)).To(Equal(1))
+		output := writer.String()
+		Expect(output).To(ContainSubstring("Trying to pull "))
+		Expect(output).To(ContainSubstring("Getting image source signatures"))
 
 		exists, err := images.Exists(bt.conn, rawImage, nil)
 		Expect(err).NotTo(HaveOccurred())
@@ -377,6 +385,22 @@ var _ = Describe("Podman images", func() {
 		// The v2 endpoint only supports the docker transport.  Let's see if that's really true.
 		_, err = images.Pull(bt.conn, "bogus-transport:bogus.com/image:reference", nil)
 		Expect(err).To(HaveOccurred())
+	})
+
+	It("Image Push", func() {
+		registry, err := podmanRegistry.Start()
+		Expect(err).To(BeNil())
+
+		var writer bytes.Buffer
+		pushOpts := new(images.PushOptions).WithUsername(registry.User).WithPassword(registry.Password).WithSkipTLSVerify(true).WithProgressWriter(&writer).WithQuiet(false)
+		err = images.Push(bt.conn, alpine.name, fmt.Sprintf("localhost:%s/test:latest", registry.Port), pushOpts)
+		Expect(err).ToNot(HaveOccurred())
+
+		output := writer.String()
+		Expect(output).To(ContainSubstring("Copying blob "))
+		Expect(output).To(ContainSubstring("Copying config "))
+		Expect(output).To(ContainSubstring("Writing manifest to image destination"))
+		Expect(output).To(ContainSubstring("Storing signatures"))
 	})
 
 	It("Build no options", func() {

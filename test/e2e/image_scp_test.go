@@ -1,11 +1,12 @@
 package integration
 
 import (
-	"io/ioutil"
 	"os"
+	"path/filepath"
 
 	"github.com/containers/common/pkg/config"
 	. "github.com/containers/podman/v4/test/utils"
+	"github.com/containers/storage/pkg/homedir"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -23,7 +24,7 @@ var _ = Describe("podman image scp", func() {
 
 	BeforeEach(func() {
 		ConfPath.Value, ConfPath.IsSet = os.LookupEnv("CONTAINERS_CONF")
-		conf, err := ioutil.TempFile("", "containersconf")
+		conf, err := os.CreateTemp("", "containersconf")
 		Expect(err).ToNot(HaveOccurred())
 
 		os.Setenv("CONTAINERS_CONF", conf.Name())
@@ -56,6 +57,9 @@ var _ = Describe("podman image scp", func() {
 	})
 
 	It("podman image scp with proper connection", func() {
+		if _, err := os.Stat(filepath.Join(homedir.Get(), ".ssh", "known_hosts")); err != nil {
+			Skip("known_hosts does not exist or is not accessible")
+		}
 		cmd := []string{"system", "connection", "add",
 			"--default",
 			"QA",

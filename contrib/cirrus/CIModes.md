@@ -43,13 +43,10 @@ of this document, it's not possible to override the behavior of `$CIRRUS_PR`.
 ## Cirrus Task contexts and runtime modes
 
 ### Intended general PR Tasks (*italic*: matrix)
-+ ext_svc_check
-+ automation
 + *build*
 + validate
 + bindings
 + swagger
-+ consistency
 + *alt_build*
 + osx_alt_build
 + docker-py_test
@@ -76,12 +73,16 @@ of this document, it's not possible to override the behavior of `$CIRRUS_PR`.
 + release_test
 
 ### Intended `[CI:DOCS]` PR Tasks:
-+ ext_svc_check
-+ automation
 + *build*
 + validate
 + swagger
-+ consistency
++ meta
++ success
+
+### Intended `[CI:COPR]` PR Tasks:
++ *build*
++ validate
++ swagger
 + meta
 + success
 
@@ -96,11 +97,8 @@ of this document, it's not possible to override the behavior of `$CIRRUS_PR`.
 + success
 
 ### Intend `[CI:BUILD]` PR Tasks:
-+ ext_svc_check
-+ automation
 + *build*
 + validate
-+ consistency
 + *alt_build*
 + osx_alt_build
 + test_image_build
@@ -109,7 +107,6 @@ of this document, it's not possible to override the behavior of `$CIRRUS_PR`.
 + artifacts
 
 ### Intended Branch tasks (and Cirrus-cron jobs, except "multiarch"):
-+ ext_svc_check
 + *build*
 + swagger
 + *alt_build*
@@ -123,7 +120,6 @@ of this document, it's not possible to override the behavior of `$CIRRUS_PR`.
 + artifacts
 
 ### Intended for "multiarch" Cirrus-Cron (always a branch):
-+ ext_svc_check
 + image_build
 + meta
 + success

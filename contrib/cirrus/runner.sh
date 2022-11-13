@@ -19,22 +19,11 @@ set -eo pipefail
 # shellcheck source=contrib/cirrus/lib.sh
 source $(dirname $0)/lib.sh
 
-function _run_ext_svc() {
-    $SCRIPT_BASE/ext_svc_check.sh
-}
-
-function _run_automation() {
-    $SCRIPT_BASE/cirrus_yaml_test.py
-
-    req_env_vars CI DEST_BRANCH IMAGE_SUFFIX TEST_FLAVOR TEST_ENVIRON \
-                 PODBIN_NAME PRIV_NAME DISTRO_NV CONTAINER USER HOME \
-                 UID AUTOMATION_LIB_PATH SCRIPT_BASE OS_RELEASE_ID \
-                 CG_FS_TYPE
-    bigto ooe.sh dnf install -y ShellCheck  # small/quick addition
-    $SCRIPT_BASE/shellcheck.sh
-}
-
 function _run_validate() {
+    # TODO: aarch64 images need python3-devel installed
+    # https://github.com/containers/automation_images/issues/159
+    bigto ooe.sh dnf install -y python3-devel
+
     # git-validation tool fails if $EPOCH_TEST_COMMIT is empty
     # shellcheck disable=SC2154
     if [[ -n "$EPOCH_TEST_COMMIT" ]]; then
@@ -222,15 +211,6 @@ eof
     rm -f $envvarsfile
 }
 
-function _run_consistency() {
-    make vendor
-    SUGGESTION="run 'make vendor' and commit all changes" ./hack/tree_status.sh
-    make generate-bindings
-    SUGGESTION="run 'make generate-bindings' and commit all changes" ./hack/tree_status.sh
-    make completions
-    SUGGESTION="run 'make completions' and commit all changes" ./hack/tree_status.sh
-}
-
 function _run_build() {
     # Ensure always start from clean-slate with all vendor modules downloaded
     make clean
@@ -246,6 +226,7 @@ function _run_build() {
     if [[ "$runtime" != "$CI_DESIRED_RUNTIME" ]]; then
         die "Built podman is using '$runtime'; this CI environment requires $CI_DESIRED_RUNTIME"
     fi
+    msg "Built podman is using expected runtime='$runtime'"
 }
 
 function _run_altbuild() {
@@ -393,9 +374,7 @@ dotest() {
 }
 
 _run_machine() {
-    # TODO: This is a manually-triggered task, if that ever changes need to
-    # add something like:
-    # _bail_if_test_can_be_skipped docs test/e2e test/system test/python
+    # N/B: Can't use _bail_if_test_can_be_skipped here b/c content isn't under test/
     make localmachine |& logformatter
 }
 
@@ -419,6 +398,8 @@ function _bail_if_test_can_be_skipped() {
         return 0
     fi
 
+    # Defined by Cirrus-CI for all tasks
+    # shellcheck disable=SC2154
     head=$CIRRUS_CHANGE_IN_REPO
     base=$(git merge-base $DEST_BRANCH $head)
     diffs=$(git diff --name-only $base $head)
