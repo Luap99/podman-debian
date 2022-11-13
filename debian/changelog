@@ -1,3 +1,13 @@
+libpod (4.3.1+ds1-1) experimental; urgency=medium
+
+  * New upstream release
+    - Add container GID to additional groups,
+      fixes CVE-2022-2989, closes: #1019591
+  * Bugfix: Subordinate UID/GID ranges not fetched from libsubid,
+    Thanks to Sam Morris <sam@robots.org.uk> for the patch, closes: #1019929
+
+ -- Reinhard Tartler <siretart@tauware.de>  Sun, 13 Nov 2022 12:27:53 -0500
+
 libpod (4.2.0+ds1-3) experimental; urgency=medium
 
   * Force using golang-go to avoid compilation failures with gcc-go
