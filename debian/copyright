@@ -9,6 +9,7 @@ Comment:
  Protobuf in debian is not ready yet, cf. #961814
 Files-Excluded:
     vendor
+    test/tools/vendor
 Files-Included:
     vendor/github.com/checkpoint-restore/checkpointctl
     vendor/github.com/container-orchestrated-devices
