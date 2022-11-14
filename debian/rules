@@ -13,7 +13,14 @@ export GO111MODULE=off
 export DH_GOLANG_GO_GENERATE := 1
 
 export DH_GOLANG_INSTALL_EXTRA := $(wildcard libpod/*/testdata/* libpod/*/cni/*/*/*)
-export DH_GOLANG_EXCLUDES := \
+
+# machine/qemu only works on amd64, arm64
+ifeq (,$(filter amd64 arm64,$(DEB_HOST_ARCH)))
+$(info excluding pkg/machine/qemu for $(DEB_HOST_ARCH))
+LOCAL_DH_GOLANG_EXTRA_EXCLUDES := pkg/machine/qemu
+endif
+
+export DH_GOLANG_EXCLUDES := $(LOCAL_DH_GOLANG_EXTRA_EXCLUDES) \
 	contrib/perftest \
 	dependencies \
 	hack/podman-registry-go \
