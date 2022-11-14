@@ -1,3 +1,10 @@
+libpod (4.3.1+ds1-3) experimental; urgency=medium
+
+  * debian/rules: make the previous change to build machine/qemu only
+    on supported architecture actually work
+
+ -- Reinhard Tartler <siretart@tauware.de>  Tue, 22 Nov 2022 17:49:12 -0500
+
 libpod (4.3.1+ds1-2) experimental; urgency=medium
 
   * Build machine/qemu only on amd64, arm64, fixes FTBFS
