@@ -37,13 +37,12 @@ cgroupVersion: v[12]
     # FIXME: if we're ever able to get package versions on Debian,
     #        add '-[0-9]' to all '*.package' queries below.
     tests="
-host.buildahVersion       | [0-9.]
+host.buildahVersion       | [1-9][0-9]*\.[0-9.]\\\+.*
 host.conmon.path          | $expr_path
 host.conmon.package       | .*conmon.*
 host.cgroupManager        | \\\(systemd\\\|cgroupfs\\\)
 host.cgroupVersion        | v[12]
 host.ociRuntime.path      | $expr_path
-host.ociRuntime.package   | .*\\\(crun\\\|runc\\\).*
 store.configFile          | $expr_path
 store.graphDriverName     | [a-z0-9]\\\+\\\$
 store.graphRoot           | $expr_path
@@ -56,7 +55,24 @@ host.slirp4netns.executable | $expr_path
         dprint "# actual=<$actual> expect=<$expect>"
         is "$actual" "$expect" "jq .$field"
     done
+}
 
+@test "podman info - confirm desired runtime" {
+    if [[ -z "$CI_DESIRED_RUNTIME" ]]; then
+        # When running in Cirrus, CI_DESIRED_RUNTIME *must* be defined
+        # in .cirrus.yml so we can double-check that all CI VMs are
+        # using crun/runc as desired.
+        if [[ -n "$CIRRUS_CI" ]]; then
+            die "CIRRUS_CI is set, but CI_DESIRED_RUNTIME is not! See #14912"
+        fi
+
+        # Not running under Cirrus (e.g., gating tests, or dev laptop).
+        # Totally OK to skip this test.
+        skip "CI_DESIRED_RUNTIME is unset--OK, because we're not in Cirrus"
+    fi
+
+    run_podman info --format '{{.Host.OCIRuntime.Name}}'
+    is "$output" "$CI_DESIRED_RUNTIME" "CI_DESIRED_RUNTIME (from .cirrus.yml)"
 }
 
 # 2021-04-06 discussed in watercooler: RHEL must never use crun, even if
@@ -89,10 +105,30 @@ host.slirp4netns.executable | $expr_path
     is "$output" ".*graphOptions: {}" "output includes graphOptions: {}"
 }
 
+@test "podman info netavark " {
+    # Confirm netavark in use when explicitly required by execution environment.
+    if [[ "$NETWORK_BACKEND" == "netavark" ]]; then
+        if ! is_netavark; then
+            # Assume is_netavark() will provide debugging feedback.
+            die "Netavark driver testing required, but not in use by podman."
+        fi
+    else
+        skip "Netavark testing not requested (\$NETWORK_BACKEND='$NETWORK_BACKEND')"
+    fi
+}
+
 @test "podman --root PATH info - basic output" {
     if ! is_remote; then
         run_podman --storage-driver=vfs --root ${PODMAN_TMPDIR}/nothing-here-move-along info --format '{{ .Store.GraphOptions }}'
         is "$output" "map\[\]" "'podman --root should reset Graphoptions to []"
+    fi
+}
+
+@test "podman --root PATH --volumepath info - basic output" {
+    volumePath=${PODMAN_TMPDIR}/volumesGoHere
+    if ! is_remote; then
+        run_podman --storage-driver=vfs --root ${PODMAN_TMPDIR}/nothing-here-move-along --volumepath ${volumePath} info --format '{{ .Store.VolumePath }}'
+        is "$output" "${volumePath}" "'podman --volumepath should reset VolumePath"
     fi
 }
 

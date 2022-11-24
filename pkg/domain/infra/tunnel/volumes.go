@@ -2,12 +2,13 @@ package tunnel
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
-	"github.com/containers/podman/v3/pkg/bindings/volumes"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/domain/entities/reports"
-	"github.com/containers/podman/v3/pkg/errorhandling"
-	"github.com/pkg/errors"
+	"github.com/containers/podman/v4/pkg/bindings/volumes"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/domain/entities/reports"
+	"github.com/containers/podman/v4/pkg/errorhandling"
 )
 
 func (ic *ContainerEngine) VolumeCreate(ctx context.Context, opts entities.VolumeCreateOptions) (*entities.IDOrNameResponse, error) {
@@ -31,6 +32,9 @@ func (ic *ContainerEngine) VolumeRm(ctx context.Context, namesOrIds []string, op
 	reports := make([]*entities.VolumeRmReport, 0, len(namesOrIds))
 	for _, id := range namesOrIds {
 		options := new(volumes.RemoveOptions).WithForce(opts.Force)
+		if opts.Timeout != nil {
+			options = options.WithTimeout(*opts.Timeout)
+		}
 		reports = append(reports, &entities.VolumeRmReport{
 			Err: volumes.Remove(ic.ClientCtx, id, options),
 			Id:  id,
@@ -61,7 +65,7 @@ func (ic *ContainerEngine) VolumeInspect(ctx context.Context, namesOrIds []strin
 				return nil, nil, err
 			}
 			if errModel.ResponseCode == 404 {
-				errs = append(errs, errors.Errorf("no such volume %q", id))
+				errs = append(errs, fmt.Errorf("no such volume %q", id))
 				continue
 			}
 			return nil, nil, err
@@ -96,4 +100,16 @@ func (ic *ContainerEngine) VolumeExists(ctx context.Context, nameOrID string) (*
 // TODO: Not used and exposed to tunnel. Will be used by `export` command which is unavailable to `podman-remote`
 func (ic *ContainerEngine) VolumeMounted(ctx context.Context, nameOrID string) (*entities.BoolReport, error) {
 	return nil, errors.New("not implemented")
+}
+
+func (ic *ContainerEngine) VolumeMount(ctx context.Context, nameOrIDs []string) ([]*entities.VolumeMountReport, error) {
+	return nil, errors.New("mounting volumes is not supported for remote clients")
+}
+
+func (ic *ContainerEngine) VolumeUnmount(ctx context.Context, nameOrIDs []string) ([]*entities.VolumeUnmountReport, error) {
+	return nil, errors.New("unmounting volumes is not supported for remote clients")
+}
+
+func (ic *ContainerEngine) VolumeReload(ctx context.Context) (*entities.VolumeReloadReport, error) {
+	return nil, errors.New("volume reload is not supported for remote clients")
 }

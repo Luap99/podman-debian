@@ -2,11 +2,11 @@ package libpod
 
 import (
 	"context"
+	"errors"
 
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/libpod/events"
-	"github.com/containers/podman/v3/pkg/domain/entities/reports"
-	"github.com/pkg/errors"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/libpod/events"
+	"github.com/containers/podman/v4/pkg/domain/entities/reports"
 )
 
 // Contains the public Runtime API for volumes
@@ -21,10 +21,7 @@ type VolumeCreateOption func(*Volume) error
 type VolumeFilter func(*Volume) bool
 
 // RemoveVolume removes a volumes
-func (r *Runtime) RemoveVolume(ctx context.Context, v *Volume, force bool) error {
-	r.lock.Lock()
-	defer r.lock.Unlock()
-
+func (r *Runtime) RemoveVolume(ctx context.Context, v *Volume, force bool, timeout *uint) error {
 	if !r.valid {
 		return define.ErrRuntimeStopped
 	}
@@ -36,14 +33,11 @@ func (r *Runtime) RemoveVolume(ctx context.Context, v *Volume, force bool) error
 			return nil
 		}
 	}
-	return r.removeVolume(ctx, v, force)
+	return r.removeVolume(ctx, v, force, timeout, false)
 }
 
 // GetVolume retrieves a volume given its full name.
 func (r *Runtime) GetVolume(name string) (*Volume, error) {
-	r.lock.RLock()
-	defer r.lock.RUnlock()
-
 	if !r.valid {
 		return nil, define.ErrRuntimeStopped
 	}
@@ -58,9 +52,6 @@ func (r *Runtime) GetVolume(name string) (*Volume, error) {
 
 // LookupVolume retrieves a volume by unambiguous partial name.
 func (r *Runtime) LookupVolume(name string) (*Volume, error) {
-	r.lock.RLock()
-	defer r.lock.RUnlock()
-
 	if !r.valid {
 		return nil, define.ErrRuntimeStopped
 	}
@@ -75,9 +66,6 @@ func (r *Runtime) LookupVolume(name string) (*Volume, error) {
 
 // HasVolume checks to see if a volume with the given name exists
 func (r *Runtime) HasVolume(name string) (bool, error) {
-	r.lock.RLock()
-	defer r.lock.RUnlock()
-
 	if !r.valid {
 		return false, define.ErrRuntimeStopped
 	}
@@ -90,9 +78,6 @@ func (r *Runtime) HasVolume(name string) (bool, error) {
 // output. If multiple filters are used, a volume will be returned if
 // any of the filters are matched
 func (r *Runtime) Volumes(filters ...VolumeFilter) ([]*Volume, error) {
-	r.lock.RLock()
-	defer r.lock.RUnlock()
-
 	if !r.valid {
 		return nil, define.ErrRuntimeStopped
 	}
@@ -123,9 +108,6 @@ func (r *Runtime) Volumes(filters ...VolumeFilter) ([]*Volume, error) {
 
 // GetAllVolumes retrieves all the volumes
 func (r *Runtime) GetAllVolumes() ([]*Volume, error) {
-	r.lock.RLock()
-	defer r.lock.RUnlock()
-
 	if !r.valid {
 		return nil, define.ErrRuntimeStopped
 	}
@@ -149,8 +131,9 @@ func (r *Runtime) PruneVolumes(ctx context.Context, filterFuncs []VolumeFilter) 
 		}
 		report.Size = volSize
 		report.Id = vol.Name()
-		if err := r.RemoveVolume(ctx, vol, false); err != nil {
-			if errors.Cause(err) != define.ErrVolumeBeingUsed && errors.Cause(err) != define.ErrVolumeRemoved {
+		var timeout *uint
+		if err := r.RemoveVolume(ctx, vol, false, timeout); err != nil {
+			if !errors.Is(err, define.ErrVolumeBeingUsed) && !errors.Is(err, define.ErrVolumeRemoved) {
 				report.Err = err
 			} else {
 				// We didn't remove the volume for some reason

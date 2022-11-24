@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"os"
 
-	"github.com/containers/podman/v3/libpod/define"
-	. "github.com/containers/podman/v3/test/utils"
+	"github.com/containers/podman/v4/libpod/define"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -25,7 +25,6 @@ var _ = Describe("Podman pod inspect", func() {
 		}
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
 	})
 
 	AfterEach(func() {
@@ -56,9 +55,9 @@ var _ = Describe("Podman pod inspect", func() {
 		inspect := podmanTest.Podman([]string{"pod", "inspect", podid})
 		inspect.WaitWithDefaultTimeout()
 		Expect(inspect).Should(Exit(0))
-		Expect(inspect.IsJSONOutputValid()).To(BeTrue())
+		Expect(inspect.OutputToString()).To(BeValidJSON())
 		podData := inspect.InspectPodToJSON()
-		Expect(podData.ID).To(Equal(podid))
+		Expect(podData).To(HaveField("ID", podid))
 	})
 
 	It("podman pod inspect (CreateCommand)", func() {
@@ -75,7 +74,7 @@ var _ = Describe("Podman pod inspect", func() {
 		inspect := podmanTest.Podman([]string{"pod", "inspect", podName})
 		inspect.WaitWithDefaultTimeout()
 		Expect(inspect).Should(Exit(0))
-		Expect(inspect.IsJSONOutputValid()).To(BeTrue())
+		Expect(inspect.OutputToString()).To(BeValidJSON())
 		podData := inspect.InspectPodToJSON()
 		// Let's get the last len(createCommand) items in the command.
 		inspectCreateCommand := podData.CreateCommand
@@ -97,8 +96,8 @@ var _ = Describe("Podman pod inspect", func() {
 		err := json.Unmarshal(inspectOut.Out.Contents(), inspectJSON)
 		Expect(err).To(BeNil())
 		Expect(inspectJSON.InfraConfig).To(Not(BeNil()))
-		Expect(len(inspectJSON.InfraConfig.PortBindings["80/tcp"])).To(Equal(1))
-		Expect(inspectJSON.InfraConfig.PortBindings["80/tcp"][0].HostPort).To(Equal("8383"))
+		Expect(inspectJSON.InfraConfig.PortBindings["80/tcp"]).To(HaveLen(1))
+		Expect(inspectJSON.InfraConfig.PortBindings["80/tcp"][0]).To(HaveField("HostPort", "8383"))
 	})
 
 	It("podman pod inspect outputs show correct MAC", func() {
@@ -118,5 +117,22 @@ var _ = Describe("Podman pod inspect", func() {
 		Expect(inspectOut).Should(Exit(0))
 
 		Expect(inspectOut.OutputToString()).To(ContainSubstring(macAddr))
+	})
+
+	It("podman inspect two pods", func() {
+		_, ec, podid1 := podmanTest.CreatePod(nil)
+		Expect(ec).To(Equal(0))
+
+		_, ec, podid2 := podmanTest.CreatePod(nil)
+		Expect(ec).To(Equal(0))
+
+		inspect := podmanTest.Podman([]string{"pod", "inspect", podid1, podid2})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect).Should(Exit(0))
+		Expect(inspect.OutputToString()).To(BeValidJSON())
+		podData := inspect.InspectPodArrToJSON()
+		Expect(podData).To(HaveLen(2))
+		Expect(podData[0]).To(HaveField("ID", podid1))
+		Expect(podData[1]).To(HaveField("ID", podid2))
 	})
 })

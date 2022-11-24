@@ -27,9 +27,7 @@ function setup() {
     retries=5
     while [[ ! -e $PODMAN_TEST_PTY ]]; do
         retries=$(( retries - 1 ))
-        if [[ $retries -eq 0 ]]; then
-            die "Timed out waiting for $PODMAN_TEST_PTY"
-        fi
+        assert $retries -gt 0 "Timed out waiting for $PODMAN_TEST_PTY"
         sleep 0.5
     done
 }
@@ -49,19 +47,19 @@ function teardown() {
 # BEGIN tests
 
 @test "podman detects correct tty size" {
-    skip "FIXME: #10710. As of 2021-12-08, stty fails >75% of the time."
-
     # Set the pty to a random size. Make rows/columns odd/even, to guarantee
     # that they can never be the same
     rows=$(( 15 + RANDOM % 60 |   1 ))
     cols=$(( 15 + RANDOM % 60 & 126 ))
     stty rows $rows cols $cols <$PODMAN_TEST_PTY
 
+    CR=$'\r'
+
     # ...and make sure stty under podman reads that.
     run_podman run -it --name mystty $IMAGE stty size <$PODMAN_TEST_PTY
-    is "$output" "$rows $cols" "stty under podman run reads the correct dimensions"
+    is "$output" "$rows $cols$CR" "stty under podman run reads the correct dimensions"
 
-    run_podman rm -f mystty
+    run_podman rm -t 0 -f mystty
 
     # FIXME: the checks below are flaking a lot (see #10710).
 
@@ -70,14 +68,14 @@ function teardown() {
 #    run_podman exec -it mystty stty size <$PODMAN_TEST_PTY
 #    is "$output" "$rows $cols" "stty under podman exec reads the correct dimensions"
 #
-#    run_podman rm -f mystty
+#    run_podman rm -t 0 -f mystty
 }
 
 
 @test "podman load - will not read from tty" {
     run_podman 125 load <$PODMAN_TEST_PTY
     is "$output" \
-       "Error: cannot read from terminal. Use command-line redirection" \
+       "Error: cannot read from terminal, use command-line redirection or the --input flag" \
        "Diagnostic from 'podman load' without redirection or -i"
 }
 
@@ -86,14 +84,15 @@ function teardown() {
     run_podman run --tty -i --rm $IMAGE echo hello < /dev/null
     is "$output" ".*The input device is not a TTY.*" "-it _without_ a tty"
 
+    CR=$'\r'
     run_podman run --tty -i --rm $IMAGE echo hello <$PODMAN_TEST_PTY
-    is "$output" "hello" "-it _with_ a pty"
+    is "$output" "hello$CR" "-it _with_ a pty"
 
     run_podman run --tty=false -i --rm $IMAGE echo hello < /dev/null
     is "$output" "hello" "-tty=false: no warning"
 
     run_podman run --tty -i=false --rm $IMAGE echo hello < /dev/null
-    is "$output" "hello" "-i=false: no warning"
+    is "$output" "hello$CR" "-i=false: no warning"
 }
 
 # vim: filetype=sh

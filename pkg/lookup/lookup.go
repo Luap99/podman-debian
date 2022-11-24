@@ -14,7 +14,7 @@ const (
 	etcgroup  = "/etc/group"
 )
 
-// Overrides allows you to override defaults in GetUserGroupInfo
+// Overrides allows you to override defaults in GetUserGroupInfo.
 type Overrides struct {
 	DefaultUser            *user.ExecUser
 	ContainerEtcPasswdPath string
@@ -61,7 +61,7 @@ func GetUserGroupInfo(containerMount, containerUser string, override *Overrides)
 		defaultExecUser = override.DefaultUser
 	} else {
 		// Define a default container user
-		//defaultExecUser = &user.ExecUser{
+		// defaultExecUser = &user.ExecUser{
 		//	Uid:  0,
 		//	Gid:  0,
 		//	Home: "/",

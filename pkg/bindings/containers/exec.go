@@ -3,14 +3,16 @@ package containers
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/pkg/api/handlers"
-	"github.com/containers/podman/v3/pkg/bindings"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/api/handlers"
+	"github.com/containers/podman/v4/pkg/bindings"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 	jsoniter "github.com/json-iterator/go"
-	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
 
@@ -26,22 +28,22 @@ func ExecCreate(ctx context.Context, nameOrID string, config *handlers.ExecCreat
 	}
 
 	if config == nil {
-		return "", errors.Errorf("must provide a configuration for exec session")
+		return "", errors.New("must provide a configuration for exec session")
 	}
 
 	requestJSON, err := json.Marshal(config)
 	if err != nil {
-		return "", errors.Wrapf(err, "error marshalling exec config to JSON")
+		return "", fmt.Errorf("marshalling exec config to JSON: %w", err)
 	}
 	jsonReader := strings.NewReader(string(requestJSON))
 
-	resp, err := conn.DoRequest(jsonReader, http.MethodPost, "/containers/%s/exec", nil, nil, nameOrID)
+	resp, err := conn.DoRequest(ctx, jsonReader, http.MethodPost, "/containers/%s/exec", nil, nil, nameOrID)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
 
-	respStruct := new(handlers.ExecCreateResponse)
+	respStruct := new(entities.IDResponse)
 	if err := resp.Process(respStruct); err != nil {
 		return "", err
 	}
@@ -63,7 +65,7 @@ func ExecInspect(ctx context.Context, sessionID string, options *ExecInspectOpti
 
 	logrus.Debugf("Inspecting session ID %q", sessionID)
 
-	resp, err := conn.DoRequest(nil, http.MethodGet, "/exec/%s/json", nil, nil, sessionID)
+	resp, err := conn.DoRequest(ctx, nil, http.MethodGet, "/exec/%s/json", nil, nil, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +103,7 @@ func ExecStart(ctx context.Context, sessionID string, options *ExecStartOptions)
 		return err
 	}
 
-	resp, err := conn.DoRequest(bytes.NewReader(bodyJSON), http.MethodPost, "/exec/%s/start", nil, nil, sessionID)
+	resp, err := conn.DoRequest(ctx, bytes.NewReader(bodyJSON), http.MethodPost, "/exec/%s/start", nil, nil, sessionID)
 	if err != nil {
 		return err
 	}

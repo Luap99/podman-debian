@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,11 +10,10 @@ import (
 	"strings"
 	"unsafe"
 
-	"github.com/blang/semver"
-	"github.com/containers/podman/v3/version"
+	"github.com/blang/semver/v4"
+	"github.com/containers/podman/v4/version"
 	"github.com/gorilla/mux"
 	jsoniter "github.com/json-iterator/go"
-	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
 
@@ -42,11 +42,11 @@ func SupportedVersion(r *http.Request, condition string) (semver.Version, error)
 	}
 	safeVal, err := url.PathUnescape(val)
 	if err != nil {
-		return version, errors.Wrapf(err, "unable to unescape given API version: %q", val)
+		return version, fmt.Errorf("unable to unescape given API version: %q: %w", val, err)
 	}
 	version, err = semver.ParseTolerant(safeVal)
 	if err != nil {
-		return version, errors.Wrapf(err, "unable to parse given API version: %q from %q", safeVal, val)
+		return version, fmt.Errorf("unable to parse given API version: %q from %q: %w", safeVal, val, err)
 	}
 
 	inRange, err := semver.ParseRange(condition)
@@ -89,21 +89,21 @@ func WriteResponse(w http.ResponseWriter, code int, value interface{}) {
 		w.WriteHeader(code)
 
 		if _, err := fmt.Fprintln(w, v); err != nil {
-			logrus.Errorf("unable to send string response: %q", err)
+			logrus.Errorf("Unable to send string response: %q", err)
 		}
 	case *os.File:
 		w.Header().Set("Content-Type", "application/octet; charset=us-ascii")
 		w.WriteHeader(code)
 
 		if _, err := io.Copy(w, v); err != nil {
-			logrus.Errorf("unable to copy to response: %q", err)
+			logrus.Errorf("Unable to copy to response: %q", err)
 		}
 	case io.Reader:
 		w.Header().Set("Content-Type", "application/x-tar")
 		w.WriteHeader(code)
 
 		if _, err := io.Copy(w, v); err != nil {
-			logrus.Errorf("unable to copy to response: %q", err)
+			logrus.Errorf("Unable to copy to response: %q", err)
 		}
 	default:
 		WriteJSON(w, code, value)
@@ -145,12 +145,12 @@ func MarshalErrorSliceJSON(ptr unsafe.Pointer, stream *jsoniter.Stream) {
 	}
 }
 
-func MarshalErrorJSONIsEmpty(_ unsafe.Pointer) bool {
-	return false
+func MarshalErrorJSONIsEmpty(ptr unsafe.Pointer) bool {
+	return *((*error)(ptr)) == nil
 }
 
-func MarshalErrorSliceJSONIsEmpty(_ unsafe.Pointer) bool {
-	return false
+func MarshalErrorSliceJSONIsEmpty(ptr unsafe.Pointer) bool {
+	return len(*((*[]error)(ptr))) == 0
 }
 
 // WriteJSON writes an interface value encoded as JSON to w
@@ -162,7 +162,7 @@ func WriteJSON(w http.ResponseWriter, code int, value interface{}) {
 	coder := json.NewEncoder(w)
 	coder.SetEscapeHTML(true)
 	if err := coder.Encode(value); err != nil {
-		logrus.Errorf("unable to write json: %q", err)
+		logrus.Errorf("Unable to write json: %q", err)
 	}
 }
 
@@ -174,11 +174,11 @@ func FilterMapToString(filters map[string][]string) (string, error) {
 	return string(f), nil
 }
 
-func getVar(r *http.Request, k string) string {
+func GetVar(r *http.Request, k string) string {
 	val := mux.Vars(r)[k]
 	safeVal, err := url.PathUnescape(val)
 	if err != nil {
-		logrus.Error(errors.Wrapf(err, "failed to unescape mux key %s, value %s", k, val))
+		logrus.Error(fmt.Errorf("failed to unescape mux key %s, value %s: %w", k, val, err))
 		return val
 	}
 	return safeVal
@@ -186,5 +186,5 @@ func getVar(r *http.Request, k string) string {
 
 // GetName extracts the name from the mux
 func GetName(r *http.Request) string {
-	return getVar(r, "name")
+	return GetVar(r, "name")
 }

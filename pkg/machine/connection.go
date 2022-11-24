@@ -1,12 +1,13 @@
-// +build amd64,!windows arm64,!windows
+//go:build amd64 || arm64
+// +build amd64 arm64
 
 package machine
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/containers/common/pkg/config"
-	"github.com/pkg/errors"
 )
 
 func AddConnection(uri fmt.Stringer, name, identity string, isDefault bool) error {
@@ -24,7 +25,8 @@ func AddConnection(uri fmt.Stringer, name, identity string, isDefault bool) erro
 		cfg.Engine.ActiveService = name
 	}
 	dst := config.Destination{
-		URI: uri.String(),
+		URI:       uri.String(),
+		IsMachine: true,
 	}
 	dst.Identity = identity
 	if cfg.Engine.ServiceDestinations == nil {
@@ -38,6 +40,31 @@ func AddConnection(uri fmt.Stringer, name, identity string, isDefault bool) erro
 	return cfg.Write()
 }
 
+func AnyConnectionDefault(name ...string) (bool, error) {
+	cfg, err := config.ReadCustomConfig()
+	if err != nil {
+		return false, err
+	}
+	for _, n := range name {
+		if n == cfg.Engine.ActiveService {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+func ChangeDefault(name string) error {
+	cfg, err := config.ReadCustomConfig()
+	if err != nil {
+		return err
+	}
+
+	cfg.Engine.ActiveService = name
+
+	return cfg.Write()
+}
+
 func RemoveConnection(name string) error {
 	cfg, err := config.ReadCustomConfig()
 	if err != nil {
@@ -46,7 +73,7 @@ func RemoveConnection(name string) error {
 	if _, ok := cfg.Engine.ServiceDestinations[name]; ok {
 		delete(cfg.Engine.ServiceDestinations, name)
 	} else {
-		return errors.Errorf("unable to find connection named %q", name)
+		return fmt.Errorf("unable to find connection named %q", name)
 	}
 	return cfg.Write()
 }

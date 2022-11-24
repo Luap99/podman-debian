@@ -65,4 +65,93 @@ const (
 	// InspectResponseFalse is a boolean False response for an inspect
 	// annotation.
 	InspectResponseFalse = "FALSE"
+
+	// CheckpointAnnotationName is used by Container Checkpoint when creating a
+	// checkpoint image to specify the original human-readable name for the
+	// container.
+	CheckpointAnnotationName = "io.podman.annotations.checkpoint.name"
+
+	// CheckpointAnnotationRawImageName is used by Container Checkpoint when
+	// creating a checkpoint image to specify the original unprocessed name of
+	// the image used to create the container (as specified by the user).
+	CheckpointAnnotationRawImageName = "io.podman.annotations.checkpoint.rawImageName"
+
+	// CheckpointAnnotationRootfsImageID is used by Container Checkpoint when
+	// creating a checkpoint image to specify the original ID of the image used
+	// to create the container.
+	CheckpointAnnotationRootfsImageID = "io.podman.annotations.checkpoint.rootfsImageID"
+
+	// CheckpointAnnotationRootfsImageName is used by Container Checkpoint when
+	// creating a checkpoint image to specify the original image name used to
+	// create the container.
+	CheckpointAnnotationRootfsImageName = "io.podman.annotations.checkpoint.rootfsImageName"
+
+	// CheckpointAnnotationPodmanVersion is used by Container Checkpoint when
+	// creating a checkpoint image to specify the version of Podman used on the
+	// host where the checkpoint was created.
+	CheckpointAnnotationPodmanVersion = "io.podman.annotations.checkpoint.podman.version"
+
+	// CheckpointAnnotationCriuVersion is used by Container Checkpoint when
+	// creating a checkpoint image to specify the version of CRIU used on the
+	// host where the checkpoint was created.
+	CheckpointAnnotationCriuVersion = "io.podman.annotations.checkpoint.criu.version"
+
+	// CheckpointAnnotationRuntimeName is used by Container Checkpoint when
+	// creating a checkpoint image to specify the runtime used on the host where
+	// the checkpoint was created.
+	CheckpointAnnotationRuntimeName = "io.podman.annotations.checkpoint.runtime.name"
+
+	// CheckpointAnnotationRuntimeVersion is used by Container Checkpoint when
+	// creating a checkpoint image to specify the version of runtime used on the
+	// host where the checkpoint was created.
+	CheckpointAnnotationRuntimeVersion = "io.podman.annotations.checkpoint.runtime.version"
+
+	// CheckpointAnnotationConmonVersion is used by Container Checkpoint when
+	// creating a checkpoint image to specify the version of conmon used on
+	// the host where the checkpoint was created.
+	CheckpointAnnotationConmonVersion = "io.podman.annotations.checkpoint.conmon.version"
+
+	// CheckpointAnnotationHostArch is used by Container Checkpoint when
+	// creating a checkpoint image to specify the CPU architecture of the host
+	// on which the checkpoint was created.
+	CheckpointAnnotationHostArch = "io.podman.annotations.checkpoint.host.arch"
+
+	// CheckpointAnnotationHostKernel is used by Container Checkpoint when
+	// creating a checkpoint image to specify the kernel version used by the
+	// host where the checkpoint was created.
+	CheckpointAnnotationHostKernel = "io.podman.annotations.checkpoint.host.kernel"
+
+	// CheckpointAnnotationCgroupVersion is used by Container Checkpoint when
+	// creating a checkpoint image to specify the cgroup version used by the
+	// host where the checkpoint was created.
+	CheckpointAnnotationCgroupVersion = "io.podman.annotations.checkpoint.cgroups.version"
+
+	// CheckpointAnnotationDistributionVersion is used by Container Checkpoint
+	// when creating a checkpoint image to specify the version of host
+	// distribution on which the checkpoint was created.
+	CheckpointAnnotationDistributionVersion = "io.podman.annotations.checkpoint.distribution.version"
+
+	// CheckpointAnnotationDistributionName is used by Container Checkpoint when
+	// creating a checkpoint image to specify the name of host distribution on
+	// which the checkpoint was created.
+	CheckpointAnnotationDistributionName = "io.podman.annotations.checkpoint.distribution.name"
+
+	// InitContainerType is used by play kube when playing a kube yaml to specify the type
+	// of the init container.
+	InitContainerType = "io.podman.annotations.init.container.type"
+
+	// MaxKubeAnnotation is the max length of annotations allowed by Kubernetes.
+	MaxKubeAnnotation = 63
 )
+
+// IsReservedAnnotation returns true if the specified value corresponds to an
+// already reserved annotation that Podman sets during container creation.
+func IsReservedAnnotation(value string) bool {
+	switch value {
+	case InspectAnnotationCIDFile, InspectAnnotationAutoremove, InspectAnnotationVolumesFrom, InspectAnnotationPrivileged, InspectAnnotationPublishAll, InspectAnnotationInit, InspectAnnotationLabel, InspectAnnotationSeccomp, InspectAnnotationApparmor, InspectResponseTrue, InspectResponseFalse:
+		return true
+
+	default:
+		return false
+	}
+}

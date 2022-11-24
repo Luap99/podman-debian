@@ -5,7 +5,7 @@ import (
 	"io"
 	"regexp"
 
-	"github.com/pkg/errors"
+	"github.com/containers/common/libnetwork/types"
 )
 
 var (
@@ -17,9 +17,9 @@ var (
 	// NameRegex is a regular expression to validate container/pod names.
 	// This must NOT be changed from outside of Libpod. It should be a
 	// constant, but Go won't let us do that.
-	NameRegex = regexp.MustCompile("^[a-zA-Z0-9][a-zA-Z0-9_.-]*$")
+	NameRegex = types.NameRegex
 	// RegexError is thrown in presence of an invalid container/pod name.
-	RegexError = errors.Wrapf(ErrInvalidArg, "names must match [a-zA-Z0-9][a-zA-Z0-9_.-]*")
+	RegexError = types.RegexError
 	// UmaskRegex is a regular expression to validate Umask.
 	UmaskRegex = regexp.MustCompile(`^[0-7]{1,4}$`)
 )
@@ -39,6 +39,10 @@ type InfoData struct {
 // VolumeDriverLocal is the "local" volume driver. It is managed by libpod
 // itself.
 const VolumeDriverLocal = "local"
+
+// VolumeDriverImage is the "image" volume driver. It is managed by Libpod and
+// uses volumes backed by an image.
+const VolumeDriverImage = "image"
 
 const (
 	OCIManifestDir  = "oci-dir"
@@ -78,15 +82,11 @@ const JSONLogging = "json-file"
 // NoLogging is the string conmon expects when specifying to use no log driver whatsoever
 const NoLogging = "none"
 
-// Strings used for --sdnotify option to podman
-const (
-	SdNotifyModeContainer = "container"
-	SdNotifyModeConmon    = "conmon"
-	SdNotifyModeIgnore    = "ignore"
-)
+// PassthroughLogging is the string conmon expects when specifying to use the passthrough driver
+const PassthroughLogging = "passthrough"
 
 // DefaultRlimitValue is the value set by default for nofile and nproc
 const RLimitDefaultValue = uint64(1048576)
 
 // BindMountPrefix distinguishes its annotations from others
-const BindMountPrefix = "bind-mount-options:"
+const BindMountPrefix = "bind-mount-options"

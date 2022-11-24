@@ -4,7 +4,7 @@ package secrets
 import (
 	"net/url"
 
-	"github.com/containers/podman/v3/pkg/bindings/internal/util"
+	"github.com/containers/podman/v4/pkg/bindings/internal/util"
 )
 
 // Changed returns true if named field has been set
@@ -60,4 +60,19 @@ func (o *CreateOptions) GetDriverOpts() map[string]string {
 		return z
 	}
 	return o.DriverOpts
+}
+
+// WithLabels set field Labels to given value
+func (o *CreateOptions) WithLabels(value map[string]string) *CreateOptions {
+	o.Labels = value
+	return o
+}
+
+// GetLabels returns value of field Labels
+func (o *CreateOptions) GetLabels() map[string]string {
+	if o.Labels == nil {
+		var z map[string]string
+		return z
+	}
+	return o.Labels
 }

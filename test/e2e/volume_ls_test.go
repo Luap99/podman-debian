@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -24,7 +24,6 @@ var _ = Describe("Podman volume ls", func() {
 		}
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
 	})
 
 	AfterEach(func() {
@@ -42,7 +41,18 @@ var _ = Describe("Podman volume ls", func() {
 		session = podmanTest.Podman([]string{"volume", "ls"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(len(session.OutputToStringArray())).To(Equal(2))
+		Expect(session.OutputToStringArray()).To(HaveLen(2))
+	})
+
+	It("podman ls volume filter with a key pattern", func() {
+		session := podmanTest.Podman([]string{"volume", "create", "--label", "helloworld=world", "myvol2"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		session = podmanTest.Podman([]string{"volume", "ls", "--filter", "label=hello*"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToStringArray()).To(HaveLen(2))
 	})
 
 	It("podman ls volume with JSON format", func() {
@@ -53,7 +63,7 @@ var _ = Describe("Podman volume ls", func() {
 		session = podmanTest.Podman([]string{"volume", "ls", "--format", "json"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(session.IsJSONOutputValid()).To(BeTrue())
+		Expect(session.OutputToString()).To(BeValidJSON())
 	})
 
 	It("podman ls volume with Go template", func() {
@@ -65,7 +75,10 @@ var _ = Describe("Podman volume ls", func() {
 		session.WaitWithDefaultTimeout()
 
 		Expect(session).Should(Exit(0))
-		Expect(len(session.OutputToStringArray())).To(Equal(1), session.OutputToString())
+		arr := session.OutputToStringArray()
+		Expect(arr).To(HaveLen(2))
+		Expect(arr[0]).To(ContainSubstring("NAME"))
+		Expect(arr[1]).To(ContainSubstring("myvol"))
 	})
 
 	It("podman ls volume with --filter flag", func() {
@@ -81,24 +94,24 @@ var _ = Describe("Podman volume ls", func() {
 		session = podmanTest.Podman([]string{"volume", "ls", "--filter", "label=foo"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(len(session.OutputToStringArray())).To(Equal(2))
+		Expect(session.OutputToStringArray()).To(HaveLen(2))
 		Expect(session.OutputToStringArray()[1]).To(ContainSubstring(volName))
 
 		session = podmanTest.Podman([]string{"volume", "ls", "--filter", "label=foo=foo"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(len(session.OutputToStringArray())).To(Equal(0))
+		Expect(session.OutputToStringArray()).To(BeEmpty())
 
 		session = podmanTest.Podman([]string{"volume", "ls", "--filter", "label=foo=bar"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(len(session.OutputToStringArray())).To(Equal(2))
+		Expect(session.OutputToStringArray()).To(HaveLen(2))
 		Expect(session.OutputToStringArray()[1]).To(ContainSubstring(volName))
 
 		session = podmanTest.Podman([]string{"volume", "ls", "--filter", "label=foo=baz"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(len(session.OutputToStringArray())).To(Equal(0))
+		Expect(session.OutputToStringArray()).To(BeEmpty())
 	})
 
 	It("podman ls volume with --filter until flag", func() {
@@ -109,12 +122,12 @@ var _ = Describe("Podman volume ls", func() {
 		session = podmanTest.Podman([]string{"volume", "ls", "--filter", "until=5000000000"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(len(session.OutputToStringArray())).To(Equal(2))
+		Expect(session.OutputToStringArray()).To(HaveLen(2))
 
 		session = podmanTest.Podman([]string{"volume", "ls", "--filter", "until=50000"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(len(session.OutputToStringArray())).To(Equal(0))
+		Expect(session.OutputToStringArray()).To(BeEmpty())
 	})
 
 	It("podman volume ls with --filter dangling", func() {
@@ -142,6 +155,37 @@ var _ = Describe("Podman volume ls", func() {
 		Expect(lsDangling).Should(Exit(0))
 		Expect(lsDangling.OutputToString()).To(ContainSubstring(volName1))
 	})
+
+	It("podman ls volume with --filter name", func() {
+		volName1 := "volume1"
+		session := podmanTest.Podman([]string{"volume", "create", volName1})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		volName2 := "volume2"
+		session2 := podmanTest.Podman([]string{"volume", "create", volName2})
+		session2.WaitWithDefaultTimeout()
+		Expect(session2).Should(Exit(0))
+
+		session = podmanTest.Podman([]string{"volume", "ls", "--filter", "name=volume1*"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToStringArray()).To(HaveLen(3))
+		Expect(session.OutputToStringArray()[1]).To(ContainSubstring(volName1))
+		Expect(session.OutputToStringArray()[2]).To(ContainSubstring(volName2))
+
+		session = podmanTest.Podman([]string{"volume", "ls", "--filter", "name=volumex"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToStringArray()).To(BeEmpty())
+
+		session = podmanTest.Podman([]string{"volume", "ls", "--filter", "name=volume1"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToStringArray()).To(HaveLen(2))
+		Expect(session.OutputToStringArray()[1]).To(ContainSubstring(volName1))
+	})
+
 	It("podman ls volume with multiple --filter flag", func() {
 		session := podmanTest.Podman([]string{"volume", "create", "--label", "foo=bar", "myvol"})
 		volName := session.OutputToString()
@@ -160,14 +204,14 @@ var _ = Describe("Podman volume ls", func() {
 		session = podmanTest.Podman([]string{"volume", "ls", "--filter", "label=foo", "--filter", "label=foo2"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(len(session.OutputToStringArray())).To(Equal(3))
+		Expect(session.OutputToStringArray()).To(HaveLen(3))
 		Expect(session.OutputToStringArray()[1]).To(ContainSubstring(volName))
 		Expect(session.OutputToStringArray()[2]).To(ContainSubstring(anotherVol))
 
 		session = podmanTest.Podman([]string{"volume", "ls", "--filter", "label=foo=bar", "--filter", "label=foo2=bar2"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(len(session.OutputToStringArray())).To(Equal(3))
+		Expect(session.OutputToStringArray()).To(HaveLen(3))
 		Expect(session.OutputToStringArray()[1]).To(ContainSubstring(volName))
 		Expect(session.OutputToStringArray()[2]).To(ContainSubstring(anotherVol))
 	})

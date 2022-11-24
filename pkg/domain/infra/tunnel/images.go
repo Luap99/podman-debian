@@ -2,7 +2,8 @@ package tunnel
 
 import (
 	"context"
-	"io/ioutil"
+	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -10,15 +11,15 @@ import (
 
 	"github.com/containers/common/libimage"
 	"github.com/containers/common/pkg/config"
+	"github.com/containers/common/pkg/ssh"
 	"github.com/containers/image/v5/docker/reference"
 	"github.com/containers/image/v5/types"
-	images "github.com/containers/podman/v3/pkg/bindings/images"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/domain/entities/reports"
-	"github.com/containers/podman/v3/pkg/domain/utils"
-	"github.com/containers/podman/v3/pkg/errorhandling"
-	utils2 "github.com/containers/podman/v3/utils"
-	"github.com/pkg/errors"
+	"github.com/containers/podman/v4/pkg/bindings/images"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/domain/entities/reports"
+	"github.com/containers/podman/v4/pkg/domain/utils"
+	"github.com/containers/podman/v4/pkg/errorhandling"
+	utils2 "github.com/containers/podman/v4/utils"
 )
 
 func (ir *ImageEngine) Exists(_ context.Context, nameOrID string) (*entities.BoolReport, error) {
@@ -27,7 +28,7 @@ func (ir *ImageEngine) Exists(_ context.Context, nameOrID string) (*entities.Boo
 }
 
 func (ir *ImageEngine) Remove(ctx context.Context, imagesArg []string, opts entities.ImageRemoveOptions) (*entities.ImageRemoveReport, []error) {
-	options := new(images.RemoveOptions).WithForce(opts.Force).WithAll(opts.All)
+	options := new(images.RemoveOptions).WithForce(opts.Force).WithIgnore(opts.Ignore).WithAll(opts.All).WithLookupManifest(opts.LookupManifest).WithNoPrune(opts.NoPrune)
 	return images.Remove(ir.ClientCtx, imagesArg, options)
 }
 
@@ -95,7 +96,7 @@ func (ir *ImageEngine) Prune(ctx context.Context, opts entities.ImagePruneOption
 		f := strings.Split(filter, "=")
 		filters[f[0]] = f[1:]
 	}
-	options := new(images.PruneOptions).WithAll(opts.All).WithFilters(filters)
+	options := new(images.PruneOptions).WithAll(opts.All).WithFilters(filters).WithExternal(opts.External)
 	reports, err := images.Prune(ir.ClientCtx, options)
 	if err != nil {
 		return nil, err
@@ -108,6 +109,7 @@ func (ir *ImageEngine) Pull(ctx context.Context, rawImage string, opts entities.
 	options.WithAllTags(opts.AllTags).WithAuthfile(opts.Authfile).WithArch(opts.Arch).WithOS(opts.OS)
 	options.WithVariant(opts.Variant).WithPassword(opts.Password)
 	options.WithQuiet(opts.Quiet).WithUsername(opts.Username).WithPolicy(opts.PullPolicy.String())
+	options.WithProgressWriter(opts.Writer)
 	if s := opts.SkipTLSVerify; s != types.OptionalBoolUndefined {
 		if s == types.OptionalBoolTrue {
 			options.WithSkipTLSVerify(true)
@@ -130,7 +132,7 @@ func (ir *ImageEngine) Tag(ctx context.Context, nameOrID string, tags []string, 
 		)
 		ref, err := reference.Parse(newTag)
 		if err != nil {
-			return errors.Wrapf(err, "error parsing reference %q", newTag)
+			return fmt.Errorf("parsing reference %q: %w", newTag, err)
 		}
 		if t, ok := ref.(reference.Tagged); ok {
 			tag = t.Tag()
@@ -139,7 +141,7 @@ func (ir *ImageEngine) Tag(ctx context.Context, nameOrID string, tags []string, 
 			repo = r.Name()
 		}
 		if len(repo) < 1 {
-			return errors.Errorf("invalid image name %q", nameOrID)
+			return fmt.Errorf("invalid image name %q", nameOrID)
 		}
 		if err := images.Tag(ir.ClientCtx, nameOrID, tag, repo, options); err != nil {
 			return err
@@ -160,7 +162,7 @@ func (ir *ImageEngine) Untag(ctx context.Context, nameOrID string, tags []string
 		)
 		ref, err := reference.Parse(newTag)
 		if err != nil {
-			return errors.Wrapf(err, "error parsing reference %q", newTag)
+			return fmt.Errorf("parsing reference %q: %w", newTag, err)
 		}
 		if t, ok := ref.(reference.Tagged); ok {
 			tag = t.Tag()
@@ -172,7 +174,7 @@ func (ir *ImageEngine) Untag(ctx context.Context, nameOrID string, tags []string
 			repo = r.Name()
 		}
 		if len(repo) < 1 {
-			return errors.Errorf("invalid image name %q", nameOrID)
+			return fmt.Errorf("invalid image name %q", nameOrID)
 		}
 		if err := images.Untag(ir.ClientCtx, nameOrID, tag, repo, options); err != nil {
 			return err
@@ -193,7 +195,7 @@ func (ir *ImageEngine) Inspect(ctx context.Context, namesOrIDs []string, opts en
 				return nil, nil, err
 			}
 			if errModel.ResponseCode == 404 {
-				errs = append(errs, errors.Wrapf(err, "unable to inspect %q", i))
+				errs = append(errs, fmt.Errorf("unable to inspect %q: %w", i, err))
 				continue
 			}
 			return nil, nil, err
@@ -214,7 +216,7 @@ func (ir *ImageEngine) Load(ctx context.Context, opts entities.ImageLoadOptions)
 		return nil, err
 	}
 	if fInfo.IsDir() {
-		return nil, errors.Errorf("remote client supports archives only but %q is a directory", opts.Input)
+		return nil, fmt.Errorf("remote client supports archives only but %q is a directory", opts.Input)
 	}
 	return images.Load(ir.ClientCtx, f)
 }
@@ -225,6 +227,7 @@ func (ir *ImageEngine) Import(ctx context.Context, opts entities.ImageImportOpti
 		f   *os.File
 	)
 	options := new(images.ImportOptions).WithChanges(opts.Changes).WithMessage(opts.Message).WithReference(opts.Reference)
+	options.WithOS(opts.OS).WithArchitecture(opts.Architecture).WithVariant(opts.Variant)
 	if opts.SourceIsURL {
 		options.WithURL(opts.Source)
 	} else {
@@ -238,7 +241,7 @@ func (ir *ImageEngine) Import(ctx context.Context, opts entities.ImageImportOpti
 
 func (ir *ImageEngine) Push(ctx context.Context, source string, destination string, opts entities.ImagePushOptions) error {
 	options := new(images.PushOptions)
-	options.WithAll(opts.All).WithCompress(opts.Compress).WithUsername(opts.Username).WithPassword(opts.Password).WithAuthfile(opts.Authfile).WithFormat(opts.Format)
+	options.WithAll(opts.All).WithCompress(opts.Compress).WithUsername(opts.Username).WithPassword(opts.Password).WithAuthfile(opts.Authfile).WithFormat(opts.Format).WithRemoveSignatures(opts.RemoveSignatures).WithQuiet(opts.Quiet).WithCompressionFormat(opts.CompressionFormat).WithProgressWriter(opts.Writer)
 
 	if s := opts.SkipTLSVerify; s != types.OptionalBoolUndefined {
 		if s == types.OptionalBoolTrue {
@@ -256,10 +259,11 @@ func (ir *ImageEngine) Save(ctx context.Context, nameOrID string, tags []string,
 		err error
 	)
 	options := new(images.ExportOptions).WithFormat(opts.Format).WithCompress(opts.Compress)
+	options = options.WithOciAcceptUncompressedLayers(opts.OciAcceptUncompressedLayers)
 
 	switch opts.Format {
 	case "oci-dir", "docker-dir":
-		f, err = ioutil.TempFile("", "podman_save")
+		f, err = os.CreateTemp("", "podman_save")
 		if err == nil {
 			defer func() { _ = os.Remove(f.Name()) }()
 		}
@@ -293,7 +297,7 @@ func (ir *ImageEngine) Save(ctx context.Context, nameOrID string, tags []string,
 	switch {
 	case err == nil:
 		if info.Mode().IsRegular() {
-			return errors.Errorf("%q already exists as a regular file", opts.Output)
+			return fmt.Errorf("%q already exists as a regular file", opts.Output)
 		}
 	case os.IsNotExist(err):
 		if err := os.Mkdir(opts.Output, 0755); err != nil {
@@ -325,7 +329,7 @@ func (ir *ImageEngine) Search(ctx context.Context, term string, opts entities.Im
 
 	options := new(images.SearchOptions)
 	options.WithAuthfile(opts.Authfile).WithFilters(mappedFilters).WithLimit(opts.Limit)
-	options.WithListTags(opts.ListTags).WithNoTrunc(opts.NoTrunc)
+	options.WithListTags(opts.ListTags)
 	if s := opts.SkipTLSVerify; s != types.OptionalBoolUndefined {
 		if s == types.OptionalBoolTrue {
 			options.WithSkipTLSVerify(true)
@@ -359,4 +363,24 @@ func (ir *ImageEngine) Shutdown(_ context.Context) {
 
 func (ir *ImageEngine) Sign(ctx context.Context, names []string, options entities.SignOptions) (*entities.SignReport, error) {
 	return nil, errors.New("not implemented yet")
+}
+
+func (ir *ImageEngine) Scp(ctx context.Context, src, dst string, parentFlags []string, quiet bool, sshMode ssh.EngineMode) error {
+	options := new(images.ScpOptions)
+
+	var destination *string
+	if len(dst) > 1 {
+		destination = &dst
+	}
+	options.Quiet = &quiet
+	options.Destination = destination
+
+	rep, err := images.Scp(ir.ClientCtx, &src, destination, *options)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("Loaded Image(s):", rep.Id)
+
+	return nil
 }

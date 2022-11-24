@@ -1,10 +1,9 @@
 package integration
 
 import (
-	"io/ioutil"
 	"os"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -128,8 +127,29 @@ var _ = Describe("Podman kill", func() {
 		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(0))
 	})
 
+	It("podman kill paused container", func() {
+		SkipIfRootlessCgroupsV1("pause is not supported for cgroupv1 rootless")
+		ctrName := "testctr"
+		session := podmanTest.RunTopContainer(ctrName)
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		pause := podmanTest.Podman([]string{"pause", ctrName})
+		pause.WaitWithDefaultTimeout()
+		Expect(pause).Should(Exit(0))
+
+		kill := podmanTest.Podman([]string{"kill", ctrName})
+		kill.WaitWithDefaultTimeout()
+		Expect(kill).Should(Exit(0))
+
+		inspect := podmanTest.Podman([]string{"inspect", "-f", "{{.State.Status}}", ctrName})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect).Should(Exit(0))
+		Expect(inspect.OutputToString()).To(Or(Equal("stopped"), Equal("exited")))
+	})
+
 	It("podman kill --cidfile", func() {
-		tmpDir, err := ioutil.TempDir("", "")
+		tmpDir, err := os.MkdirTemp("", "")
 		Expect(err).To(BeNil())
 		tmpFile := tmpDir + "cid"
 		defer os.RemoveAll(tmpDir)
@@ -149,12 +169,12 @@ var _ = Describe("Podman kill", func() {
 	})
 
 	It("podman kill multiple --cidfile", func() {
-		tmpDir1, err := ioutil.TempDir("", "")
+		tmpDir1, err := os.MkdirTemp("", "")
 		Expect(err).To(BeNil())
 		tmpFile1 := tmpDir1 + "cid"
 		defer os.RemoveAll(tmpDir1)
 
-		tmpDir2, err := ioutil.TempDir("", "")
+		tmpDir2, err := os.MkdirTemp("", "")
 		Expect(err).To(BeNil())
 		tmpFile2 := tmpDir2 + "cid"
 		defer os.RemoveAll(tmpDir2)
@@ -181,7 +201,7 @@ var _ = Describe("Podman kill", func() {
 		Expect(wait).Should(Exit(0))
 	})
 
-	It("podman stop --all", func() {
+	It("podman kill --all", func() {
 		session := podmanTest.RunTopContainer("")
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))

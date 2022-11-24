@@ -2,19 +2,20 @@ package integration
 
 import (
 	"fmt"
-	"io/ioutil"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/containers/podman/v3/pkg/cgroups"
-	. "github.com/containers/podman/v3/test/utils"
+	"github.com/containers/common/pkg/cgroups"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/rootless"
+	. "github.com/containers/podman/v4/test/utils"
 	"github.com/containers/storage/pkg/stringid"
-	"github.com/mrunalp/fileutils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -34,7 +35,6 @@ var _ = Describe("Podman run", func() {
 		}
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
 	})
 
 	AfterEach(func() {
@@ -72,8 +72,31 @@ var _ = Describe("Podman run", func() {
 		Expect(session.OutputToString()).To(ContainSubstring("graphRootMounted=1"))
 	})
 
+	It("podman run from manifest list", func() {
+		session := podmanTest.Podman([]string{"manifest", "create", "localhost/test:latest"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		session = podmanTest.Podman([]string{"build", "-f", "build/Containerfile.with-platform", "--platform", "linux/amd64,linux/arm64", "--manifest", "localhost/test:latest"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		session = podmanTest.Podman([]string{"run", "--platform", "linux/arm64", "localhost/test", "uname", "-a"})
+		session.WaitWithDefaultTimeout()
+		exitCode := session.ExitCode()
+		// CI could either support requested platform or not, if it supports then output should contain `aarch64`
+		// if not run should fail with a very specific error i.e `Exec format error` anything other than this should
+		// be marked as failure of test.
+		if exitCode == 0 {
+			Expect(session.OutputToString()).To(ContainSubstring("aarch64"))
+		} else {
+			// crun says 'Exec', runc says 'exec'. Handle either.
+			Expect(session.ErrorToString()).To(ContainSubstring("xec format error"))
+		}
+	})
+
 	It("podman run a container based on a complex local image name", func() {
-		imageName := strings.TrimPrefix(nginx, "quay.io/")
+		imageName := strings.TrimPrefix(NGINX_IMAGE, "quay.io/")
 		session := podmanTest.Podman([]string{"run", imageName, "ls"})
 		session.WaitWithDefaultTimeout()
 		Expect(session.ErrorToString()).ToNot(ContainSubstring("Trying to pull"))
@@ -81,14 +104,18 @@ var _ = Describe("Podman run", func() {
 	})
 
 	It("podman run --signature-policy", func() {
-		SkipIfRemote("SigPolicy not handled by remote")
 		session := podmanTest.Podman([]string{"run", "--pull=always", "--signature-policy", "/no/such/file", ALPINE})
 		session.WaitWithDefaultTimeout()
 		Expect(session).To(ExitWithError())
 
 		session = podmanTest.Podman([]string{"run", "--pull=always", "--signature-policy", "/etc/containers/policy.json", ALPINE})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		if IsRemote() {
+			Expect(session).To(ExitWithError())
+			Expect(session.ErrorToString()).To(ContainSubstring("unknown flag"))
+		} else {
+			Expect(session).Should(Exit(0))
+		}
 	})
 
 	It("podman run --rm with --restart", func() {
@@ -114,10 +141,10 @@ var _ = Describe("Podman run", func() {
 	})
 
 	It("podman run a container based on on a short name with localhost", func() {
-		tag := podmanTest.Podman([]string{"tag", nginx, "localhost/libpod/alpine_nginx:latest"})
+		tag := podmanTest.Podman([]string{"tag", NGINX_IMAGE, "localhost/libpod/alpine_nginx:latest"})
 		tag.WaitWithDefaultTimeout()
 
-		rmi := podmanTest.Podman([]string{"rmi", nginx})
+		rmi := podmanTest.Podman([]string{"rmi", NGINX_IMAGE})
 		rmi.WaitWithDefaultTimeout()
 
 		session := podmanTest.Podman([]string{"run", "libpod/alpine_nginx:latest", "ls"})
@@ -127,10 +154,10 @@ var _ = Describe("Podman run", func() {
 	})
 
 	It("podman container run a container based on on a short name with localhost", func() {
-		tag := podmanTest.Podman([]string{"image", "tag", nginx, "localhost/libpod/alpine_nginx:latest"})
+		tag := podmanTest.Podman([]string{"image", "tag", NGINX_IMAGE, "localhost/libpod/alpine_nginx:latest"})
 		tag.WaitWithDefaultTimeout()
 
-		rmi := podmanTest.Podman([]string{"image", "rm", nginx})
+		rmi := podmanTest.Podman([]string{"image", "rm", NGINX_IMAGE})
 		rmi.WaitWithDefaultTimeout()
 
 		session := podmanTest.Podman([]string{"container", "run", "libpod/alpine_nginx:latest", "ls"})
@@ -150,8 +177,7 @@ var _ = Describe("Podman run", func() {
 		session := podmanTest.Podman([]string{"run", ALPINE, "find", "/etc", "-name", "hosts"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		match, _ := session.GrepString("/etc/hosts")
-		Expect(match).Should(BeTrue())
+		Expect(session.OutputToString()).To(ContainSubstring("/etc/hosts"))
 	})
 
 	It("podman create pod with name in /etc/hosts", func() {
@@ -160,10 +186,8 @@ var _ = Describe("Podman run", func() {
 		session := podmanTest.Podman([]string{"run", "-ti", "--rm", "--name", name, "--hostname", hostname, ALPINE, "cat", "/etc/hosts"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		match, _ := session.GrepString(name)
-		Expect(match).Should(BeTrue())
-		match, _ = session.GrepString(hostname)
-		Expect(match).Should(BeTrue())
+		Expect(session.OutputToString()).To(ContainSubstring(name))
+		Expect(session.OutputToString()).To(ContainSubstring(hostname))
 	})
 
 	It("podman run a container based on remote image", func() {
@@ -174,7 +198,7 @@ var _ = Describe("Podman run", func() {
 
 		lock := GetPortLock("5000")
 		defer lock.Unlock()
-		session := podmanTest.Podman([]string{"run", "-d", "--name", "registry", "-p", "5000:5000", registry, "/entrypoint.sh", "/etc/docker/registry/config.yml"})
+		session := podmanTest.Podman([]string{"run", "-d", "--name", "registry", "-p", "5000:5000", REGISTRY_IMAGE, "/entrypoint.sh", "/etc/docker/registry/config.yml"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
@@ -197,7 +221,7 @@ var _ = Describe("Podman run", func() {
 	It("podman run a container with a --rootfs", func() {
 		rootfs := filepath.Join(tempdir, "rootfs")
 		uls := filepath.Join("/", "usr", "local", "share")
-		uniqueString := stringid.GenerateNonCryptoID()
+		uniqueString := stringid.GenerateRandomID()
 		testFilePath := filepath.Join(uls, uniqueString)
 		tarball := filepath.Join(tempdir, "rootfs.tar")
 
@@ -232,6 +256,49 @@ var _ = Describe("Podman run", func() {
 		stdoutLines := session.OutputToStringArray()
 		Expect(stdoutLines).Should(HaveLen(1))
 		Expect(stdoutLines[0]).Should(Equal(uniqueString))
+
+		SkipIfRemote("External overlay only work locally")
+		if os.Getenv("container") != "" {
+			Skip("Overlay mounts not supported when running in a container")
+		}
+		if rootless.IsRootless() {
+			if _, err := exec.LookPath("fuse-overlayfs"); err != nil {
+				Skip("Fuse-Overlayfs required for rootless overlay mount test")
+			}
+		}
+		// Test --rootfs with an external overlay
+		// use --rm to remove container and confirm if we did not leak anything
+		osession := podmanTest.Podman([]string{"run", "-i", "--rm", "--security-opt", "label=disable",
+			"--rootfs", rootfs + ":O", "cat", testFilePath})
+		osession.WaitWithDefaultTimeout()
+		Expect(osession).Should(Exit(0))
+
+		// Test podman start stop with overlay
+		osession = podmanTest.Podman([]string{"run", "--name", "overlay-foo", "--security-opt", "label=disable",
+			"--rootfs", rootfs + ":O", "echo", "hello"})
+		osession.WaitWithDefaultTimeout()
+		Expect(osession).Should(Exit(0))
+
+		osession = podmanTest.Podman([]string{"stop", "overlay-foo"})
+		osession.WaitWithDefaultTimeout()
+		Expect(osession).Should(Exit(0))
+
+		startsession := podmanTest.Podman([]string{"start", "--attach", "overlay-foo"})
+		startsession.WaitWithDefaultTimeout()
+		Expect(startsession).Should(Exit(0))
+		Expect(startsession.OutputToString()).To(Equal("hello"))
+
+		// remove container for above test overlay-foo
+		osession = podmanTest.Podman([]string{"rm", "overlay-foo"})
+		osession.WaitWithDefaultTimeout()
+		Expect(osession).Should(Exit(0))
+
+		// Test --rootfs with an external overlay with --uidmap
+		osession = podmanTest.Podman([]string{"run", "--uidmap", "0:1000:1000", "--rm", "--security-opt", "label=disable",
+			"--rootfs", rootfs + ":O", "echo", "hello"})
+		osession.WaitWithDefaultTimeout()
+		Expect(osession).Should(Exit(0))
+		Expect(osession.OutputToString()).To(Equal("hello"))
 	})
 
 	It("podman run a container with --init", func() {
@@ -242,20 +309,21 @@ var _ = Describe("Podman run", func() {
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
 		conData := result.InspectContainerToJSON()
-		Expect(conData[0].Path).To(Equal("/dev/init"))
-		Expect(conData[0].Config.Annotations["io.podman.annotations.init"]).To(Equal("TRUE"))
+		Expect(conData[0]).To(HaveField("Path", define.ContainerInitPath))
+		Expect(conData[0].Config.Annotations).To(HaveKeyWithValue("io.podman.annotations.init", "TRUE"))
 	})
 
 	It("podman run a container with --init and --init-path", func() {
-		session := podmanTest.Podman([]string{"run", "--name", "test", "--init", "--init-path", "/usr/libexec/podman/catatonit", ALPINE, "ls"})
+		// Also bind-mount /dev (#14251).
+		session := podmanTest.Podman([]string{"run", "-v", "/dev:/dev", "--name", "test", "--init", "--init-path", "/usr/libexec/podman/catatonit", ALPINE, "ls"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		result := podmanTest.Podman([]string{"inspect", "test"})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
 		conData := result.InspectContainerToJSON()
-		Expect(conData[0].Path).To(Equal("/dev/init"))
-		Expect(conData[0].Config.Annotations["io.podman.annotations.init"]).To(Equal("TRUE"))
+		Expect(conData[0]).To(HaveField("Path", define.ContainerInitPath))
+		Expect(conData[0].Config.Annotations).To(HaveKeyWithValue("io.podman.annotations.init", "TRUE"))
 	})
 
 	It("podman run a container without --init", func() {
@@ -266,13 +334,13 @@ var _ = Describe("Podman run", func() {
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
 		conData := result.InspectContainerToJSON()
-		Expect(conData[0].Path).To(Equal("ls"))
-		Expect(conData[0].Config.Annotations["io.podman.annotations.init"]).To(Equal("FALSE"))
+		Expect(conData[0]).To(HaveField("Path", "ls"))
+		Expect(conData[0].Config.Annotations).To(HaveKeyWithValue("io.podman.annotations.init", "FALSE"))
 	})
 
 	forbidGetCWDSeccompProfile := func() string {
 		in := []byte(`{"defaultAction":"SCMP_ACT_ALLOW","syscalls":[{"name":"getcwd","action":"SCMP_ACT_ERRNO"}]}`)
-		jsonFile, err := podmanTest.CreateSeccompJson(in)
+		jsonFile, err := podmanTest.CreateSeccompJSON(in)
 		if err != nil {
 			fmt.Println(err)
 			Skip("Failed to prepare seccomp.json for test.")
@@ -340,31 +408,31 @@ var _ = Describe("Podman run", func() {
 
 		SkipIfCgroupV1("podman umask on /sys/fs/cgroup will fail with cgroups V1")
 		SkipIfRootless("/sys/fs/cgroup rw access is needed")
-		rwOnCGroups := "/sys/fs/cgroup cgroup2 rw"
+		rwOnCgroups := "/sys/fs/cgroup cgroup2 rw"
 		session := podmanTest.Podman([]string{"run", "--security-opt", "unmask=ALL", "--security-opt", "mask=/sys/fs/cgroup", ALPINE, "cat", "/proc/mounts"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(session.OutputToString()).To(ContainSubstring(rwOnCGroups))
+		Expect(session.OutputToString()).To(ContainSubstring(rwOnCgroups))
 
 		session = podmanTest.Podman([]string{"run", "--security-opt", "unmask=/sys/fs/cgroup", ALPINE, "cat", "/proc/mounts"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(session.OutputToString()).To(ContainSubstring(rwOnCGroups))
+		Expect(session.OutputToString()).To(ContainSubstring(rwOnCgroups))
 
 		session = podmanTest.Podman([]string{"run", "--security-opt", "unmask=/sys/fs/cgroup///", ALPINE, "cat", "/proc/mounts"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(session.OutputToString()).To(ContainSubstring(rwOnCGroups))
+		Expect(session.OutputToString()).To(ContainSubstring(rwOnCgroups))
 
 		session = podmanTest.Podman([]string{"run", "--security-opt", "unmask=ALL", ALPINE, "cat", "/proc/mounts"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(session.OutputToString()).To(ContainSubstring(rwOnCGroups))
+		Expect(session.OutputToString()).To(ContainSubstring(rwOnCgroups))
 
 		session = podmanTest.Podman([]string{"run", "--security-opt", "unmask=/sys/fs/cgroup", "--security-opt", "mask=/sys/fs/cgroup", ALPINE, "cat", "/proc/mounts"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(session.OutputToString()).To(ContainSubstring(rwOnCGroups))
+		Expect(session.OutputToString()).To(ContainSubstring(rwOnCgroups))
 
 		session = podmanTest.Podman([]string{"run", "--security-opt", "unmask=/sys/fs/cgroup", ALPINE, "ls", "/sys/fs/cgroup"})
 		session.WaitWithDefaultTimeout()
@@ -376,16 +444,14 @@ var _ = Describe("Podman run", func() {
 		session := podmanTest.Podman([]string{"run", "-it", "--security-opt", strings.Join([]string{"seccomp=", forbidGetCWDSeccompProfile()}, ""), ALPINE, "pwd"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).To(ExitWithError())
-		match, _ := session.GrepString("Operation not permitted")
-		Expect(match).Should(BeTrue())
+		Expect(session.OutputToString()).To(ContainSubstring("Operation not permitted"))
 	})
 
 	It("podman run seccomp test --privileged", func() {
 		session := podmanTest.Podman([]string{"run", "-it", "--privileged", "--security-opt", strings.Join([]string{"seccomp=", forbidGetCWDSeccompProfile()}, ""), ALPINE, "pwd"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).To(ExitWithError())
-		match, _ := session.GrepString("Operation not permitted")
-		Expect(match).Should(BeTrue())
+		Expect(session.OutputToString()).To(ContainSubstring("Operation not permitted"))
 	})
 
 	It("podman run seccomp test --privileged no profile should be unconfined", func() {
@@ -491,6 +557,11 @@ var _ = Describe("Podman run", func() {
 		Expect(session).Should(Exit(0))
 		Expect(session.OutputToString()).To(ContainSubstring("0000000000000000"))
 
+		session = podmanTest.Podman([]string{"run", "--user=1:1", "--cap-add=DAC_OVERRIDE", "--rm", ALPINE, "grep", "CapEff", "/proc/self/status"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToString()).To(ContainSubstring("0000000000000002"))
+
 		if os.Geteuid() > 0 {
 			if os.Getenv("SKIP_USERNS") != "" {
 				Skip("Skip userns tests.")
@@ -565,6 +636,13 @@ USER bin`, BB)
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(session.OutputToString()).To(Equal("111"))
+
+		currentOOMScoreAdj, err := os.ReadFile("/proc/self/oom_score_adj")
+		Expect(err).To(BeNil())
+		session = podmanTest.Podman([]string{"run", "--rm", fedoraMinimal, "cat", "/proc/self/oom_score_adj"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToString()).To(Equal(strings.TrimRight(string(currentOOMScoreAdj), "\n")))
 	})
 
 	It("podman run limits host test", func() {
@@ -636,8 +714,7 @@ USER bin`, BB)
 	})
 
 	It("podman run device-read-bps test", func() {
-		SkipIfRootless("FIXME: Missing /sys/fs/cgroup/user.slice/user-14467.slice/user@14467.service/cgroup.subtree_control")
-		SkipIfRootlessCgroupsV1("Setting device-read-bps not supported on cgroupv1 for rootless users")
+		SkipIfRootless("Setting device-read-bps not supported for rootless users")
 
 		var session *PodmanSessionIntegration
 
@@ -655,8 +732,7 @@ USER bin`, BB)
 	})
 
 	It("podman run device-write-bps test", func() {
-		SkipIfRootless("FIXME /sys/fs/cgroup/user.slice/user-14467.slice/user@14467.service/cgroup.subtree_control does not exist")
-		SkipIfRootlessCgroupsV1("Setting device-write-bps not supported on cgroupv1 for rootless users")
+		SkipIfRootless("Setting device-write-bps not supported for rootless users")
 
 		var session *PodmanSessionIntegration
 
@@ -673,8 +749,7 @@ USER bin`, BB)
 	})
 
 	It("podman run device-read-iops test", func() {
-		SkipIfRootless("FIXME /sys/fs/cgroup/user.slice/user-14467.slice/user@14467.service/cgroup.subtree_control does not exist")
-		SkipIfRootlessCgroupsV1("Setting device-read-iops not supported on cgroupv1 for rootless users")
+		SkipIfRootless("Setting device-read-iops not supported for rootless users")
 		var session *PodmanSessionIntegration
 
 		if CGROUPSV2 {
@@ -691,8 +766,7 @@ USER bin`, BB)
 	})
 
 	It("podman run device-write-iops test", func() {
-		SkipIfRootless("FIXME /sys/fs/cgroup/user.slice/user-14467.slice/user@14467.service/cgroup.subtree_control does not exist")
-		SkipIfRootlessCgroupsV1("Setting device-write-iops not supported on cgroupv1 for rootless users")
+		SkipIfRootless("Setting device-write-iops not supported for rootless users")
 		var session *PodmanSessionIntegration
 
 		if CGROUPSV2 {
@@ -756,16 +830,38 @@ USER bin`, BB)
 	})
 
 	It("podman test hooks", func() {
-		hcheck := "/run/hookscheck"
+		SkipIfRemote("--hooks-dir does not work with remote")
 		hooksDir := tempdir + "/hooks"
-		os.Mkdir(hooksDir, 0755)
-		fileutils.CopyFile("hooks/hooks.json", hooksDir)
-		os.Setenv("HOOK_OPTION", fmt.Sprintf("--hooks-dir=%s", hooksDir))
-		os.Remove(hcheck)
-		session := podmanTest.Podman([]string{"run", ALPINE, "ls"})
+		err := os.Mkdir(hooksDir, 0755)
+		Expect(err).ToNot(HaveOccurred())
+		hookJSONPath := filepath.Join(hooksDir, "checkhooks.json")
+		hookScriptPath := filepath.Join(hooksDir, "checkhooks.sh")
+		targetFile := filepath.Join(hooksDir, "target")
+
+		hookJSON := fmt.Sprintf(`{
+	"cmd" : [".*"],
+	"hook" : "%s",
+	"stage" : [ "prestart" ]
+}
+`, hookScriptPath)
+		err = os.WriteFile(hookJSONPath, []byte(hookJSON), 0644)
+		Expect(err).ToNot(HaveOccurred())
+
+		random := stringid.GenerateRandomID()
+
+		hookScript := fmt.Sprintf(`#!/bin/sh
+echo -n %s >%s
+`, random, targetFile)
+		err = os.WriteFile(hookScriptPath, []byte(hookScript), 0755)
+		Expect(err).ToNot(HaveOccurred())
+
+		session := podmanTest.Podman([]string{"--hooks-dir", hooksDir, "run", ALPINE, "ls"})
 		session.Wait(10)
-		os.Unsetenv("HOOK_OPTION")
 		Expect(session).Should(Exit(0))
+
+		b, err := os.ReadFile(targetFile)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(string(b)).To(Equal(random))
 	})
 
 	It("podman run with subscription secrets", func() {
@@ -780,19 +876,19 @@ USER bin`, BB)
 
 		mountsFile := filepath.Join(containersDir, "mounts.conf")
 		mountString := secretsDir + ":/run/secrets"
-		err = ioutil.WriteFile(mountsFile, []byte(mountString), 0755)
+		err = os.WriteFile(mountsFile, []byte(mountString), 0755)
 		Expect(err).To(BeNil())
 
 		secretsFile := filepath.Join(secretsDir, "test.txt")
 		secretsString := "Testing secrets mount. I am mounted!"
-		err = ioutil.WriteFile(secretsFile, []byte(secretsString), 0755)
+		err = os.WriteFile(secretsFile, []byte(secretsString), 0755)
 		Expect(err).To(BeNil())
 
 		targetDir := tempdir + "/symlink/target"
 		err = os.MkdirAll(targetDir, 0755)
 		Expect(err).To(BeNil())
 		keyFile := filepath.Join(targetDir, "key.pem")
-		err = ioutil.WriteFile(keyFile, []byte(mountString), 0755)
+		err = os.WriteFile(keyFile, []byte(mountString), 0755)
 		Expect(err).To(BeNil())
 		execSession := SystemExec("ln", []string{"-s", targetDir, filepath.Join(secretsDir, "mysymlink")})
 		Expect(execSession).Should(Exit(0))
@@ -811,7 +907,7 @@ USER bin`, BB)
 	It("podman run with FIPS mode secrets", func() {
 		SkipIfRootless("rootless can not manipulate system-fips file")
 		fipsFile := "/etc/system-fips"
-		err = ioutil.WriteFile(fipsFile, []byte{}, 0755)
+		err = os.WriteFile(fipsFile, []byte{}, 0755)
 		Expect(err).To(BeNil())
 
 		session := podmanTest.Podman([]string{"run", "--rm", ALPINE, "ls", "/run/secrets"})
@@ -827,56 +923,56 @@ USER bin`, BB)
 		session := podmanTest.Podman([]string{"run", "--rm", ALPINE, "id"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(session.LineInOutputContains("27(video),777,65533(nogroup)")).To(BeFalse())
+		Expect(session.OutputToString()).To(Not(ContainSubstring("27(video),777,65533(nogroup)")))
 	})
 
 	It("podman run with group-add", func() {
 		session := podmanTest.Podman([]string{"run", "--rm", "--group-add=audio", "--group-add=nogroup", "--group-add=777", ALPINE, "id"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(session.LineInOutputContains("777,65533(nogroup)")).To(BeTrue())
+		Expect(session.OutputToString()).To(ContainSubstring("777,65533(nogroup)"))
 	})
 
 	It("podman run with user (default)", func() {
 		session := podmanTest.Podman([]string{"run", "--rm", ALPINE, "id"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(session.LineInOutputContains("uid=0(root) gid=0(root)")).To(BeTrue())
+		Expect(session.OutputToString()).To(ContainSubstring("uid=0(root) gid=0(root)"))
 	})
 
 	It("podman run with user (integer, not in /etc/passwd)", func() {
 		session := podmanTest.Podman([]string{"run", "--rm", "--user=1234", ALPINE, "id"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(session.OutputToString()).To(Equal("uid=1234(1234) gid=0(root)"))
+		Expect(session.OutputToString()).To(Equal("uid=1234(1234) gid=0(root) groups=0(root)"))
 	})
 
 	It("podman run with user (integer, in /etc/passwd)", func() {
 		session := podmanTest.Podman([]string{"run", "--rm", "--user=8", ALPINE, "id"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(session.LineInOutputContains("uid=8(mail) gid=12(mail)")).To(BeTrue())
+		Expect(session.OutputToString()).To(ContainSubstring("uid=8(mail) gid=12(mail)"))
 	})
 
 	It("podman run with user (username)", func() {
 		session := podmanTest.Podman([]string{"run", "--rm", "--user=mail", ALPINE, "id"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(session.LineInOutputContains("uid=8(mail) gid=12(mail)")).To(BeTrue())
+		Expect(session.OutputToString()).To(ContainSubstring("uid=8(mail) gid=12(mail)"))
 	})
 
 	It("podman run with user:group (username:integer)", func() {
 		session := podmanTest.Podman([]string{"run", "--rm", "--user=mail:21", ALPINE, "id"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(session.OutputToString()).To(Equal("uid=8(mail) gid=21(ftp)"))
+		Expect(session.OutputToString()).To(Equal("uid=8(mail) gid=21(ftp) groups=21(ftp)"))
 	})
 
 	It("podman run with user:group (integer:groupname)", func() {
 		session := podmanTest.Podman([]string{"run", "--rm", "--user=8:ftp", ALPINE, "id"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(session.OutputToString()).To(Equal("uid=8(mail) gid=21(ftp)"))
+		Expect(session.OutputToString()).To(Equal("uid=8(mail) gid=21(ftp) groups=21(ftp)"))
 	})
 
 	It("podman run with user, verify caps dropped", func() {
@@ -887,6 +983,14 @@ USER bin`, BB)
 		Expect("0000000000000000").To(Equal(capEff[1]))
 	})
 
+	It("podman run with user, verify group added", func() {
+		session := podmanTest.Podman([]string{"run", "--rm", "--user=1000:1000", ALPINE, "grep", "Groups:", "/proc/self/status"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		groups := strings.Split(session.OutputToString(), " ")[1]
+		Expect("1000").To(Equal(groups))
+	})
+
 	It("podman run with attach stdin outputs container ID", func() {
 		session := podmanTest.Podman([]string{"run", "--attach", "stdin", ALPINE, "printenv"})
 		session.WaitWithDefaultTimeout()
@@ -894,7 +998,7 @@ USER bin`, BB)
 		ps := podmanTest.Podman([]string{"ps", "-aq", "--no-trunc"})
 		ps.WaitWithDefaultTimeout()
 		Expect(ps).Should(Exit(0))
-		Expect(ps.LineInOutputContains(session.OutputToString())).To(BeTrue())
+		Expect(ps.OutputToString()).To(ContainSubstring(session.OutputToString()))
 	})
 
 	It("podman run with attach stdout does not print stderr", func() {
@@ -941,7 +1045,7 @@ USER bin`, BB)
 	})
 
 	It("podman run with built-in volume image", func() {
-		session := podmanTest.Podman([]string{"run", "--rm", redis, "ls"})
+		session := podmanTest.Podman([]string{"run", "--rm", REDIS_IMAGE, "ls"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
@@ -965,7 +1069,7 @@ USER mail`, BB)
 		filename := "test.txt"
 		volFile := filepath.Join(vol, filename)
 		data := "Testing --volumes-from!!!"
-		err = ioutil.WriteFile(volFile, []byte(data), 0755)
+		err = os.WriteFile(volFile, []byte(data), 0755)
 		Expect(err).To(BeNil())
 		mountpoint := "/myvol/"
 
@@ -997,7 +1101,7 @@ USER mail`, BB)
 		filename := "test.txt"
 		volFile := filepath.Join(vol, filename)
 		data := "Testing --volumes-from!!!"
-		err = ioutil.WriteFile(volFile, []byte(data), 0755)
+		err = os.WriteFile(volFile, []byte(data), 0755)
 		Expect(err).To(BeNil())
 		mountpoint := "/myvol/"
 
@@ -1006,7 +1110,7 @@ USER mail`, BB)
 		Expect(session).Should(Exit(0))
 		ctrID := session.OutputToString()
 
-		// check that the read only option works
+		// check that the read-only option works
 		session = podmanTest.Podman([]string{"run", "--volumes-from", ctrID + ":ro", ALPINE, "touch", mountpoint + "abc.txt"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(1))
@@ -1030,13 +1134,13 @@ USER mail`, BB)
 		Expect(session).Should(Exit(125))
 		Expect(session.ErrorToString()).To(ContainSubstring("cannot set :z more than once in mount options"))
 
-		// create new read only volume
+		// create new read-only volume
 		session = podmanTest.Podman([]string{"create", "--volume", vol + ":" + mountpoint + ":ro", ALPINE, "cat", mountpoint + filename})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		ctrID = session.OutputToString()
 
-		// check if the original volume was mounted as read only that --volumes-from also mount it as read only
+		// check if the original volume was mounted as read-only that --volumes-from also mount it as read-only
 		session = podmanTest.Podman([]string{"run", "--volumes-from", ctrID, ALPINE, "touch", mountpoint + "abc.txt"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(1))
@@ -1044,7 +1148,7 @@ USER mail`, BB)
 	})
 
 	It("podman run --volumes-from flag with built-in volumes", func() {
-		session := podmanTest.Podman([]string{"create", redis, "sh"})
+		session := podmanTest.Podman([]string{"create", REDIS_IMAGE, "sh"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		ctrID := session.OutputToString()
@@ -1107,8 +1211,7 @@ USER mail`, BB)
 		session := podmanTest.Podman([]string{"run", "--volume", vol1 + ":/myvol1:z", "--volume", vol2 + ":/myvol2:z", fedoraMinimal, "findmnt", "-o", "TARGET,PROPAGATION"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		match, _ := session.GrepString("shared")
-		Expect(match).Should(BeFalse())
+		Expect(session.OutputToString()).To(Not(ContainSubstring("shared")))
 	})
 
 	It("podman run findmnt shared", func() {
@@ -1139,11 +1242,11 @@ USER mail`, BB)
 	})
 
 	It("podman run --mount type=bind,bind-nonrecursive", func() {
-		SkipIfRootless("FIXME: rootless users are not allowed to mount bind-nonrecursive (Could this be a Kernel bug?")
-		session := podmanTest.Podman([]string{"run", "--mount", "type=bind,bind-nonrecursive,slave,src=/,target=/host", fedoraMinimal, "findmnt", "-nR", "/host"})
+		SkipIfRootless("FIXME: rootless users are not allowed to mount bind-nonrecursive")
+		session := podmanTest.Podman([]string{"run", "--mount", "type=bind,bind-nonrecursive,private,src=/sys,target=/host-sys", fedoraMinimal, "findmnt", "-nR", "/host-sys"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(len(session.OutputToStringArray())).To(Equal(1))
+		Expect(session.OutputToStringArray()).To(HaveLen(1))
 	})
 
 	It("podman run --mount type=devpts,target=/foo/bar", func() {
@@ -1151,6 +1254,14 @@ USER mail`, BB)
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(session.OutputToString()).To(ContainSubstring("devpts"))
+	})
+
+	It("podman run --mount type=devpts,target=/dev/pts with uid, gid and mode", func() {
+		// runc doesn't seem to honor uid= so avoid testing it
+		session := podmanTest.Podman([]string{"run", "-t", "--mount", "type=devpts,target=/dev/pts,uid=1000,gid=1001,mode=123", fedoraMinimal, "stat", "-c%g-%a", "/dev/pts/0"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToString()).To(ContainSubstring("1001-123"))
 	})
 
 	It("podman run --pod automatically", func() {
@@ -1164,8 +1275,7 @@ USER mail`, BB)
 
 		check := podmanTest.Podman([]string{"pod", "ps", "--no-trunc"})
 		check.WaitWithDefaultTimeout()
-		match, _ := check.GrepString("foobar")
-		Expect(match).To(BeTrue())
+		Expect(check.OutputToString()).To(ContainSubstring("foobar"))
 	})
 
 	It("podman run --pod new with hostname", func() {
@@ -1265,7 +1375,7 @@ USER mail`, BB)
 		Expect(err).To(BeNil())
 		file.Close()
 
-		session := podmanTest.Podman([]string{"run", "-dt", "--restart", "always", "-v", fmt.Sprintf("%s:/tmp/runroot:Z", testDir), ALPINE, "sh", "-c", "date +%N > /tmp/runroot/ran && while test -r /tmp/runroot/running; do sleep 0.1s; done"})
+		session := podmanTest.Podman([]string{"run", "-dt", "--restart", "always", "-v", fmt.Sprintf("%s:/tmp/runroot:Z", testDir), ALPINE, "sh", "-c", "touch /tmp/runroot/ran && while test -r /tmp/runroot/running; do sleep 0.1s; done"})
 
 		found := false
 		testFile := filepath.Join(testDir, "ran")
@@ -1358,7 +1468,7 @@ USER mail`, BB)
 			return strings.TrimSuffix(i, "\n")
 		}
 
-		curCgroupsBytes, err := ioutil.ReadFile("/proc/self/cgroup")
+		curCgroupsBytes, err := os.ReadFile("/proc/self/cgroup")
 		Expect(err).ShouldNot(HaveOccurred())
 		curCgroups := trim(string(curCgroupsBytes))
 		fmt.Printf("Output:\n%s\n", curCgroups)
@@ -1381,7 +1491,7 @@ USER mail`, BB)
 			Skip("Test only works on crun")
 		}
 
-		curCgroupsBytes, err := ioutil.ReadFile("/proc/self/cgroup")
+		curCgroupsBytes, err := os.ReadFile("/proc/self/cgroup")
 		Expect(err).To(BeNil())
 		var curCgroups string = string(curCgroupsBytes)
 		fmt.Printf("Output:\n%s\n", curCgroups)
@@ -1394,11 +1504,11 @@ USER mail`, BB)
 
 		// Get PID and get cgroups of that PID
 		inspectOut := podmanTest.InspectContainer(ctrName)
-		Expect(len(inspectOut)).To(Equal(1))
+		Expect(inspectOut).To(HaveLen(1))
 		pid := inspectOut[0].State.Pid
 		Expect(pid).To(Not(Equal(0)))
 
-		ctrCgroupsBytes, err := ioutil.ReadFile(fmt.Sprintf("/proc/%d/cgroup", pid))
+		ctrCgroupsBytes, err := os.ReadFile(fmt.Sprintf("/proc/%d/cgroup", pid))
 		Expect(err).To(BeNil())
 		var ctrCgroups string = string(ctrCgroupsBytes)
 		fmt.Printf("Output\n:%s\n", ctrCgroups)
@@ -1467,7 +1577,7 @@ USER mail`, BB)
 		session := podmanTest.Podman([]string{"run", "-t", "-i", "--group-add", groupName, "--privileged", fedoraMinimal, "groups"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(strings.Contains(session.OutputToString(), groupName)).To(BeTrue())
+		Expect(session.OutputToString()).To(ContainSubstring(groupName))
 	})
 
 	It("podman run --tz", func() {
@@ -1487,7 +1597,7 @@ USER mail`, BB)
 		session := podmanTest.Podman([]string{"run", "--tz", badTZFile, "--rm", ALPINE, "date"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).To(ExitWithError())
-		Expect(session.ErrorToString()).To(ContainSubstring("error finding timezone for container"))
+		Expect(session.ErrorToString()).To(ContainSubstring("finding timezone for container"))
 
 		err = os.Remove(tzFile)
 		Expect(err).To(BeNil())
@@ -1553,7 +1663,7 @@ USER mail`, BB)
 		session = podmanTest.Podman([]string{"run", "--umask", "9999", "--rm", ALPINE, "sh", "-c", "umask"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).To(ExitWithError())
-		Expect(session.ErrorToString()).To(ContainSubstring("Invalid umask"))
+		Expect(session.ErrorToString()).To(ContainSubstring("invalid umask"))
 	})
 
 	It("podman run makes workdir from image", func() {
@@ -1595,24 +1705,24 @@ WORKDIR /madethis`, BB)
 	})
 
 	It("podman run container with --pull missing and only pull once", func() {
-		session := podmanTest.Podman([]string{"run", "--pull", "missing", cirros, "ls"})
+		session := podmanTest.Podman([]string{"run", "--pull", "missing", CIRROS_IMAGE, "ls"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(session.ErrorToString()).To(ContainSubstring("Trying to pull"))
 
-		session = podmanTest.Podman([]string{"run", "--pull", "missing", cirros, "ls"})
+		session = podmanTest.Podman([]string{"run", "--pull", "missing", CIRROS_IMAGE, "ls"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(session.ErrorToString()).ToNot(ContainSubstring("Trying to pull"))
 	})
 
 	It("podman run container with --pull missing should pull image multiple times", func() {
-		session := podmanTest.Podman([]string{"run", "--pull", "always", cirros, "ls"})
+		session := podmanTest.Podman([]string{"run", "--pull", "always", CIRROS_IMAGE, "ls"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(session.ErrorToString()).To(ContainSubstring("Trying to pull"))
 
-		session = podmanTest.Podman([]string{"run", "--pull", "always", cirros, "ls"})
+		session = podmanTest.Podman([]string{"run", "--pull", "always", CIRROS_IMAGE, "ls"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(session.ErrorToString()).To(ContainSubstring("Trying to pull"))
@@ -1629,7 +1739,7 @@ WORKDIR /madethis`, BB)
 	It("podman run --secret", func() {
 		secretsString := "somesecretdata"
 		secretFilePath := filepath.Join(podmanTest.TempDir, "secret")
-		err := ioutil.WriteFile(secretFilePath, []byte(secretsString), 0755)
+		err := os.WriteFile(secretFilePath, []byte(secretsString), 0755)
 		Expect(err).To(BeNil())
 
 		session := podmanTest.Podman([]string{"secret", "create", "mysecret", secretFilePath})
@@ -1651,7 +1761,7 @@ WORKDIR /madethis`, BB)
 	It("podman run --secret source=mysecret,type=mount", func() {
 		secretsString := "somesecretdata"
 		secretFilePath := filepath.Join(podmanTest.TempDir, "secret")
-		err := ioutil.WriteFile(secretFilePath, []byte(secretsString), 0755)
+		err := os.WriteFile(secretFilePath, []byte(secretsString), 0755)
 		Expect(err).To(BeNil())
 
 		session := podmanTest.Podman([]string{"secret", "create", "mysecret", secretFilePath})
@@ -1673,7 +1783,7 @@ WORKDIR /madethis`, BB)
 	It("podman run --secret source=mysecret,type=mount with target", func() {
 		secretsString := "somesecretdata"
 		secretFilePath := filepath.Join(podmanTest.TempDir, "secret")
-		err := ioutil.WriteFile(secretFilePath, []byte(secretsString), 0755)
+		err := os.WriteFile(secretFilePath, []byte(secretsString), 0755)
 		Expect(err).To(BeNil())
 
 		session := podmanTest.Podman([]string{"secret", "create", "mysecret_target", secretFilePath})
@@ -1695,7 +1805,7 @@ WORKDIR /madethis`, BB)
 	It("podman run --secret source=mysecret,type=mount with target at /tmp", func() {
 		secretsString := "somesecretdata"
 		secretFilePath := filepath.Join(podmanTest.TempDir, "secret")
-		err := ioutil.WriteFile(secretFilePath, []byte(secretsString), 0755)
+		err := os.WriteFile(secretFilePath, []byte(secretsString), 0755)
 		Expect(err).To(BeNil())
 
 		session := podmanTest.Podman([]string{"secret", "create", "mysecret_target2", secretFilePath})
@@ -1717,7 +1827,7 @@ WORKDIR /madethis`, BB)
 	It("podman run --secret source=mysecret,type=env", func() {
 		secretsString := "somesecretdata"
 		secretFilePath := filepath.Join(podmanTest.TempDir, "secret")
-		err := ioutil.WriteFile(secretFilePath, []byte(secretsString), 0755)
+		err := os.WriteFile(secretFilePath, []byte(secretsString), 0755)
 		Expect(err).To(BeNil())
 
 		session := podmanTest.Podman([]string{"secret", "create", "mysecret", secretFilePath})
@@ -1733,7 +1843,7 @@ WORKDIR /madethis`, BB)
 	It("podman run --secret target option", func() {
 		secretsString := "somesecretdata"
 		secretFilePath := filepath.Join(podmanTest.TempDir, "secret")
-		err := ioutil.WriteFile(secretFilePath, []byte(secretsString), 0755)
+		err := os.WriteFile(secretFilePath, []byte(secretsString), 0755)
 		Expect(err).To(BeNil())
 
 		session := podmanTest.Podman([]string{"secret", "create", "mysecret", secretFilePath})
@@ -1749,7 +1859,7 @@ WORKDIR /madethis`, BB)
 	It("podman run --secret mount with uid, gid, mode options", func() {
 		secretsString := "somesecretdata"
 		secretFilePath := filepath.Join(podmanTest.TempDir, "secret")
-		err := ioutil.WriteFile(secretFilePath, []byte(secretsString), 0755)
+		err := os.WriteFile(secretFilePath, []byte(secretsString), 0755)
 		Expect(err).To(BeNil())
 
 		session := podmanTest.Podman([]string{"secret", "create", "mysecret", secretFilePath})
@@ -1776,7 +1886,7 @@ WORKDIR /madethis`, BB)
 	It("podman run --secret with --user", func() {
 		secretsString := "somesecretdata"
 		secretFilePath := filepath.Join(podmanTest.TempDir, "secret")
-		err := ioutil.WriteFile(secretFilePath, []byte(secretsString), 0755)
+		err := os.WriteFile(secretFilePath, []byte(secretsString), 0755)
 		Expect(err).To(BeNil())
 
 		session := podmanTest.Podman([]string{"secret", "create", "mysecret", secretFilePath})
@@ -1792,7 +1902,7 @@ WORKDIR /madethis`, BB)
 	It("podman run invalid secret option", func() {
 		secretsString := "somesecretdata"
 		secretFilePath := filepath.Join(podmanTest.TempDir, "secret")
-		err := ioutil.WriteFile(secretFilePath, []byte(secretsString), 0755)
+		err := os.WriteFile(secretFilePath, []byte(secretsString), 0755)
 		Expect(err).To(BeNil())
 
 		session := podmanTest.Podman([]string{"secret", "create", "mysecret", secretFilePath})
@@ -1847,7 +1957,7 @@ WORKDIR /madethis`, BB)
 		running := podmanTest.Podman([]string{"ps", "-q"})
 		running.WaitWithDefaultTimeout()
 		Expect(running).Should(Exit(0))
-		Expect(len(running.OutputToStringArray())).To(Equal(2))
+		Expect(running.OutputToStringArray()).To(HaveLen(2))
 	})
 
 	It("podman run with pidfile", func() {
@@ -1857,7 +1967,7 @@ WORKDIR /madethis`, BB)
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		readFirstLine := func(path string) string {
-			content, err := ioutil.ReadFile(path)
+			content, err := os.ReadFile(path)
 			Expect(err).To(BeNil())
 			return strings.Split(string(content), "\n")[0]
 		}
@@ -1875,5 +1985,15 @@ WORKDIR /madethis`, BB)
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(session.OutputToString()).To(ContainSubstring("i686"))
+	})
+
+	It("podman run /dev/shm has nosuid,noexec,nodev", func() {
+		session := podmanTest.Podman([]string{"run", ALPINE, "grep", "/dev/shm", "/proc/self/mountinfo"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		output := session.OutputToString()
+		Expect(output).To(ContainSubstring("nosuid"))
+		Expect(output).To(ContainSubstring("noexec"))
+		Expect(output).To(ContainSubstring("nodev"))
 	})
 })

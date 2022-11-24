@@ -2,20 +2,20 @@ package util
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
-	"github.com/containers/podman/v3/pkg/timetype"
-	"github.com/pkg/errors"
+	"github.com/containers/podman/v4/pkg/timetype"
 )
 
 // ComputeUntilTimestamp extracts until timestamp from filters
 func ComputeUntilTimestamp(filterValues []string) (time.Time, error) {
 	invalid := time.Time{}
 	if len(filterValues) != 1 {
-		return invalid, errors.Errorf("specify exactly one timestamp for until")
+		return invalid, errors.New("specify exactly one timestamp for until")
 	}
 	ts, err := timetype.GetTimestamp(filterValues[0], time.Now())
 	if err != nil {
@@ -92,25 +92,4 @@ func PrepareFilters(r *http.Request) (*map[string][]string, error) {
 		}
 	}
 	return &filterMap, nil
-}
-
-// MatchLabelFilters matches labels and returns true if they are valid
-func MatchLabelFilters(filterValues []string, labels map[string]string) bool {
-outer:
-	for _, filterValue := range filterValues {
-		filterArray := strings.SplitN(filterValue, "=", 2)
-		filterKey := filterArray[0]
-		if len(filterArray) > 1 {
-			filterValue = filterArray[1]
-		} else {
-			filterValue = ""
-		}
-		for labelKey, labelValue := range labels {
-			if labelKey == filterKey && (filterValue == "" || labelValue == filterValue) {
-				continue outer
-			}
-		}
-		return false
-	}
-	return true
 }

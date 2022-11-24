@@ -1,4 +1,4 @@
-% podman-top(1)
+% podman-top 1
 
 ## NAME
 podman\-top - Display the running processes of a container
@@ -20,7 +20,7 @@ Print usage statement
 #### **--latest**, **-l**
 
 Instead of providing the container name or ID, use the last created container. If you use methods other than Podman
-to run containers such as CRI-O, the last started container could be from either of those methods.(This option is not available with the remote Podman client)
+to run containers such as CRI-O, the last started container could be from either of those methods.(This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
 
 ## FORMAT DESCRIPTORS
 
@@ -102,7 +102,7 @@ root   1     0      0.000   1h2m12.497061672s   ?     0s     sleep 100000
 ```
 
 ## SEE ALSO
-podman(1), ps(1), seccomp(2), proc(5), capabilities(7)
+**[podman(1)](podman.1.md)**, **ps(1)**, **seccomp(2)**, **proc(5)**, **capabilities(7)**
 
 ## HISTORY
 July 2018, Introduce format descriptors by Valentin Rothberg <vrothberg@suse.com>

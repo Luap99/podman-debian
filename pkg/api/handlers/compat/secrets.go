@@ -4,26 +4,24 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
-	"github.com/containers/podman/v3/libpod"
-	"github.com/containers/podman/v3/pkg/api/handlers/utils"
-	api "github.com/containers/podman/v3/pkg/api/types"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/domain/infra/abi"
-	"github.com/containers/podman/v3/pkg/util"
-	"github.com/pkg/errors"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v4/pkg/api/types"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/domain/infra/abi"
+	"github.com/containers/podman/v4/pkg/util"
 )
 
 func ListSecrets(w http.ResponseWriter, r *http.Request) {
-	var (
-		runtime = r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
-	)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	filtersMap, err := util.PrepareFilters(r)
 	if err != nil {
-		utils.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError,
-			errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
+		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("failed to parse parameters for %s: %w", r.URL.String(), err))
 		return
 	}
 	ic := abi.ContainerEngine{Libpod: runtime}
@@ -53,9 +51,7 @@ func ListSecrets(w http.ResponseWriter, r *http.Request) {
 }
 
 func InspectSecret(w http.ResponseWriter, r *http.Request) {
-	var (
-		runtime = r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
-	)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	name := utils.GetName(r)
 	names := []string{name}
 	ic := abi.ContainerEngine{Libpod: runtime}
@@ -86,9 +82,7 @@ func InspectSecret(w http.ResponseWriter, r *http.Request) {
 }
 
 func RemoveSecret(w http.ResponseWriter, r *http.Request) {
-	var (
-		runtime = r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
-	)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 
 	opts := entities.SecretRmOptions{}
 	name := utils.GetName(r)
@@ -106,9 +100,7 @@ func RemoveSecret(w http.ResponseWriter, r *http.Request) {
 }
 
 func CreateSecret(w http.ResponseWriter, r *http.Request) {
-	var (
-		runtime = r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
-	)
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	opts := entities.SecretCreateOptions{}
 	createParams := struct {
 		*entities.SecretCreateRequest
@@ -116,24 +108,20 @@ func CreateSecret(w http.ResponseWriter, r *http.Request) {
 	}{}
 
 	if err := json.NewDecoder(r.Body).Decode(&createParams); err != nil {
-		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrap(err, "Decode()"))
-		return
-	}
-	if len(createParams.Labels) > 0 {
-		utils.Error(w, "labels not supported", http.StatusBadRequest,
-			errors.Wrapf(errors.New("bad parameter"), "labels not supported"))
+		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("Decode(): %w", err))
 		return
 	}
 
 	decoded, _ := base64.StdEncoding.DecodeString(createParams.Data)
 	reader := bytes.NewReader(decoded)
 	opts.Driver = createParams.Driver.Name
+	opts.Labels = createParams.Labels
 
 	ic := abi.ContainerEngine{Libpod: runtime}
 	report, err := ic.SecretCreate(r.Context(), createParams.Name, reader, opts)
 	if err != nil {
-		if errors.Cause(err).Error() == "secret name in use" {
-			utils.Error(w, "name conflicts with an existing object", http.StatusConflict, err)
+		if strings.Contains(err.Error(), "secret name in use") {
+			utils.Error(w, http.StatusConflict, err)
 			return
 		}
 		utils.InternalServerError(w, err)
@@ -143,5 +131,5 @@ func CreateSecret(w http.ResponseWriter, r *http.Request) {
 }
 
 func UpdateSecret(w http.ResponseWriter, r *http.Request) {
-	utils.Error(w, fmt.Sprintf("unsupported endpoint: %v", r.Method), http.StatusNotImplemented, errors.New("update is not supported"))
+	utils.Error(w, http.StatusNotImplemented, errors.New("update is not supported"))
 }

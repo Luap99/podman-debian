@@ -1,11 +1,11 @@
 package integration
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
+	"strings"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -20,12 +20,9 @@ var _ = Describe("Podman commit", func() {
 
 	BeforeEach(func() {
 		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
+		Expect(err).To(BeNil())
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
 	})
 
 	AfterEach(func() {
@@ -47,7 +44,7 @@ var _ = Describe("Podman commit", func() {
 		check := podmanTest.Podman([]string{"inspect", "foobar.com/test1-image:latest"})
 		check.WaitWithDefaultTimeout()
 		data := check.InspectImageJSON()
-		Expect(StringInSlice("foobar.com/test1-image:latest", data[0].RepoTags)).To(BeTrue())
+		Expect(data[0].RepoTags).To(ContainElement("foobar.com/test1-image:latest"))
 	})
 
 	It("podman commit single letter container", func() {
@@ -62,7 +59,7 @@ var _ = Describe("Podman commit", func() {
 		check := podmanTest.Podman([]string{"inspect", "localhost/a:latest"})
 		check.WaitWithDefaultTimeout()
 		data := check.InspectImageJSON()
-		Expect(StringInSlice("localhost/a:latest", data[0].RepoTags)).To(BeTrue())
+		Expect(data[0].RepoTags).To(ContainElement("localhost/a:latest"))
 	})
 
 	It("podman container commit container", func() {
@@ -77,7 +74,7 @@ var _ = Describe("Podman commit", func() {
 		check := podmanTest.Podman([]string{"image", "inspect", "foobar.com/test1-image:latest"})
 		check.WaitWithDefaultTimeout()
 		data := check.InspectImageJSON()
-		Expect(StringInSlice("foobar.com/test1-image:latest", data[0].RepoTags)).To(BeTrue())
+		Expect(data[0].RepoTags).To(ContainElement("foobar.com/test1-image:latest"))
 	})
 
 	It("podman commit container with message", func() {
@@ -92,7 +89,7 @@ var _ = Describe("Podman commit", func() {
 		check := podmanTest.Podman([]string{"inspect", "foobar.com/test1-image:latest"})
 		check.WaitWithDefaultTimeout()
 		data := check.InspectImageJSON()
-		Expect(data[0].Comment).To(Equal("testing-commit"))
+		Expect(data[0]).To(HaveField("Comment", "testing-commit"))
 	})
 
 	It("podman commit container with author", func() {
@@ -107,7 +104,7 @@ var _ = Describe("Podman commit", func() {
 		check := podmanTest.Podman([]string{"inspect", "foobar.com/test1-image:latest"})
 		check.WaitWithDefaultTimeout()
 		data := check.InspectImageJSON()
-		Expect(data[0].Author).To(Equal("snoopy"))
+		Expect(data[0]).To(HaveField("Author", "snoopy"))
 	})
 
 	It("podman commit container with change flag", func() {
@@ -133,6 +130,23 @@ var _ = Describe("Podman commit", func() {
 		Expect(foundBlue).To(Equal(true))
 	})
 
+	It("podman commit container with --squash", func() {
+		test := podmanTest.Podman([]string{"run", "--name", "test1", "-d", ALPINE, "ls"})
+		test.WaitWithDefaultTimeout()
+		Expect(test).Should(Exit(0))
+		Expect(podmanTest.NumberOfContainers()).To(Equal(1))
+
+		session := podmanTest.Podman([]string{"commit", "--squash", "test1", "foobar.com/test1-image:latest"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		session = podmanTest.Podman([]string{"inspect", "--format", "{{.RootFS.Layers}}", "foobar.com/test1-image:latest"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		// Check for one layers
+		Expect(strings.Fields(session.OutputToString())).To(HaveLen(1))
+	})
+
 	It("podman commit container with change flag and JSON entrypoint with =", func() {
 		test := podmanTest.Podman([]string{"run", "--name", "test1", "-d", ALPINE, "ls"})
 		test.WaitWithDefaultTimeout()
@@ -146,8 +160,8 @@ var _ = Describe("Podman commit", func() {
 		check := podmanTest.Podman([]string{"inspect", "foobar.com/test1-image:latest"})
 		check.WaitWithDefaultTimeout()
 		data := check.InspectImageJSON()
-		Expect(len(data)).To(Equal(1))
-		Expect(len(data[0].Config.Entrypoint)).To(Equal(2))
+		Expect(data).To(HaveLen(1))
+		Expect(data[0].Config.Entrypoint).To(HaveLen(2))
 		Expect(data[0].Config.Entrypoint[0]).To(Equal("foo"))
 		Expect(data[0].Config.Entrypoint[1]).To(Equal("bar=baz"))
 	})
@@ -204,8 +218,7 @@ var _ = Describe("Podman commit", func() {
 		inspect.WaitWithDefaultTimeout()
 		Expect(inspect).Should(Exit(0))
 		image := inspect.InspectImageJSON()
-		_, ok := image[0].Config.Volumes["/foo"]
-		Expect(ok).To(BeFalse())
+		Expect(image[0].Config.Volumes).To(Not(HaveKey("/foo")))
 	})
 
 	It("podman commit with volume mounts and --include-volumes", func() {
@@ -224,8 +237,7 @@ var _ = Describe("Podman commit", func() {
 		inspect.WaitWithDefaultTimeout()
 		Expect(inspect).Should(Exit(0))
 		image := inspect.InspectImageJSON()
-		_, ok := image[0].Config.Volumes["/foo"]
-		Expect(ok).To(BeTrue())
+		Expect(image[0].Config.Volumes).To(HaveKey("/foo"))
 
 		r := podmanTest.Podman([]string{"run", "newimage"})
 		r.WaitWithDefaultTimeout()
@@ -250,7 +262,7 @@ var _ = Describe("Podman commit", func() {
 		for _, v := range image[0].Config.Env {
 			envMap[v] = true
 		}
-		Expect(envMap["TEST=1=1-01=9.01"]).To(BeTrue())
+		Expect(envMap).To(HaveKey("TEST=1=1-01=9.01"))
 	})
 
 	It("podman commit container and print id to external file", func() {
@@ -274,17 +286,17 @@ var _ = Describe("Podman commit", func() {
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
-		id, _ := ioutil.ReadFile(targetFile)
+		id, _ := os.ReadFile(targetFile)
 		check := podmanTest.Podman([]string{"inspect", "foobar.com/test1-image:latest"})
 		check.WaitWithDefaultTimeout()
 		data := check.InspectImageJSON()
-		Expect(data[0].ID).To(Equal(string(id)))
+		Expect(data[0]).To(HaveField("ID", string(id)))
 	})
 
 	It("podman commit should not commit secret", func() {
 		secretsString := "somesecretdata"
 		secretFilePath := filepath.Join(podmanTest.TempDir, "secret")
-		err := ioutil.WriteFile(secretFilePath, []byte(secretsString), 0755)
+		err := os.WriteFile(secretFilePath, []byte(secretsString), 0755)
 		Expect(err).To(BeNil())
 
 		session := podmanTest.Podman([]string{"secret", "create", "mysecret", secretFilePath})
@@ -309,7 +321,7 @@ var _ = Describe("Podman commit", func() {
 	It("podman commit should not commit env secret", func() {
 		secretsString := "somesecretdata"
 		secretFilePath := filepath.Join(podmanTest.TempDir, "secret")
-		err := ioutil.WriteFile(secretFilePath, []byte(secretsString), 0755)
+		err := os.WriteFile(secretFilePath, []byte(secretsString), 0755)
 		Expect(err).To(BeNil())
 
 		session := podmanTest.Podman([]string{"secret", "create", "mysecret", secretFilePath})
@@ -349,7 +361,7 @@ var _ = Describe("Podman commit", func() {
 		Expect(images[0].Config.ExposedPorts).To(HaveKey("80/tcp"))
 
 		name = "testcon2"
-		s = podmanTest.Podman([]string{"run", "--name", name, "-d", nginx})
+		s = podmanTest.Podman([]string{"run", "--name", name, "-d", NGINX_IMAGE})
 		s.WaitWithDefaultTimeout()
 		Expect(s).Should(Exit(0))
 

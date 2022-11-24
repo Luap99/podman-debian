@@ -1,10 +1,10 @@
 package integration
 
 import (
+	"fmt"
 	"os"
-	"strconv"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -26,7 +26,6 @@ var _ = Describe("Podman run memory", func() {
 		}
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
 	})
 
 	AfterEach(func() {
@@ -67,52 +66,33 @@ var _ = Describe("Podman run memory", func() {
 		Expect(session.OutputToString()).To(Equal("41943040"))
 	})
 
-	It("podman run memory-swappiness test", func() {
-		SkipIfCgroupV2("memory-swappiness not supported on cgroupV2")
-		session := podmanTest.Podman([]string{"run", "--memory-swappiness=15", ALPINE, "cat", "/sys/fs/cgroup/memory/memory.swappiness"})
-		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
-		Expect(session.OutputToString()).To(Equal("15"))
-	})
-
-	It("podman run kernel-memory test", func() {
-		if podmanTest.Host.Distribution == "ubuntu" {
-			Skip("Unable to perform test on Ubuntu distributions due to memory management")
-		}
-
-		var session *PodmanSessionIntegration
+	It("podman run memory-swap test", func() {
+		var (
+			session *PodmanSessionIntegration
+			expect  string
+		)
 
 		if CGROUPSV2 {
-			session = podmanTest.Podman([]string{"run", "--net=none", "--memory-reservation=40m", ALPINE, "sh", "-c", "cat /sys/fs/cgroup/$(sed -e 's|0::||' < /proc/self/cgroup)/memory.low"})
+			session = podmanTest.Podman([]string{"run", "--memory=20m", "--memory-swap=30M", "--net=none", ALPINE, "sh", "-c", "cat /sys/fs/cgroup/$(sed -e 's|0::||' < /proc/self/cgroup)/memory.swap.max"})
+			expect = "10485760"
 		} else {
-			session = podmanTest.Podman([]string{"run", "--memory-reservation=40m", ALPINE, "cat", "/sys/fs/cgroup/memory/memory.soft_limit_in_bytes"})
-		}
-
-		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
-		Expect(session.OutputToString()).To(Equal("41943040"))
-	})
-
-	It("podman run kernel-memory test", func() {
-		if podmanTest.Host.Distribution == "ubuntu" {
-			Skip("Unable to perform test on Ubuntu distributions due to memory management")
-		}
-		var session *PodmanSessionIntegration
-		if CGROUPSV2 {
-			session = podmanTest.Podman([]string{"run", "--memory", "256m", "--memory-swap", "-1", ALPINE, "cat", "/sys/fs/cgroup/memory.swap.max"})
-		} else {
-			session = podmanTest.Podman([]string{"run", "--cgroupns=private", ALPINE, "cat", "/sys/fs/cgroup/memory/memory.memsw.limit_in_bytes"})
+			session = podmanTest.Podman([]string{"run", "--memory=20m", "--memory-swap=30M", ALPINE, "cat", "/sys/fs/cgroup/memory/memory.memsw.limit_in_bytes"})
+			expect = "31457280"
 		}
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		output := session.OutputToString()
-		Expect(err).To(BeNil())
-		if CGROUPSV2 {
-			Expect(output).To(Equal("max"))
-		} else {
-			crazyHighNumber, err := strconv.ParseInt(output, 10, 64)
-			Expect(err).To(BeZero())
-			Expect(crazyHighNumber).To(BeNumerically(">", 936854771712))
-		}
+		Expect(session.OutputToString()).To(Equal(expect))
 	})
+
+	for _, limit := range []string{"0", "15", "100"} {
+		limit := limit // Keep this value in a proper scope
+		testName := fmt.Sprintf("podman run memory-swappiness test(%s)", limit)
+		It(testName, func() {
+			SkipIfCgroupV2("memory-swappiness not supported on cgroupV2")
+			session := podmanTest.Podman([]string{"run", fmt.Sprintf("--memory-swappiness=%s", limit), ALPINE, "cat", "/sys/fs/cgroup/memory/memory.swappiness"})
+			session.WaitWithDefaultTimeout()
+			Expect(session).Should(Exit(0))
+			Expect(session.OutputToString()).To(Equal(limit))
+		})
+	}
 })

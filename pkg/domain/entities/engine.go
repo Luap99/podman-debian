@@ -33,13 +33,15 @@ type PodmanConfig struct {
 	*config.Config
 	*pflag.FlagSet
 
-	CGroupUsage    string     // rootless code determines Usage message
+	DockerConfig   string     // Used for Docker compatibility
+	CgroupUsage    string     // rootless code determines Usage message
 	ConmonPath     string     // --conmon flag will set Engine.ConmonPath
 	CPUProfile     string     // Hidden: Should CPU profile be taken
 	EngineMode     EngineMode // ABI or Tunneling mode
 	Identity       string     // ssh identity for connecting to server
 	MaxWorks       int        // maximum number of parallel threads
 	MemoryProfile  string     // Hidden: Should memory profile be taken
+	NoOut          bool       // Don't output to stdout
 	RegistriesConf string     // allows for specifying a custom registries.conf
 	Remote         bool       // Connection to Podman API Service will use RESTful API
 	RuntimePath    string     // --runtime flag will set Engine.RuntimePath
@@ -51,4 +53,6 @@ type PodmanConfig struct {
 	Runroot       string
 	StorageDriver string
 	StorageOpts   []string
+	SSHMode       string
+	MachineMode   bool
 }

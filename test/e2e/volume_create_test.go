@@ -3,8 +3,9 @@ package integration
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -24,7 +25,6 @@ var _ = Describe("Podman volume create", func() {
 		}
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
 	})
 
 	AfterEach(func() {
@@ -42,9 +42,8 @@ var _ = Describe("Podman volume create", func() {
 
 		check := podmanTest.Podman([]string{"volume", "ls", "-q"})
 		check.WaitWithDefaultTimeout()
-		match, _ := check.GrepString(volName)
-		Expect(match).To(BeTrue())
-		Expect(len(check.OutputToStringArray())).To(Equal(1))
+		Expect(check.OutputToString()).To(ContainSubstring(volName))
+		Expect(check.OutputToStringArray()).To(HaveLen(1))
 	})
 
 	It("podman create volume with name", func() {
@@ -55,9 +54,8 @@ var _ = Describe("Podman volume create", func() {
 
 		check := podmanTest.Podman([]string{"volume", "ls", "-q"})
 		check.WaitWithDefaultTimeout()
-		match, _ := check.GrepString(volName)
-		Expect(match).To(BeTrue())
-		Expect(len(check.OutputToStringArray())).To(Equal(1))
+		Expect(check.OutputToString()).To(ContainSubstring(volName))
+		Expect(check.OutputToStringArray()).To(HaveLen(1))
 	})
 
 	It("podman create and export volume", func() {
@@ -93,34 +91,43 @@ var _ = Describe("Podman volume create", func() {
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
-		session = podmanTest.Podman([]string{"volume", "export", volName, "--output=hello.tar"})
+		helloTar := filepath.Join(podmanTest.TempDir, "hello.tar")
+		session = podmanTest.Podman([]string{"volume", "export", volName, "--output", helloTar})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
 		session = podmanTest.Podman([]string{"volume", "create", "my_vol2"})
 		session.WaitWithDefaultTimeout()
-		volName = session.OutputToString()
 		Expect(session).Should(Exit(0))
 
-		session = podmanTest.Podman([]string{"volume", "import", "my_vol2", "hello.tar"})
+		session = podmanTest.Podman([]string{"volume", "import", "my_vol2", helloTar})
 		session.WaitWithDefaultTimeout()
-		volName = session.OutputToString()
 		Expect(session).Should(Exit(0))
+		Expect(session.OutputToString()).To(Equal(""), "output of volume import")
 
 		session = podmanTest.Podman([]string{"run", "--volume", "my_vol2:/data", ALPINE, "cat", "/data/test"})
 		session.WaitWithDefaultTimeout()
 		Expect(session.OutputToString()).To(ContainSubstring("hello"))
 	})
 
-	It("podman import volume should fail", func() {
+	It("podman import/export volume should fail", func() {
 		// try import on volume or source which does not exists
-		if podmanTest.RemoteTest {
-			Skip("Volume export check does not work with a remote client")
-		}
+		SkipIfRemote("Volume export check does not work with a remote client")
 
 		session := podmanTest.Podman([]string{"volume", "import", "notfound", "notfound.tar"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).To(ExitWithError())
+		Expect(session.ErrorToString()).To(ContainSubstring("open notfound.tar: no such file or directory"))
+
+		session = podmanTest.Podman([]string{"volume", "import", "notfound", "-"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).To(ExitWithError())
+		Expect(session.ErrorToString()).To(ContainSubstring("no such volume notfound"))
+
+		session = podmanTest.Podman([]string{"volume", "export", "notfound"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).To(ExitWithError())
+		Expect(session.ErrorToString()).To(ContainSubstring("no such volume notfound"))
 	})
 
 	It("podman create volume with bad volume option", func() {
@@ -147,12 +154,66 @@ var _ = Describe("Podman volume create", func() {
 		Expect(inspectGID).Should(Exit(0))
 		Expect(inspectGID.OutputToString()).To(Equal(gid))
 
-		// options should containt `uid=3000,gid=4000:3000:4000`
+		// options should contain `uid=3000,gid=4000:3000:4000`
 		optionFormat := `{{ .Options.o }}:{{ .Options.UID }}:{{ .Options.GID }}`
 		optionStrFormatExpect := fmt.Sprintf(`uid=%s,gid=%s:%s:%s`, uid, gid, uid, gid)
 		inspectOpts := podmanTest.Podman([]string{"volume", "inspect", "--format", optionFormat, volName})
 		inspectOpts.WaitWithDefaultTimeout()
 		Expect(inspectOpts).Should(Exit(0))
 		Expect(inspectOpts.OutputToString()).To(Equal(optionStrFormatExpect))
+	})
+
+	It("image-backed volume basic functionality", func() {
+		podmanTest.AddImageToRWStore(fedoraMinimal)
+		volName := "testvol"
+		volCreate := podmanTest.Podman([]string{"volume", "create", "--driver", "image", "--opt", fmt.Sprintf("image=%s", fedoraMinimal), volName})
+		volCreate.WaitWithDefaultTimeout()
+		Expect(volCreate).Should(Exit(0))
+
+		runCmd := podmanTest.Podman([]string{"run", "-v", fmt.Sprintf("%s:/test", volName), ALPINE, "cat", "/test/etc/redhat-release"})
+		runCmd.WaitWithDefaultTimeout()
+		Expect(runCmd).Should(Exit(0))
+		Expect(runCmd.OutputToString()).To(ContainSubstring("Fedora"))
+
+		rmCmd := podmanTest.Podman([]string{"rmi", "--force", fedoraMinimal})
+		rmCmd.WaitWithDefaultTimeout()
+		Expect(rmCmd).Should(Exit(0))
+
+		psCmd := podmanTest.Podman([]string{"ps", "-aq"})
+		psCmd.WaitWithDefaultTimeout()
+		Expect(psCmd).Should(Exit(0))
+		Expect(psCmd.OutputToString()).To(BeEmpty())
+
+		volumesCmd := podmanTest.Podman([]string{"volume", "ls", "-q"})
+		volumesCmd.WaitWithDefaultTimeout()
+		Expect(volumesCmd).Should(Exit(0))
+		Expect(volumesCmd.OutputToString()).To(Not(ContainSubstring(volName)))
+	})
+
+	It("image-backed volume force removal", func() {
+		podmanTest.AddImageToRWStore(fedoraMinimal)
+		volName := "testvol"
+		volCreate := podmanTest.Podman([]string{"volume", "create", "--driver", "image", "--opt", fmt.Sprintf("image=%s", fedoraMinimal), volName})
+		volCreate.WaitWithDefaultTimeout()
+		Expect(volCreate).Should(Exit(0))
+
+		runCmd := podmanTest.Podman([]string{"run", "-v", fmt.Sprintf("%s:/test", volName), ALPINE, "cat", "/test/etc/redhat-release"})
+		runCmd.WaitWithDefaultTimeout()
+		Expect(runCmd).Should(Exit(0))
+		Expect(runCmd.OutputToString()).To(ContainSubstring("Fedora"))
+
+		rmCmd := podmanTest.Podman([]string{"volume", "rm", "--force", volName})
+		rmCmd.WaitWithDefaultTimeout()
+		Expect(rmCmd).Should(Exit(0))
+
+		psCmd := podmanTest.Podman([]string{"ps", "-aq"})
+		psCmd.WaitWithDefaultTimeout()
+		Expect(psCmd).Should(Exit(0))
+		Expect(psCmd.OutputToString()).To(BeEmpty())
+
+		volumesCmd := podmanTest.Podman([]string{"volume", "ls", "-q"})
+		volumesCmd.WaitWithDefaultTimeout()
+		Expect(volumesCmd).Should(Exit(0))
+		Expect(volumesCmd.OutputToString()).To(Not(ContainSubstring(volName)))
 	})
 })

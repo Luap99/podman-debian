@@ -116,4 +116,39 @@ load helpers
     is "$output" "Error: valid signals are 1 through 64" "podman create"
 }
 
+@test "podman kill - print IDs or raw input" {
+    # kill -a must print the IDs
+    run_podman run --rm -d $IMAGE top
+    ctrID="$output"
+    run_podman kill -a
+    is "$output" "$ctrID"
+
+    # kill $input must print $input
+    cname=$(random_string)
+    run_podman run --rm -d --name $cname $IMAGE top
+    run_podman kill $cname
+    is "$output" $cname
+}
+
+@test "podman kill - concurrent stop" {
+    # 14761 - concurrent kill/stop must record the exit code
+    random_name=$(random_string 10)
+    run_podman run -d --replace --name=$random_name $IMAGE sh -c "trap 'echo Received SIGTERM, ignoring' SIGTERM; echo READY; while :; do sleep 0.2; done"
+    $PODMAN stop -t 1 $random_name &
+    run_podman kill $random_name
+    run_podman wait $random_name
+    run_podman rm -f $random_name
+}
+
+@test "podman wait - exit codes" {
+    random_name=$(random_string 10)
+    run_podman create --name=$random_name $IMAGE /no/such/command
+    # Container never ran -> exit code == 0
+    run_podman wait $random_name
+    # Container did not start successfully -> exit code != 0
+    run_podman 125 start $random_name
+    # FIXME(#14873): while older Podmans return 0 on wait, Docker does not.
+    run_podman wait $random_name
+}
+
 # vim: filetype=sh

@@ -1,4 +1,4 @@
-% podman-mount(1)
+% podman-mount 1
 
 ## NAME
 podman\-mount - Mount a working container's root filesystem
@@ -14,7 +14,7 @@ accessed from the host, and returns its location.
 
 If you execute the command without any arguments, Podman will list all of the
 currently mounted containers, including external containers. External containers are
-containers in container/storage by tools other then Podman. For example Buildah and
+containers in container/storage by tools other than Podman. For example Buildah and
 CRI-O.
 
 Rootless mode only supports mounting VFS driver, unless you enter the user namespace
@@ -38,11 +38,11 @@ Print the mounted containers in specified format (json).
 
 Instead of providing the container name or ID, use the last created container.
 If you use methods other than Podman to run containers such as CRI-O, the last
-started container could be from either of those methods. (This option is not available with the remote Podman client)
+started container could be from either of those methods. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
 
-#### **--notruncate**
+#### **--no-trunc**
 
-Do not truncate IDs in output.
+Do not truncate the output (default *false*).
 
 ## EXAMPLE
 
@@ -73,4 +73,4 @@ a7060253093b /var/lib/containers/storage/overlay/0ff7d7ca68bed1ace424f9df154d2dd
 ```
 
 ## SEE ALSO
-podman(1), podman-umount(1), mount(8), podman-unshare(1)
+**[podman(1)](podman.1.md)**, **[podman-umount(1)](podman-umount.1.md)**, **[podman-unshare(1)](podman-unshare.1.md)**, **mount(8)**

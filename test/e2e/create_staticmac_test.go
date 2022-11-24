@@ -3,8 +3,8 @@ package integration
 import (
 	"os"
 
-	"github.com/containers/podman/v3/pkg/rootless"
-	. "github.com/containers/podman/v3/test/utils"
+	"github.com/containers/podman/v4/pkg/rootless"
+	. "github.com/containers/podman/v4/test/utils"
 	"github.com/containers/storage/pkg/stringid"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -25,8 +25,7 @@ var _ = Describe("Podman run with --mac-address flag", func() {
 		}
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
-		// Cleanup the CNI networks used by the tests
+		// Clean up the CNI networks used by the tests
 		os.RemoveAll("/var/lib/cni/networks/podman")
 	})
 
@@ -49,10 +48,10 @@ var _ = Describe("Podman run with --mac-address flag", func() {
 	})
 
 	It("Podman run --mac-address with custom network", func() {
-		net := "n1" + stringid.GenerateNonCryptoID()
+		net := "n1" + stringid.GenerateRandomID()
 		session := podmanTest.Podman([]string{"network", "create", net})
 		session.WaitWithDefaultTimeout()
-		defer podmanTest.removeCNINetwork(net)
+		defer podmanTest.removeNetwork(net)
 		Expect(session).Should(Exit(0))
 
 		result := podmanTest.Podman([]string{"run", "--network", net, "--mac-address", "92:d0:c6:00:29:34", ALPINE, "ip", "addr"})

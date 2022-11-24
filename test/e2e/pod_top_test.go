@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -25,7 +25,6 @@ var _ = Describe("Podman top", func() {
 		}
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
 	})
 
 	AfterEach(func() {
@@ -120,7 +119,7 @@ var _ = Describe("Podman top", func() {
 		result := podmanTest.Podman([]string{"pod", "top", podid})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
-		Expect(len(result.OutputToStringArray())).To(Equal(3))
+		Expect(result.OutputToStringArray()).To(HaveLen(3))
 	})
 
 	It("podman pod top on pod with containers in different namespace", func() {
@@ -145,6 +144,6 @@ var _ = Describe("Podman top", func() {
 		result := podmanTest.Podman([]string{"pod", "top", podid})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
-		Expect(len(result.OutputToStringArray())).To(Equal(3))
+		Expect(result.OutputToStringArray()).To(HaveLen(3))
 	})
 })

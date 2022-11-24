@@ -2,15 +2,16 @@ package libpod
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
 
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/libpod/events"
-	"github.com/containers/podman/v3/libpod/logs"
-	"github.com/hpcloud/tail/watch"
-	"github.com/pkg/errors"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/libpod/events"
+	"github.com/containers/podman/v4/libpod/logs"
+	"github.com/nxadm/tail"
+	"github.com/nxadm/tail/watch"
 	"github.com/sirupsen/logrus"
 )
 
@@ -18,13 +19,13 @@ import (
 var logDrivers []string
 
 func init() {
-	logDrivers = append(logDrivers, define.KubernetesLogging, define.NoLogging)
+	logDrivers = append(logDrivers, define.KubernetesLogging, define.NoLogging, define.PassthroughLogging)
 }
 
 // Log is a runtime function that can read one or more container logs.
 func (r *Runtime) Log(ctx context.Context, containers []*Container, options *logs.LogOptions, logChannel chan *logs.LogLine) error {
-	for _, ctr := range containers {
-		if err := ctr.ReadLog(ctx, options, logChannel); err != nil {
+	for c, ctr := range containers {
+		if err := ctr.ReadLog(ctx, options, logChannel, int64(c)); err != nil {
 			return err
 		}
 	}
@@ -32,37 +33,40 @@ func (r *Runtime) Log(ctx context.Context, containers []*Container, options *log
 }
 
 // ReadLog reads a containers log based on the input options and returns log lines over a channel.
-func (c *Container) ReadLog(ctx context.Context, options *logs.LogOptions, logChannel chan *logs.LogLine) error {
+func (c *Container) ReadLog(ctx context.Context, options *logs.LogOptions, logChannel chan *logs.LogLine, colorID int64) error {
 	switch c.LogDriver() {
+	case define.PassthroughLogging:
+		return fmt.Errorf("this container is using the 'passthrough' log driver, cannot read logs: %w", define.ErrNoLogs)
 	case define.NoLogging:
-		return errors.Wrapf(define.ErrNoLogs, "this container is using the 'none' log driver, cannot read logs")
+		return fmt.Errorf("this container is using the 'none' log driver, cannot read logs: %w", define.ErrNoLogs)
 	case define.JournaldLogging:
-		return c.readFromJournal(ctx, options, logChannel)
+		return c.readFromJournal(ctx, options, logChannel, colorID)
 	case define.JSONLogging:
 		// TODO provide a separate implementation of this when Conmon
 		// has support.
 		fallthrough
 	case define.KubernetesLogging, "":
-		return c.readFromLogFile(ctx, options, logChannel)
+		return c.readFromLogFile(ctx, options, logChannel, colorID)
 	default:
-		return errors.Wrapf(define.ErrInternal, "unrecognized log driver %q, cannot read logs", c.LogDriver())
+		return fmt.Errorf("unrecognized log driver %q, cannot read logs: %w", c.LogDriver(), define.ErrInternal)
 	}
 }
 
-func (c *Container) readFromLogFile(ctx context.Context, options *logs.LogOptions, logChannel chan *logs.LogLine) error {
+func (c *Container) readFromLogFile(ctx context.Context, options *logs.LogOptions, logChannel chan *logs.LogLine, colorID int64) error {
 	t, tailLog, err := logs.GetLogFile(c.LogPath(), options)
 	if err != nil {
 		// If the log file does not exist, this is not fatal.
-		if os.IsNotExist(errors.Cause(err)) {
+		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
-		return errors.Wrapf(err, "unable to read log file %s for %s ", c.ID(), c.LogPath())
+		return fmt.Errorf("unable to read log file %s for %s : %w", c.ID(), c.LogPath(), err)
 	}
 	options.WaitGroup.Add(1)
 	if len(tailLog) > 0 {
 		for _, nll := range tailLog {
 			nll.CID = c.ID()
 			nll.CName = c.Name()
+			nll.ColorID = colorID
 			if nll.Since(options.Since) && nll.Until(options.Until) {
 				logChannel <- nll
 			}
@@ -71,30 +75,28 @@ func (c *Container) readFromLogFile(ctx context.Context, options *logs.LogOption
 
 	go func() {
 		defer options.WaitGroup.Done()
-
-		var partial string
-		for line := range t.Lines {
+		var line *tail.Line
+		var ok bool
+		for {
 			select {
 			case <-ctx.Done():
 				// the consumer has cancelled
+				t.Kill(errors.New("hangup by client"))
 				return
-			default:
-				// fallthrough
+			case line, ok = <-t.Lines:
+				if !ok {
+					// channel was closed
+					return
+				}
 			}
 			nll, err := logs.NewLogLine(line.Text)
 			if err != nil {
-				logrus.Errorf("Error getting new log line: %v", err)
+				logrus.Errorf("Getting new log line: %v", err)
 				continue
-			}
-			if nll.Partial() {
-				partial += nll.Msg
-				continue
-			} else if !nll.Partial() && len(partial) > 0 {
-				nll.Msg = partial + nll.Msg
-				partial = ""
 			}
 			nll.CID = c.ID()
 			nll.CName = c.Name()
+			nll.ColorID = colorID
 			if nll.Since(options.Since) && nll.Until(options.Until) {
 				logChannel <- nll
 			}
@@ -107,8 +109,8 @@ func (c *Container) readFromLogFile(ctx context.Context, options *logs.LogOption
 		// until EOF.
 		state, err := c.State()
 		if err != nil || state != define.ContainerStateRunning {
-			if err != nil && errors.Cause(err) != define.ErrNoSuchCtr {
-				logrus.Errorf("Error getting container state: %v", err)
+			if err != nil && !errors.Is(err, define.ErrNoSuchCtr) {
+				logrus.Errorf("Getting container state: %v", err)
 			}
 			go func() {
 				// Make sure to wait at least for the poll duration
@@ -116,7 +118,7 @@ func (c *Container) readFromLogFile(ctx context.Context, options *logs.LogOption
 				time.Sleep(watch.POLL_DURATION)
 				tailError := t.StopAtEOF()
 				if tailError != nil && tailError.Error() != "tail: stop at eof" {
-					logrus.Errorf("Error stopping logger: %v", tailError)
+					logrus.Errorf("Stopping logger: %v", tailError)
 				}
 			}()
 			return nil
@@ -132,7 +134,7 @@ func (c *Container) readFromLogFile(ctx context.Context, options *logs.LogOption
 			}
 			go func() {
 				if err := c.runtime.Events(ctx, eventOptions); err != nil {
-					logrus.Errorf("Error waiting for container to exit: %v", err)
+					logrus.Errorf("Waiting for container to exit: %v", err)
 				}
 			}()
 			// Now wait for the died event and signal to finish
@@ -143,7 +145,7 @@ func (c *Container) readFromLogFile(ctx context.Context, options *logs.LogOption
 			time.Sleep(watch.POLL_DURATION)
 			tailError := t.StopAtEOF()
 			if tailError != nil && fmt.Sprintf("%v", tailError) != "tail: stop at eof" {
-				logrus.Errorf("Error stopping logger: %v", tailError)
+				logrus.Errorf("Stopping logger: %v", tailError)
 			}
 		}()
 	}

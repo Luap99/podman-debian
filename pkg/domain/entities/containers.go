@@ -6,12 +6,11 @@ import (
 	"os"
 	"time"
 
+	nettypes "github.com/containers/common/libnetwork/types"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v3/libpod/define"
-	nettypes "github.com/containers/podman/v3/libpod/network/types"
-	"github.com/containers/podman/v3/pkg/specgen"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/specgen"
 	"github.com/containers/storage/pkg/archive"
-	"github.com/cri-o/ocicni/pkg/ocicni"
 )
 
 // ContainerRunlabelOptions are the options to execute container-runlabel.
@@ -48,8 +47,7 @@ type ContainerRunlabelOptions struct {
 }
 
 // ContainerRunlabelReport contains the results from executing container-runlabel.
-type ContainerRunlabelReport struct {
-}
+type ContainerRunlabelReport struct{}
 
 type WaitOptions struct {
 	Condition []define.ContainerStatus
@@ -58,7 +56,7 @@ type WaitOptions struct {
 }
 
 type WaitReport struct {
-	Id       string //nolint
+	Id       string //nolint:revive,stylecheck
 	Error    error
 	ExitCode int32
 }
@@ -73,15 +71,19 @@ type StringSliceReport struct {
 }
 
 type PauseUnPauseOptions struct {
-	All bool
+	Filters map[string][]string
+	All     bool
+	Latest  bool
 }
 
 type PauseUnpauseReport struct {
-	Err error
-	Id  string //nolint
+	Err      error
+	Id       string //nolint:revive,stylecheck
+	RawInput string
 }
 
 type StopOptions struct {
+	Filters map[string][]string
 	All     bool
 	Ignore  bool
 	Latest  bool
@@ -90,7 +92,7 @@ type StopOptions struct {
 
 type StopReport struct {
 	Err      error
-	Id       string //nolint
+	Id       string //nolint:revive,stylecheck
 	RawInput string
 }
 
@@ -112,11 +114,12 @@ type KillOptions struct {
 
 type KillReport struct {
 	Err      error
-	Id       string //nolint
+	Id       string //nolint:revive,stylecheck
 	RawInput string
 }
 
 type RestartOptions struct {
+	Filters map[string][]string
 	All     bool
 	Latest  bool
 	Running bool
@@ -124,21 +127,20 @@ type RestartOptions struct {
 }
 
 type RestartReport struct {
-	Err error
-	Id  string //nolint
+	Err      error
+	Id       string //nolint:revive,stylecheck
+	RawInput string
 }
 
 type RmOptions struct {
+	Filters map[string][]string
 	All     bool
+	Depend  bool
 	Force   bool
 	Ignore  bool
 	Latest  bool
+	Timeout *uint
 	Volumes bool
-}
-
-type RmReport struct {
-	Err error
-	Id  string //nolint
 }
 
 type ContainerInspectReport struct {
@@ -158,6 +160,7 @@ type CommitOptions struct {
 	Message        string
 	Pause          bool
 	Quiet          bool
+	Squash         bool
 	Writer         io.Writer
 }
 
@@ -168,10 +171,13 @@ type CopyOptions struct {
 	Chown bool
 	// Map to translate path names.
 	Rename map[string]string
+	// NoOverwriteDirNonDir when true prevents an existing directory or file from being overwritten
+	// by the other type
+	NoOverwriteDirNonDir bool
 }
 
 type CommitReport struct {
-	Id string //nolint
+	Id string //nolint:revive,stylecheck
 }
 
 type ContainerExportOptions struct {
@@ -181,6 +187,7 @@ type ContainerExportOptions struct {
 type CheckpointOptions struct {
 	All            bool
 	Export         string
+	CreateImage    string
 	IgnoreRootFS   bool
 	IgnoreVolumes  bool
 	Keep           bool
@@ -190,11 +197,16 @@ type CheckpointOptions struct {
 	PreCheckPoint  bool
 	WithPrevious   bool
 	Compression    archive.Compression
+	PrintStats     bool
+	FileLocks      bool
 }
 
 type CheckpointReport struct {
-	Err error
-	Id  string //nolint
+	Err             error                                   `json:"-"`
+	Id              string                                  `json:"Id"` //nolint:revive,stylecheck
+	RawInput        string                                  `json:"RawInput"`
+	RuntimeDuration int64                                   `json:"runtime_checkpoint_duration"`
+	CRIUStatistics  *define.CRIUCheckpointRestoreStatistics `json:"criu_statistics"`
 }
 
 type RestoreOptions struct {
@@ -204,22 +216,28 @@ type RestoreOptions struct {
 	IgnoreStaticIP  bool
 	IgnoreStaticMAC bool
 	Import          string
+	CheckpointImage bool
 	Keep            bool
 	Latest          bool
 	Name            string
 	TCPEstablished  bool
 	ImportPrevious  string
-	PublishPorts    []nettypes.PortMapping
+	PublishPorts    []string
 	Pod             string
+	PrintStats      bool
+	FileLocks       bool
 }
 
 type RestoreReport struct {
-	Err error
-	Id  string //nolint
+	Err             error                                   `json:"-"`
+	Id              string                                  `json:"Id"` //nolint:revive,stylecheck
+	RawInput        string                                  `json:"RawInput"`
+	RuntimeDuration int64                                   `json:"runtime_restore_duration"`
+	CRIUStatistics  *define.CRIUCheckpointRestoreStatistics `json:"criu_statistics"`
 }
 
 type ContainerCreateReport struct {
-	Id string //nolint
+	Id string //nolint:revive,stylecheck
 }
 
 // AttachOptions describes the cli and other values
@@ -252,6 +270,8 @@ type ContainerLogsOptions struct {
 	Tail int64
 	// Show timestamps in the logs.
 	Timestamps bool
+	// Show different colors in the logs.
+	Colors bool
 	// Write the stdout to this Writer.
 	StdoutWriter io.Writer
 	// Write the stderr to this Writer.
@@ -296,7 +316,7 @@ type ContainerStartOptions struct {
 // ContainerStartReport describes the response from starting
 // containers from the cli
 type ContainerStartReport struct {
-	Id       string //nolint
+	Id       string //nolint:revive,stylecheck
 	RawInput string
 	Err      error
 	ExitCode int
@@ -333,13 +353,14 @@ type ContainerRunOptions struct {
 	Rm           bool
 	SigProxy     bool
 	Spec         *specgen.SpecGenerator
+	Passwd       bool
 }
 
 // ContainerRunReport describes the results of running
 // a container
 type ContainerRunReport struct {
 	ExitCode int
-	Id       string //nolint
+	Id       string //nolint:revive,stylecheck
 }
 
 // ContainerCleanupOptions are the CLI values for the
@@ -356,7 +377,8 @@ type ContainerCleanupOptions struct {
 // container cleanup
 type ContainerCleanupReport struct {
 	CleanErr error
-	Id       string //nolint
+	Id       string //nolint:revive,stylecheck
+	RawInput string
 	RmErr    error
 	RmiErr   error
 }
@@ -371,11 +393,12 @@ type ContainerInitOptions struct {
 // ContainerInitReport describes the results of a
 // container init
 type ContainerInitReport struct {
-	Err error
-	Id  string //nolint
+	Err      error
+	Id       string //nolint:revive,stylecheck
+	RawInput string
 }
 
-//ContainerMountOptions describes the input values for mounting containers
+// ContainerMountOptions describes the input values for mounting containers
 // in the CLI
 type ContainerMountOptions struct {
 	All        bool
@@ -394,7 +417,7 @@ type ContainerUnmountOptions struct {
 // ContainerMountReport describes the response from container mount
 type ContainerMountReport struct {
 	Err  error
-	Id   string //nolint
+	Id   string //nolint:revive,stylecheck
 	Name string
 	Path string
 }
@@ -402,7 +425,7 @@ type ContainerMountReport struct {
 // ContainerUnmountReport describes the response from umounting a container
 type ContainerUnmountReport struct {
 	Err error
-	Id  string //nolint
+	Id  string //nolint:revive,stylecheck
 }
 
 // ContainerPruneOptions describes the options needed
@@ -421,8 +444,8 @@ type ContainerPortOptions struct {
 // ContainerPortReport describes the output needed for
 // the CLI to output ports
 type ContainerPortReport struct {
-	Id    string //nolint
-	Ports []ocicni.PortMapping
+	Id    string //nolint:revive,stylecheck
+	Ports []nettypes.PortMapping
 }
 
 // ContainerCpOptions describes input options for cp.
@@ -431,6 +454,9 @@ type ContainerCpOptions struct {
 	Pause bool
 	// Extract the tarfile into the destination directory.
 	Extract bool
+	// OverwriteDirNonDir allows for overwriting a directory with a
+	// non-directory and vice versa.
+	OverwriteDirNonDir bool
 }
 
 // ContainerStatsOptions describes input options for getting
@@ -457,4 +483,21 @@ type ContainerStatsReport struct {
 type ContainerRenameOptions struct {
 	// NewName is the new name that will be given to the container.
 	NewName string
+}
+
+// ContainerCloneOptions contains options for cloning an existing continer
+type ContainerCloneOptions struct {
+	ID           string
+	Destroy      bool
+	CreateOpts   ContainerCreateOptions
+	Image        string
+	RawImageName string
+	Run          bool
+	Force        bool
+}
+
+// ContainerUpdateOptions containers options for updating an existing containers cgroup configuration
+type ContainerUpdateOptions struct {
+	NameOrID string
+	Specgen  *specgen.SpecGenerator
 }

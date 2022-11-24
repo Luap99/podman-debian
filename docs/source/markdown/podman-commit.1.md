@@ -1,4 +1,4 @@
-% podman-commit(1)
+% podman-commit 1
 
 ## NAME
 podman\-commit - Create new image based on the changed container
@@ -36,7 +36,7 @@ Apply the following possible instructions to the created image:
 
 Can be set multiple times.
 
-#### **--format**, **-f** =**oci** | *docker*
+#### **--format**, **-f**=**oci** | *docker*
 
 Set the format of the image manifest and metadata.  The currently supported formats are **oci** and *docker*.\
 The default is **oci**.
@@ -63,6 +63,11 @@ The default is **false**.
 #### **--quiet**, **-q**
 
 Suppresses output.\
+The default is **false**.
+
+#### **--squash**, **-s**
+
+Squash newly built layers into a single new layer.\
 The default is **false**.
 
 ## EXAMPLES

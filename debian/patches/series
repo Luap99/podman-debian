@@ -1,4 +1,2 @@
 test--skip-TestPostDeleteHooks.patch
-mbp.patch
-old-godbus.patch
-generate-crash.patch
+system-goimports.patch

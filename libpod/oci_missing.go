@@ -6,8 +6,9 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/pkg/errors"
+	"github.com/containers/common/pkg/resize"
+	"github.com/containers/podman/v4/libpod/define"
+	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
 )
 
@@ -66,8 +67,8 @@ func (r *MissingRuntime) Path() string {
 }
 
 // CreateContainer is not available as the runtime is missing
-func (r *MissingRuntime) CreateContainer(ctr *Container, restoreOptions *ContainerCheckpointOptions) error {
-	return r.printError()
+func (r *MissingRuntime) CreateContainer(ctr *Container, restoreOptions *ContainerCheckpointOptions) (int64, error) {
+	return 0, r.printError()
 }
 
 // UpdateContainerStatus is not available as the runtime is missing
@@ -77,6 +78,11 @@ func (r *MissingRuntime) UpdateContainerStatus(ctr *Container) error {
 
 // StartContainer is not available as the runtime is missing
 func (r *MissingRuntime) StartContainer(ctr *Container) error {
+	return r.printError()
+}
+
+// UpdateContainer is not available as the runtime is missing
+func (r *MissingRuntime) UpdateContainer(ctr *Container, resources *spec.LinuxResources) error {
 	return r.printError()
 }
 
@@ -108,24 +114,29 @@ func (r *MissingRuntime) UnpauseContainer(ctr *Container) error {
 	return r.printError()
 }
 
+// Attach is not available as the runtime is missing
+func (r *MissingRuntime) Attach(ctr *Container, params *AttachOptions) error {
+	return r.printError()
+}
+
 // HTTPAttach is not available as the runtime is missing
 func (r *MissingRuntime) HTTPAttach(ctr *Container, req *http.Request, w http.ResponseWriter, streams *HTTPAttachStreams, detachKeys *string, cancel <-chan bool, hijackDone chan<- bool, streamAttach, streamLogs bool) error {
 	return r.printError()
 }
 
 // AttachResize is not available as the runtime is missing
-func (r *MissingRuntime) AttachResize(ctr *Container, newSize define.TerminalSize) error {
+func (r *MissingRuntime) AttachResize(ctr *Container, newSize resize.TerminalSize) error {
 	return r.printError()
 }
 
 // ExecContainer is not available as the runtime is missing
-func (r *MissingRuntime) ExecContainer(ctr *Container, sessionID string, options *ExecOptions, streams *define.AttachStreams, newSize *define.TerminalSize) (int, chan error, error) {
+func (r *MissingRuntime) ExecContainer(ctr *Container, sessionID string, options *ExecOptions, streams *define.AttachStreams, newSize *resize.TerminalSize) (int, chan error, error) {
 	return -1, nil, r.printError()
 }
 
 // ExecContainerHTTP is not available as the runtime is missing
 func (r *MissingRuntime) ExecContainerHTTP(ctr *Container, sessionID string, options *ExecOptions, req *http.Request, w http.ResponseWriter,
-	streams *HTTPAttachStreams, cancel <-chan bool, hijackDone chan<- bool, holdConnOpen <-chan bool, newSize *define.TerminalSize) (int, chan error, error) {
+	streams *HTTPAttachStreams, cancel <-chan bool, hijackDone chan<- bool, holdConnOpen <-chan bool, newSize *resize.TerminalSize) (int, chan error, error) {
 	return -1, nil, r.printError()
 }
 
@@ -135,7 +146,7 @@ func (r *MissingRuntime) ExecContainerDetached(ctr *Container, sessionID string,
 }
 
 // ExecAttachResize is not available as the runtime is missing.
-func (r *MissingRuntime) ExecAttachResize(ctr *Container, sessionID string, newSize define.TerminalSize) error {
+func (r *MissingRuntime) ExecAttachResize(ctr *Container, sessionID string, newSize resize.TerminalSize) error {
 	return r.printError()
 }
 
@@ -153,8 +164,8 @@ func (r *MissingRuntime) ExecUpdateStatus(ctr *Container, sessionID string) (boo
 }
 
 // CheckpointContainer is not available as the runtime is missing
-func (r *MissingRuntime) CheckpointContainer(ctr *Container, options ContainerCheckpointOptions) error {
-	return r.printError()
+func (r *MissingRuntime) CheckpointContainer(ctr *Container, options ContainerCheckpointOptions) (int64, error) {
+	return 0, r.printError()
 }
 
 // CheckConmonRunning is not available as the runtime is missing
@@ -204,7 +215,7 @@ func (r *MissingRuntime) ExecAttachSocketPath(ctr *Container, sessionID string) 
 // the container, but Conmon should still place an exit file for it.
 func (r *MissingRuntime) ExitFilePath(ctr *Container) (string, error) {
 	if ctr == nil {
-		return "", errors.Wrapf(define.ErrInvalidArg, "must provide a valid container to get exit file path")
+		return "", fmt.Errorf("must provide a valid container to get exit file path: %w", define.ErrInvalidArg)
 	}
 	return filepath.Join(r.exitsDir, ctr.ID()), nil
 }
@@ -222,5 +233,5 @@ func (r *MissingRuntime) RuntimeInfo() (*define.ConmonInfo, *define.OCIRuntimeIn
 
 // Return an error indicating the runtime is missing
 func (r *MissingRuntime) printError() error {
-	return errors.Wrapf(define.ErrOCIRuntimeNotFound, "runtime %s is missing", r.name)
+	return fmt.Errorf("runtime %s is missing: %w", r.name, define.ErrOCIRuntimeNotFound)
 }

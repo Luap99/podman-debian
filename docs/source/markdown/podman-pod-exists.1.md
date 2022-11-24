@@ -1,4 +1,4 @@
-% podman-pod-exists(1)
+% podman-pod-exists 1
 
 ## NAME
 podman-pod-exists - Check if a pod exists in local storage
@@ -31,7 +31,7 @@ $
 ```
 
 ## SEE ALSO
-podman-pod(1), podman(1)
+**[podman(1)](podman.1.md)**, **[podman-pod(1)](podman-pod.1.md)**
 
 ## HISTORY
 December 2018, Originally compiled by Brent Baude (bbaude at redhat dot com)

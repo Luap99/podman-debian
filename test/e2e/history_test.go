@@ -3,7 +3,7 @@ package integration
 import (
 	"os"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -23,7 +23,6 @@ var _ = Describe("Podman history", func() {
 		}
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
 	})
 
 	AfterEach(func() {
@@ -73,7 +72,7 @@ var _ = Describe("Podman history", func() {
 		lines := session.OutputToStringArray()
 		Expect(len(lines)).To(BeNumerically(">", 0))
 		// the image id must be 64 chars long
-		Expect(len(lines[0])).To(BeNumerically("==", 64))
+		Expect(lines[0]).To(HaveLen(64))
 
 		session = podmanTest.Podman([]string{"history", "--no-trunc", "--format", "{{.CreatedBy}}", ALPINE})
 		session.WaitWithDefaultTimeout()
@@ -89,6 +88,6 @@ var _ = Describe("Podman history", func() {
 		session := podmanTest.Podman([]string{"history", "--format=json", ALPINE})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(session.IsJSONOutputValid()).To(BeTrue())
+		Expect(session.OutputToString()).To(BeValidJSON())
 	})
 })

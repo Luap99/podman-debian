@@ -21,12 +21,13 @@ load helpers
     # time to write a new post-restart time value. Pause by CID, unpause
     # by name, just to exercise code paths. While paused, check 'ps'
     # and 'inspect', then check again after restarting.
-    run_podman pause $cid
+    run_podman --noout pause $cid
+    is "$output" "" "output should be empty"
     run_podman inspect --format '{{.State.Status}}' $cid
     is "$output" "paused" "podman inspect .State.Status"
     sleep 3
     run_podman ps -a --format '{{.ID}} {{.Names}} {{.Status}}'
-    is "$output" "${cid:0:12} $cname paused" "podman ps on paused container"
+    is "$output" "${cid:0:12} $cname Paused" "podman ps on paused container"
     run_podman unpause $cname
     run_podman ps -a --format '{{.ID}} {{.Names}} {{.Status}}'
     is "$output" "${cid:0:12} $cname Up .*" "podman ps on resumed container"
@@ -48,8 +49,7 @@ load helpers
     # would imply that the container never paused.
     is "$max_delta" "[3456]" "delta t between paused and restarted"
 
-    run_podman stop -t 0 $cname
-    run_podman rm -f $cname
+    run_podman rm -t 0 -f $cname
 
     # Pause/unpause on nonexistent name or id - these should all fail
     run_podman 125 pause $cid
@@ -75,7 +75,7 @@ load helpers
     run_podman ps --format '{{.ID}} {{.Names}} {{.Status}}'
     is "$output" "${cid:0:12} $cname Up.*" "podman ps on resumed container"
     run_podman stop -t 0 $cname
-    run_podman rm -f $cname
-    run_podman rm -f notrunning
+    run_podman rm -t 0 -f $cname
+    run_podman rm -t 0 -f notrunning
 }
 # vim: filetype=sh

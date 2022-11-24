@@ -1,15 +1,18 @@
-package test_bindings
+package bindings_test
 
 import (
+	"bytes"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
-	"github.com/containers/podman/v3/pkg/bindings"
-	"github.com/containers/podman/v3/pkg/bindings/containers"
-	"github.com/containers/podman/v3/pkg/bindings/images"
-	"github.com/containers/podman/v3/pkg/domain/entities"
+	podmanRegistry "github.com/containers/podman/v4/hack/podman-registry-go"
+	"github.com/containers/podman/v4/pkg/bindings"
+	"github.com/containers/podman/v4/pkg/bindings/containers"
+	"github.com/containers/podman/v4/pkg/bindings/images"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -85,10 +88,16 @@ var _ = Describe("Podman images", func() {
 
 	// Test to validate the remove image api
 	It("remove image", func() {
-		// Remove invalid image should be a 404
+		// NOTE that removing an image that does not exist will still
+		// return a 200 http status.  The response, however, includes
+		// the exit code that podman-remote should exit with.
+		//
+		// The libpod/images/remove endpoint supports batch removal of
+		// images for performance reasons and for hiding the logic of
+		// deciding which exit code to use from the client.
 		response, errs := images.Remove(bt.conn, []string{"foobar5000"}, nil)
 		Expect(len(errs)).To(BeNumerically(">", 0))
-		code, _ := bindings.CheckResponseCode(errs[0])
+		Expect(response.ExitCode).To(BeNumerically("==", 1)) // podman-remote would exit with 1
 
 		// Remove an image by name, validate image is removed and error is nil
 		inspectData, err := images.GetImage(bt.conn, busybox.shortName, nil)
@@ -97,8 +106,9 @@ var _ = Describe("Podman images", func() {
 		Expect(len(errs)).To(BeZero())
 
 		Expect(inspectData.ID).To(Equal(response.Deleted[0]))
-		inspectData, err = images.GetImage(bt.conn, busybox.shortName, nil)
-		code, _ = bindings.CheckResponseCode(err)
+		_, err = images.GetImage(bt.conn, busybox.shortName, nil)
+		code, _ := bindings.CheckResponseCode(err)
+		Expect(code).To(BeNumerically("==", http.StatusNotFound))
 
 		// Start a container with alpine image
 		var top string = "top"
@@ -111,23 +121,26 @@ var _ = Describe("Podman images", func() {
 
 		// try to remove the image "alpine". This should fail since we are not force
 		// deleting hence image cannot be deleted until the container is deleted.
-		response, errs = images.Remove(bt.conn, []string{alpine.shortName}, nil)
+		_, errs = images.Remove(bt.conn, []string{alpine.shortName}, nil)
 		code, _ = bindings.CheckResponseCode(errs[0])
+		Expect(code).To(BeNumerically("==", -1))
 
 		// Removing the image "alpine" where force = true
 		options := new(images.RemoveOptions).WithForce(true)
-		response, errs = images.Remove(bt.conn, []string{alpine.shortName}, options)
+		_, errs = images.Remove(bt.conn, []string{alpine.shortName}, options)
 		Expect(errs).To(Or(HaveLen(0), BeNil()))
 		// To be extra sure, check if the previously created container
 		// is gone as well.
 		_, err = containers.Inspect(bt.conn, "top", nil)
 		code, _ = bindings.CheckResponseCode(err)
+		Expect(code).To(BeNumerically("==", http.StatusNotFound))
 
 		// Now make sure both images are gone.
-		inspectData, err = images.GetImage(bt.conn, busybox.shortName, nil)
+		_, err = images.GetImage(bt.conn, busybox.shortName, nil)
 		code, _ = bindings.CheckResponseCode(err)
+		Expect(code).To(BeNumerically("==", http.StatusNotFound))
 
-		inspectData, err = images.GetImage(bt.conn, alpine.shortName, nil)
+		_, err = images.GetImage(bt.conn, alpine.shortName, nil)
 		code, _ = bindings.CheckResponseCode(err)
 		Expect(code).To(BeNumerically("==", http.StatusNotFound))
 	})
@@ -218,8 +231,8 @@ var _ = Describe("Podman images", func() {
 		Expect(err).ToNot(HaveOccurred())
 		Expect(exists).To(BeFalse())
 		f, err := os.Open(filepath.Join(ImageCacheDir, alpine.tarballName))
-		defer f.Close()
 		Expect(err).ToNot(HaveOccurred())
+		defer f.Close()
 		names, err := images.Load(bt.conn, f)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(names.Names[0]).To(Equal(alpine.name))
@@ -240,8 +253,6 @@ var _ = Describe("Podman images", func() {
 		Expect(names.Names[0]).To(Equal(alpine.name))
 
 		// load with a bad repo name should trigger a 500
-		f, err = os.Open(filepath.Join(ImageCacheDir, alpine.tarballName))
-		Expect(err).ToNot(HaveOccurred())
 		_, errs = images.Remove(bt.conn, []string{alpine.name}, nil)
 		Expect(len(errs)).To(BeZero())
 		exists, err = images.Exists(bt.conn, alpine.name, nil)
@@ -253,8 +264,8 @@ var _ = Describe("Podman images", func() {
 		// Export an image
 		exportPath := filepath.Join(bt.tempDirPath, alpine.tarballName)
 		w, err := os.Create(filepath.Join(bt.tempDirPath, alpine.tarballName))
-		defer w.Close()
 		Expect(err).ToNot(HaveOccurred())
+		defer w.Close()
 		err = images.Export(bt.conn, []string{alpine.name}, w, nil)
 		Expect(err).ToNot(HaveOccurred())
 		_, err = os.Stat(exportPath)
@@ -271,8 +282,8 @@ var _ = Describe("Podman images", func() {
 		Expect(err).ToNot(HaveOccurred())
 		Expect(exists).To(BeFalse())
 		f, err := os.Open(filepath.Join(ImageCacheDir, alpine.tarballName))
-		defer f.Close()
 		Expect(err).ToNot(HaveOccurred())
+		defer f.Close()
 		changes := []string{"CMD /bin/foobar"}
 		testMessage := "test_import"
 		options := new(images.ImportOptions).WithMessage(testMessage).WithChanges(changes).WithReference(alpine.name)
@@ -339,6 +350,7 @@ var _ = Describe("Podman images", func() {
 
 		//	Search with a fqdn
 		reports, err = images.Search(bt.conn, "quay.io/libpod/alpine_nginx", nil)
+		Expect(err).To(BeNil(), "Error in images.Search()")
 		Expect(len(reports)).To(BeNumerically(">=", 1))
 	})
 
@@ -353,9 +365,14 @@ var _ = Describe("Podman images", func() {
 	It("Image Pull", func() {
 		rawImage := "docker.io/library/busybox:latest"
 
-		pulledImages, err := images.Pull(bt.conn, rawImage, nil)
+		var writer bytes.Buffer
+		pullOpts := new(images.PullOptions).WithProgressWriter(&writer)
+		pulledImages, err := images.Pull(bt.conn, rawImage, pullOpts)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(len(pulledImages)).To(Equal(1))
+		output := writer.String()
+		Expect(output).To(ContainSubstring("Trying to pull "))
+		Expect(output).To(ContainSubstring("Getting image source signatures"))
 
 		exists, err := images.Exists(bt.conn, rawImage, nil)
 		Expect(err).NotTo(HaveOccurred())
@@ -368,6 +385,22 @@ var _ = Describe("Podman images", func() {
 		// The v2 endpoint only supports the docker transport.  Let's see if that's really true.
 		_, err = images.Pull(bt.conn, "bogus-transport:bogus.com/image:reference", nil)
 		Expect(err).To(HaveOccurred())
+	})
+
+	It("Image Push", func() {
+		registry, err := podmanRegistry.Start()
+		Expect(err).To(BeNil())
+
+		var writer bytes.Buffer
+		pushOpts := new(images.PushOptions).WithUsername(registry.User).WithPassword(registry.Password).WithSkipTLSVerify(true).WithProgressWriter(&writer).WithQuiet(false)
+		err = images.Push(bt.conn, alpine.name, fmt.Sprintf("localhost:%s/test:latest", registry.Port), pushOpts)
+		Expect(err).ToNot(HaveOccurred())
+
+		output := writer.String()
+		Expect(output).To(ContainSubstring("Copying blob "))
+		Expect(output).To(ContainSubstring("Copying config "))
+		Expect(output).To(ContainSubstring("Writing manifest to image destination"))
+		Expect(output).To(ContainSubstring("Storing signatures"))
 	})
 
 	It("Build no options", func() {

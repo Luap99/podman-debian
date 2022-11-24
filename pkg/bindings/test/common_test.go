@@ -1,22 +1,20 @@
-package test_bindings
+package bindings_test
 
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/containers/podman/v3/libpod/define"
-	. "github.com/containers/podman/v3/pkg/bindings"
-	"github.com/containers/podman/v3/pkg/bindings/containers"
-	"github.com/containers/podman/v3/pkg/specgen"
+	"github.com/containers/podman/v4/libpod/define"
+	. "github.com/containers/podman/v4/pkg/bindings"
+	"github.com/containers/podman/v4/pkg/bindings/containers"
+	"github.com/containers/podman/v4/pkg/specgen"
 	"github.com/onsi/ginkgo"
 	"github.com/onsi/gomega/gexec"
-	"github.com/pkg/errors"
 )
 
 type testImage struct {
@@ -51,7 +49,7 @@ var (
 		shortName:   "busybox",
 		tarballName: "busybox.tar",
 	}
-	CACHE_IMAGES = []testImage{alpine, busybox}
+	CACHE_IMAGES = []testImage{alpine, busybox} //nolint:revive,stylecheck
 )
 
 type bindingTest struct {
@@ -86,7 +84,7 @@ func (b *bindingTest) runPodman(command []string) *gexec.Session {
 	}
 	val, ok = os.LookupEnv("CNI_CONFIG_DIR")
 	if ok {
-		cmd = append(cmd, "--cni-config-dir", val)
+		cmd = append(cmd, "--network-config-dir", val)
 	}
 	val, ok = os.LookupEnv("CONMON")
 	if ok {
@@ -127,7 +125,7 @@ func (b *bindingTest) runPodman(command []string) *gexec.Session {
 	fmt.Printf("Running: %s %s\n", podmanBinary, strings.Join(cmd, " "))
 	session, err := gexec.Start(c, ginkgo.GinkgoWriter, ginkgo.GinkgoWriter)
 	if err != nil {
-		panic(errors.Errorf("unable to run podman command: %q", cmd))
+		panic(fmt.Errorf("unable to run podman command: %q", cmd))
 	}
 	return session
 }
@@ -147,11 +145,11 @@ func newBindingTest() *bindingTest {
 
 // createTempDirinTempDir create a temp dir with prefix podman_test
 func createTempDirInTempDir() (string, error) {
-	return ioutil.TempDir("", "libpod_api")
+	return os.MkdirTemp("", "libpod_api")
 }
 
 func (b *bindingTest) startAPIService() *gexec.Session {
-	cmd := []string{"--log-level=debug", "--events-backend=file", "system", "service", "--timeout=0", b.sock}
+	cmd := []string{"--log-level=debug", "system", "service", "--timeout=0", b.sock}
 	session := b.runPodman(cmd)
 
 	sock := strings.TrimPrefix(b.sock, "unix://")
@@ -211,7 +209,7 @@ func (b *bindingTest) RunTopContainer(containerName *string, podName *string) (s
 	}
 	ctr, err := containers.CreateWithSpec(b.conn, s, nil)
 	if err != nil {
-		return "", nil
+		return "", err
 	}
 	err = containers.Start(b.conn, ctr.ID, nil)
 	if err != nil {
@@ -244,8 +242,8 @@ func (b *bindingTest) PodcreateAndExpose(name *string, port *string) {
 	b.runPodman(command).Wait(45)
 }
 
-//  StringInSlice returns a boolean based on whether a given
-//  string is in a given slice
+// StringInSlice returns a boolean based on whether a given
+// string is in a given slice
 func StringInSlice(s string, sl []string) bool {
 	for _, val := range sl {
 		if s == val {
@@ -265,7 +263,7 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	// If running localized tests, the cache dir is created and populated. if the
 	// tests are remote, this is a no-op
 	createCache()
-	path, err := ioutil.TempDir("", "libpodlock")
+	path, err := os.MkdirTemp("", "libpodlock")
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)

@@ -2,9 +2,10 @@
 package images
 
 import (
+	"io"
 	"net/url"
 
-	"github.com/containers/podman/v3/pkg/bindings/internal/util"
+	"github.com/containers/podman/v4/pkg/bindings/internal/util"
 )
 
 // Changed returns true if named field has been set
@@ -105,6 +106,21 @@ func (o *PullOptions) GetPassword() string {
 		return z
 	}
 	return *o.Password
+}
+
+// WithProgressWriter set field ProgressWriter to given value
+func (o *PullOptions) WithProgressWriter(value io.Writer) *PullOptions {
+	o.ProgressWriter = &value
+	return o
+}
+
+// GetProgressWriter returns value of field ProgressWriter
+func (o *PullOptions) GetProgressWriter() io.Writer {
+	if o.ProgressWriter == nil {
+		var z io.Writer
+		return z
+	}
+	return *o.ProgressWriter
 }
 
 // WithQuiet set field Quiet to given value

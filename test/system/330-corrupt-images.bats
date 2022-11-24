@@ -74,11 +74,11 @@ function _corrupt_image_test() {
         # Corruptify, and confirm that 'podman images' throws an error
         rm -v ${PODMAN_CORRUPT_TEST_WORKDIR}/root/*-images/$id/${rm_path}
         run_podman 125 images
-        is "$output" "Error: error retrieving label for image \"$id\": you may need to remove the image to resolve the error"
+        is "$output" "Error: retrieving label for image \"$id\": you may need to remove the image to resolve the error.*"
 
         # Run the requested command. Confirm it succeeds, with suitable warnings
         run_podman $*
-        is "$output" ".*error determining parent of image.*ignoring the error" \
+        is "$output" ".*Failed to determine parent of image.*ignoring the error" \
            "$* with missing $what_to_rm"
 
         run_podman images -a --noheading

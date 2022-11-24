@@ -2,18 +2,17 @@
 
 load helpers
 
+LOOPDEVICE=
+
 # This is a long ugly way to clean up pods and remove the pause image
 function teardown() {
-    run_podman pod rm -f -a
-    run_podman rm -f -a
-    run_podman image list --format '{{.ID}} {{.Repository}}'
-    while read id name; do
-        if [[ "$name" =~ /pause ]]; then
-            run_podman rmi $id
-        fi
-    done <<<"$output"
-
+    run_podman pod rm -f -t 0 -a
+    run_podman rm -f -t 0 -a
+    run_podman rmi --ignore $(pause_image)
     basic_teardown
+    if [[ -n "$LOOPDEVICE" ]]; then
+        losetup -d $LOOPDEVICE
+    fi
 }
 
 
@@ -29,8 +28,7 @@ function teardown() {
 }
 
 @test "podman pod top - containers in different PID namespaces" {
-    # With infra=false, we don't get a /pause container (we also
-    # don't pull k8s.gcr.io/pause )
+    # With infra=false, we don't get a /pause container
     no_infra='--infra=false'
     run_podman pod create $no_infra
     podid="$output"
@@ -57,9 +55,31 @@ function teardown() {
     fi
 
     # Clean up
-    run_podman pod rm -f $podid
+    run_podman --noout pod rm -f -t 0 $podid
+    is "$output" "" "output should be empty"
 }
 
+
+@test "podman pod create - custom infra image" {
+    skip_if_remote "CONTAINERS_CONF only affects server side"
+    image="i.do/not/exist:image"
+    tmpdir=$PODMAN_TMPDIR/pod-test
+    mkdir -p $tmpdir
+    containersconf=$tmpdir/containers.conf
+    cat >$containersconf <<EOF
+[engine]
+infra_image="$image"
+EOF
+
+    run_podman 125 pod create --infra-image $image
+    is "$output" ".*initializing source docker://$image:.*"
+
+    CONTAINERS_CONF=$containersconf run_podman 125 pod create
+    is "$output" ".*initializing source docker://$image:.*"
+
+    CONTAINERS_CONF=$containersconf run_podman 125 create --pod new:test $IMAGE
+    is "$output" ".*initializing source docker://$image:.*"
+}
 
 @test "podman pod - communicating between pods" {
     podname=pod$(random_string)
@@ -71,9 +91,7 @@ function teardown() {
 
     # (Assert that output is formatted, not a one-line blob: #8021)
     run_podman pod inspect $podname
-    if [[ "${#lines[*]}" -lt 10 ]]; then
-        die "Output from 'pod inspect' is only ${#lines[*]} lines; see #8011"
-    fi
+    assert "${#lines[*]}" -ge 10 "Output from 'pod inspect'; see #8011"
 
     # Randomly-assigned port in the 5xxx range
     port=$(random_free_port)
@@ -100,15 +118,8 @@ function teardown() {
     # Clean up. First the nc -l container...
     run_podman rm $cid1
 
-    # ...then, from pause container, find the image ID of the pause image...
-    run_podman pod inspect --format '{{(index .Containers 0).ID}}' $podname
-    pause_cid="$output"
-    run_podman container inspect --format '{{.Image}}' $pause_cid
-    pause_iid="$output"
-
     # ...then rm the pod, then rmi the pause image so we don't leave strays.
     run_podman pod rm $podname
-    run_podman rmi $pause_iid
 
     # Pod no longer exists
     run_podman 1 pod exists $podid
@@ -210,7 +221,7 @@ EOF
                --add-host   "$add_host_n:$add_host_ip"   \
                --dns        "$dns_server"                \
                --dns-search "$dns_search"                \
-               --dns-opt    "$dns_opt"                   \
+               --dns-option "$dns_opt"                   \
                --publish    "$port_out:$port_in"         \
                --label      "${labelname}=${labelvalue}" \
                --infra-image   "$infra_image"            \
@@ -240,16 +251,18 @@ EOF
 
     run_podman run --rm --pod mypod $IMAGE hostname
     is "$output" "$hostname" "--hostname set the hostname"
+    run_podman 125 run --rm --pod mypod --hostname foobar $IMAGE hostname
+    is "$output" ".*invalid config provided: cannot set hostname when joining the pod UTS namespace: invalid configuration" "--hostname should not be allowed in share UTS pod"
 
     run_podman run --rm --pod $pod_id $IMAGE cat /etc/hosts
-    is "$output" ".*$add_host_ip $add_host_n" "--add-host was added"
+    is "$output" ".*$add_host_ip[[:blank:]]$add_host_n" "--add-host was added"
     is "$output" ".*	$hostname"            "--hostname is in /etc/hosts"
     #               ^^^^ this must be a tab, not a space
 
     run_podman run --rm --pod mypod $IMAGE cat /etc/resolv.conf
     is "$output" ".*nameserver $dns_server"  "--dns [server] was added"
     is "$output" ".*search $dns_search"      "--dns-search was added"
-    is "$output" ".*options $dns_opt"        "--dns-opt was added"
+    is "$output" ".*options $dns_opt"        "--dns-option was added"
 
     # pod inspect
     run_podman pod inspect --format '{{.Name}}: {{.ID}} : {{.NumContainers}} : {{.Labels}}' mypod
@@ -301,18 +314,239 @@ EOF
 
     # Clean up
     run_podman rm $cid
-    run_podman pod rm -f mypod
+    run_podman pod rm -t 0 -f mypod
     run_podman rmi $infra_image
-
 }
 
 @test "podman pod create should fail when infra-name is already in use" {
     local infra_name="infra_container_$(random_string 10 | tr A-Z a-z)"
-    run_podman pod create --infra-name "$infra_name"
-    run_podman '?' pod create --infra-name "$infra_name"
-    if [ $status -eq 0 ]; then
-        die "Podman should fail when user try to create two pods with the same infra-name value"
+    local infra_image="k8s.gcr.io/pause:3.5"
+    local pod_name="$(random_string 10 | tr A-Z a-z)"
+
+    run_podman --noout pod create --name $pod_name --infra-name "$infra_name" --infra-image "$infra_image"
+    is "$output" "" "output from pod create should be empty"
+
+    run_podman 125 pod create --infra-name "$infra_name"
+    assert "$output" =~ "^Error: .*: the container name \"$infra_name\" is already in use by .* You have to remove that container to be able to reuse that name: that name is already in use" \
+           "Trying to create two pods with same infra-name"
+
+    run_podman pod rm -f $pod_name
+    run_podman rmi $infra_image
+}
+
+@test "podman pod create --share" {
+    local pod_name="$(random_string 10 | tr A-Z a-z)"
+    run_podman 125 pod create --share bogus --name $pod_name
+    is "$output" ".*invalid kernel namespace to share: bogus. Options are: cgroup, ipc, net, pid, uts or none" \
+       "pod test for bogus --share option"
+    run_podman pod create --share ipc --name $pod_name
+    run_podman pod inspect $pod_name --format "{{.SharedNamespaces}}"
+    is "$output" "[ipc]"
+    run_podman run --rm --pod $pod_name --hostname foobar $IMAGE hostname
+    is "$output" "foobar" "--hostname should work with non share UTS namespace"
+    run_podman pod create --share +pid --replace --name $pod_name
+    run_podman pod inspect $pod_name --format "{{.SharedNamespaces}}"
+    for ns in uts pid ipc net; do
+        is "$output" ".*$ns"
+    done
+}
+
+@test "podman pod create --pod new:$POD --hostname" {
+    local pod_name="$(random_string 10 | tr A-Z a-z)"
+    run_podman run --rm --pod "new:$pod_name" --hostname foobar $IMAGE hostname
+    is "$output" "foobar" "--hostname should work when creating a new:pod"
+    run_podman pod rm $pod_name
+    run_podman run --rm --pod "new:$pod_name" $IMAGE hostname
+    is "$output" "$pod_name" "new:POD should have hostname name set to podname"
+}
+
+@test "podman rm --force to remove infra container" {
+    local pod_name="$(random_string 10 | tr A-Z a-z)"
+    run_podman create --pod "new:$pod_name" $IMAGE
+    container_ID="$output"
+    run_podman pod inspect --format "{{.InfraContainerID}}" $pod_name
+    infra_ID="$output"
+
+    run_podman 125 container rm $infra_ID
+    is "$output" ".* and cannot be removed without removing the pod"
+    run_podman 125 container rm --force $infra_ID
+    is "$output" ".* and cannot be removed without removing the pod"
+
+    run_podman container rm --depend $infra_ID
+    is "$output" ".*$infra_ID.*"
+    is "$output" ".*$container_ID.*"
+
+    # Now make sure that --force --all works as well
+    run_podman create --pod "new:$pod_name" $IMAGE
+    container_1_ID="$output"
+    run_podman create --pod "$pod_name" $IMAGE
+    container_2_ID="$output"
+    run_podman create $IMAGE
+    container_3_ID="$output"
+    run_podman pod inspect --format "{{.InfraContainerID}}" $pod_name
+    infra_ID="$output"
+
+    run_podman container rm --force --all $infraID
+    is "$output" ".*$infra_ID.*"
+    is "$output" ".*$container_1_ID.*"
+    is "$output" ".*$container_2_ID.*"
+    is "$output" ".*$container_3_ID.*"
+}
+
+@test "podman pod create share net" {
+    run_podman pod create --name test
+    run_podman pod inspect test --format {{.InfraConfig.HostNetwork}}
+    is "$output" "false" "Default network sharing should be false"
+    run_podman pod rm test
+
+    run_podman pod create --share ipc  --network private test
+    run_podman pod inspect test --format {{.InfraConfig.HostNetwork}}
+    is "$output" "false" "Private network sharing with only ipc should be false"
+    run_podman pod rm test
+
+    local name="$(random_string 10 | tr A-Z a-z)"
+    run_podman pod create --name $name --share net  --network private
+    run_podman pod inspect $name --format {{.InfraConfig.HostNetwork}}
+    is "$output" "false" "Private network sharing with only net should be false"
+
+    run_podman pod create --share net --network host --replace $name
+    run_podman pod inspect $name --format {{.InfraConfig.HostNetwork}}
+    is "$output" "true" "Host network sharing with only net should be true"
+    run_podman pod rm $name
+
+    run_podman pod create --name test --share ipc --network host
+    run_podman pod inspect test --format {{.InfraConfig.HostNetwork}}
+    is "$output" "true" "Host network sharing with only ipc should be true"
+    run_podman pod rm test
+}
+
+@test "pod exit policies" {
+    # Test setting exit policies
+    run_podman pod create
+    podID="$output"
+    run_podman pod inspect $podID --format "{{.ExitPolicy}}"
+    is "$output" "continue" "default exit policy"
+    run_podman pod rm $podID
+
+    run_podman pod create --exit-policy stop
+    podID="$output"
+    run_podman pod inspect $podID --format "{{.ExitPolicy}}"
+    is "$output" "stop" "custom exit policy"
+    run_podman pod rm $podID
+
+    run_podman 125 pod create --exit-policy invalid
+    is "$output" "Error: .*running pod create option: invalid pod exit policy: \"invalid\"" "invalid exit policy"
+
+    # Test exit-policy behaviour
+    run_podman pod create --exit-policy continue
+    podID="$output"
+    run_podman run --pod $podID $IMAGE true
+    run_podman pod inspect $podID --format "{{.State}}"
+    _ensure_pod_state $podID Degraded
+    run_podman pod rm $podID
+
+    run_podman pod create --exit-policy stop
+    podID="$output"
+    run_podman run --pod $podID $IMAGE true
+    run_podman pod inspect $podID --format "{{.State}}"
+    _ensure_pod_state $podID Exited
+    run_podman pod rm $podID
+}
+
+@test "pod exit policies - play kube" {
+    # play-kube sets the exit policy to "stop"
+    local name="$(random_string 10 | tr A-Z a-z)"
+
+    kubeFile="apiVersion: v1
+kind: Pod
+metadata:
+  name: $name-pod
+spec:
+  containers:
+  - command:
+    - \"true\"
+    image: $IMAGE
+    name: ctr
+  restartPolicy: OnFailure"
+
+    echo "$kubeFile" > $PODMAN_TMPDIR/test.yaml
+    run_podman play kube $PODMAN_TMPDIR/test.yaml
+    run_podman pod inspect $name-pod --format "{{.ExitPolicy}}"
+    is "$output" "stop" "custom exit policy"
+    _ensure_pod_state $name-pod Exited
+    run_podman pod rm $name-pod
+}
+
+@test "pod resource limits" {
+    skip_if_remote "resource limits only implemented on non-remote"
+    skip_if_rootless "resource limits only work with root"
+    skip_if_cgroupsv1 "resource limits only meaningful on cgroups V2"
+    skip_if_aarch64 "FIXME: #15074 - flakes often on aarch64"
+
+    # create loopback device
+    lofile=${PODMAN_TMPDIR}/disk.img
+    fallocate -l 1k  ${lofile}
+    LOOPDEVICE=$(losetup --show -f $lofile)
+
+    # tr needed because losetup seems to use %2d
+    lomajmin=$(losetup -l --noheadings --output MAJ:MIN $LOOPDEVICE | tr -d ' ')
+    run grep -w bfq /sys/block/$(basename ${LOOPDEVICE})/queue/scheduler
+    if [ $status -ne 0 ]; then
+        losetup -d $LOOPDEVICE
+        LOOPDEVICE=
+        skip "BFQ scheduler is not supported on the system"
     fi
+    echo bfq > /sys/block/$(basename ${LOOPDEVICE})/queue/scheduler
+
+    # FIXME: #15464: blkio-weight-device not working
+    expected_limits="
+cpu.max         | 500000 100000
+memory.max      | 5242880
+memory.swap.max | 1068498944
+io.bfq.weight   | default 50
+io.max          | $lomajmin rbps=1048576 wbps=1048576 riops=max wiops=max
+"
+
+    for cgm in systemd cgroupfs; do
+        local name=resources-$cgm
+        run_podman --cgroup-manager=$cgm pod create --name=$name --cpus=5 --memory=5m --memory-swap=1g --cpu-shares=1000 --cpuset-cpus=0 --cpuset-mems=0 --device-read-bps=${LOOPDEVICE}:1mb --device-write-bps=${LOOPDEVICE}:1mb --blkio-weight=50
+        run_podman --cgroup-manager=$cgm pod start $name
+        run_podman pod inspect --format '{{.CgroupPath}}' $name
+        local cgroup_path="$output"
+
+        while read unit expect; do
+            local actual=$(< /sys/fs/cgroup/$cgroup_path/$unit)
+            is "$actual" "$expect" "resource limit under $cgm: $unit"
+        done < <(parse_table "$expected_limits")
+        run_podman --cgroup-manager=$cgm pod rm -f $name
+    done
+
+    # Clean up, and prevent duplicate cleanup in teardown
+    losetup -d $LOOPDEVICE
+    LOOPDEVICE=
+}
+
+@test "podman pod ps doesn't race with pod rm" {
+    # create a few pods
+    for i in {0..10}; do
+        run_podman pod create
+    done
+
+    # and delete them
+    $PODMAN pod rm -a &
+
+    # pod ps should not fail while pods are deleted
+    run_podman pod ps -q
+
+    # wait for pod rm -a
+    wait
+}
+
+@test "podman pod rm --force bogus" {
+    run_podman 1 pod rm bogus
+    is "$output" "Error: .*bogus.*: no such pod" "Should print error"
+    run_podman pod rm --force bogus
+    is "$output" "" "Should print no output"
 }
 
 # vim: filetype=sh

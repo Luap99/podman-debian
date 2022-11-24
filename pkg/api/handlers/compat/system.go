@@ -4,12 +4,12 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/containers/podman/v3/libpod"
-	"github.com/containers/podman/v3/pkg/api/handlers"
-	"github.com/containers/podman/v3/pkg/api/handlers/utils"
-	api "github.com/containers/podman/v3/pkg/api/types"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/domain/infra/abi"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/pkg/api/handlers"
+	"github.com/containers/podman/v4/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v4/pkg/api/types"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/domain/infra/abi"
 	docker "github.com/docker/docker/api/types"
 )
 
@@ -76,7 +76,7 @@ func GetDiskUsage(w http.ResponseWriter, r *http.Request) {
 			Scope:      "local",
 			Status:     nil,
 			UsageData: &docker.VolumeUsageData{
-				RefCount: 1,
+				RefCount: int64(o.Links),
 				Size:     o.Size,
 			},
 		}

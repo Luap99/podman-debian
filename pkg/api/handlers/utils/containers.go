@@ -2,24 +2,24 @@ package utils
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
-	"github.com/containers/podman/v3/libpod/events"
-	api "github.com/containers/podman/v3/pkg/api/types"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/domain/infra/abi"
+	"github.com/containers/podman/v4/libpod/events"
+	api "github.com/containers/podman/v4/pkg/api/types"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/domain/infra/abi"
 
-	"github.com/containers/podman/v3/pkg/api/handlers"
+	"github.com/containers/podman/v4/pkg/api/handlers"
 	"github.com/sirupsen/logrus"
 
-	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v4/libpod/define"
 
-	"github.com/containers/podman/v3/libpod"
+	"github.com/containers/podman/v4/libpod"
 	"github.com/gorilla/schema"
-	"github.com/pkg/errors"
 )
 
 type waitQueryDocker struct {
@@ -39,7 +39,7 @@ func WaitContainerDocker(w http.ResponseWriter, r *http.Request) {
 
 	decoder := ctx.Value(api.DecoderKey).(*schema.Decoder)
 	if err = decoder.Decode(&query, r.URL.Query()); err != nil {
-		Error(w, "Something went wrong.", http.StatusBadRequest, errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
+		Error(w, http.StatusBadRequest, fmt.Errorf("failed to parse parameters for %s: %w", r.URL.String(), err))
 		return
 	}
 
@@ -57,7 +57,6 @@ func WaitContainerDocker(w http.ResponseWriter, r *http.Request) {
 	name := GetName(r)
 
 	exists, err := containerExists(ctx, name)
-
 	if err != nil {
 		InternalServerError(w, err)
 		return
@@ -70,7 +69,7 @@ func WaitContainerDocker(w http.ResponseWriter, r *http.Request) {
 	// In docker compatibility mode we have to send headers in advance,
 	// otherwise docker client would freeze.
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(200)
+	w.WriteHeader(http.StatusOK)
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
 	}
@@ -78,7 +77,7 @@ func WaitContainerDocker(w http.ResponseWriter, r *http.Request) {
 	exitCode, err := waitDockerCondition(ctx, name, interval, condition)
 	var errStruct *struct{ Message string }
 	if err != nil {
-		logrus.Errorf("error while waiting on condition: %q", err)
+		logrus.Errorf("While waiting on condition: %q", err)
 		errStruct = &struct {
 			Message string
 		}{
@@ -94,20 +93,19 @@ func WaitContainerDocker(w http.ResponseWriter, r *http.Request) {
 	enc.SetEscapeHTML(true)
 	err = enc.Encode(&responseData)
 	if err != nil {
-		logrus.Errorf("unable to write json: %q", err)
+		logrus.Errorf("Unable to write json: %q", err)
 	}
 }
 
 func WaitContainerLibpod(w http.ResponseWriter, r *http.Request) {
 	var (
-		err        error
-		interval   = time.Millisecond * 250
-		conditions = []define.ContainerStatus{define.ContainerStateStopped, define.ContainerStateExited}
+		err      error
+		interval = time.Millisecond * 250
 	)
 	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	query := waitQueryLibpod{}
 	if err := decoder.Decode(&query, r.URL.Query()); err != nil {
-		Error(w, "Something went wrong.", http.StatusBadRequest, errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
+		Error(w, http.StatusBadRequest, fmt.Errorf("failed to parse parameters for %s: %w", r.URL.String(), err))
 		return
 	}
 
@@ -119,19 +117,12 @@ func WaitContainerLibpod(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if _, found := r.URL.Query()["condition"]; found {
-		if len(query.Condition) > 0 {
-			conditions = query.Condition
-		}
-	}
-
 	name := GetName(r)
 
 	waitFn := createContainerWaitFn(r.Context(), name, interval)
-
-	exitCode, err := waitFn(conditions...)
+	exitCode, err := waitFn(query.Condition...)
 	if err != nil {
-		if errors.Cause(err) == define.ErrNoSuchCtr {
+		if errors.Is(err, define.ErrNoSuchCtr) {
 			ContainerNotFound(w, name, err)
 			return
 		}
@@ -192,14 +183,13 @@ func waitDockerCondition(ctx context.Context, containerName string, interval tim
 var notRunningStates = []define.ContainerStatus{
 	define.ContainerStateCreated,
 	define.ContainerStateRemoving,
-	define.ContainerStateStopped,
 	define.ContainerStateExited,
 	define.ContainerStateConfigured,
 }
 
 func waitRemoved(ctrWait containerWaitFn) (int32, error) {
 	code, err := ctrWait(define.ContainerStateUnknown)
-	if err != nil && errors.Cause(err) == define.ErrNoSuchCtr {
+	if err != nil && errors.Is(err, define.ErrNoSuchCtr) {
 		return code, nil
 	}
 	return code, err

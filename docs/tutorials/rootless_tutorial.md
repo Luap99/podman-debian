@@ -1,4 +1,4 @@
-![PODMAN logo](../../logo/podman-logo-source.svg)
+![PODMAN logo](https://raw.githubusercontent.com/containers/common/main/logos/podman-logo-full-vert.png)
 
 # Basic Setup and Use of Podman in a Rootless environment.
 
@@ -19,11 +19,11 @@ or for all commands by changing the value for the "Default OCI runtime" in the `
 
 ### Installing Podman
 
-For installing Podman, please see the [installation instructions](https://github.com/containers/podman/blob/main/install.md).
+For installing Podman, please see the [installation instructions](https://podman.io/getting-started/installation).
 
 ### Building Podman
 
-For building Podman, please see the [installation instructions](https://github.com/containers/podman/blob/main/install.md#building-from-scratch).
+For building Podman, please see the [build instructions](https://podman.io/getting-started/installation#building-from-scratch).
 
 ### Install `slirp4netns`
 
@@ -81,10 +81,10 @@ If you update either `/etc/subuid` or `/etc/subgid`, you need to stop all the ru
 Rather than updating the files directly, the `usermod` program can be used to assign UIDs and GIDs to a user.
 
 ```
-usermod --add-subuids 200000-201000 --add-subgids 200000-201000 johndoe
+usermod --add-subuids 100000-165535 --add-subgids 100000-165535 johndoe
 grep johndoe /etc/subuid /etc/subgid
-/etc/subuid:johndoe:200000:1001
-/etc/subgid:johndoe:200000:1001
+/etc/subuid:johndoe:100000:65536
+/etc/subgid:johndoe:100000:65536
 ```
 
 ### Enable unprivileged `ping`
@@ -186,10 +186,10 @@ We do recognize that this doesn't really match how many people intend to use roo
 
 It is also helpful to distinguish between running Podman as a rootless user, and a container which is built to run rootless. If the container you're trying to run has a `USER` which is not root, then when mounting volumes you **must** use `--userns=keep-id`. This is because the container user would not be able to become `root` and access the mounted volumes.
 
-Other considerations in regards to volumes:
+Another consideration in regards to volumes:
 
-- You should always give the full path to the volume you'd like to mount
-- The mount point must exist in the container
+- When providing the path of a directory you'd like to bind-mount, the path needs to be provided as an absolute path
+  or a relative path that starts with `.` (a dot), otherwise the string will be interpreted as the name of a named volume.
 
 ## More information
 

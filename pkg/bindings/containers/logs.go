@@ -2,13 +2,13 @@ package containers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 
-	"github.com/containers/podman/v3/pkg/bindings"
-	"github.com/pkg/errors"
+	"github.com/containers/podman/v4/pkg/bindings"
 )
 
 // Logs obtains a container's logs given the options provided.  The logs are then sent to the
@@ -29,7 +29,7 @@ func Logs(ctx context.Context, nameOrID string, options *LogOptions, stdoutChan,
 	if options.Stdout == nil && options.Stderr == nil {
 		params.Set("stdout", strconv.FormatBool(true))
 	}
-	response, err := conn.DoRequest(nil, http.MethodGet, "/containers/%s/logs", params, nil, nameOrID)
+	response, err := conn.DoRequest(ctx, nil, http.MethodGet, "/containers/%s/logs", params, nil, nameOrID)
 	if err != nil {
 		return err
 	}
@@ -57,7 +57,7 @@ func Logs(ctx context.Context, nameOrID string, options *LogOptions, stdoutChan,
 		case 2:
 			stderrChan <- string(frame)
 		case 3:
-			return errors.New("error from service in stream: " + string(frame))
+			return errors.New("from service in stream: " + string(frame))
 		default:
 			return fmt.Errorf("unrecognized input header: %d", fd)
 		}

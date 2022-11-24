@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/containers/podman/v3/libpod/define"
-	. "github.com/containers/podman/v3/test/utils"
+	"github.com/containers/podman/v4/libpod/define"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -26,7 +26,6 @@ var _ = Describe("Podman init containers", func() {
 		}
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
 	})
 
 	AfterEach(func() {
@@ -66,7 +65,7 @@ var _ = Describe("Podman init containers", func() {
 		inspect.WaitWithDefaultTimeout()
 		Expect(inspect).Should(Exit(0))
 		data := inspect.InspectPodToJSON()
-		Expect(data.State).To(Equal(define.PodStateRunning))
+		Expect(data).To(HaveField("State", define.PodStateRunning))
 	})
 
 	It("podman create init container should fail in running pod", func() {
@@ -114,7 +113,7 @@ var _ = Describe("Podman init containers", func() {
 		check := podmanTest.Podman([]string{"container", "exists", initContainerID})
 		check.WaitWithDefaultTimeout()
 		// Container was rm'd
-		//Expect(check).Should(Exit(1))
+		// Expect(check).Should(Exit(1))
 		Expect(check.ExitCode()).To(Equal(1), "I dont understand why the other way does not work")
 		// Lets double check with a stop and start
 		stopPod := podmanTest.Podman([]string{"pod", "stop", "foobar"})
@@ -135,7 +134,7 @@ var _ = Describe("Podman init containers", func() {
 		filename := filepath.Join("/dev/shm", RandomString(12))
 
 		// Write the date to a file
-		session := podmanTest.Podman([]string{"create", "--init-ctr", "always", "--pod", "new:foobar", ALPINE, "bin/sh", "-c", fmt.Sprintf("date > %s", filename)})
+		session := podmanTest.Podman([]string{"create", "--init-ctr", "always", "--pod", "new:foobar", fedoraMinimal, "bin/sh", "-c", "date +%T.%N > " + filename})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		verify := podmanTest.Podman([]string{"create", "--pod", "foobar", "-t", ALPINE, "top"})

@@ -54,6 +54,11 @@ option is listed in the appropriate man page and vice-versa.
 
 $ME invokes '\$PODMAN' (default: $Default_Podman).
 
+In the spirit of shoehorning functionality where it wasn't intended,
+$ME also checks the SEE ALSO section of each man page
+to ensure that references and links are properly formatted
+and valid.
+
 Exit status is zero if no inconsistencies found, one otherwise
 
 OPTIONS:
@@ -130,7 +135,7 @@ sub xref_by_help {
         }
         else {
             my $man = $man->{_path} || 'man';
-            warn "$ME: podman @subcommand --help lists $k, but $k not in $man\n";
+            warn "$ME: 'podman @subcommand --help' lists '$k', which is not in $man\n";
             ++$Errs;
         }
     }
@@ -181,7 +186,7 @@ sub xref_by_man {
             # Special case: podman completion is a hidden command
             next if $k eq 'completion';
 
-            warn "$ME: podman @subcommand: $k in $man, but not --help\n";
+            warn "$ME: 'podman @subcommand': $k in $man, but not --help\n";
             ++$Errs;
         }
     }
@@ -200,13 +205,6 @@ sub xref_rst {
         # Check for subcommands, if any (eg podman system -> connection -> add)
         if (ref $help->{$k}) {
             xref_rst($help->{$k}, $rst->{$k}, @subcommand, $k);
-        }
-
-        # Check that command is mentioned in at least one .rst file
-        if (! exists $rst->{$k}{_desc}) {
-            my @podman = ("podman", @subcommand, $k);
-            warn "$ME: no link in *.rst for @podman\n";
-            ++$Errs;
         }
     }
 }
@@ -289,16 +287,35 @@ sub podman_man {
     my $section = '';
     my @most_recent_flags;
     my $previous_subcmd = '';
+    my $previous_flag = '';
     while (my $line = <$fh>) {
         chomp $line;
         next unless $line;		# skip empty lines
 
+        # First line (page title) must match the command name.
+        if ($line =~ /^%\s+/) {
+            my $expect = "% $command 1";
+            if ($line ne $expect) {
+                warn "$ME: $subpath:$.: wrong title line '$line'; should be '$expect'\n";
+                ++$Errs;
+            }
+        }
+
         # .md files designate sections with leading double hash
         if ($line =~ /^##\s*(GLOBAL\s+)?OPTIONS/) {
             $section = 'flags';
+            $previous_flag = '';
+        }
+        elsif ($line =~ /^###\s+\w+\s+OPTIONS/) {
+            # podman image trust has sections for set & show
+            $section = 'flags';
+            $previous_flag = '';
         }
         elsif ($line =~ /^\#\#\s+(SUB)?COMMANDS/) {
             $section = 'commands';
+        }
+        elsif ($line =~ /^\#\#\s+SEE\s+ALSO/) {
+            $section = 'see-also';
         }
         elsif ($line =~ /^\#\#[^#]/) {
             $section = '';
@@ -319,7 +336,7 @@ sub podman_man {
                 # $1 will be changed by recursion _*BEFORE*_ left-hand assignment
                 my $subcmd = $1;
                 if ($previous_subcmd gt $subcmd) {
-                    warn "$ME: $subpath: '$previous_subcmd' and '$subcmd' are out of order\n";
+                    warn "$ME: $subpath:$.: '$previous_subcmd' and '$subcmd' are out of order\n";
                     ++$Errs;
                 }
                 $previous_subcmd = $subcmd;
@@ -341,18 +358,73 @@ sub podman_man {
                 # If option has long and short form, long must come first.
                 # This is a while-loop because there may be multiple long
                 # option names, e.g. --net/--network
-                while ($line =~ s/^\*\*(--[a-z0-9-]+)\*\*(=\*[a-zA-Z0-9-]+\*)?(,\s+)?//g) {
-                    $man{$1} = 1;
-                    push @most_recent_flags, $1;
+                my $is_first = 1;
+                while ($line =~ s/^\*\*(--[a-z0-9-]+)\*\*(,\s+)?//g) {
+                    my $flag = $1;
+                    $man{$flag} = 1;
+                    if ($flag lt $previous_flag && $is_first) {
+                        warn "$ME: $subpath:$.: $flag should precede $previous_flag\n";
+                        ++$Errs;
+                    }
+                    $previous_flag = $flag if $is_first;
+                    push @most_recent_flags, $flag;
+
+                    # Further iterations of /g are allowed to be out of order,
+                    # e.g., it's OK for "--namespace, -ns" to precede --nohead
+                    $is_first = 0;
                 }
                 # Short form
-                if ($line =~ s/^\*\*(-[a-zA-Z0-9])\*\*(=\*[a-zA-Z0-9-]+\*)?//g) {
-                    $man{$1} = 1;
+                if ($line =~ s/^\*\*(-[a-zA-Z0-9])\*\*//) {
+                    my $flag = $1;
+                    $man{$flag} = 1;
 
                     # Keep track of them, in case we see 'Not implemented' below
-                    push @most_recent_flags, $1;
+                    push @most_recent_flags, $flag;
+                }
+
+                # Options with no '=whatever'
+                next if !$line;
+
+                # Anything remaining *must* be of the form '=<possibilities>'
+                if ($line !~ /^=/) {
+                    warn "$ME: $subpath:$.: could not parse '$line' in option description\n";
+                    ++$Errs;
+                }
+
+                # For some years it was traditional, albeit wrong, to write
+                #     **--foo**=*bar*, **-f**
+                # The correct way is to add =*bar* at the end.
+                if ($line =~ s/,\s\*\*(-[a-zA-Z])\*\*//) {
+                    $man{$1} = 1;
+                    warn "$ME: $subpath:$.: please rewrite as ', **$1**$line'\n";
+                    ++$Errs;
+                }
+
+                # List of possibilities ('=*a* | *b*') must be space-separated
+                if ($line =~ /\|/) {
+                    if ($line =~ /[^\s]\|[^\s]/) {
+                        # Sigh, except for this one special case
+                        if ($line !~ /SOURCE-VOLUME.*HOST-DIR.*CONTAINER-DIR/) {
+                            warn "$ME: $subpath:$.: values must be space-separated: '$line'\n";
+                            ++$Errs;
+                        }
+                    }
+                    my $copy = $line;
+                    if ($copy =~ s/\**true\**//) {
+                        if ($copy =~ s/\**false\**//) {
+                            if ($copy !~ /[a-z]/) {
+                                warn "$ME: $subpath:$.: Do not enumerate true/false for boolean-only options\n";
+                                ++$Errs;
+                            }
+                        }
+                    }
                 }
             }
+        }
+
+        # It's easy to make mistakes in the SEE ALSO elements.
+        elsif ($section eq 'see-also') {
+            _check_seealso_links( "$subpath:$.", $line );
         }
     }
     close $fh;
@@ -440,6 +512,120 @@ sub podman_rst {
 }
 
 # END   data gathering
+###############################################################################
+# BEGIN sanity checking of SEE ALSO links
+
+##########################
+#  _check_seealso_links  #  Check formatting and link validity.
+##########################
+sub _check_seealso_links {
+    my $path = shift;
+    my $line = shift;
+
+    return if ! $line;
+
+    # Line must be a comma-separated list of man page references, e.g.
+    #    **foo(1)**, **[podman-bar(1)](podman-bar.1.md)**, **[xxx(8)](http...)**
+  TOKEN:
+    for my $token (split /,\s+/, $line) {
+        # Elements must be separated by comma and space. (We don't do further
+        # checks here, so it's possible for the dev to add the space and then
+        # have us fail on the next iteration. I choose not to address that.)
+        if ($token =~ /,/) {
+            warn "$ME: $path: please add space after comma: '$token'\n";
+            ++$Errs;
+            next TOKEN;
+        }
+
+        # Each token must be of the form '**something**'
+        if ($token !~ s/^\*\*(.*)\*\*$/$1/) {
+            if ($token =~ /\*\*/) {
+                warn "$ME: $path: '$token' has asterisks in the wrong place\n";
+            }
+            else {
+                warn "$ME: $path: '$token' should be bracketed by '**'\n";
+            }
+            ++$Errs;
+            next TOKEN;
+        }
+
+        # Is it a markdown link?
+        if ($token =~ /^\[(\S+)\]\((\S+)\)$/) {
+            my ($name, $link) = ($1, $2);
+            if ($name =~ /^(.*)\((\d)\)$/) {
+                my ($base, $section) = ($1, $2);
+                if (-e "$Markdown_Path/$base.$section.md" || -e "$Markdown_Path/links/$base.$section") {
+                    if ($link ne "$base.$section.md") {
+                        warn "$ME: $path: inconsistent link $name -> $link, expected $base.$section.md\n";
+                        ++$Errs;
+                    }
+                }
+                else {
+                    if (! _is_valid_external_link($base, $section, $link)) {
+                        warn "$ME: $path: invalid link $name -> $link\n";
+                        ++$Errs;
+                    }
+                }
+            }
+            else {
+                warn "$ME: $path: could not parse '$name' as 'manpage(N)'\n";
+                ++$Errs;
+            }
+        }
+
+        # Not a markdown link; it must be a plain man reference, e.g. 'foo(5)'
+        elsif ($token =~ m!^(\S+)\((\d+)\)$!) {
+            my ($base, $section) = ($1, $2);
+
+            # Unadorned 'podman-foo(1)' must be a link.
+            if (-e "$Markdown_Path/$base.$section.md" || -e "$Markdown_Path/links/$base.$section") {
+                warn "$ME: $path: '$token' should be '[$token]($base.$section.md)'\n";
+                ++$Errs;
+            }
+
+            # Link to man page foo(5) but without a link. This is not an error
+            # but Ed may sometimes want to see those on a manual test run.
+            warn "$ME: $path: plain '$token' would be so much nicer as a link\n"
+                if $verbose;
+        }
+        else {
+            warn "$ME: $path: invalid token '$token'\n";
+            ++$Errs;
+        }
+    }
+}
+
+#############################
+#  _is_valid_external_link  #  Tries to validate links to external man pages
+#############################
+#
+# This performs no actual fetches, so we can't actually check for 404.
+# All we do is ensure that links conform to standard patterns. This is
+# good for catching things like 'conmon(8)' pointing to a .5 URL, or
+# linking to .md instead of .html.
+#
+# FIXME: we could actually rewrite this so as to offer hints on what to fix.
+# That's a lot of work, and a lot of convoluted code, for questionable ROI.
+#
+sub _is_valid_external_link {
+    my ($base, $section, $link) = @_;
+
+    return 1 if $link =~ m!^https://github\.com/\S+/blob/(main|master)(/.*)?/\Q$base\E\.$section\.md!;
+
+    return 1 if $link =~ m!^https://.*unix\.com/man-page/(linux|redhat)/$section/$base$!;
+    return 1 if $link eq "https://man7\.org/linux/man-pages/man$section/$base\.$section\.html";
+
+    if ($base =~ /systemd/) {
+        return 1 if $link eq "https://www.freedesktop.org/software/systemd/man/$base.html";
+    }
+
+    return;
+}
+
+
+
+
+# END   sanity checking of SEE ALSO links
 ###############################################################################
 
 1;

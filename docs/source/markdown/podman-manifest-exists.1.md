@@ -1,4 +1,4 @@
-% podman-manifest-exists(1)
+% podman-manifest-exists 1
 
 ## NAME
 podman\-manifest\-exists - Check if the given manifest list exists in local storage
@@ -37,7 +37,7 @@ $
 ```
 
 ## SEE ALSO
-podman(1), podman-manifest-create(1), podman-manifest-remove(1)
+**[podman(1)](podman.1.md)**, **[podman-manifest(1)](podman-manifest.1.md)**
 
 ## HISTORY
 January 2021, Originally compiled by Paul Holzinger `<paul.holzinger@web.de>`

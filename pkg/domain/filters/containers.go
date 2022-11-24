@@ -1,16 +1,17 @@
 package filters
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/containers/podman/v3/libpod"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/pkg/network"
-	"github.com/containers/podman/v3/pkg/util"
-	"github.com/pkg/errors"
+	"github.com/containers/common/pkg/filters"
+	cutil "github.com/containers/common/pkg/util"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/util"
 )
 
 // GenerateContainerFilterFuncs return ContainerFilter functions based of filter.
@@ -24,7 +25,7 @@ func GenerateContainerFilterFuncs(filter string, filterValues []string, r *libpo
 	case "label":
 		// we have to match that all given labels exits on that container
 		return func(c *libpod.Container) bool {
-			return util.MatchLabelFilters(filterValues, c.Labels())
+			return filters.MatchLabelFilters(filterValues, c.Labels())
 		}, nil
 	case "name":
 		// we only have to match one name
@@ -36,7 +37,7 @@ func GenerateContainerFilterFuncs(filter string, filterValues []string, r *libpo
 		for _, exitCode := range filterValues {
 			ec, err := strconv.ParseInt(exitCode, 10, 32)
 			if err != nil {
-				return nil, errors.Wrapf(err, "exited code out of range %q", ec)
+				return nil, fmt.Errorf("exited code out of range %q: %w", ec, err)
 			}
 			exitCodes = append(exitCodes, int32(ec))
 		}
@@ -53,8 +54,8 @@ func GenerateContainerFilterFuncs(filter string, filterValues []string, r *libpo
 		}, nil
 	case "status":
 		for _, filterValue := range filterValues {
-			if !util.StringInSlice(filterValue, []string{"created", "running", "paused", "stopped", "exited", "unknown"}) {
-				return nil, errors.Errorf("%s is not a valid status", filterValue)
+			if _, err := define.StringToContainerStatus(filterValue); err != nil {
+				return nil, err
 			}
 		}
 		return func(c *libpod.Container) bool {
@@ -184,7 +185,7 @@ func GenerateContainerFilterFuncs(filter string, filterValues []string, r *libpo
 		for _, podNameOrID := range filterValues {
 			p, err := r.LookupPod(podNameOrID)
 			if err != nil {
-				if errors.Cause(err) == define.ErrNoSuchPod {
+				if errors.Is(err, define.ErrNoSuchPod) {
 					continue
 				}
 				return nil, err
@@ -210,6 +211,17 @@ func GenerateContainerFilterFuncs(filter string, filterValues []string, r *libpo
 			return false
 		}, nil
 	case "network":
+		var inputNetNames []string
+		for _, val := range filterValues {
+			net, err := r.Network().NetworkInspect(val)
+			if err != nil {
+				if errors.Is(err, define.ErrNoSuchNetwork) {
+					continue
+				}
+				return nil, err
+			}
+			inputNetNames = append(inputNetNames, net.Name)
+		}
 		return func(c *libpod.Container) bool {
 			networkMode := c.NetworkMode()
 			// support docker like `--filter network=container:<IDorName>`
@@ -241,18 +253,14 @@ func GenerateContainerFilterFuncs(filter string, filterValues []string, r *libpo
 				return false
 			}
 
-			networks, _, err := c.Networks()
+			networks, err := c.Networks()
 			// if err or no networks, quick out
 			if err != nil || len(networks) == 0 {
 				return false
 			}
 			for _, net := range networks {
-				netID := network.GetNetworkID(net)
-				for _, val := range filterValues {
-					// match by network name or id
-					if val == net || val == netID {
-						return true
-					}
+				if cutil.StringInSlice(net, inputNetNames) {
+					return true
 				}
 			}
 			return false
@@ -264,7 +272,7 @@ func GenerateContainerFilterFuncs(filter string, filterValues []string, r *libpo
 				invalidPolicyNames = append(invalidPolicyNames, policy)
 			}
 		}
-		var filterValueError error = nil
+		var filterValueError error
 		if len(invalidPolicyNames) > 0 {
 			errPrefix := "invalid restart policy"
 			if len(invalidPolicyNames) > 1 {
@@ -284,7 +292,7 @@ func GenerateContainerFilterFuncs(filter string, filterValues []string, r *libpo
 			return false
 		}, filterValueError
 	}
-	return nil, errors.Errorf("%s is an invalid filter", filter)
+	return nil, fmt.Errorf("%s is an invalid filter", filter)
 }
 
 // GeneratePruneContainerFilterFuncs return ContainerFilter functions based of filter for prune operation
@@ -292,12 +300,16 @@ func GeneratePruneContainerFilterFuncs(filter string, filterValues []string, r *
 	switch filter {
 	case "label":
 		return func(c *libpod.Container) bool {
-			return util.MatchLabelFilters(filterValues, c.Labels())
+			return filters.MatchLabelFilters(filterValues, c.Labels())
+		}, nil
+	case "label!":
+		return func(c *libpod.Container) bool {
+			return !filters.MatchLabelFilters(filterValues, c.Labels())
 		}, nil
 	case "until":
 		return prepareUntilFilterFunc(filterValues)
 	}
-	return nil, errors.Errorf("%s is an invalid filter", filter)
+	return nil, fmt.Errorf("%s is an invalid filter", filter)
 }
 
 func prepareUntilFilterFunc(filterValues []string) (func(container *libpod.Container) bool, error) {

@@ -1,4 +1,4 @@
-package test_bindings
+package bindings_test
 
 import (
 	"context"
@@ -6,9 +6,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/containers/podman/v3/pkg/bindings"
-	"github.com/containers/podman/v3/pkg/bindings/containers"
-	"github.com/containers/podman/v3/pkg/bindings/network"
+	"github.com/containers/common/libnetwork/types"
+	"github.com/containers/podman/v4/pkg/bindings"
+	"github.com/containers/podman/v4/pkg/bindings/containers"
+	"github.com/containers/podman/v4/pkg/bindings/network"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
@@ -41,10 +42,10 @@ var _ = Describe("Podman networks", func() {
 
 	It("podman prune unused networks with filters", func() {
 		name := "foobar"
-		opts := network.CreateOptions{
-			Name: &name,
+		net := types.Network{
+			Name: name,
 		}
-		_, err = network.Create(connText, &opts)
+		_, err = network.Create(connText, &net)
 		Expect(err).To(BeNil())
 
 		// Invalid filters should return error
@@ -79,7 +80,7 @@ var _ = Describe("Podman networks", func() {
 
 		// Valid filter params => network should be pruned now.
 		filters = map[string][]string{
-			"until": {"5000000000"}, //June 11, 2128
+			"until": {"5000000000"}, // June 11, 2128
 		}
 		pruneResponse, err = network.Prune(connText, new(network.PruneOptions).WithFilters(filters))
 		Expect(err).To(BeNil())
@@ -88,45 +89,45 @@ var _ = Describe("Podman networks", func() {
 
 	It("create network", func() {
 		// create a network with blank config should work
-		_, err = network.Create(connText, &network.CreateOptions{})
+		_, err = network.Create(connText, nil)
 		Expect(err).To(BeNil())
 
 		name := "foobar"
-		opts := network.CreateOptions{
-			Name: &name,
+		net := types.Network{
+			Name: name,
 		}
 
-		report, err := network.Create(connText, &opts)
+		report, err := network.Create(connText, &net)
 		Expect(err).To(BeNil())
-		Expect(report.Filename).To(ContainSubstring(name))
+		Expect(report.Name).To(Equal(name))
 
 		// create network with same name should 500
-		_, err = network.Create(connText, &opts)
+		_, err = network.Create(connText, &net)
 		Expect(err).ToNot(BeNil())
 		code, _ := bindings.CheckResponseCode(err)
-		Expect(code).To(BeNumerically("==", http.StatusInternalServerError))
+		Expect(code).To(BeNumerically("==", http.StatusConflict))
 	})
 
 	It("inspect network", func() {
 		name := "foobar"
-		opts := network.CreateOptions{
-			Name: &name,
+		net := types.Network{
+			Name: name,
 		}
-		_, err = network.Create(connText, &opts)
+		_, err = network.Create(connText, &net)
 		Expect(err).To(BeNil())
 		data, err := network.Inspect(connText, name, nil)
 		Expect(err).To(BeNil())
-		Expect(data[0]["name"]).To(Equal(name))
+		Expect(data.Name).To(Equal(name))
 	})
 
 	It("list networks", func() {
 		// create a bunch of named networks and make verify with list
 		netNames := []string{"homer", "bart", "lisa", "maggie", "marge"}
 		for i := 0; i < 5; i++ {
-			opts := network.CreateOptions{
-				Name: &netNames[i],
+			net := types.Network{
+				Name: netNames[i],
 			}
-			_, err = network.Create(connText, &opts)
+			_, err = network.Create(connText, &net)
 			Expect(err).To(BeNil())
 		}
 		list, err := network.List(connText, nil)
@@ -166,10 +167,10 @@ var _ = Describe("Podman networks", func() {
 
 		// Removing an unused network should work
 		name := "unused"
-		opts := network.CreateOptions{
-			Name: &name,
+		net := types.Network{
+			Name: name,
 		}
-		_, err = network.Create(connText, &opts)
+		_, err = network.Create(connText, &net)
 		Expect(err).To(BeNil())
 		report, err := network.Remove(connText, name, nil)
 		Expect(err).To(BeNil())
@@ -177,10 +178,10 @@ var _ = Describe("Podman networks", func() {
 
 		// Removing a network that is being used without force should be 500
 		name = "used"
-		opts = network.CreateOptions{
-			Name: &name,
+		net = types.Network{
+			Name: name,
 		}
-		_, err = network.Create(connText, &opts)
+		_, err = network.Create(connText, &net)
 		Expect(err).To(BeNil())
 
 		// Start container and wait

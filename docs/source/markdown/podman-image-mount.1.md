@@ -1,4 +1,4 @@
-% podman-image-mount(1)
+% podman-image-mount 1
 
 ## NAME
 podman\-image\-mount - Mount an image's root filesystem
@@ -73,4 +73,4 @@ podman image mount --format json
 ```
 
 ## SEE ALSO
-podman(1), podman-image-umount(1), mount(8), podman-unshare(1)
+**[podman(1)](podman.1.md)**, **[podman-image(1)](podman-image.1.md)**, **[podman-image-umount(1)](podman-image-umount.1.md)**, **[podman-unshare(1)](podman-unshare.1.md)**, **mount(8)**

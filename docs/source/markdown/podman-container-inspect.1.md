@@ -1,4 +1,4 @@
-% podman-container-inspect(1)
+% podman-container-inspect 1
 
 ## NAME
 podman\-container\-inspect - Display a container's configuration
@@ -18,12 +18,56 @@ all results in a JSON array. If a format is specified, the given template will b
 Format the output using the given Go template.
 The keys of the returned JSON can be used as the values for the --format flag (see examples below).
 
+Valid placeholders for the Go template are listed below:
+
+| **Placeholder**      | **Description**                                    |
+| -----------------    | ------------------                                 |
+| .AppArmorProfile     | AppArmor profile (string)                          |
+| .Args                | Command-line arguments (array of strings)          |
+| .BoundingCaps        | Bounding capability set (array of strings)         |
+| .Config ...          | Structure with config info                         |
+| .ConmonPidFile       | Path to file containing conmon pid (string)        |
+| .Created             | Container creation time (string, ISO3601)          |
+| .Dependencies        | Dependencies (array of strings)                    |
+| .Driver              | Storage driver (string)                            |
+| .EffectiveCaps       | Effective capability set (array of strings)        |
+| .ExecIDs             | Exec IDs (array of strings)                        |
+| .GraphDriver ...     | Further details of graph driver (struct)           |
+| .HostConfig ...      | Host config details (struct)                       |
+| .HostnamePath        | Path to file containing hostname (string)          |
+| .HostsPath           | Path to container /etc/hosts file (string)         |
+| .ID                  | Container ID (full 64-char hash)                   |
+| .Image               | Container image ID (64-char hash)                  |
+| .ImageName           | Container image name (string)                      |
+| .IsInfra             | Is this an infra container? (string: true/false)   |
+| .IsService           | Is this a service container? (string: true/false)  |
+| .MountLabel          | SELinux label of mount (string)                    |
+| .Mounts              | Mounts (array of strings)                          |
+| .Name                | Container name (string)                            |
+| .Namespace           | Container namespace (string)                       |
+| .NetworkSettings ... | Network settings (struct)                          |
+| .OCIConfigPath       | Path to OCI config file (string)                   |
+| .OCIRuntime          | OCI runtime name (string)                          |
+| .Path                | Path to container command (string)                 |
+| .PidFile             | Path to file containing container PID (string)     |
+| .Pod                 | Parent pod (string)                                |
+| .ProcessLabel        | SELinux label of process (string)                  |
+| .ResolvConfPath      | Path to container's resolv.conf file (string)      |
+| .RestartCount        | Number of times container has been restarted (int) |
+| .Rootfs              | Container rootfs (string)                          |
+| .SizeRootFs          | Size of rootfs, in bytes [1]                       |
+| .SizeRw              | Size of upper (R/W) container layer, in bytes [1]  |
+| .State ...           | Container state info (struct)                      |
+| .StaticDir           | Path to container metadata dir (string)            |
+
+[1] This format specifier requires the **--size** option
+
 #### **--latest**, **-l**
 
 Instead of providing the container name or ID, use the last created container. If you use methods other than Podman
 to run containers such as CRI-O, the last started container could be from either of those methods.
 
-(This option is not available with the remote Podman client.)
+(This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines.)
 
 #### **--size**, **-s**
 
@@ -133,28 +177,6 @@ $ podman container inspect foobar
             "Ports": {},
             "SandboxKey": ""
         },
-        "ExitCommand": [
-            "/usr/bin/podman",
-            "--root",
-            "/home/dwalsh/.local/share/containers/storage",
-            "--runroot",
-            "/run/user/3267/containers",
-            "--log-level",
-            "warning",
-            "--cgroup-manager",
-            "systemd",
-            "--tmpdir",
-            "/run/user/3267/libpod/tmp",
-            "--runtime",
-            "crun",
-            "--storage-driver",
-            "overlay",
-            "--events-backend",
-            "journald",
-            "container",
-            "cleanup",
-            "99f66530fe9c7249f7cf29f78e8661669d5831cbe4ee80ea757d5e922dd6a8a6"
-        ],
         "Namespace": "",
         "IsInfra": false,
         "Config": {
@@ -241,7 +263,7 @@ $ podman container inspect foobar
             "DnsSearch": [],
             "ExtraHosts": [],
             "GroupAdd": [],
-            "IpcMode": "private",
+            "IpcMode": "shareable",
             "Cgroup": "",
             "Cgroups": "default",
             "Links": null,
@@ -312,7 +334,7 @@ $ podman container inspect --latest --format {{.EffectiveCaps}}
 ```
 
 ## SEE ALSO
-**[podman(1)](podman.1.md)**,**[podman-container(1)](podman-container.1.md)**, **[podman-inspect(1)](podman-inspect.1.md)**
+**[podman(1)](podman.1.md)**, **[podman-container(1)](podman-container.1.md)**, **[podman-inspect(1)](podman-inspect.1.md)**
 
 ## HISTORY
 Sep 2021, Originally compiled by Dan Walsh <dwalsh@redhat.com>

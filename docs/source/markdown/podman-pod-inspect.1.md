@@ -1,4 +1,4 @@
-% podman-pod-inspect(1)
+% podman-pod-inspect 1
 
 ## NAME
 podman\-pod\-inspect - Displays information describing a pod
@@ -11,33 +11,54 @@ Displays configuration and state information about a given pod.  It also display
 that belong to the pod.
 
 ## OPTIONS
-#### **--latest**, **-l**
 
-Instead of providing the pod name or ID, use the last created pod. If you use methods other than Podman
-to run pods such as CRI-O, the last started pod could be from either of those methods. (This option is not available with the remote Podman client)
-
-#### **--format**=*format*, **-f**
+#### **--format**, **-f**=*format*
 
 Change the default output format.  This can be of a supported type like 'json'
 or a Go template.
 Valid placeholders for the Go template are listed below:
 
-| **Placeholder**   | **Description**                                                               |
-| ----------------- | ----------------------------------------------------------------------------- |
-| .ID               | Pod   ID                                                                      |
-| .Name             | Pod   name                                                                    |
-| .State            | Pod   state                                                                   |
-| .Hostname         | Pod   hostname                                                                |
-| .Labels           | Pod   labels                                                                  |
-| .Created          | Time when the pod was created                                                 |
-| .CreateCgroup     | Whether cgroup was created                                                    |
-| .CgroupParent     | Pod   cgroup parent                                                           |
-| .CgroupPath       | Pod   cgroup path                                                             |
-| .CreateInfra      | Whether infrastructure created                                                |
-| .InfraContainerID | Pod   infrastructure ID                                                       |
-| .SharedNamespaces | Pod   shared namespaces                                                       |
-| .NumContainers    | Number of containers in the pod                                               |
-| .Containers       | Pod   containers                                                              |
+| **Placeholder**      | **Description**                             |
+|----------------------|---------------------------------------------|
+| .BlkioDeviceReadBps  | Block I/O Device Read, in bytes/sec         |
+| .BlkioDeviceWriteBps | Block I/O Device Read, in bytes/sec         |
+| .BlkioWeight         | Block I/O Weight                            |
+| .BlkioWeightDevice   | Block I/O Device Weight                     |
+| .CgroupParent        | Pod cgroup parent                           |
+| .CgroupPath          | Pod cgroup path                             |
+| .Containers          | Pod containers                              |
+| .CPUPeriod           | CPU period                                  |
+| .CPUQuota            | CPU quota                                   |
+| .CPUSetCPUs          | CPU Set CPUs                                |
+| .CPUSetMems          | CPU Set Mems                                |
+| .CPUShares           | CPU Shares                                  |
+| .CreateCgroup        | Whether cgroup was created                  |
+| .CreateCommand       | Create command                              |
+| .Created             | Time when the pod was created               |
+| .CreateInfra         | Whether infrastructure created              |
+| .Devices             | Devices                                     |
+| .ExitPolicy          | Exit policy                                 |
+| .Hostname            | Pod hostname                                |
+| .ID                  | Pod ID                                      |
+| .InfraConfig ...     | Infra config (contains further fields)      |
+| .InfraContainerID    | Pod infrastructure ID                       |
+| .InspectPodData ...  | Nested structure, for experts only          |
+| .Labels              | Pod labels                                  |
+| .MemoryLimit         | Memory limit, bytes                         |
+| .MemorySwap          | Memory swap limit, in bytes                 |
+| .Mounts              | Mounts                                      |
+| .Name                | Pod name                                    |
+| .Namespace           | Namespace                                   |
+| .NumContainers       | Number of containers in the pod             |
+| .SecurityOpts        | Security options                            |
+| .SharedNamespaces    | Pod shared namespaces                       |
+| .State               | Pod state                                   |
+| .VolumesFrom         | Volumes from                                |
+
+#### **--latest**, **-l**
+
+Instead of providing the pod name or ID, use the last created pod. If you use methods other than Podman
+to run pods such as CRI-O, the last started pod could be from either of those methods. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
 
 ## EXAMPLE
 ```
@@ -70,7 +91,7 @@ Valid placeholders for the Go template are listed below:
 ```
 
 ## SEE ALSO
-**[podman(1)](podman.1.md)**,**[podman-pod(1)](podman-pod.1.md)**, **[podman-inspect(1)](podman-inspect.1.md)**
+**[podman(1)](podman.1.md)**, **[podman-pod(1)](podman-pod.1.md)**, **[podman-inspect(1)](podman-inspect.1.md)**
 
 ## HISTORY
 August 2018, Originally compiled by Brent Baude <bbaude@redhat.com>

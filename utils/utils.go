@@ -2,26 +2,23 @@ package utils
 
 import (
 	"bytes"
+	"crypto/rand"
 	"fmt"
 	"io"
-	"io/ioutil"
-	"math/rand"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
 
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/pkg/cgroups"
+	"github.com/containers/common/pkg/cgroups"
 	"github.com/containers/storage/pkg/archive"
 	"github.com/godbus/dbus/v5"
-	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
 
 // ExecCmd executes a command with args and returns its output as a string along
-// with an error, if any
+// with an error, if any.
 func ExecCmd(name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	var stdout bytes.Buffer
@@ -43,9 +40,7 @@ func ExecCmdWithStdStreams(stdin io.Reader, stdout, stderr io.Writer, env []stri
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	if env != nil {
-		cmd.Env = env
-	}
+	cmd.Env = env
 
 	err := cmd.Run()
 	if err != nil {
@@ -53,57 +48,6 @@ func ExecCmdWithStdStreams(stdin io.Reader, stdout, stderr io.Writer, env []stri
 	}
 
 	return nil
-}
-
-// ErrDetach is an error indicating that the user manually detached from the
-// container.
-var ErrDetach = define.ErrDetach
-
-// CopyDetachable is similar to io.Copy but support a detach key sequence to break out.
-func CopyDetachable(dst io.Writer, src io.Reader, keys []byte) (written int64, err error) {
-	buf := make([]byte, 32*1024)
-	for {
-		nr, er := src.Read(buf)
-		if nr > 0 {
-			preservBuf := []byte{}
-			for i, key := range keys {
-				preservBuf = append(preservBuf, buf[0:nr]...)
-				if nr != 1 || buf[0] != key {
-					break
-				}
-				if i == len(keys)-1 {
-					return 0, ErrDetach
-				}
-				nr, er = src.Read(buf)
-			}
-			var nw int
-			var ew error
-			if len(preservBuf) > 0 {
-				nw, ew = dst.Write(preservBuf)
-				nr = len(preservBuf)
-			} else {
-				nw, ew = dst.Write(buf[0:nr])
-			}
-			if nw > 0 {
-				written += int64(nw)
-			}
-			if ew != nil {
-				err = ew
-				break
-			}
-			if nr != nw {
-				err = io.ErrShortWrite
-				break
-			}
-		}
-		if er != nil {
-			if er != io.EOF {
-				err = er
-			}
-			break
-		}
-	}
-	return written, err
 }
 
 // UntarToFileSystem untars an os.file of a tarball to a destination in the filesystem
@@ -116,7 +60,7 @@ func UntarToFileSystem(dest string, tarball *os.File, options *archive.TarOption
 func CreateTarFromSrc(source string, dest string) error {
 	file, err := os.Create(dest)
 	if err != nil {
-		return errors.Wrapf(err, "Could not create tarball file '%s'", dest)
+		return fmt.Errorf("could not create tarball file '%s': %w", dest, err)
 	}
 	defer file.Close()
 	return TarToFilesystem(source, file)
@@ -156,7 +100,7 @@ func RemoveScientificNotationFromFloat(x float64) (float64, error) {
 	}
 	result, err := strconv.ParseFloat(bigNum, 64)
 	if err != nil {
-		return x, errors.Wrapf(err, "unable to remove scientific number from calculations")
+		return x, fmt.Errorf("unable to remove scientific number from calculations: %w", err)
 	}
 	return result, nil
 }
@@ -169,36 +113,50 @@ var (
 // RunsOnSystemd returns whether the system is using systemd
 func RunsOnSystemd() bool {
 	runsOnSystemdOnce.Do(func() {
-		initCommand, err := ioutil.ReadFile("/proc/1/comm")
+		initCommand, err := os.ReadFile("/proc/1/comm")
 		// On errors, default to systemd
 		runsOnSystemd = err != nil || strings.TrimRight(string(initCommand), "\n") == "systemd"
 	})
 	return runsOnSystemd
 }
 
-func moveProcessToScope(pidPath, slice, scope string) error {
-	data, err := ioutil.ReadFile(pidPath)
+func moveProcessPIDFileToScope(pidPath, slice, scope string) error {
+	data, err := os.ReadFile(pidPath)
 	if err != nil {
 		// do not raise an error if the file doesn't exist
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return errors.Wrapf(err, "cannot read pid file %s", pidPath)
+		return fmt.Errorf("cannot read pid file: %w", err)
 	}
 	pid, err := strconv.ParseUint(string(data), 10, 0)
 	if err != nil {
-		return errors.Wrapf(err, "cannot parse pid file %s", pidPath)
+		return fmt.Errorf("cannot parse pid file %s: %w", pidPath, err)
 	}
-	err = RunUnderSystemdScope(int(pid), slice, scope)
 
+	return moveProcessToScope(int(pid), slice, scope)
+}
+
+func moveProcessToScope(pid int, slice, scope string) error {
+	err := RunUnderSystemdScope(pid, slice, scope)
 	// If the PID is not valid anymore, do not return an error.
 	if dbusErr, ok := err.(dbus.Error); ok {
 		if dbusErr.Name == "org.freedesktop.DBus.Error.UnixProcessIdUnknown" {
 			return nil
 		}
 	}
-
 	return err
+}
+
+// MoveRootlessNetnsSlirpProcessToUserSlice moves the slirp4netns process for the rootless netns
+// into a different scope so that systemd does not kill it with a container.
+func MoveRootlessNetnsSlirpProcessToUserSlice(pid int) error {
+	randBytes := make([]byte, 4)
+	_, err := rand.Read(randBytes)
+	if err != nil {
+		return err
+	}
+	return moveProcessToScope(pid, "user.slice", fmt.Sprintf("rootless-netns-%x.scope", randBytes))
 }
 
 // MovePauseProcessToScope moves the pause process used for rootless mode to keep the namespaces alive to
@@ -206,9 +164,14 @@ func moveProcessToScope(pidPath, slice, scope string) error {
 func MovePauseProcessToScope(pausePidPath string) {
 	var err error
 
-	for i := 0; i < 3; i++ {
-		r := rand.Int()
-		err = moveProcessToScope(pausePidPath, "user.slice", fmt.Sprintf("podman-pause-%d.scope", r))
+	for i := 0; i < 10; i++ {
+		randBytes := make([]byte, 4)
+		_, err = rand.Read(randBytes)
+		if err != nil {
+			logrus.Errorf("failed to read random bytes: %v", err)
+			continue
+		}
+		err = moveProcessPIDFileToScope(pausePidPath, "user.slice", fmt.Sprintf("podman-pause-%x.scope", randBytes))
 		if err == nil {
 			return
 		}
@@ -225,4 +188,34 @@ func MovePauseProcessToScope(pausePidPath string) {
 			logrus.Debugf("Failed to add pause process to systemd sandbox cgroup: %v", err)
 		}
 	}
+}
+
+var (
+	maybeMoveToSubCgroupSync    sync.Once
+	maybeMoveToSubCgroupSyncErr error
+)
+
+// MaybeMoveToSubCgroup moves the current process in a sub cgroup when
+// it is running in the root cgroup on a system that uses cgroupv2.
+func MaybeMoveToSubCgroup() error {
+	maybeMoveToSubCgroupSync.Do(func() {
+		unifiedMode, err := cgroups.IsCgroup2UnifiedMode()
+		if err != nil {
+			maybeMoveToSubCgroupSyncErr = err
+			return
+		}
+		if !unifiedMode {
+			maybeMoveToSubCgroupSyncErr = nil
+			return
+		}
+		cgroup, err := GetOwnCgroup()
+		if err != nil {
+			maybeMoveToSubCgroupSyncErr = err
+			return
+		}
+		if cgroup == "/" {
+			maybeMoveToSubCgroupSyncErr = MoveUnderCgroupSubtree("init")
+		}
+	})
+	return maybeMoveToSubCgroupSyncErr
 }

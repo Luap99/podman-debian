@@ -1,4 +1,4 @@
-% podman-pod(1)
+% podman-pod 1
 
 ## NAME
 podman\-pod - Management tool for groups of containers, called pods
@@ -13,6 +13,7 @@ podman pod is a set of subcommands that manage pods, or groups of containers.
 
 | Command | Man Page                                          | Description                                                                       |
 | ------- | ------------------------------------------------- | --------------------------------------------------------------------------------- |
+| clone   | [podman-pod-clone(1)](podman-pod-clone.1.md)      | Creates a copy of an existing pod.                                                             |
 | create  | [podman-pod-create(1)](podman-pod-create.1.md)    | Create a new pod.                                                                 |
 | exists  | [podman-pod-exists(1)](podman-pod-exists.1.md)    | Check if a pod exists in local storage.                                           |
 | inspect | [podman-pod-inspect(1)](podman-pod-inspect.1.md)  | Displays information describing a pod.                                            |
@@ -30,7 +31,7 @@ podman pod is a set of subcommands that manage pods, or groups of containers.
 | unpause | [podman-pod-unpause(1)](podman-pod-unpause.1.md)  | Unpause one or more pods.                                                         |
 
 ## SEE ALSO
-podman(1)
+**[podman(1)](podman.1.md)**
 
 ## HISTORY
 July 2018, Originally compiled by Peter Hunt <pehunt@redhat.com>

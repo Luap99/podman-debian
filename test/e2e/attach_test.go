@@ -1,11 +1,10 @@
 package integration
 
 import (
-	"os"
 	"syscall"
 	"time"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -20,12 +19,9 @@ var _ = Describe("Podman attach", func() {
 
 	BeforeEach(func() {
 		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
+		Expect(err).To(BeNil())
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
 	})
 
 	AfterEach(func() {
@@ -86,6 +82,7 @@ var _ = Describe("Podman attach", func() {
 		Expect(results.OutputToString()).To(ContainSubstring("test"))
 		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(1))
 	})
+
 	It("podman attach to the latest container", func() {
 		session := podmanTest.Podman([]string{"run", "-d", "--name", "test1", ALPINE, "/bin/sh", "-c", "while true; do echo test1; sleep 1; done"})
 		session.WaitWithDefaultTimeout()

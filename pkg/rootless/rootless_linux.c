@@ -19,6 +19,15 @@
 #include <sys/select.h>
 #include <stdio.h>
 
+#ifndef TEMP_FAILURE_RETRY
+#define TEMP_FAILURE_RETRY(expression) \
+  (__extension__                                                              \
+    ({ long int __result;                                                     \
+       do __result = (long int) (expression);                                 \
+       while (__result == -1L && errno == EINTR);                             \
+       __result; }))
+#endif
+
 #define cleanup_free __attribute__ ((cleanup (cleanup_freep)))
 #define cleanup_close __attribute__ ((cleanup (cleanup_closep)))
 #define cleanup_dir __attribute__ ((cleanup (cleanup_dirp)))
@@ -72,15 +81,6 @@ int rename_noreplace (int olddirfd, const char *oldpath, int newdirfd, const cha
   return rename (oldpath, newpath);
 }
 
-#ifndef TEMP_FAILURE_RETRY
-#define TEMP_FAILURE_RETRY(expression) \
-  (__extension__                                                              \
-    ({ long int __result;                                                     \
-       do __result = (long int) (expression);                                 \
-       while (__result == -1L && errno == EINTR);                             \
-       __result; }))
-#endif
-
 static const char *_max_user_namespaces = "/proc/sys/user/max_user_namespaces";
 static const char *_unprivileged_user_namespaces = "/proc/sys/kernel/unprivileged_userns_clone";
 
@@ -133,6 +133,11 @@ do_pause ()
   for (i = 0; sig[i]; i++)
     sigaction (sig[i], &act, NULL);
 
+  /* Attempt to execv catatonit to keep the pause process alive.  */
+  execl ("/usr/libexec/podman/catatonit", "catatonit", "-P", NULL);
+  execl ("/usr/bin/catatonit", "catatonit", "-P", NULL);
+  /* and if the catatonit executable could not be found, fallback here... */
+
   prctl (PR_SET_NAME, "podman pause", NULL, NULL, NULL);
   while (1)
     pause ();
@@ -173,7 +178,7 @@ get_cmd_line_args ()
           char *tmp = realloc (buffer, allocated);
           if (tmp == NULL)
             return NULL;
-	  buffer = tmp;
+          buffer = tmp;
         }
     }
 
@@ -230,6 +235,7 @@ can_use_shortcut ()
 
       if (strcmp (argv[argc], "mount") == 0
           || strcmp (argv[argc], "machine") == 0
+          || strcmp (argv[argc], "context") == 0
           || strcmp (argv[argc], "search") == 0
           || (strcmp (argv[argc], "system") == 0 && argv[argc+1] && strcmp (argv[argc+1], "service") != 0))
         {
@@ -238,8 +244,8 @@ can_use_shortcut ()
         }
 
       if (argv[argc+1] != NULL && (strcmp (argv[argc], "container") == 0 ||
-	   strcmp (argv[argc], "image") == 0) &&
-	   strcmp (argv[argc+1], "mount") == 0)
+                                   strcmp (argv[argc], "image") == 0) &&
+     (strcmp (argv[argc+1], "mount") == 0  || strcmp (argv[argc+1], "scp") == 0))
         {
           ret = false;
           break;
@@ -500,14 +506,16 @@ create_pause_process (const char *pause_pid_file_path, char **argv)
   if (pid)
     {
       char b;
-      int r;
+      int r, r2;
 
       close (p[1]);
       /* Block until we write the pid file.  */
       r = TEMP_FAILURE_RETRY (read (p[0], &b, 1));
       close (p[0]);
 
-      reexec_in_user_namespace_wait (pid, 0);
+      r2 = reexec_in_user_namespace_wait (pid, 0);
+      if (r2 != 0)
+	return -1;
 
       return r == 1 && b == '0' ? 0 : -1;
     }
@@ -752,6 +760,7 @@ reexec_userns_join (int pid_to_join, char *pause_pid_file_path)
     }
 
   execvp (argv[0], argv);
+  fprintf (stderr, "failed to execvp %s: %m\n", argv[0]);
 
   _exit (EXIT_FAILURE);
 }
@@ -783,7 +792,10 @@ copy_file_to_fd (const char *file_to_read, int outfd)
 
   fd = open (file_to_read, O_RDONLY);
   if (fd < 0)
-    return fd;
+    {
+      fprintf (stderr, "open `%s`: %m\n", file_to_read);
+      return fd;
+    }
 
   for (;;)
     {
@@ -791,7 +803,10 @@ copy_file_to_fd (const char *file_to_read, int outfd)
 
       r = TEMP_FAILURE_RETRY (read (fd, buf, sizeof buf));
       if (r < 0)
-        return r;
+        {
+          fprintf (stderr, "read from `%s`: %m\n", file_to_read);
+          return r;
+        }
 
       if (r == 0)
         break;
@@ -800,7 +815,10 @@ copy_file_to_fd (const char *file_to_read, int outfd)
         {
           w = TEMP_FAILURE_RETRY (write (outfd, &buf[t], r - t));
           if (w < 0)
-            return w;
+            {
+              fprintf (stderr, "write file to output fd `%s`: %m\n", file_to_read);
+              return w;
+            }
           t += w;
         }
     }

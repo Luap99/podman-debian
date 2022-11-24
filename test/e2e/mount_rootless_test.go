@@ -3,7 +3,7 @@ package integration
 import (
 	"os"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -25,7 +25,6 @@ var _ = Describe("Podman mount", func() {
 		}
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
 	})
 
 	AfterEach(func() {
@@ -53,9 +52,16 @@ var _ = Describe("Podman mount", func() {
 		Expect(setup).Should(Exit(0))
 		cid := setup.OutputToString()
 
-		session := podmanTest.Podman([]string{"unshare", PODMAN_BINARY, "mount", cid})
+		// command: podman <options> unshare podman <options> mount cid
+		args := []string{"unshare", podmanTest.PodmanBinary}
+		opts := podmanTest.PodmanMakeOptions([]string{"mount", cid}, false, false)
+		args = append(args, opts...)
+
+		// container root file system location is /tmp/... because "--root /tmp/..."
+		session := podmanTest.Podman(args)
 		session.WaitWithDefaultTimeout()
-		Expect(setup).Should(Exit(0))
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToString()).To(ContainSubstring("/tmp"))
 	})
 
 	It("podman image mount", func() {
@@ -72,8 +78,15 @@ var _ = Describe("Podman mount", func() {
 		setup.WaitWithDefaultTimeout()
 		Expect(setup).Should(Exit(0))
 
-		session := podmanTest.Podman([]string{"unshare", PODMAN_BINARY, "image", "mount", ALPINE})
+		// command: podman <options> unshare podman <options> image mount ALPINE
+		args := []string{"unshare", podmanTest.PodmanBinary}
+		opts := podmanTest.PodmanMakeOptions([]string{"image", "mount", ALPINE}, false, false)
+		args = append(args, opts...)
+
+		// image location is /tmp/... because "--root /tmp/..."
+		session := podmanTest.Podman(args)
 		session.WaitWithDefaultTimeout()
-		Expect(setup).Should(Exit(0))
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToString()).To(ContainSubstring("/tmp"))
 	})
 })

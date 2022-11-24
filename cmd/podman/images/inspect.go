@@ -1,11 +1,11 @@
 package images
 
 import (
-	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/inspect"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	inspectTypes "github.com/containers/podman/v3/pkg/inspect"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/inspect"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	inspectTypes "github.com/containers/podman/v4/pkg/inspect"
 	"github.com/spf13/cobra"
 )
 
@@ -34,10 +34,10 @@ func init() {
 
 	formatFlagName := "format"
 	flags.StringVarP(&inspectOpts.Format, formatFlagName, "f", "json", "Format the output to a Go template or json")
-	_ = inspectCmd.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteFormat(inspectTypes.ImageData{}))
+	_ = inspectCmd.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteFormat(&inspectTypes.ImageData{}))
 }
 
 func inspectExec(cmd *cobra.Command, args []string) error {
-	inspectOpts.Type = inspect.ImageType
+	inspectOpts.Type = common.ImageType
 	return inspect.Inspect(args, *inspectOpts)
 }

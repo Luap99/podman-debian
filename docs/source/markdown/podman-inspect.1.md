@@ -1,4 +1,4 @@
-% podman-inspect(1)
+% podman-inspect 1
 
 ## NAME
 podman\-inspect - Display a container, image, volume, network, or pod's configuration
@@ -22,11 +22,6 @@ For more inspection options, see also
 
 ## OPTIONS
 
-#### **--type**, **-t**=*type*
-
-Return JSON for the specified type.  Type can be 'container', 'image', 'volume', 'network', 'pod', or 'all' (default: all)
-(Only meaningful when invoked as *podman inspect*)
-
 #### **--format**, **-f**=*format*
 
 Format the output using the given Go template.
@@ -37,12 +32,16 @@ The keys of the returned JSON can be used as the values for the --format flag (s
 Instead of providing the container name or ID, use the last created container. If you use methods other than Podman
 to run containers such as CRI-O, the last started container could be from either of those methods.
 
-This option can be used to inspect the latest pod created when used with --type pod. (This option is not available with the remote Podman client or when invoked as *podman image inspect*.)
+This option can be used to inspect the latest pod created when used with --type pod. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines, or when invoked as *podman image inspect*.)
 
 #### **--size**, **-s**
 
 In addition to normal output, display the total file size if the type is a container.
 
+#### **--type**, **-t**=*type*
+
+Return JSON for the specified type.  Type can be 'container', 'image', 'volume', 'network', 'pod', or 'all' (default: all)
+(Only meaningful when invoked as *podman inspect*)
 
 ## EXAMPLE
 
@@ -162,7 +161,7 @@ myNetwork
 ```
 
 ## SEE ALSO
-**[podman(1)](podman.1.md)**,**[podman-container-inspect(1)](podman-container-inspect.1.md)**,**[podman-image-inspect(1)](podman-image-inspect.1.md)**,**[podman-network-inspect(1)](podman-network-inspect.1.md)**,**[podman-pod-inspect(1)](podman-pod-inspect.1.md)**,**[podman-volume-inspect(1)](podman-volume-inspect.1.md)**.
+**[podman(1)](podman.1.md)**, **[podman-container-inspect(1)](podman-container-inspect.1.md)**, **[podman-image-inspect(1)](podman-image-inspect.1.md)**, **[podman-network-inspect(1)](podman-network-inspect.1.md)**, **[podman-pod-inspect(1)](podman-pod-inspect.1.md)**, **[podman-volume-inspect(1)](podman-volume-inspect.1.md)**
 
 ## HISTORY
 July 2017, Originally compiled by Dan Walsh <dwalsh@redhat.com>

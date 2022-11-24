@@ -1,9 +1,11 @@
 User Namespaces
 ===============
 
-podman requires a Linux Kernel with userspaces enabled. Debian
-Kernels have that functionality, but the local system administrator
-needs to enable it manually, with a command like this:
+podman requires a Linux Kernel with user namespaces enabled. Debian Kernels
+have that functionality, and it's enabled by default on Debian 11 (bullseye)
+and later. For older Debian kernels, or if the kernel is configured to not
+enable that by default, the local system administrator needs to enable it
+manually, with a command like this:
 
 sudo sysctl -w kernel.unprivileged_userns_clone=1
 

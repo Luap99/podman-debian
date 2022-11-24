@@ -1,3 +1,4 @@
+//go:build ignore
 // +build ignore
 
 package main
@@ -11,7 +12,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"strings"
@@ -71,7 +71,7 @@ func main() {
 	)
 	srcFile := os.Getenv("GOFILE")
 	inputStructName := os.Args[1]
-	b, err := ioutil.ReadFile(srcFile)
+	b, err := os.ReadFile(srcFile)
 	if err != nil {
 		panic(err)
 	}
@@ -82,7 +82,7 @@ func main() {
 	}
 
 	// always add reflect
-	imports := []string{"\"reflect\"", "\"github.com/containers/podman/v3/pkg/bindings/internal/util\""}
+	imports := []string{"\"reflect\"", "\"github.com/containers/podman/v4/pkg/bindings/internal/util\""}
 	for _, imp := range f.Imports {
 		imports = append(imports, imp.Path.Value)
 	}
@@ -170,7 +170,7 @@ func main() {
 		}
 
 		// go import file
-		goimport := exec.Command("goimports", "-w", out.Name())
+		goimport := exec.Command("../../../test/tools/build/goimports", "-w", out.Name())
 		goimport.Stderr = os.Stdout
 		if err := goimport.Run(); err != nil {
 			fmt.Println(err)

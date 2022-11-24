@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/cmd/podman/utils"
-	"github.com/containers/podman/v3/cmd/podman/validate"
-	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/utils"
+	"github.com/containers/podman/v4/cmd/podman/validate"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/spf13/cobra"
 )
 
@@ -22,11 +22,9 @@ var (
 		Long:  podUnpauseDescription,
 		RunE:  unpause,
 		Args: func(cmd *cobra.Command, args []string) error {
-			return validate.CheckAllLatestAndCIDFile(cmd, args, false, false)
+			return validate.CheckAllLatestAndIDFile(cmd, args, false, "")
 		},
-		// TODO have a function which shows only pods which could be unpaused
-		// for now show all
-		ValidArgsFunction: common.AutocompletePods,
+		ValidArgsFunction: common.AutoCompletePodsPause,
 		Example: `podman pod unpause podID1 podID2
   podman pod unpause --all
   podman pod unpause --latest`,
@@ -43,7 +41,7 @@ func init() {
 		Parent:  podCmd,
 	})
 	flags := unpauseCommand.Flags()
-	flags.BoolVarP(&unpauseOptions.All, "all", "a", false, "Pause all running pods")
+	flags.BoolVarP(&unpauseOptions.All, "all", "a", false, "Unpause all running pods")
 	validate.AddLatestFlag(unpauseCommand, &unpauseOptions.Latest)
 }
 

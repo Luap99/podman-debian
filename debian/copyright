@@ -9,19 +9,16 @@ Comment:
  Protobuf in debian is not ready yet, cf. #961814
 Files-Excluded:
     vendor
+    test/tools/vendor
 Files-Included:
     vendor/github.com/checkpoint-restore/checkpointctl
     vendor/github.com/container-orchestrated-devices
     vendor/github.com/containers/conmon
     vendor/github.com/coreos/stream-metadata-go
-    vendor/github.com/cri-o/ocicni
     vendor/github.com/digitalocean
     vendor/github.com/docker/go-plugins-helpers
-    vendor/github.com/gorilla/schema
     vendor/github.com/moby/sys
     vendor/github.com/uber/jaeger-client-go
-    vendor/k8s.io/api
-    vendor/k8s.io/apimachinery
 
 Files: *
 Copyright:
@@ -49,21 +46,20 @@ Copyright:
     2016-2019 Red Hat, Inc.
 License: Expat
 
-Files: libpod/network/cni/cni_exec.go
-Copyright: 2021, Podman authors
-  2016, CNI authors
+Files: pkg/k8s.io/*
+Copyright: belongs to the Kubernetes Authors and is licensed under Apache-2.0, also check the license headers in the files.
 License: Apache-2.0
 
-Files: pkg/cgroups/systemd.go
-Copyright: The containerd Authors.
+Files: pkg/k8s.io/api/*
+Copyright: 2014-2017, 2020, The Kubernetes Authors.
+License: Apache-2.0
+
+Files: pkg/k8s.io/apimachinery/*
+Copyright: 2014-2017, 2020, The Kubernetes Authors.
 License: Apache-2.0
 
 Files: pkg/kubeutils/*
-Copyright: 2014-2020, The Kubernetes Authors.
-License: Apache-2.0
-
-Files: pkg/netns/*
-Copyright: 2018, CNI authors
+Copyright: 2014-2017, 2020, The Kubernetes Authors.
 License: Apache-2.0
 
 Files: pkg/signal/signal_linux.go
@@ -74,6 +70,15 @@ License: Apache-2.0
 Files: pkg/util/camelcase/*
 Copyright: 2015, Fatih Arslan
 License: Expat
+
+Files: vendor/github.com/container-orchestrated-devices/container-device-interface/pkg/*
+Copyright: 2021, 2022, The CDI Authors
+License: Apache-2.0
+
+Files: vendor/github.com/container-orchestrated-devices/container-device-interface/pkg/cdi/doc.go
+Copyright:
+    2016-2019 Red Hat, Inc.
+License: Apache-2.0
 
 Files: vendor/github.com/digitalocean/go-libvirt/const.gen.go
   vendor/github.com/digitalocean/go-libvirt/doc.go
@@ -117,82 +122,6 @@ Files: vendor/github.com/uber/*
 Copyright: 2017,2018 Uber Technologies, Inc.
 License: Apache-2.0
 
-Files: vendor/k8s.io/*
-Copyright: The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/api/apps/v1/doc.go
-  vendor/k8s.io/api/apps/v1/register.go
-  vendor/k8s.io/api/apps/v1/types.go
-Copyright: 2014-2020, The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/api/core/*
-Copyright: 2014-2020, The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/api/core/v1/generated.pb.go
-  vendor/k8s.io/api/core/v1/types_swagger_doc_generated.go
-  vendor/k8s.io/api/core/v1/zz_generated.deepcopy.go
-Copyright: The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/apimachinery/*
-Copyright: 2009, The Go Authors.
-License: BSD-3-Clause~Google
-
-Files: vendor/k8s.io/apimachinery/pkg/*
-Copyright: 2014-2020, The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/apimachinery/pkg/api/resource/OWNERS
-Copyright:
-    2014-2019 The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/apimachinery/pkg/api/resource/generated.pb.go
-  vendor/k8s.io/apimachinery/pkg/api/resource/zz_generated.deepcopy.go
-Copyright: The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/apimachinery/pkg/apis/meta/v1/OWNERS
-Copyright:
-    2014-2019 The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/apimachinery/pkg/apis/meta/v1/generated.pb.go
-  vendor/k8s.io/apimachinery/pkg/apis/meta/v1/types_swagger_doc_generated.go
-  vendor/k8s.io/apimachinery/pkg/apis/meta/v1/zz_generated.conversion.go
-  vendor/k8s.io/apimachinery/pkg/apis/meta/v1/zz_generated.deepcopy.go
-  vendor/k8s.io/apimachinery/pkg/apis/meta/v1/zz_generated.defaults.go
-Copyright: The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/apimachinery/pkg/labels/zz_generated.deepcopy.go
-Copyright: The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/apimachinery/pkg/runtime/generated.pb.go
-  vendor/k8s.io/apimachinery/pkg/runtime/zz_generated.deepcopy.go
-Copyright: The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/apimachinery/pkg/runtime/schema/generated.pb.go
-Copyright: The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/apimachinery/pkg/util/intstr/generated.pb.go
-Copyright: The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/apimachinery/pkg/util/sets/*
-Copyright: The Kubernetes Authors.
-License: Apache-2.0
-
-Files: vendor/k8s.io/apimachinery/pkg/watch/zz_generated.deepcopy.go
-Copyright: The Kubernetes Authors.
-License: Apache-2.0
-
 License: Apache-2.0
  Licensed under the Apache License, Version 2.0 (the "License");
  you may not use this file except in compliance with the License.
@@ -208,33 +137,6 @@ License: Apache-2.0
  .
  On Debian systems, the complete text of the Apache version 2.0 license
  can be found in "/usr/share/common-licenses/Apache-2.0".
-
-License: BSD-3-Clause~Google
- Redistribution and use in source and binary forms, with or without
- modification, are permitted provided that the following conditions are
- met:
- .
-   * Redistributions of source code must retain the above copyright
-     notice, this list of conditions and the following disclaimer.
-   * Redistributions in binary form must reproduce the above
-     copyright notice, this list of conditions and the following disclaimer
-     in the documentation and/or other materials provided with the
-     distribution.
-   * Neither the name of Google Inc. nor the names of its
-     contributors may be used to endorse or promote products derived from
-     this software without specific prior written permission.
- .
- THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 License: BSD-3-clause
  This software is Copyright (c) 2020 by X. Ample.

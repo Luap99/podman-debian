@@ -1,20 +1,22 @@
 package filters
 
 import (
+	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
-	"github.com/containers/podman/v3/libpod"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/pkg/network"
-	"github.com/containers/podman/v3/pkg/util"
-	"github.com/pkg/errors"
+	"github.com/containers/common/pkg/filters"
+	cutil "github.com/containers/common/pkg/util"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/util"
 )
 
 // GeneratePodFilterFunc takes a filter and filtervalue (key, value)
 // and generates a libpod function that can be used to filter
 // pods
-func GeneratePodFilterFunc(filter string, filterValues []string) (
+func GeneratePodFilterFunc(filter string, filterValues []string, r *libpod.Runtime) (
 	func(pod *libpod.Pod) bool, error) {
 	switch filter {
 	case "ctr-ids":
@@ -58,8 +60,8 @@ func GeneratePodFilterFunc(filter string, filterValues []string) (
 		}, nil
 	case "ctr-status":
 		for _, filterValue := range filterValues {
-			if !util.StringInSlice(filterValue, []string{"created", "running", "paused", "stopped", "exited", "unknown"}) {
-				return nil, errors.Errorf("%s is not a valid status", filterValue)
+			if !cutil.StringInSlice(filterValue, []string{"created", "running", "paused", "stopped", "exited", "unknown"}) {
+				return nil, fmt.Errorf("%s is not a valid status", filterValue)
 			}
 		}
 		return func(p *libpod.Pod) bool {
@@ -95,8 +97,8 @@ func GeneratePodFilterFunc(filter string, filterValues []string) (
 		}, nil
 	case "status":
 		for _, filterValue := range filterValues {
-			if !util.StringInSlice(filterValue, []string{"stopped", "running", "paused", "exited", "dead", "created", "degraded"}) {
-				return nil, errors.Errorf("%s is not a valid pod status", filterValue)
+			if !cutil.StringInSlice(filterValue, []string{"stopped", "running", "paused", "exited", "dead", "created", "degraded"}) {
+				return nil, fmt.Errorf("%s is not a valid pod status", filterValue)
 			}
 		}
 		return func(p *libpod.Pod) bool {
@@ -114,7 +116,7 @@ func GeneratePodFilterFunc(filter string, filterValues []string) (
 	case "label":
 		return func(p *libpod.Pod) bool {
 			labels := p.Labels()
-			return util.MatchLabelFilters(filterValues, labels)
+			return filters.MatchLabelFilters(filterValues, labels)
 		}, nil
 	case "until":
 		return func(p *libpod.Pod) bool {
@@ -128,28 +130,35 @@ func GeneratePodFilterFunc(filter string, filterValues []string) (
 			return false
 		}, nil
 	case "network":
+		var inputNetNames []string
+		for _, val := range filterValues {
+			net, err := r.Network().NetworkInspect(val)
+			if err != nil {
+				if errors.Is(err, define.ErrNoSuchNetwork) {
+					continue
+				}
+				return nil, err
+			}
+			inputNetNames = append(inputNetNames, net.Name)
+		}
 		return func(p *libpod.Pod) bool {
 			infra, err := p.InfraContainer()
 			// no infra, quick out
 			if err != nil {
 				return false
 			}
-			networks, _, err := infra.Networks()
+			networks, err := infra.Networks()
 			// if err or no networks, quick out
 			if err != nil || len(networks) == 0 {
 				return false
 			}
 			for _, net := range networks {
-				netID := network.GetNetworkID(net)
-				for _, val := range filterValues {
-					// match by network name or id
-					if val == net || val == netID {
-						return true
-					}
+				if cutil.StringInSlice(net, inputNetNames) {
+					return true
 				}
 			}
 			return false
 		}, nil
 	}
-	return nil, errors.Errorf("%s is an invalid filter", filter)
+	return nil, fmt.Errorf("%s is an invalid filter", filter)
 }

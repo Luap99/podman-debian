@@ -3,9 +3,9 @@ package integration
 import (
 	"os"
 
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/pkg/annotations"
-	. "github.com/containers/podman/v3/test/utils"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/annotations"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -25,7 +25,6 @@ var _ = Describe("Podman container inspect", func() {
 		}
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
 	})
 
 	AfterEach(func() {
@@ -59,7 +58,7 @@ var _ = Describe("Podman container inspect", func() {
 
 	It("podman inspect shows exposed ports on image", func() {
 		name := "testcon"
-		session := podmanTest.Podman([]string{"run", "-d", "--expose", "8989", "--name", name, nginx})
+		session := podmanTest.Podman([]string{"run", "-d", "--expose", "8989", "--name", name, NGINX_IMAGE})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 

@@ -5,18 +5,8 @@ load helpers
 @test "podman run - basic tests" {
     rand=$(random_string 30)
 
-    # 2019-09 Fedora 31 and rawhide (32) are switching from runc to crun
-    # because of cgroups v2; crun emits different error messages.
-    # Default to runc:
-    err_no_such_cmd="Error: .*: starting container process caused.*exec:.*stat /no/such/command: no such file or directory"
-    err_no_exec_dir="Error: .*: starting container process caused.*exec:.* permission denied"
-
-    # ...but check the configured runtime engine, and switch to crun as needed
-    run_podman info --format '{{ .Host.OCIRuntime.Path }}'
-    if expr "$output" : ".*/crun"; then
-        err_no_such_cmd="Error: executable file.* not found in \$PATH: No such file or directory: OCI runtime attempted to invoke a command that was not found"
-        err_no_exec_dir="Error: open executable: Operation not permitted: OCI permission denied"
-    fi
+    err_no_such_cmd="Error:.*/no/such/command.*[Nn]o such file or directory"
+    err_no_exec_dir="Error:.*exec.*permission denied"
 
     tests="
 true              |   0 |
@@ -44,12 +34,8 @@ echo $rand        |   0 | $rand
         # FIXME: The </dev/null is a hack, necessary because as of 2019-09
         #        podman-remote has a bug in which it silently slurps up stdin,
         #        including the output of parse_table (i.e. tests to be run).
-        run_podman $expected_rc run $IMAGE "$@" </dev/null
-
-        # FIXME: remove conditional once podman-remote issue #4096 is fixed
-        if ! is_remote; then
-            is "$output" "$expected_output" "podman run $cmd - output"
-        fi
+        run_podman $expected_rc run $IMAGE "$@"
+        is "$output" "$expected_output" "podman run $cmd - output"
 
         tests_run=$(expr $tests_run + 1)
     done < <(parse_table "$tests")
@@ -69,7 +55,12 @@ echo $rand        |   0 | $rand
 
 @test "podman run --memory=0 runtime option" {
     run_podman run --memory=0 --rm $IMAGE echo hello
-    is "$output" "hello" "failed to run when --memory is set to 0"
+    if is_rootless && ! is_cgroupsv2; then
+        is "${lines[0]}" "Resource limits are not supported and ignored on cgroups V1 rootless systems" "--memory is not supported"
+        is "${lines[1]}" "hello" "--memory is ignored"
+    else
+        is "$output" "hello" "failed to run when --memory is set to 0"
+    fi
 }
 
 # 'run --preserve-fds' passes a number of additional file descriptors into the container
@@ -84,16 +75,16 @@ echo $rand        |   0 | $rand
 }
 
 @test "podman run - uidmapping has no /sys/kernel mounts" {
+    skip_if_cgroupsv1 "FIXME: #15025: run --uidmap fails on cgroups v1"
     skip_if_rootless "cannot umount as rootless"
     skip_if_remote "TODO Fix this for remote case"
 
     run_podman run --rm --uidmap 0:100:10000 $IMAGE mount
-    run grep /sys/kernel <(echo "$output")
-    is "$output" "" "unwanted /sys/kernel in 'mount' output"
+    assert "$output" !~ /sys/kernel "unwanted /sys/kernel in 'mount' output"
 
     run_podman run --rm --net host --uidmap 0:100:10000 $IMAGE mount
-    run grep /sys/kernel <(echo "$output")
-    is "$output" "" "unwanted /sys/kernel in 'mount' output (with --net=host)"
+    assert "$output" !~ /sys/kernel \
+           "unwanted /sys/kernel in 'mount' output (with --net=host)"
 }
 
 # 'run --rm' goes through different code paths and may lose exit status.
@@ -236,7 +227,7 @@ echo $rand        |   0 | $rand
 }
 
 @test "podman run docker-archive" {
-    skip_if_remote "podman-remote does not support docker-archive (#7116)"
+    skip_if_remote "podman-remote does not support docker-archive"
 
     # Create an image that, when run, outputs a random magic string
     expect=$(random_string 20)
@@ -283,9 +274,11 @@ echo $rand        |   0 | $rand
 # symptom only manifests on a fedora container image -- we have no
 # reproducer on alpine. Checking directory ownership is good enough.
 @test "podman run : user namespace preserved root ownership" {
+    keep="--userns=keep-id"
+    is_rootless || keep=""
     for priv in "" "--privileged"; do
         for user in "--user=0" "--user=100"; do
-            for keepid in "" "--userns=keep-id"; do
+            for keepid in "" ${keep}; do
                 opts="$priv $user $keepid"
 
                 for dir in /etc /usr;do
@@ -300,6 +293,7 @@ echo $rand        |   0 | $rand
 
 # #6829 : add username to /etc/passwd inside container if --userns=keep-id
 @test "podman run : add username to /etc/passwd if --userns=keep-id" {
+    skip_if_not_rootless "--userns=keep-id only works in rootless mode"
     # Default: always run as root
     run_podman run --rm $IMAGE id -un
     is "$output" "root" "id -un on regular container"
@@ -350,6 +344,7 @@ echo $rand        |   0 | $rand
 
 # #6991 : /etc/passwd is modifiable
 @test "podman run : --userns=keep-id: passwd file is modifiable" {
+    skip_if_not_rootless "--userns=keep-id only works in rootless mode"
     run_podman run -d --userns=keep-id --cap-add=dac_override $IMAGE sh -c 'while ! test -e /tmp/stop; do sleep 0.1; done'
     cid="$output"
 
@@ -387,17 +382,7 @@ json-file | f
     while read driver do_check; do
         msg=$(random_string 15)
         run_podman run --name myctr --log-driver $driver $IMAGE echo $msg
-
-        # Simple output check
-        # Special case: 'json-file' emits a warning, the rest do not
-        # ...but with podman-remote the warning is on the server only
-        if [[ $do_check == 'f' ]] && ! is_remote; then      # 'f' for 'fallback'
-            is "${lines[0]}" ".* level=error msg=\"json-file logging specified but not supported. Choosing k8s-file logging instead\"" \
-               "Fallback warning emitted"
-            is "${lines[1]}" "$msg" "basic output sanity check (driver=$driver)"
-        else
-            is "$output" "$msg" "basic output sanity check (driver=$driver)"
-        fi
+        is "$output" "$msg" "basic output sanity check (driver=$driver)"
 
         # Simply confirm that podman preserved our argument as-is
         run_podman inspect --format '{{.HostConfig.LogConfig.Type}}' myctr
@@ -437,7 +422,7 @@ json-file | f
 
     # Invalid log-driver argument
     run_podman 125 run --log-driver=InvalidDriver $IMAGE true
-    is "$output" "Error: error running container create option: invalid log driver: invalid argument" \
+    is "$output" "Error: running container create option: invalid log driver: invalid argument" \
        "--log-driver InvalidDriver"
 }
 
@@ -477,10 +462,10 @@ json-file | f
     # dependent, we pick an obscure zone (+1245) that is unlikely to
     # collide with any of our testing environments.
     #
-    # To get a reference timestamp we run 'date' locally; note the explicit
-    # strftime() format. We can't use --iso=seconds because GNU date adds
-    # a colon to the TZ offset (eg -07:00) whereas alpine does not (-0700).
-    run date --date=@1600000000 +%Y-%m-%dT%H:%M:%S%z
+    # To get a reference timestamp we run 'date' locally. This requires
+    # that GNU date output matches that of alpine; this seems to be true
+    # as of testimage:20220615.
+    run date --date=@1600000000 --iso=seconds
     expect="$output"
     TZ=Pacific/Chatham run_podman run --rm --tz=local $IMAGE date -Iseconds -r $testfile
     is "$output" "$expect" "podman run with --tz=local, matches host"
@@ -509,6 +494,21 @@ json-file | f
     rm -f $new_runtime
 }
 
+@test "podman --noout run should print output" {
+    run_podman --noout run -d --name test $IMAGE echo hi
+    is "$output" "" "output should be empty"
+    run_podman wait test
+    run_podman --noout rm test
+    is "$output" "" "output should be empty"
+}
+
+@test "podman --noout create should print output" {
+    run_podman --noout create --name test $IMAGE echo hi
+    is "$output" "" "output should be empty"
+    run_podman --noout rm test
+    is "$output" "" "output should be empty"
+}
+
 # Regression test for issue #8082
 @test "podman run : look up correct image name" {
     # Create a 2nd tag for the local image. Force to lower case, and apply it.
@@ -522,7 +522,8 @@ json-file | f
     cid="$output"
 
     run_podman inspect --format "{{.ImageName}}" $cid
-    is "$output" "$newtag" "container .ImageName is the container-create name"
+    is "$output" "$newtag:latest" \
+       "container .ImageName is the container-create name"
 
     # Same thing, but now with a :tag, and making sure it works with --name
     newtag2="${newtag}:$(random_string 6|tr A-Z a-z)"
@@ -531,7 +532,8 @@ json-file | f
     cname="$(random_string 14|tr A-Z a-z)"
     run_podman create --name $cname $newtag2
     run_podman inspect --format "{{.ImageName}}" $cname
-    is "$output" "$newtag2" "container .ImageName is the container-create name"
+    is "$output" "$newtag2" \
+       "container .ImageName is the container-create name, with :tag"
 
     # Clean up.
     run_podman rm $cid $cname
@@ -546,9 +548,21 @@ json-file | f
     # prior to #8623 `podman run` would error out on untagged images with:
     # Error: both RootfsImageName and RootfsImageID must be set if either is set: invalid argument
     run_podman untag $IMAGE
-    run_podman run --rm $imageID ls
 
+    run_podman run --rm $randomname $imageID true
     run_podman tag $imageID $IMAGE
+}
+
+@test "podman inspect includes image data" {
+    randomname=$(random_string 30)
+
+    run_podman inspect $IMAGE --format "{{.ID}} {{.Digest}}"
+    expected="$IMAGE $output"
+
+    run_podman run --name $randomname $IMAGE true
+    run_podman container inspect $randomname --format "{{.ImageName}} {{.Image}} {{.ImageDigest}}"
+    is "$output" "$expected"
+    run_podman rm -f -t0 $randomname
 }
 
 @test "Verify /run/.containerenv exist" {
@@ -584,9 +598,7 @@ json-file | f
 @test "podman run with --net=host and --port prints warning" {
     rand=$(random_string 10)
 
-    # Please keep the duplicate "--net" options; this tests against #8507,
-    # a regression in which subsequent --net options did not override earlier.
-    run_podman run --rm -p 8080 --net=none --net=host $IMAGE echo $rand
+    run_podman run --rm -p 8080 --net=host $IMAGE echo $rand
     is "${lines[0]}" \
        "Port mappings have been discarded as one of the Host, Container, Pod, and None network modes are in use" \
        "Warning is emitted before container output"
@@ -620,9 +632,15 @@ json-file | f
         run_podman image mount $IMAGE
         romount="$output"
 
-        run_podman run --rm --rootfs $romount echo "Hello world"
+        randomname=$(random_string 30)
+        # FIXME FIXME FIXME: Remove :O once (if) #14504 is fixed!
+        run_podman run --name=$randomname --rootfs $romount:O echo "Hello world"
         is "$output" "Hello world"
 
+	run_podman container inspect $randomname --format "{{.ImageDigest}}"
+	is "$output" "" "Empty image digest for --rootfs container"
+
+	run_podman rm -f -t0 $randomname
         run_podman image unmount $IMAGE
     fi
 }
@@ -687,10 +705,8 @@ json-file | f
     # This operation should take
     # exactly 10 seconds. Give it some leeway.
     delta_t=$(( $t1 - $t0 ))
-    [ $delta_t -gt 8 ]  ||\
-        die "podman stop: ran too quickly! ($delta_t seconds; expected >= 10)"
-    [ $delta_t -le 14 ] ||\
-        die "podman stop: took too long ($delta_t seconds; expected ~10)"
+    assert "$delta_t" -gt  8 "podman stop: ran too quickly!"
+    assert "$delta_t" -le 14 "podman stop: took too long"
 
     run_podman rm $cid
 }
@@ -711,6 +727,18 @@ EOF
     run_podman rmi nomtab
 }
 
+@test "podman run --hostuser tests" {
+    skip_if_not_rootless "test whether hostuser is successfully added"
+    user=$(id -un)
+    run_podman 1 run --rm $IMAGE grep $user /etc/passwd
+    run_podman run --hostuser=$user --rm $IMAGE grep $user /etc/passwd
+    user=$(id -u)
+    run_podman run --hostuser=$user --rm $IMAGE grep $user /etc/passwd
+    run_podman run --hostuser=$user --user $user --rm $IMAGE grep $user /etc/passwd
+    user=bogus
+    run_podman 126 run --hostuser=$user --rm $IMAGE grep $user /etc/passwd
+}
+
 @test "podman run --device-cgroup-rule tests" {
     skip_if_rootless "cannot add devices in rootless mode"
 
@@ -723,9 +751,9 @@ EOF
     run_podman 125 run --device-cgroup-rule="b 7:2" --rm $IMAGE
     is "$output" 'Error: invalid device cgroup rule requires type, major:Minor, and access rules: "b 7:2"'
     run_podman 125 run --device-cgroup-rule="x 7:* rmw" --rm $IMAGE
-    is "$output" "Error: invalid device type in device-access-add:"
+    is "$output" "Error: invalid device type in device-access-add: x"
     run_podman 125 run --device-cgroup-rule="a a:* rmw" --rm $IMAGE
-    is "$output" "Error: strconv.ParseInt: parsing \"a\": invalid syntax"
+    is "$output" "Error: strconv.ParseUint: parsing \"a\": invalid syntax"
 }
 
 @test "podman run closes stdin" {
@@ -734,8 +762,89 @@ EOF
     is "$output" "$random_1" "output matches STDIN"
 }
 
+@test "podman run defaultenv" {
+    run_podman run --rm $IMAGE printenv
+    assert "$output" =~ "TERM=xterm" "env includes TERM"
+    assert "$output" =~ "container=podman" "env includes container=podman"
+
+    run_podman run --unsetenv=TERM --rm $IMAGE printenv
+    assert "$output" =~ "container=podman" "env includes container=podman"
+    assert "$output" != "TERM" "unwanted TERM environment variable despite --unsetenv=TERM"
+
+    run_podman run --unsetenv-all --rm $IMAGE /bin/printenv
+    for v in TERM container PATH; do
+        assert "$output" !~ "$v" "variable present despite --unsetenv-all"
+    done
+
+    run_podman run --unsetenv-all --env TERM=abc --rm $IMAGE /bin/printenv
+    assert "$output" =~ "TERM=abc" \
+           "missing TERM environment variable despite TERM being set on commandline"
+}
+
+@test "podman run - no /etc/hosts" {
+    if [[ -z "$container" ]]; then
+        skip "Test is too dangerous to run in a non-container environment"
+    fi
+    skip_if_rootless "cannot move /etc/hosts file as a rootless user"
+
+    local hosts_tmp=/etc/hosts.RENAME-ME-BACK-TO-JUST-HOSTS
+    if [[ -e $hosts_tmp ]]; then
+        die "Internal error: leftover backup hosts file: $hosts_tmp"
+    fi
+    mv /etc/hosts $hosts_tmp
+    run_podman '?' run --rm --add-host "foo.com:1.2.3.4" $IMAGE cat "/etc/hosts"
+    mv $hosts_tmp /etc/hosts
+    assert "$status" = 0 \
+           "podman run without /etc/hosts file should work"
+    assert "$output" =~ "^1\.2\.3\.4[[:blank:]]foo\.com.*" \
+           "users can add hosts even without /etc/hosts"
+}
+
+# rhbz#1854566 : $IMAGE has incorrect permission 555 on the root '/' filesystem
+@test "podman run image with filesystem permission" {
+    # make sure the IMAGE image have permissiong of 555 like filesystem RPM expects
+    run_podman run --rm $IMAGE stat -c %a /
+    is "$output" "555" "directory permissions on /"
+}
+
+# rhbz#1763007 : the --log-opt for podman run does not work as expected
+@test "podman run with log-opt option" {
+    # Pseudorandom size of the form N.NNN. The '| 1' handles '0.NNN' or 'N.NN0',
+    # which podman displays as 'NNN kB' or 'N.NN MB' respectively.
+    size=$(printf "%d.%03d" $(($RANDOM % 10 | 1)) $(($RANDOM % 100 | 1)))
+    run_podman run -d --rm --log-opt max-size=${size}m $IMAGE sleep 5
+    cid=$output
+    run_podman inspect --format "{{ .HostConfig.LogConfig.Size }}" $cid
+    is "$output" "${size}MB"
+    run_podman rm -t 0 -f $cid
+}
+
+@test "podman run --kernel-memory warning" {
+    # Not sure what situations this fails in, but want to make sure warning shows.
+    run_podman '?' run --rm --kernel-memory 100 $IMAGE false
+    is "$output" ".*The --kernel-memory flag is no longer supported. This flag is a noop." "warn on use of --kernel-memory"
+
+}
+
+# rhbz#1902979 : podman run fails to update /etc/hosts when --uidmap is provided
+@test "podman run update /etc/hosts" {
+    skip_if_cgroupsv1 "FIXME: #15025: run --uidmap fails on cgroups v1"
+    HOST=$(random_string 25)
+    run_podman run --uidmap 0:10001:10002 --rm --hostname ${HOST} $IMAGE grep ${HOST} /etc/hosts
+    is "${lines[0]}" ".*${HOST}.*"
+}
+
+@test "podman run doesn't override oom-score-adj" {
+    current_oom_score_adj=$(cat /proc/self/oom_score_adj)
+    run_podman run --rm $IMAGE cat /proc/self/oom_score_adj
+    is "$output" "$current_oom_score_adj" "different oom_score_adj in the container"
+}
+
 # CVE-2022-1227 : podman top joins container mount NS and uses nsenter from image
 @test "podman top does not use nsenter from image" {
+    keepid="--userns=keep-id"
+    is_rootless || keepid=""
+
     tmpdir=$PODMAN_TMPDIR/build-test
     mkdir -p $tmpdir
     tmpbuilddir=$tmpdir/build
@@ -750,12 +859,94 @@ EOF
 
     test_image="cve_2022_1227_test"
     run_podman build -t $test_image $tmpbuilddir
-    run_podman run -d --userns=keep-id $test_image top
+    run_podman run -d ${keepid} $test_image top
     ctr="$output"
     run_podman top $ctr huser,user
-    run_podman kill $ctr
-    run_podman rm -f $ctr
+    run_podman rm -f -t0 $ctr
     run_podman rmi $test_image
+}
+
+@test "podman create --security-opt" {
+    run_podman create --security-opt no-new-privileges=true $IMAGE
+    run_podman rm $output
+    run_podman create --security-opt no-new-privileges:true $IMAGE
+    run_podman rm $output
+    run_podman create --security-opt no-new-privileges=false $IMAGE
+    run_podman rm $output
+    run_podman create --security-opt no-new-privileges $IMAGE
+    run_podman rm $output
+}
+
+@test "podman run --device-read-bps" {
+    skip_if_rootless "cannot use this flag in rootless mode"
+    # this test is a triple check on blkio flags since they seem to sneak by the tests
+    if is_cgroupsv2; then
+        run_podman run -dt --device-read-bps=/dev/zero:1M $IMAGE top
+        run_podman exec -it $output cat /sys/fs/cgroup/io.max
+        is "$output" ".*1:5 rbps=1048576 wbps=max riops=max wiops=max" "throttle devices passed successfully.*"
+    else
+        run_podman run -dt --device-read-bps=/dev/zero:1M $IMAGE top
+        run_podman exec -it $output cat /sys/fs/cgroup/blkio/blkio.throttle.read_bps_device
+        is "$output" ".*1:5 1048576" "throttle devices passed successfully.*"
+    fi
+    run_podman container rm -fa
+}
+
+@test "podman run failed --rm " {
+    port=$(random_free_port)
+
+    # Run two containers with the same port bindings. The second must fail
+    run_podman     run -p $port:80 --rm -d --name c_ok           $IMAGE top
+    run_podman 126 run -p $port:80      -d --name c_fail_no_rm   $IMAGE top
+    run_podman 126 run -p $port:80 --rm -d --name c_fail_with_rm $IMAGE top
+    # Prior to #15060, the third container would still show up in ps -a
+    run_podman ps -a --sort names --format '{{.Image}}--{{.Names}}'
+    is "$output" "$IMAGE--c_fail_no_rm
+$IMAGE--c_ok" \
+       "podman ps -a shows running & failed containers, but not failed-with-rm"
+
+    run_podman container rm -f -t 0 c_ok c_fail_no_rm
+}
+
+@test "podman run --attach stdin prints container ID" {
+    ctr_name="container-$(random_string 5)"
+    run_podman run --name $ctr_name --attach stdin $IMAGE echo hello
+    run_output=$output
+    run_podman inspect --format "{{.Id}}" $ctr_name
+    ctr_id=$output
+    is "$run_output" "$ctr_id" "Did not find container ID in the output"
+    run_podman rm $ctr_name
+}
+
+# 15895: --privileged + --systemd = hide /dev/ttyNN
+@test "podman run --privileged as root with systemd will not mount /dev/tty" {
+    skip_if_rootless "this test only makes sense as root"
+
+    # First, confirm that we _have_ /dev/ttyNN devices on the host.
+    # ('skip' would be nicer in some sense... but could hide a regression.
+    # Fedora, RHEL, Debian, Ubuntu, Gentoo, all have /dev/ttyN, so if
+    # this ever triggers, it means a real problem we should know about.)
+    assert "$(ls /dev/tty* | grep -vx /dev/tty)" != "" \
+           "Expected at least one /dev/ttyN device on host"
+
+    # Ok now confirm that without --systemd, podman exposes ttyNN devices
+    run_podman run --rm -d --privileged $IMAGE ./pause
+    cid="$output"
+
+    run_podman exec $cid sh -c 'ls /dev/tty*'
+    assert "$output" != "/dev/tty" \
+           "ls /dev/tty* without systemd; should have lots of ttyN devices"
+    run_podman stop -t 0 $cid
+
+    # Actual test for 15895: with --systemd, no ttyN devices are passed through
+    run_podman run --rm -d --privileged --systemd=always $IMAGE ./pause
+    cid="$output"
+
+    run_podman exec $cid sh -c 'ls /dev/tty*'
+    assert "$output" = "/dev/tty" \
+           "ls /dev/tty* with --systemd=always: should have no ttyN devices"
+
+    run_podman stop -t 0 $cid
 }
 
 # vim: filetype=sh

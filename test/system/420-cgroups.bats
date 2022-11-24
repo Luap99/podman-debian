@@ -8,9 +8,7 @@ load helpers
 @test "podman run, preserves initial --cgroup-manager" {
     skip_if_remote "podman-remote does not support --cgroup-manager"
 
-    if is_rootless && is_cgroupsv1; then
-        skip "not supported as rootless under cgroups v1"
-    fi
+    skip_if_rootless_cgroupsv1
 
     # Find out our default cgroup manager, and from that, get the non-default
     run_podman info --format '{{.Host.CgroupManager}}'
@@ -21,6 +19,8 @@ load helpers
     esac
 
     run_podman --cgroup-manager=$other run --name myc $IMAGE true
+    assert "$output" = "" "run true, with cgroup-manager=$other, is silent"
+
     run_podman container inspect --format '{{.HostConfig.CgroupManager}}' myc
     is "$output" "$other" "podman preserved .HostConfig.CgroupManager"
 
@@ -31,7 +31,8 @@ load helpers
 
     # Restart the container, without --cgroup-manager option (ie use default)
     # Prior to #7970, this would fail with an OCI runtime error
-    run_podman start myc
+    run_podman start -a myc
+    assert "$output" = "" "restarted container emits no output"
 
     run_podman rm myc
 }

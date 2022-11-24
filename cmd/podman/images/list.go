@@ -1,6 +1,7 @@
 package images
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -11,11 +12,10 @@ import (
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/report"
 	"github.com/containers/image/v5/docker/reference"
-	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/docker/go-units"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
@@ -94,7 +94,7 @@ func imageListFlagSet(cmd *cobra.Command) {
 
 	formatFlagName := "format"
 	flags.StringVar(&listFlag.format, formatFlagName, "", "Change the output format to JSON or a Go template")
-	_ = cmd.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteFormat(entities.ImageSummary{}))
+	_ = cmd.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteFormat(&imageReporter{}))
 
 	flags.BoolVar(&listFlag.digests, "digests", false, "Show digests")
 	flags.BoolVarP(&listFlag.noHeading, "noheading", "n", false, "Do not print column headings")
@@ -117,7 +117,7 @@ func images(cmd *cobra.Command, args []string) error {
 		listOptions.Filter = append(listOptions.Filter, "reference="+args[0])
 	}
 
-	if cmd.Flag("sort").Changed && !sortFields.Contains(listFlag.sort) {
+	if cmd.Flags().Changed("sort") && !sortFields.Contains(listFlag.sort) {
 		return fmt.Errorf("\"%s\" is not a valid field for sorting. Choose from: %s",
 			listFlag.sort, sortFields.String())
 	}
@@ -140,7 +140,7 @@ func images(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("format") && !report.HasTable(listFlag.format) {
 			listFlag.noHeading = true
 		}
-		return writeTemplate(imgs)
+		return writeTemplate(cmd, imgs)
 	}
 }
 
@@ -186,38 +186,31 @@ func writeJSON(images []imageReporter) error {
 	return nil
 }
 
-func writeTemplate(imgs []imageReporter) error {
+func writeTemplate(cmd *cobra.Command, imgs []imageReporter) error {
 	hdrs := report.Headers(imageReporter{}, map[string]string{
 		"ID":       "IMAGE ID",
 		"ReadOnly": "R/O",
 	})
 
-	var format string
-	if listFlag.format == "" {
-		format = lsFormatFromFlags(listFlag)
+	rpt := report.New(os.Stdout, cmd.Name())
+	defer rpt.Flush()
+
+	var err error
+	if cmd.Flags().Changed("format") {
+		rpt, err = rpt.Parse(report.OriginUser, cmd.Flag("format").Value.String())
 	} else {
-		format = report.NormalizeFormat(listFlag.format)
-		format = report.EnforceRange(format)
+		rpt, err = rpt.Parse(report.OriginPodman, lsFormatFromFlags(listFlag))
 	}
-
-	tmpl, err := report.NewTemplate("list").Parse(format)
 	if err != nil {
 		return err
 	}
 
-	w, err := report.NewWriterDefault(os.Stdout)
-	if err != nil {
-		return err
-	}
-	defer w.Flush()
-
-	if !listFlag.noHeading {
-		if err := tmpl.Execute(w, hdrs); err != nil {
+	if rpt.RenderHeaders && !listFlag.noHeading {
+		if err := rpt.Execute(hdrs); err != nil {
 			return err
 		}
 	}
-
-	return tmpl.Execute(w, imgs)
+	return rpt.Execute(imgs)
 }
 
 func sortImages(imageS []*entities.ImageSummary) ([]imageReporter, error) {
@@ -232,7 +225,7 @@ func sortImages(imageS []*entities.ImageSummary) ([]imageReporter, error) {
 				h.ImageSummary = *e
 				h.Repository, h.Tag, err = tokenRepoTag(tag)
 				if err != nil {
-					return nil, errors.Wrapf(err, "error parsing repository tag %q:", tag)
+					return nil, fmt.Errorf("parsing repository tag: %q: %w", tag, err)
 				}
 				if h.Tag == "<none>" {
 					untagged = append(untagged, h)

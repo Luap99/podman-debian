@@ -21,6 +21,14 @@ const (
 	slirpType     = "slirp4netns"
 )
 
+// KeepIDUserNsOptions defines how to keepIDmatically create a user namespace.
+type KeepIDUserNsOptions struct {
+	// UID is the target uid in the user namespace.
+	UID *uint32
+	// GID is the target uid in the user namespace.
+	GID *uint32
+}
+
 // CgroupMode represents cgroup mode in the container.
 type CgroupMode string
 
@@ -93,7 +101,13 @@ func (n UsernsMode) IsHost() bool {
 
 // IsKeepID indicates whether container uses a mapping where the (uid, gid) on the host is kept inside of the namespace.
 func (n UsernsMode) IsKeepID() bool {
-	return n == "keep-id"
+	parts := strings.Split(string(n), ":")
+	return parts[0] == "keep-id"
+}
+
+// IsNoMap indicates whether container uses a mapping where the (uid, gid) on the host is not present in the namespace.
+func (n UsernsMode) IsNoMap() bool {
+	return n == "nomap"
 }
 
 // IsAuto indicates whether container uses the "auto" userns mode.
@@ -107,7 +121,7 @@ func (n UsernsMode) IsDefaultValue() bool {
 	return n == "" || n == defaultType
 }
 
-// GetAutoOptions returns a AutoUserNsOptions with the settings to setup automatically
+// GetAutoOptions returns a AutoUserNsOptions with the settings to automatically set up
 // a user namespace.
 func (n UsernsMode) GetAutoOptions() (*types.AutoUserNsOptions, error) {
 	parts := strings.SplitN(string(n), ":", 2)
@@ -149,6 +163,44 @@ func (n UsernsMode) GetAutoOptions() (*types.AutoUserNsOptions, error) {
 	return &options, nil
 }
 
+// GetKeepIDOptions returns a KeepIDUserNsOptions with the settings to keepIDmatically set up
+// a user namespace.
+func (n UsernsMode) GetKeepIDOptions() (*KeepIDUserNsOptions, error) {
+	parts := strings.SplitN(string(n), ":", 2)
+	if parts[0] != "keep-id" {
+		return nil, fmt.Errorf("wrong user namespace mode")
+	}
+	options := KeepIDUserNsOptions{}
+	if len(parts) == 1 {
+		return &options, nil
+	}
+	for _, o := range strings.Split(parts[1], ",") {
+		v := strings.SplitN(o, "=", 2)
+		if len(v) != 2 {
+			return nil, fmt.Errorf("invalid option specified: %q", o)
+		}
+		switch v[0] {
+		case "uid":
+			s, err := strconv.ParseUint(v[1], 10, 32)
+			if err != nil {
+				return nil, err
+			}
+			v := uint32(s)
+			options.UID = &v
+		case "gid":
+			s, err := strconv.ParseUint(v[1], 10, 32)
+			if err != nil {
+				return nil, err
+			}
+			v := uint32(s)
+			options.GID = &v
+		default:
+			return nil, fmt.Errorf("unknown option specified: %q", v[0])
+		}
+	}
+	return &options, nil
+}
+
 // IsPrivate indicates whether the container uses the a private userns.
 func (n UsernsMode) IsPrivate() bool {
 	return !(n.IsHost() || n.IsContainer())
@@ -158,7 +210,7 @@ func (n UsernsMode) IsPrivate() bool {
 func (n UsernsMode) Valid() bool {
 	parts := strings.Split(string(n), ":")
 	switch mode := parts[0]; mode {
-	case "", privateType, hostType, "keep-id", nsType, "auto":
+	case "", privateType, hostType, "keep-id", nsType, "auto", "nomap":
 	case containerType:
 		if len(parts) != 2 || parts[1] == "" {
 			return false
@@ -254,7 +306,7 @@ func (n IpcMode) IsHost() bool {
 	return n == hostType
 }
 
-// IsShareable indicates whether the container's ipc namespace can be shared with another container.
+// IsShareable indicates whether the container uses its own shareable ipc namespace which can be shared.
 func (n IpcMode) IsShareable() bool {
 	return n == shareableType
 }
@@ -370,7 +422,7 @@ func (n NetworkMode) Container() string {
 	return ""
 }
 
-//UserDefined indicates user-created network
+// UserDefined indicates user-created network
 func (n NetworkMode) UserDefined() string {
 	if n.IsUserDefined() {
 		return string(n)

@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -21,18 +21,18 @@ func containerCapMatchesHost(ctrCap string, hostCap string) {
 	if isRootless() {
 		return
 	}
-	ctrCap_n, err := strconv.ParseUint(ctrCap, 16, 64)
+	ctrCapN, err := strconv.ParseUint(ctrCap, 16, 64)
 	Expect(err).NotTo(HaveOccurred(), "Error parsing %q as hex", ctrCap)
 
-	hostCap_n, err := strconv.ParseUint(hostCap, 16, 64)
+	hostCapN, err := strconv.ParseUint(hostCap, 16, 64)
 	Expect(err).NotTo(HaveOccurred(), "Error parsing %q as hex", hostCap)
 
 	// host caps can never be zero (except rootless).
 	// and host caps must always be a superset (inclusive) of container
-	Expect(hostCap_n).To(BeNumerically(">", 0), "host cap %q should be nonzero", hostCap)
-	Expect(hostCap_n).To(BeNumerically(">=", ctrCap_n), "host cap %q should never be less than container cap %q", hostCap, ctrCap)
-	hostCap_masked := hostCap_n & (1<<len(capability.List()) - 1)
-	Expect(ctrCap_n).To(Equal(hostCap_masked), "container cap %q is not a subset of host cap %q", ctrCap, hostCap)
+	Expect(hostCapN).To(BeNumerically(">", 0), "host cap %q should be nonzero", hostCap)
+	Expect(hostCapN).To(BeNumerically(">=", ctrCapN), "host cap %q should never be less than container cap %q", hostCap, ctrCap)
+	hostCapMasked := hostCapN & (1<<len(capability.List()) - 1)
+	Expect(ctrCapN).To(Equal(hostCapMasked), "container cap %q is not a subset of host cap %q", ctrCap, hostCap)
 }
 
 var _ = Describe("Podman privileged container tests", func() {
@@ -49,7 +49,6 @@ var _ = Describe("Podman privileged container tests", func() {
 		}
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
 	})
 
 	AfterEach(func() {
@@ -63,9 +62,7 @@ var _ = Describe("Podman privileged container tests", func() {
 		session := podmanTest.Podman([]string{"run", "--privileged", BB, "mount"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		ok, lines := session.GrepString("sysfs")
-		Expect(ok).To(BeTrue())
-		Expect(lines[0]).To(ContainSubstring("sysfs (rw,"))
+		Expect(session.OutputToString()).To(ContainSubstring("sysfs (rw,"))
 	})
 
 	It("podman privileged CapEff", func() {
@@ -124,15 +121,38 @@ var _ = Describe("Podman privileged container tests", func() {
 		session := podmanTest.Podman([]string{"run", "-t", BB, "ls", "-l", "/dev"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(len(session.OutputToStringArray())).To(Equal(17))
+		Expect(session.OutputToStringArray()).To(HaveLen(17))
 	})
 
 	It("podman privileged should inherit host devices", func() {
-		SkipIfRootless("FIXME: This seems to be broken for rootless mode, /dev/ is close to the same")
 		session := podmanTest.Podman([]string{"run", "--privileged", ALPINE, "ls", "-l", "/dev"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(len(session.OutputToStringArray())).To(BeNumerically(">", 20))
+	})
+
+	It("podman privileged should restart after host devices change", func() {
+		containerName := "privileged-restart-test"
+		SkipIfRootless("Cannot create devices in /dev in rootless mode")
+		Expect(os.MkdirAll("/dev/foodevdir", os.ModePerm)).To(BeNil())
+
+		mknod := SystemExec("mknod", []string{"/dev/foodevdir/null", "c", "1", "3"})
+		mknod.WaitWithDefaultTimeout()
+		Expect(mknod).Should(Exit(0))
+
+		session := podmanTest.Podman([]string{"run", "--name=" + containerName, "--privileged", "-it", fedoraMinimal, "ls", "/dev"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		deviceFiles := session.OutputToStringArray()
+
+		os.RemoveAll("/dev/foodevdir")
+		session = podmanTest.Podman([]string{"start", "--attach", containerName})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		deviceFilesAfterRemoval := session.OutputToStringArray()
+		Expect(deviceFiles).To(Not(Equal(deviceFilesAfterRemoval)))
 	})
 
 	It("run no-new-privileges test", func() {

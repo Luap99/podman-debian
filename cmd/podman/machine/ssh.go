@@ -1,24 +1,27 @@
-// +build amd64,!windows arm64,!windows
+//go:build amd64 || arm64
+// +build amd64 arm64
 
 package machine
 
 import (
+	"fmt"
 	"net/url"
 
+	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/pkg/machine"
-	"github.com/containers/podman/v3/pkg/machine/qemu"
-	"github.com/pkg/errors"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/utils"
+	"github.com/containers/podman/v4/pkg/machine"
 	"github.com/spf13/cobra"
 )
 
 var (
 	sshCmd = &cobra.Command{
-		Use:   "ssh [NAME] [COMMAND [ARG ...]]",
-		Short: "SSH into an existing machine",
-		Long:  "SSH into a managed virtual machine ",
-		RunE:  ssh,
+		Use:               "ssh [options] [NAME] [COMMAND [ARG ...]]",
+		Short:             "SSH into an existing machine",
+		Long:              "SSH into a managed virtual machine ",
+		PersistentPreRunE: rootlessOnly,
+		RunE:              ssh,
 		Example: `podman machine ssh myvm
   podman machine ssh myvm echo hello`,
 		ValidArgsFunction: autocompleteMachineSSH,
@@ -35,6 +38,10 @@ func init() {
 		Command: sshCmd,
 		Parent:  machineCmd,
 	})
+	flags := sshCmd.Flags()
+	usernameFlagName := "username"
+	flags.StringVar(&sshOpts.Username, usernameFlagName, "", "Username to use when ssh-ing into the VM.")
+	_ = sshCmd.RegisterFlagCompletionFunc(usernameFlagName, completion.AutocompleteNone)
 }
 
 func ssh(cmd *cobra.Command, args []string) error {
@@ -42,38 +49,24 @@ func ssh(cmd *cobra.Command, args []string) error {
 		err     error
 		validVM bool
 		vm      machine.VM
-		vmType  string
 	)
 
 	// Set the VM to default
 	vmName := defaultMachineName
+	provider := GetSystemDefaultProvider()
 
-	// If we're not given a VM name, use the remote username from the connection config
-	if len(args) == 0 {
-		sshOpts.Username, err = remoteConnectionUsername()
-		if err != nil {
-			return err
-		}
-	}
 	// If len is greater than 0, it means we may have been
 	// provided the VM name.  If so, we check.  The VM name,
 	// if provided, must be in args[0].
 	if len(args) > 0 {
-		switch vmType {
-		default:
-			validVM, err = qemu.IsValidVMName(args[0])
-			if err != nil {
-				return err
-			}
-			if validVM {
-				vmName = args[0]
-			} else {
-				sshOpts.Username, err = remoteConnectionUsername()
-				if err != nil {
-					return err
-				}
-				sshOpts.Args = append(sshOpts.Args, args[0])
-			}
+		validVM, err = provider.IsValidVMName(args[0])
+		if err != nil {
+			return err
+		}
+		if validVM {
+			vmName = args[0]
+		} else {
+			sshOpts.Args = append(sshOpts.Args, args[0])
 		}
 	}
 
@@ -83,22 +76,24 @@ func ssh(cmd *cobra.Command, args []string) error {
 		if validVM {
 			sshOpts.Args = args[1:]
 		} else {
-			sshOpts.Username, err = remoteConnectionUsername()
-			if err != nil {
-				return err
-			}
 			sshOpts.Args = args
 		}
 	}
 
-	switch vmType {
-	default:
-		vm, err = qemu.LoadVMByName(vmName)
-	}
+	vm, err = provider.LoadVMByName(vmName)
 	if err != nil {
-		return errors.Wrapf(err, "vm %s not found", vmName)
+		return fmt.Errorf("vm %s not found: %w", vmName, err)
 	}
-	return vm.SSH(vmName, sshOpts)
+
+	if !validVM && sshOpts.Username == "" {
+		sshOpts.Username, err = remoteConnectionUsername()
+		if err != nil {
+			return err
+		}
+	}
+
+	err = vm.SSH(vmName, sshOpts)
+	return utils.HandleOSExecError(err)
 }
 
 func remoteConnectionUsername() (string, error) {
@@ -106,7 +101,7 @@ func remoteConnectionUsername() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dest, _, err := cfg.ActiveDestination()
+	dest, _, _, err := cfg.ActiveDestination()
 	if err != nil {
 		return "", err
 	}

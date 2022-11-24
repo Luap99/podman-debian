@@ -21,6 +21,14 @@ load helpers
     done
 }
 
+@test "podman history - custom format" {
+    run_podman history --format "{{.ID}}\t{{.ID}}" $IMAGE
+    od -c <<<$output
+    while IFS= read -r row; do
+        is "$row" ".*	.*$"
+    done <<<$output
+}
+
 @test "podman history - json" {
     # Sigh. Timestamp in .created can be '...Z' or '...-06:00'
     tests="
@@ -45,6 +53,19 @@ size      | -\\\?[0-9]\\\+
         done
     done
 
+}
+
+@test "podman image history Created" {
+    # Values from image LIST
+    run_podman image list --format '{{.CreatedSince}}--{{.CreatedAt}}' $IMAGE
+    from_imagelist="$output"
+    assert "$from_imagelist" =~ "^[0-9].* ago--[0-9]+-[0-9]+-[0-9]+ [0-9:]+ " \
+           "CreatedSince and CreatedAt look reasonable"
+
+    # Values from image HISTORY
+    run_podman image history --format '{{.CreatedSince}}--{{.CreatedAt}}' $IMAGE
+    assert "${lines[0]}" == "$from_imagelist" \
+           "CreatedSince and CreatedAt from image history should == image list"
 }
 
 # vim: filetype=sh

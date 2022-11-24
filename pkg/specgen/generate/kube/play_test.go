@@ -2,14 +2,19 @@ package kube
 
 import (
 	"encoding/json"
-	"io/ioutil"
-	"os"
+	"math"
+	"runtime"
+	"strconv"
 	"testing"
 
 	"github.com/containers/common/pkg/secrets"
+	v1 "github.com/containers/podman/v4/pkg/k8s.io/api/core/v1"
+	"github.com/containers/podman/v4/pkg/k8s.io/apimachinery/pkg/api/resource"
+	v12 "github.com/containers/podman/v4/pkg/k8s.io/apimachinery/pkg/apis/meta/v1"
+	"github.com/containers/podman/v4/pkg/k8s.io/apimachinery/pkg/util/intstr"
+	"github.com/containers/podman/v4/pkg/specgen"
+	"github.com/docker/docker/pkg/system"
 	"github.com/stretchr/testify/assert"
-	v1 "k8s.io/api/core/v1"
-	v12 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func createSecrets(t *testing.T, d string) *secrets.SecretsManager {
@@ -21,21 +26,217 @@ func createSecrets(t *testing.T, d string) *secrets.SecretsManager {
 		"path": d,
 	}
 
+	storeOpts := secrets.StoreOptions{
+		DriverOpts: driverOpts,
+	}
+
 	for _, s := range k8sSecrets {
 		data, err := json.Marshal(s.Data)
 		assert.NoError(t, err)
 
-		_, err = secretsManager.Store(s.ObjectMeta.Name, data, driver, driverOpts)
+		_, err = secretsManager.Store(s.ObjectMeta.Name, data, driver, storeOpts)
 		assert.NoError(t, err)
 	}
 
 	return secretsManager
 }
 
+func TestConfigMapVolumes(t *testing.T) {
+	yes := true
+	tests := []struct {
+		name          string
+		volume        v1.Volume
+		configmaps    []v1.ConfigMap
+		errorMessage  string
+		expectedItems map[string][]byte
+	}{
+		{
+			"VolumeFromConfigmap",
+			v1.Volume{
+				Name: "test-volume",
+				VolumeSource: v1.VolumeSource{
+					ConfigMap: &v1.ConfigMapVolumeSource{
+						LocalObjectReference: v1.LocalObjectReference{
+							Name: "bar",
+						},
+					},
+				},
+			},
+			configMapList,
+			"",
+			map[string][]byte{"myvar": []byte("bar")},
+		},
+		{
+			"VolumeFromBinaryConfigmap",
+			v1.Volume{
+				Name: "test-volume",
+				VolumeSource: v1.VolumeSource{
+					ConfigMap: &v1.ConfigMapVolumeSource{
+						LocalObjectReference: v1.LocalObjectReference{
+							Name: "binary-bar",
+						},
+					},
+				},
+			},
+			configMapList,
+			"",
+			map[string][]byte{"myvar": []byte("bin-bar")},
+		},
+		{
+			"ConfigmapMissing",
+			v1.Volume{
+				Name: "test-volume",
+				VolumeSource: v1.VolumeSource{
+					ConfigMap: &v1.ConfigMapVolumeSource{
+						LocalObjectReference: v1.LocalObjectReference{
+							Name: "fizz",
+						},
+					},
+				},
+			},
+			configMapList,
+			`no such ConfigMap "fizz"`,
+			map[string][]byte{},
+		},
+		{
+			"ConfigmapMissingOptional",
+			v1.Volume{
+				Name: "test-volume",
+				VolumeSource: v1.VolumeSource{
+					ConfigMap: &v1.ConfigMapVolumeSource{
+						LocalObjectReference: v1.LocalObjectReference{
+							Name: "fizz",
+						},
+						Optional: &yes,
+					},
+				},
+			},
+			configMapList,
+			"",
+			map[string][]byte{},
+		},
+		{
+			"MultiValue",
+			v1.Volume{
+				Name: "test-volume",
+				VolumeSource: v1.VolumeSource{
+					ConfigMap: &v1.ConfigMapVolumeSource{
+						LocalObjectReference: v1.LocalObjectReference{
+							Name: "multi-item",
+						},
+						Optional: &yes,
+					},
+				},
+			},
+			configMapList,
+			"",
+			map[string][]byte{"foo": []byte("bar"), "fizz": []byte("buzz")},
+		},
+		{
+			"SpecificValue",
+			v1.Volume{
+				Name: "test-volume",
+				VolumeSource: v1.VolumeSource{
+					ConfigMap: &v1.ConfigMapVolumeSource{
+						LocalObjectReference: v1.LocalObjectReference{
+							Name: "multi-item",
+						},
+						Optional: &yes,
+						Items:    []v1.KeyToPath{{Key: "fizz", Path: "/custom/path"}},
+					},
+				},
+			},
+			configMapList,
+			"",
+			map[string][]byte{"/custom/path": []byte("buzz")},
+		},
+		{
+			"MultiValueBinary",
+			v1.Volume{
+				Name: "test-volume",
+				VolumeSource: v1.VolumeSource{
+					ConfigMap: &v1.ConfigMapVolumeSource{
+						LocalObjectReference: v1.LocalObjectReference{
+							Name: "multi-binary-item",
+						},
+						Optional: &yes,
+					},
+				},
+			},
+			configMapList,
+			"",
+			map[string][]byte{"foo": []byte("bin-bar"), "fizz": []byte("bin-buzz")},
+		},
+		{
+			"SpecificValueBinary",
+			v1.Volume{
+				Name: "test-volume",
+				VolumeSource: v1.VolumeSource{
+					ConfigMap: &v1.ConfigMapVolumeSource{
+						LocalObjectReference: v1.LocalObjectReference{
+							Name: "multi-binary-item",
+						},
+						Optional: &yes,
+						Items:    []v1.KeyToPath{{Key: "fizz", Path: "/custom/path"}},
+					},
+				},
+			},
+			configMapList,
+			"",
+			map[string][]byte{"/custom/path": []byte("bin-buzz")},
+		},
+		{
+			"DuplicateValues",
+			v1.Volume{
+				Name: "test-volume",
+				VolumeSource: v1.VolumeSource{
+					ConfigMap: &v1.ConfigMapVolumeSource{
+						LocalObjectReference: v1.LocalObjectReference{
+							Name: "dupe",
+						},
+					},
+				},
+			},
+			configMapList,
+			`the ConfigMap "dupe" is invalid: duplicate key "foo" present in data and binaryData`,
+			map[string][]byte{},
+		},
+		{
+			"DuplicateValuesSpecific",
+			v1.Volume{
+				Name: "test-volume",
+				VolumeSource: v1.VolumeSource{
+					ConfigMap: &v1.ConfigMapVolumeSource{
+						LocalObjectReference: v1.LocalObjectReference{
+							Name: "dupe",
+						},
+						Items: []v1.KeyToPath{{Key: "fizz", Path: "/custom/path"}},
+					},
+				},
+			},
+			configMapList,
+			`the ConfigMap "dupe" is invalid: duplicate key "foo" present in data and binaryData`,
+			map[string][]byte{},
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			result, err := VolumeFromConfigMap(test.volume.ConfigMap, test.configmaps)
+			if test.errorMessage == "" {
+				assert.NoError(t, err)
+				assert.Equal(t, test.expectedItems, result.Items)
+			} else {
+				assert.Error(t, err)
+				assert.Equal(t, test.errorMessage, err.Error())
+			}
+		})
+	}
+}
+
 func TestEnvVarsFrom(t *testing.T) {
-	d, err := ioutil.TempDir("", "secrets")
-	assert.NoError(t, err)
-	defer os.RemoveAll(d)
+	d := t.TempDir()
 	secretsManager := createSecrets(t, d)
 
 	tests := []struct {
@@ -185,10 +386,13 @@ func TestEnvVarsFrom(t *testing.T) {
 }
 
 func TestEnvVarValue(t *testing.T) {
-	d, err := ioutil.TempDir("", "secrets")
-	assert.NoError(t, err)
-	defer os.RemoveAll(d)
+	d := t.TempDir()
 	secretsManager := createSecrets(t, d)
+	stringNumCPUs := strconv.Itoa(runtime.NumCPU())
+
+	mi, err := system.ReadMemInfo()
+	assert.Nil(t, err)
+	stringMemTotal := strconv.FormatInt(mi.MemTotal, 10)
 
 	tests := []struct {
 		name     string
@@ -233,7 +437,7 @@ func TestEnvVarValue(t *testing.T) {
 				ConfigMaps: configMapList,
 			},
 			false,
-			"",
+			nilString,
 		},
 		{
 			"OptionalContainerKeyDoesNotExistInConfigMap",
@@ -253,7 +457,7 @@ func TestEnvVarValue(t *testing.T) {
 				ConfigMaps: configMapList,
 			},
 			true,
-			"",
+			nilString,
 		},
 		{
 			"ConfigMapDoesNotExist",
@@ -272,7 +476,7 @@ func TestEnvVarValue(t *testing.T) {
 				ConfigMaps: configMapList,
 			},
 			false,
-			"",
+			nilString,
 		},
 		{
 			"OptionalConfigMapDoesNotExist",
@@ -292,7 +496,7 @@ func TestEnvVarValue(t *testing.T) {
 				ConfigMaps: configMapList,
 			},
 			true,
-			"",
+			nilString,
 		},
 		{
 			"EmptyConfigMapList",
@@ -311,7 +515,7 @@ func TestEnvVarValue(t *testing.T) {
 				ConfigMaps: []v1.ConfigMap{},
 			},
 			false,
-			"",
+			nilString,
 		},
 		{
 			"OptionalEmptyConfigMapList",
@@ -331,7 +535,7 @@ func TestEnvVarValue(t *testing.T) {
 				ConfigMaps: []v1.ConfigMap{},
 			},
 			true,
-			"",
+			nilString,
 		},
 		{
 			"SecretExists",
@@ -369,7 +573,7 @@ func TestEnvVarValue(t *testing.T) {
 				SecretsManager: secretsManager,
 			},
 			false,
-			"",
+			nilString,
 		},
 		{
 			"OptionalContainerKeyDoesNotExistInSecret",
@@ -389,7 +593,7 @@ func TestEnvVarValue(t *testing.T) {
 				SecretsManager: secretsManager,
 			},
 			true,
-			"",
+			nilString,
 		},
 		{
 			"SecretDoesNotExist",
@@ -408,7 +612,7 @@ func TestEnvVarValue(t *testing.T) {
 				SecretsManager: secretsManager,
 			},
 			false,
-			"",
+			nilString,
 		},
 		{
 			"OptionalSecretDoesNotExist",
@@ -428,7 +632,339 @@ func TestEnvVarValue(t *testing.T) {
 				SecretsManager: secretsManager,
 			},
 			true,
+			nilString,
+		},
+		{
+			"FieldRefMetadataName",
+			v1.EnvVar{
+				Name: "FOO",
+				ValueFrom: &v1.EnvVarSource{
+					FieldRef: &v1.ObjectFieldSelector{
+						FieldPath: "metadata.name",
+					},
+				},
+			},
+			CtrSpecGenOptions{
+				PodName: "test",
+			},
+			true,
+			"test",
+		},
+		{
+			"FieldRefMetadataUID",
+			v1.EnvVar{
+				Name: "FOO",
+				ValueFrom: &v1.EnvVarSource{
+					FieldRef: &v1.ObjectFieldSelector{
+						FieldPath: "metadata.uid",
+					},
+				},
+			},
+			CtrSpecGenOptions{
+				PodID: "ec71ff37c67b688598c0008187ab0960dc34e1dfdcbf3a74e3d778bafcfe0977",
+			},
+			true,
+			"ec71ff37c67b688598c0008187ab0960dc34e1dfdcbf3a74e3d778bafcfe0977",
+		},
+		{
+			"FieldRefMetadataLabelsExist",
+			v1.EnvVar{
+				Name: "FOO",
+				ValueFrom: &v1.EnvVarSource{
+					FieldRef: &v1.ObjectFieldSelector{
+						FieldPath: "metadata.labels['label']",
+					},
+				},
+			},
+			CtrSpecGenOptions{
+				Labels: map[string]string{"label": "label"},
+			},
+			true,
+			"label",
+		},
+		{
+			"FieldRefMetadataLabelsEmpty",
+			v1.EnvVar{
+				Name: "FOO",
+				ValueFrom: &v1.EnvVarSource{
+					FieldRef: &v1.ObjectFieldSelector{
+						FieldPath: "metadata.labels['label']",
+					},
+				},
+			},
+			CtrSpecGenOptions{
+				Labels: map[string]string{"label": ""},
+			},
+			true,
 			"",
+		},
+		{
+			"FieldRefMetadataLabelsNotExist",
+			v1.EnvVar{
+				Name: "FOO",
+				ValueFrom: &v1.EnvVarSource{
+					FieldRef: &v1.ObjectFieldSelector{
+						FieldPath: "metadata.labels['label']",
+					},
+				},
+			},
+			CtrSpecGenOptions{},
+			true,
+			"",
+		},
+		{
+			"FieldRefMetadataAnnotationsExist",
+			v1.EnvVar{
+				Name: "FOO",
+				ValueFrom: &v1.EnvVarSource{
+					FieldRef: &v1.ObjectFieldSelector{
+						FieldPath: "metadata.annotations['annotation']",
+					},
+				},
+			},
+			CtrSpecGenOptions{
+				Annotations: map[string]string{"annotation": "annotation"},
+			},
+			true,
+			"annotation",
+		},
+		{
+			"FieldRefMetadataAnnotationsEmpty",
+			v1.EnvVar{
+				Name: "FOO",
+				ValueFrom: &v1.EnvVarSource{
+					FieldRef: &v1.ObjectFieldSelector{
+						FieldPath: "metadata.annotations['annotation']",
+					},
+				},
+			},
+			CtrSpecGenOptions{
+				Annotations: map[string]string{"annotation": ""},
+			},
+			true,
+			"",
+		},
+		{
+			"FieldRefMetadataAnnotationsNotExist",
+			v1.EnvVar{
+				Name: "FOO",
+				ValueFrom: &v1.EnvVarSource{
+					FieldRef: &v1.ObjectFieldSelector{
+						FieldPath: "metadata.annotations['annotation']",
+					},
+				},
+			},
+			CtrSpecGenOptions{},
+			true,
+			"",
+		},
+		{
+			"FieldRefInvalid1",
+			v1.EnvVar{
+				Name: "FOO",
+				ValueFrom: &v1.EnvVarSource{
+					FieldRef: &v1.ObjectFieldSelector{
+						FieldPath: "metadata.annotations['annotation]",
+					},
+				},
+			},
+			CtrSpecGenOptions{},
+			false,
+			nilString,
+		},
+		{
+			"FieldRefInvalid2",
+			v1.EnvVar{
+				Name: "FOO",
+				ValueFrom: &v1.EnvVarSource{
+					FieldRef: &v1.ObjectFieldSelector{
+						FieldPath: "metadata.dummy['annotation']",
+					},
+				},
+			},
+			CtrSpecGenOptions{},
+			false,
+			nilString,
+		},
+		{
+			"FieldRefNotSupported",
+			v1.EnvVar{
+				Name: "FOO",
+				ValueFrom: &v1.EnvVarSource{
+					FieldRef: &v1.ObjectFieldSelector{
+						FieldPath: "metadata.namespace",
+					},
+				},
+			},
+			CtrSpecGenOptions{},
+			false,
+			nilString,
+		},
+		{
+			"ResourceFieldRefNotSupported",
+			v1.EnvVar{
+				Name: "FOO",
+				ValueFrom: &v1.EnvVarSource{
+					ResourceFieldRef: &v1.ResourceFieldSelector{
+						Resource: "limits.dummy",
+					},
+				},
+			},
+			CtrSpecGenOptions{},
+			false,
+			nilString,
+		},
+		{
+			"ResourceFieldRefMemoryDivisorNotValid",
+			v1.EnvVar{
+				Name: "FOO",
+				ValueFrom: &v1.EnvVarSource{
+					ResourceFieldRef: &v1.ResourceFieldSelector{
+						Resource: "limits.memory",
+						Divisor:  resource.MustParse("2M"),
+					},
+				},
+			},
+			CtrSpecGenOptions{},
+			false,
+			nilString,
+		},
+		{
+			"ResourceFieldRefCpuDivisorNotValid",
+			v1.EnvVar{
+				Name: "FOO",
+				ValueFrom: &v1.EnvVarSource{
+					ResourceFieldRef: &v1.ResourceFieldSelector{
+						Resource: "limits.cpu",
+						Divisor:  resource.MustParse("2m"),
+					},
+				},
+			},
+			CtrSpecGenOptions{},
+			false,
+			nilString,
+		},
+		{
+			"ResourceFieldRefNoDivisor",
+			v1.EnvVar{
+				Name: "FOO",
+				ValueFrom: &v1.EnvVarSource{
+					ResourceFieldRef: &v1.ResourceFieldSelector{
+						Resource: "limits.memory",
+					},
+				},
+			},
+			CtrSpecGenOptions{
+				Container: container,
+			},
+			true,
+			memoryString,
+		},
+		{
+			"ResourceFieldRefMemoryDivisor",
+			v1.EnvVar{
+				Name: "FOO",
+				ValueFrom: &v1.EnvVarSource{
+					ResourceFieldRef: &v1.ResourceFieldSelector{
+						Resource: "limits.memory",
+						Divisor:  resource.MustParse("1Mi"),
+					},
+				},
+			},
+			CtrSpecGenOptions{
+				Container: container,
+			},
+			true,
+			strconv.Itoa(int(math.Ceil(float64(memoryInt) / 1024 / 1024))),
+		},
+		{
+			"ResourceFieldRefCpuDivisor",
+			v1.EnvVar{
+				Name: "FOO",
+				ValueFrom: &v1.EnvVarSource{
+					ResourceFieldRef: &v1.ResourceFieldSelector{
+						Resource: "requests.cpu",
+						Divisor:  resource.MustParse("1m"),
+					},
+				},
+			},
+			CtrSpecGenOptions{
+				Container: container,
+			},
+			true,
+			strconv.Itoa(int(float64(cpuInt) / 0.001)),
+		},
+		{
+			"ResourceFieldRefNoLimitMemory",
+			v1.EnvVar{
+				Name: "FOO",
+				ValueFrom: &v1.EnvVarSource{
+					ResourceFieldRef: &v1.ResourceFieldSelector{
+						Resource: "limits.memory",
+					},
+				},
+			},
+			CtrSpecGenOptions{
+				Container: v1.Container{
+					Name: "test",
+				},
+			},
+			true,
+			stringMemTotal,
+		},
+		{
+			"ResourceFieldRefNoRequestMemory",
+			v1.EnvVar{
+				Name: "FOO",
+				ValueFrom: &v1.EnvVarSource{
+					ResourceFieldRef: &v1.ResourceFieldSelector{
+						Resource: "requests.memory",
+					},
+				},
+			},
+			CtrSpecGenOptions{
+				Container: v1.Container{
+					Name: "test",
+				},
+			},
+			true,
+			stringMemTotal,
+		},
+		{
+			"ResourceFieldRefNoLimitCPU",
+			v1.EnvVar{
+				Name: "FOO",
+				ValueFrom: &v1.EnvVarSource{
+					ResourceFieldRef: &v1.ResourceFieldSelector{
+						Resource: "limits.cpu",
+					},
+				},
+			},
+			CtrSpecGenOptions{
+				Container: v1.Container{
+					Name: "test",
+				},
+			},
+			true,
+			stringNumCPUs,
+		},
+		{
+			"ResourceFieldRefNoRequestCPU",
+			v1.EnvVar{
+				Name: "FOO",
+				ValueFrom: &v1.EnvVarSource{
+					ResourceFieldRef: &v1.ResourceFieldSelector{
+						Resource: "requests.cpu",
+					},
+				},
+			},
+			CtrSpecGenOptions{
+				Container: v1.Container{
+					Name: "test",
+				},
+			},
+			true,
+			stringNumCPUs,
 		},
 	}
 
@@ -437,59 +973,190 @@ func TestEnvVarValue(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			result, err := envVarValue(test.envVar, &test.options)
 			assert.Equal(t, err == nil, test.succeed)
-			assert.Equal(t, test.expected, result)
+			if test.expected == nilString {
+				assert.Nil(t, result)
+			} else {
+				assert.Equal(t, test.expected, *result)
+			}
 		})
 	}
 }
 
-var configMapList = []v1.ConfigMap{
-	{
-		TypeMeta: v12.TypeMeta{
-			Kind: "ConfigMap",
+var (
+	nilString     = "<nil>"
+	configMapList = []v1.ConfigMap{
+		{
+			TypeMeta: v12.TypeMeta{
+				Kind: "ConfigMap",
+			},
+			ObjectMeta: v12.ObjectMeta{
+				Name: "bar",
+			},
+			Data: map[string]string{
+				"myvar": "bar",
+			},
 		},
-		ObjectMeta: v12.ObjectMeta{
-			Name: "bar",
+		{
+			TypeMeta: v12.TypeMeta{
+				Kind: "ConfigMap",
+			},
+			ObjectMeta: v12.ObjectMeta{
+				Name: "foo",
+			},
+			Data: map[string]string{
+				"myvar": "foo",
+			},
 		},
-		Data: map[string]string{
-			"myvar": "bar",
+		{
+			TypeMeta: v12.TypeMeta{
+				Kind: "ConfigMap",
+			},
+			ObjectMeta: v12.ObjectMeta{
+				Name: "binary-bar",
+			},
+			BinaryData: map[string][]byte{
+				"myvar": []byte("bin-bar"),
+			},
 		},
-	},
-	{
-		TypeMeta: v12.TypeMeta{
-			Kind: "ConfigMap",
+		{
+			TypeMeta: v12.TypeMeta{
+				Kind: "ConfigMap",
+			},
+			ObjectMeta: v12.ObjectMeta{
+				Name: "multi-item",
+			},
+			Data: map[string]string{
+				"foo":  "bar",
+				"fizz": "buzz",
+			},
 		},
-		ObjectMeta: v12.ObjectMeta{
-			Name: "foo",
+		{
+			TypeMeta: v12.TypeMeta{
+				Kind: "ConfigMap",
+			},
+			ObjectMeta: v12.ObjectMeta{
+				Name: "multi-binary-item",
+			},
+			BinaryData: map[string][]byte{
+				"foo":  []byte("bin-bar"),
+				"fizz": []byte("bin-buzz"),
+			},
 		},
-		Data: map[string]string{
-			"myvar": "foo",
+		{
+			TypeMeta: v12.TypeMeta{
+				Kind: "ConfigMap",
+			},
+			ObjectMeta: v12.ObjectMeta{
+				Name: "dupe",
+			},
+			BinaryData: map[string][]byte{
+				"fiz": []byte("bin-buzz"),
+				"foo": []byte("bin-bar"),
+			},
+			Data: map[string]string{
+				"foo": "bar",
+			},
 		},
-	},
-}
+	}
 
-var optional = true
+	optional = true
 
-var k8sSecrets = []v1.Secret{
-	{
-		TypeMeta: v12.TypeMeta{
-			Kind: "Secret",
+	k8sSecrets = []v1.Secret{
+		{
+			TypeMeta: v12.TypeMeta{
+				Kind: "Secret",
+			},
+			ObjectMeta: v12.ObjectMeta{
+				Name: "bar",
+			},
+			Data: map[string][]byte{
+				"myvar": []byte("bar"),
+			},
 		},
-		ObjectMeta: v12.ObjectMeta{
-			Name: "bar",
+		{
+			TypeMeta: v12.TypeMeta{
+				Kind: "Secret",
+			},
+			ObjectMeta: v12.ObjectMeta{
+				Name: "foo",
+			},
+			Data: map[string][]byte{
+				"myvar": []byte("foo"),
+			},
 		},
-		Data: map[string][]byte{
-			"myvar": []byte("bar"),
+	}
+
+	cpuInt       = 4
+	cpuString    = strconv.Itoa(cpuInt)
+	memoryInt    = 30000000
+	memoryString = strconv.Itoa(memoryInt)
+	container    = v1.Container{
+		Name: "test",
+		Resources: v1.ResourceRequirements{
+			Limits: v1.ResourceList{
+				v1.ResourceCPU:    resource.MustParse(cpuString),
+				v1.ResourceMemory: resource.MustParse(memoryString),
+			},
+			Requests: v1.ResourceList{
+				v1.ResourceCPU:    resource.MustParse(cpuString),
+				v1.ResourceMemory: resource.MustParse(memoryString),
+			},
 		},
-	},
-	{
-		TypeMeta: v12.TypeMeta{
-			Kind: "Secret",
+	}
+)
+
+func TestHttpLivenessProbe(t *testing.T) {
+	tests := []struct {
+		name          string
+		specGenerator specgen.SpecGenerator
+		container     v1.Container
+		restartPolicy string
+		succeed       bool
+		expectedURL   string
+	}{
+		{
+			"HttpLivenessProbeUrlSetCorrectly",
+			specgen.SpecGenerator{},
+			v1.Container{
+				LivenessProbe: &v1.Probe{
+					Handler: v1.Handler{
+						HTTPGet: &v1.HTTPGetAction{
+							Scheme: "http",
+							Host:   "127.0.0.1",
+							Port:   intstr.FromInt(8080),
+							Path:   "/health",
+						},
+					},
+				},
+			},
+			"always",
+			true,
+			"http://127.0.0.1:8080/health",
 		},
-		ObjectMeta: v12.ObjectMeta{
-			Name: "foo",
+		{
+			"HttpLivenessProbeUrlUsesDefaults",
+			specgen.SpecGenerator{},
+			v1.Container{
+				LivenessProbe: &v1.Probe{
+					Handler: v1.Handler{
+						HTTPGet: &v1.HTTPGetAction{
+							Port: intstr.FromInt(80),
+						},
+					},
+				},
+			},
+			"always",
+			true,
+			"http://localhost:80/",
 		},
-		Data: map[string][]byte{
-			"myvar": []byte("foo"),
-		},
-	},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			err := setupLivenessProbe(&test.specGenerator, test.container, test.restartPolicy)
+			assert.Equal(t, err == nil, test.succeed)
+			assert.Contains(t, test.specGenerator.ContainerHealthCheckConfig.HealthConfig.Test, test.expectedURL)
+		})
+	}
 }

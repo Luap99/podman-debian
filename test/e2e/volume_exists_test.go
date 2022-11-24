@@ -3,7 +3,7 @@ package integration
 import (
 	"os"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	"github.com/containers/storage/pkg/stringid"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -24,7 +24,6 @@ var _ = Describe("Podman volume exists", func() {
 		}
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
 	})
 
 	AfterEach(func() {
@@ -35,7 +34,7 @@ var _ = Describe("Podman volume exists", func() {
 	})
 
 	It("podman volume exists", func() {
-		vol := "vol" + stringid.GenerateNonCryptoID()
+		vol := "vol" + stringid.GenerateRandomID()
 		session := podmanTest.Podman([]string{"volume", "create", vol})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
@@ -44,7 +43,7 @@ var _ = Describe("Podman volume exists", func() {
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
-		session = podmanTest.Podman([]string{"volume", "exists", stringid.GenerateNonCryptoID()})
+		session = podmanTest.Podman([]string{"volume", "exists", stringid.GenerateRandomID()})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(1))
 	})

@@ -2,12 +2,11 @@ package integration
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -27,7 +26,6 @@ var _ = Describe("Podman exec", func() {
 		}
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
 	})
 
 	AfterEach(func() {
@@ -527,8 +525,8 @@ RUN useradd -u 1000 auser`, fedoraMinimal)
 		Expect(ctr).Should(Exit(0))
 
 		data := podmanTest.InspectContainer(ctrName)
-		Expect(len(data)).To(Equal(1))
-		Expect(len(data[0].ExecIDs)).To(Equal(1))
+		Expect(data).To(HaveLen(1))
+		Expect(data[0].ExecIDs).To(HaveLen(1))
 		Expect(exec1.OutputToString()).To(ContainSubstring(data[0].ExecIDs[0]))
 
 		exec2 := podmanTest.Podman([]string{"exec", "-t", "-i", ctrName, "ps", "-a"})
@@ -546,7 +544,7 @@ RUN useradd -u 1000 auser`, fedoraMinimal)
 	It("podman exec with env var secret", func() {
 		secretsString := "somesecretdata"
 		secretFilePath := filepath.Join(podmanTest.TempDir, "secret")
-		err := ioutil.WriteFile(secretFilePath, []byte(secretsString), 0755)
+		err := os.WriteFile(secretFilePath, []byte(secretsString), 0755)
 		Expect(err).To(BeNil())
 
 		session := podmanTest.Podman([]string{"secret", "create", "mysecret", secretFilePath})

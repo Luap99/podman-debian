@@ -2,36 +2,73 @@ package generate
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/containers/common/libimage"
-	"github.com/containers/podman/v3/libpod"
-	"github.com/containers/podman/v3/libpod/define"
-	ann "github.com/containers/podman/v3/pkg/annotations"
-	envLib "github.com/containers/podman/v3/pkg/env"
-	"github.com/containers/podman/v3/pkg/signal"
-	"github.com/containers/podman/v3/pkg/specgen"
-	spec "github.com/opencontainers/runtime-spec/specs-go"
-	"github.com/pkg/errors"
+	"github.com/containers/common/pkg/config"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/libpod/define"
+	ann "github.com/containers/podman/v4/pkg/annotations"
+	envLib "github.com/containers/podman/v4/pkg/env"
+	"github.com/containers/podman/v4/pkg/signal"
+	"github.com/containers/podman/v4/pkg/specgen"
+	"github.com/openshift/imagebuilder"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/sys/unix"
 )
+
+func getImageFromSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerator) (*libimage.Image, string, *libimage.ImageData, error) {
+	if s.Image == "" || s.Rootfs != "" {
+		return nil, "", nil, nil
+	}
+
+	// Image may already have been set in the generator.
+	image, resolvedName := s.GetImage()
+	if image != nil {
+		inspectData, err := image.Inspect(ctx, nil)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		return image, resolvedName, inspectData, nil
+	}
+
+	// Need to look up image.
+	lookupOptions := &libimage.LookupImageOptions{ManifestList: true}
+	image, resolvedName, err := r.LibimageRuntime().LookupImage(s.Image, lookupOptions)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	manifestList, err := image.ToManifestList()
+	// only process if manifest list found otherwise expect it to be regular image
+	if err == nil {
+		image, err = manifestList.LookupInstance(ctx, s.ImageArch, s.ImageOS, s.ImageVariant)
+		if err != nil {
+			return nil, "", nil, err
+		}
+	}
+	s.SetImage(image, resolvedName)
+	inspectData, err := image.Inspect(ctx, nil)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	return image, resolvedName, inspectData, err
+}
 
 // Fill any missing parts of the spec generator (e.g. from the image).
 // Returns a set of warnings or any fatal error that occurred.
 func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerator) ([]string, error) {
 	// Only add image configuration if we have an image
-	var newImage *libimage.Image
-	var inspectData *libimage.ImageData
-	var err error
-	if s.Image != "" {
-		newImage, _, err = r.LibimageRuntime().LookupImage(s.Image, nil)
-		if err != nil {
-			return nil, err
-		}
-
-		inspectData, err = newImage.Inspect(ctx, false)
+	newImage, _, inspectData, err := getImageFromSpec(ctx, r, s)
+	if err != nil {
+		return nil, err
+	}
+	if inspectData != nil {
+		inspectData, err = newImage.Inspect(ctx, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -40,6 +77,22 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 			// NOTE: the health check is only set for Docker images
 			// but inspect will take care of it.
 			s.HealthConfig = inspectData.HealthCheck
+			if s.HealthConfig != nil {
+				if s.HealthConfig.Timeout == 0 {
+					hct, err := time.ParseDuration(define.DefaultHealthCheckTimeout)
+					if err != nil {
+						return nil, err
+					}
+					s.HealthConfig.Timeout = hct
+				}
+				if s.HealthConfig.Interval == 0 {
+					hct, err := time.ParseDuration(define.DefaultHealthCheckInterval)
+					if err != nil {
+						return nil, err
+					}
+					s.HealthConfig.Interval = hct
+				}
+			}
 		}
 
 		// Image stop signal
@@ -54,7 +107,7 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 		}
 	}
 
-	rtc, err := r.GetConfig()
+	rtc, err := r.GetConfigNoCopy()
 	if err != nil {
 		return nil, err
 	}
@@ -62,10 +115,7 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 	// Get Default Environment from containers.conf
 	defaultEnvs, err := envLib.ParseSlice(rtc.GetDefaultEnvEx(s.EnvHost, s.HTTPProxy))
 	if err != nil {
-		return nil, errors.Wrap(err, "error parsing fields in containers.conf")
-	}
-	if defaultEnvs["container"] == "" {
-		defaultEnvs["container"] = "podman"
+		return nil, fmt.Errorf("parsing fields in containers.conf: %w", err)
 	}
 	var envs map[string]string
 
@@ -75,31 +125,38 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 		// already, overriding the default environments
 		envs, err = envLib.ParseSlice(inspectData.Config.Env)
 		if err != nil {
-			return nil, errors.Wrap(err, "Env fields from image failed to parse")
+			return nil, fmt.Errorf("env fields from image failed to parse: %w", err)
 		}
-		defaultEnvs = envLib.Join(defaultEnvs, envs)
+		defaultEnvs = envLib.Join(envLib.DefaultEnvVariables(), envLib.Join(defaultEnvs, envs))
 	}
 
+	for _, e := range s.EnvMerge {
+		processedWord, err := imagebuilder.ProcessWord(e, envLib.Slice(defaultEnvs))
+		if err != nil {
+			return nil, fmt.Errorf("unable to process variables for --env-merge %s: %w", e, err)
+		}
+		splitWord := strings.Split(processedWord, "=")
+		if _, ok := defaultEnvs[splitWord[0]]; ok {
+			defaultEnvs[splitWord[0]] = splitWord[1]
+		}
+	}
+
+	for _, e := range s.UnsetEnv {
+		delete(defaultEnvs, e)
+	}
+
+	if s.UnsetEnvAll {
+		defaultEnvs = make(map[string]string)
+	}
 	// First transform the os env into a map. We need it for the labels later in
 	// any case.
-	osEnv, err := envLib.ParseSlice(os.Environ())
-	if err != nil {
-		return nil, errors.Wrap(err, "error parsing host environment variables")
-	}
+	osEnv := envLib.Map(os.Environ())
+
 	// Caller Specified defaults
 	if s.EnvHost {
 		defaultEnvs = envLib.Join(defaultEnvs, osEnv)
 	} else if s.HTTPProxy {
-		for _, envSpec := range []string{
-			"http_proxy",
-			"HTTP_PROXY",
-			"https_proxy",
-			"HTTPS_PROXY",
-			"ftp_proxy",
-			"FTP_PROXY",
-			"no_proxy",
-			"NO_PROXY",
-		} {
+		for _, envSpec := range config.ProxyEnv {
 			if v, ok := osEnv[envSpec]; ok {
 				defaultEnvs[envSpec] = v
 			}
@@ -128,7 +185,9 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 
 		// Add annotations from the image
 		for k, v := range inspectData.Annotations {
-			annotations[k] = v
+			if !define.IsReservedAnnotation(k) {
+				annotations[k] = v
+			}
 		}
 	}
 
@@ -141,16 +200,24 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 	// - "container" denotes the container should join the VM of the SandboxID
 	//   (the infra container)
 	if len(s.Pod) > 0 {
-		annotations[ann.SandboxID] = s.Pod
+		p, err := r.LookupPod(s.Pod)
+		if err != nil {
+			return nil, err
+		}
+		sandboxID := p.ID()
+		if p.HasInfraContainer() {
+			infra, err := p.InfraContainer()
+			if err != nil {
+				return nil, err
+			}
+			sandboxID = infra.ID()
+		}
+		annotations[ann.SandboxID] = sandboxID
 		annotations[ann.ContainerType] = ann.ContainerTypeContainer
 		// Check if this is an init-ctr and if so, check if
 		// the pod is running.  we do not want to add init-ctrs to
 		// a running pod because it creates confusion for us.
 		if len(s.InitContainerType) > 0 {
-			p, err := r.LookupPod(s.Pod)
-			if err != nil {
-				return nil, err
-			}
 			containerStatuses, err := p.Status()
 			if err != nil {
 				return nil, err
@@ -191,9 +258,6 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 	if len(s.User) == 0 && inspectData != nil {
 		s.User = inspectData.Config.User
 	}
-	if err := finishThrottleDevices(s); err != nil {
-		return nil, err
-	}
 	// Unless already set via the CLI, check if we need to disable process
 	// labels or set the defaults.
 	if len(s.SelinuxOpts) == 0 {
@@ -202,20 +266,12 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 		}
 	}
 
-	// If caller did not specify Pids Limits load default
-	if s.ResourceLimits == nil || s.ResourceLimits.Pids == nil {
-		if s.CgroupsMode != "disabled" {
-			limit := rtc.PidsLimit()
-			if limit != 0 {
-				if s.ResourceLimits == nil {
-					s.ResourceLimits = &spec.LinuxResources{}
-				}
-				s.ResourceLimits.Pids = &spec.LinuxPids{
-					Limit: limit,
-				}
-			}
-		}
+	if s.CgroupsMode == "" {
+		s.CgroupsMode = rtc.Cgroups()
 	}
+
+	// If caller did not specify Pids Limits load default
+	s.InitResourceLimits(rtc)
 
 	if s.LogConfiguration == nil {
 		s.LogConfiguration = &specgen.LogConfig{}
@@ -251,53 +307,237 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 	return warnings, nil
 }
 
-// finishThrottleDevices takes the temporary representation of the throttle
-// devices in the specgen and looks up the major and major minors. it then
-// sets the throttle devices proper in the specgen
-func finishThrottleDevices(s *specgen.SpecGenerator) error {
-	if bps := s.ThrottleReadBpsDevice; len(bps) > 0 {
-		for k, v := range bps {
-			statT := unix.Stat_t{}
-			if err := unix.Stat(k, &statT); err != nil {
-				return err
+// ConfigToSpec takes a completed container config and converts it back into a specgenerator for purposes of cloning an existing container
+func ConfigToSpec(rt *libpod.Runtime, specg *specgen.SpecGenerator, contaierID string) (*libpod.Container, *libpod.InfraInherit, error) {
+	c, err := rt.LookupContainer(contaierID)
+	if err != nil {
+		return nil, nil, err
+	}
+	conf := c.ConfigWithNetworks()
+	if conf == nil {
+		return nil, nil, fmt.Errorf("failed to get config for container %s", c.ID())
+	}
+
+	tmpSystemd := conf.Systemd
+	tmpMounts := conf.Mounts
+
+	conf.Systemd = nil
+	conf.Mounts = []string{}
+
+	if specg == nil {
+		specg = &specgen.SpecGenerator{}
+	}
+
+	specg.Pod = conf.Pod
+
+	matching, err := json.Marshal(conf)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	err = json.Unmarshal(matching, specg)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	conf.Systemd = tmpSystemd
+	conf.Mounts = tmpMounts
+
+	if conf.Spec != nil {
+		if conf.Spec.Linux != nil && conf.Spec.Linux.Resources != nil {
+			if specg.ResourceLimits == nil {
+				specg.ResourceLimits = conf.Spec.Linux.Resources
 			}
-			v.Major = (int64(unix.Major(uint64(statT.Rdev))))
-			v.Minor = (int64(unix.Minor(uint64(statT.Rdev))))
-			s.ResourceLimits.BlockIO.ThrottleReadBpsDevice = append(s.ResourceLimits.BlockIO.ThrottleReadBpsDevice, v)
+		}
+		if conf.Spec.Process != nil && conf.Spec.Process.Env != nil {
+			env := make(map[string]string)
+			for _, entry := range conf.Spec.Process.Env {
+				split := strings.SplitN(entry, "=", 2)
+				if len(split) == 2 {
+					env[split[0]] = split[1]
+				}
+			}
+			specg.Env = env
 		}
 	}
-	if bps := s.ThrottleWriteBpsDevice; len(bps) > 0 {
-		for k, v := range bps {
-			statT := unix.Stat_t{}
-			if err := unix.Stat(k, &statT); err != nil {
-				return err
+
+	nameSpaces := []string{"pid", "net", "cgroup", "ipc", "uts", "user"}
+	containers := []string{conf.PIDNsCtr, conf.NetNsCtr, conf.CgroupNsCtr, conf.IPCNsCtr, conf.UTSNsCtr, conf.UserNsCtr}
+	place := []*specgen.Namespace{&specg.PidNS, &specg.NetNS, &specg.CgroupNS, &specg.IpcNS, &specg.UtsNS, &specg.UserNS}
+	for i, ns := range containers {
+		if len(ns) > 0 {
+			ns := specgen.Namespace{NSMode: specgen.FromContainer, Value: ns}
+			place[i] = &ns
+		} else {
+			switch nameSpaces[i] {
+			case "pid":
+				specg.PidNS = specgen.Namespace{NSMode: specgen.Default} // default
+			case "net":
+				switch {
+				case conf.NetMode.IsBridge():
+					toExpose := make(map[uint16]string, len(conf.ExposedPorts))
+					for _, expose := range []map[uint16][]string{conf.ExposedPorts} {
+						for port, proto := range expose {
+							toExpose[port] = strings.Join(proto, ",")
+						}
+					}
+					specg.Expose = toExpose
+					specg.PortMappings = conf.PortMappings
+					specg.NetNS = specgen.Namespace{NSMode: specgen.Bridge}
+				case conf.NetMode.IsSlirp4netns():
+					toExpose := make(map[uint16]string, len(conf.ExposedPorts))
+					for _, expose := range []map[uint16][]string{conf.ExposedPorts} {
+						for port, proto := range expose {
+							toExpose[port] = strings.Join(proto, ",")
+						}
+					}
+					specg.Expose = toExpose
+					specg.PortMappings = conf.PortMappings
+					netMode := strings.Split(string(conf.NetMode), ":")
+					var val string
+					if len(netMode) > 1 {
+						val = netMode[1]
+					}
+					specg.NetNS = specgen.Namespace{NSMode: specgen.Slirp, Value: val}
+				case conf.NetMode.IsPrivate():
+					specg.NetNS = specgen.Namespace{NSMode: specgen.Private}
+				case conf.NetMode.IsDefault():
+					specg.NetNS = specgen.Namespace{NSMode: specgen.Default}
+				case conf.NetMode.IsUserDefined():
+					specg.NetNS = specgen.Namespace{NSMode: specgen.Path, Value: strings.Split(string(conf.NetMode), ":")[1]}
+				case conf.NetMode.IsContainer():
+					specg.NetNS = specgen.Namespace{NSMode: specgen.FromContainer, Value: strings.Split(string(conf.NetMode), ":")[1]}
+				case conf.NetMode.IsPod():
+					specg.NetNS = specgen.Namespace{NSMode: specgen.FromPod, Value: strings.Split(string(conf.NetMode), ":")[1]}
+				}
+			case "cgroup":
+				specg.CgroupNS = specgen.Namespace{NSMode: specgen.Default} // default
+			case "ipc":
+				switch conf.ShmDir {
+				case "/dev/shm":
+					specg.IpcNS = specgen.Namespace{NSMode: specgen.Host}
+				case "":
+					specg.IpcNS = specgen.Namespace{NSMode: specgen.None}
+				default:
+					specg.IpcNS = specgen.Namespace{NSMode: specgen.Default} // default
+				}
+			case "uts":
+				specg.UtsNS = specgen.Namespace{NSMode: specgen.Private} // default
+			case "user":
+				if conf.AddCurrentUserPasswdEntry {
+					specg.UserNS = specgen.Namespace{NSMode: specgen.KeepID}
+				} else {
+					specg.UserNS = specgen.Namespace{NSMode: specgen.Default} // default
+				}
 			}
-			v.Major = (int64(unix.Major(uint64(statT.Rdev))))
-			v.Minor = (int64(unix.Minor(uint64(statT.Rdev))))
-			s.ResourceLimits.BlockIO.ThrottleWriteBpsDevice = append(s.ResourceLimits.BlockIO.ThrottleWriteBpsDevice, v)
 		}
 	}
-	if iops := s.ThrottleReadIOPSDevice; len(iops) > 0 {
-		for k, v := range iops {
-			statT := unix.Stat_t{}
-			if err := unix.Stat(k, &statT); err != nil {
-				return err
-			}
-			v.Major = (int64(unix.Major(uint64(statT.Rdev))))
-			v.Minor = (int64(unix.Minor(uint64(statT.Rdev))))
-			s.ResourceLimits.BlockIO.ThrottleReadIOPSDevice = append(s.ResourceLimits.BlockIO.ThrottleReadIOPSDevice, v)
+
+	specg.IDMappings = &conf.IDMappings
+	specg.ContainerCreateCommand = conf.CreateCommand
+	if len(specg.Rootfs) == 0 {
+		specg.Rootfs = conf.Rootfs
+	}
+	if len(specg.Image) == 0 {
+		specg.Image = conf.RootfsImageID
+	}
+	var named []*specgen.NamedVolume
+	if len(conf.NamedVolumes) != 0 {
+		for _, v := range conf.NamedVolumes {
+			named = append(named, &specgen.NamedVolume{
+				Name:    v.Name,
+				Dest:    v.Dest,
+				Options: v.Options,
+			})
 		}
 	}
-	if iops := s.ThrottleWriteIOPSDevice; len(iops) > 0 {
-		for k, v := range iops {
-			statT := unix.Stat_t{}
-			if err := unix.Stat(k, &statT); err != nil {
-				return err
-			}
-			v.Major = (int64(unix.Major(uint64(statT.Rdev))))
-			v.Minor = (int64(unix.Minor(uint64(statT.Rdev))))
-			s.ResourceLimits.BlockIO.ThrottleWriteIOPSDevice = append(s.ResourceLimits.BlockIO.ThrottleWriteIOPSDevice, v)
+	specg.Volumes = named
+	var image []*specgen.ImageVolume
+	if len(conf.ImageVolumes) != 0 {
+		for _, v := range conf.ImageVolumes {
+			image = append(image, &specgen.ImageVolume{
+				Source:      v.Source,
+				Destination: v.Dest,
+				ReadWrite:   v.ReadWrite,
+			})
 		}
 	}
-	return nil
+	specg.ImageVolumes = image
+	var overlay []*specgen.OverlayVolume
+	if len(conf.OverlayVolumes) != 0 {
+		for _, v := range conf.OverlayVolumes {
+			overlay = append(overlay, &specgen.OverlayVolume{
+				Source:      v.Source,
+				Destination: v.Dest,
+				Options:     v.Options,
+			})
+		}
+	}
+	specg.OverlayVolumes = overlay
+	_, mounts := c.SortUserVolumes(c.Spec())
+	specg.Mounts = mounts
+	specg.HostDeviceList = conf.DeviceHostSrc
+	specg.Networks = conf.Networks
+	specg.ShmSize = &conf.ShmSize
+
+	mapSecurityConfig(conf, specg)
+
+	if c.IsInfra() { // if we are creating this spec for a pod's infra ctr, map the compatible options
+		spec, err := json.Marshal(specg)
+		if err != nil {
+			return nil, nil, err
+		}
+		infraInherit := &libpod.InfraInherit{}
+		err = json.Unmarshal(spec, infraInherit)
+		return c, infraInherit, err
+	}
+	// else just return the container
+	return c, nil, nil
+}
+
+// mapSecurityConfig takes a libpod.ContainerSecurityConfig and converts it to a specgen.ContinerSecurityConfig
+func mapSecurityConfig(c *libpod.ContainerConfig, s *specgen.SpecGenerator) {
+	s.Privileged = c.Privileged
+	s.SelinuxOpts = append(s.SelinuxOpts, c.LabelOpts...)
+	s.User = c.User
+	s.Groups = c.Groups
+	s.HostUsers = c.HostUsers
+}
+
+// Check name looks for existing containers/pods with the same name, and modifies the given string until a new name is found
+func CheckName(rt *libpod.Runtime, n string, kind bool) string {
+	switch {
+	case strings.Contains(n, "-clone"):
+		ind := strings.Index(n, "-clone") + 6
+		num, err := strconv.Atoi(n[ind:])
+		if num == 0 && err != nil { // clone1 is hard to get with this logic, just check for it here.
+			if kind {
+				_, err = rt.LookupContainer(n + "1")
+			} else {
+				_, err = rt.LookupPod(n + "1")
+			}
+
+			if err != nil {
+				n += "1"
+				break
+			}
+		} else {
+			n = n[0:ind]
+		}
+		err = nil
+		count := num
+		for err == nil {
+			count++
+			tempN := n + strconv.Itoa(count)
+			if kind {
+				_, err = rt.LookupContainer(tempN)
+			} else {
+				_, err = rt.LookupPod(tempN)
+			}
+		}
+		n += strconv.Itoa(count)
+	default:
+		n += "-clone"
+	}
+	return n
 }

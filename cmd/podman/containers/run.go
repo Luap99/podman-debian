@@ -6,19 +6,18 @@ import (
 	"strings"
 
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/cmd/podman/utils"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/errorhandling"
-	"github.com/containers/podman/v3/pkg/rootless"
-	"github.com/containers/podman/v3/pkg/specgen"
-	"github.com/containers/podman/v3/pkg/specgenutil"
-	"github.com/pkg/errors"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/utils"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/errorhandling"
+	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/specgen"
+	"github.com/containers/podman/v4/pkg/specgenutil"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/term"
 )
 
 var (
@@ -61,7 +60,8 @@ func runFlags(cmd *cobra.Command) {
 	flags := cmd.Flags()
 
 	flags.SetInterspersed(false)
-	common.DefineCreateFlags(cmd, &cliVals, false)
+	common.DefineCreateDefaults(&cliVals)
+	common.DefineCreateFlags(cmd, &cliVals, entities.CreateMode)
 	common.DefineNetFlags(cmd)
 
 	flags.SetNormalizeFunc(utils.AliasFlags)
@@ -82,6 +82,9 @@ func runFlags(cmd *cobra.Command) {
 	flags.String(gpuFlagName, "", "This is a Docker specific option and is a NOOP")
 	_ = cmd.RegisterFlagCompletionFunc(gpuFlagName, completion.AutocompleteNone)
 	_ = flags.MarkHidden("gpus")
+
+	passwdFlagName := "passwd"
+	flags.BoolVar(&runOpts.Passwd, passwdFlagName, true, "add entries to /etc/passwd and /etc/group")
 
 	if registry.IsRemote() {
 		_ = flags.MarkHidden("preserve-fds")
@@ -106,10 +109,12 @@ func init() {
 }
 
 func run(cmd *cobra.Command, args []string) error {
-	var err error
+	if err := commonFlags(cmd); err != nil {
+		return err
+	}
 
 	// TODO: Breaking change should be made fatal in next major Release
-	if cliVals.TTY && cliVals.Interactive && !terminal.IsTerminal(int(os.Stdin.Fd())) {
+	if cliVals.TTY && cliVals.Interactive && !term.IsTerminal(int(os.Stdin.Fd())) {
 		logrus.Warnf("The input device is not a TTY. The --tty and --interactive flags might not work properly")
 	}
 
@@ -119,20 +124,16 @@ func run(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	flags := cmd.Flags()
-	cliVals.Net, err = common.NetFlagsToNetOptions(nil, *flags, cliVals.Pod == "" && cliVals.PodIDFile == "")
-	if err != nil {
-		return err
-	}
 	runOpts.CIDFile = cliVals.CIDFile
 	runOpts.Rm = cliVals.Rm
-	if cliVals, err = CreateInit(cmd, cliVals, false); err != nil {
+	cliVals, err := CreateInit(cmd, cliVals, false)
+	if err != nil {
 		return err
 	}
 
 	for fd := 3; fd < int(3+runOpts.PreserveFDs); fd++ {
 		if !rootless.IsFdInherited(fd) {
-			return errors.Errorf("file descriptor %d is not available - the preserve-fds option requires that file descriptors must be passed", fd)
+			return fmt.Errorf("file descriptor %d is not available - the preserve-fds option requires that file descriptors must be passed", fd)
 		}
 	}
 
@@ -140,7 +141,7 @@ func run(cmd *cobra.Command, args []string) error {
 	rawImageName := ""
 	if !cliVals.RootFS {
 		rawImageName = args[0]
-		name, err := PullImage(args[0], cliVals)
+		name, err := PullImage(args[0], &cliVals)
 		if err != nil {
 			return err
 		}
@@ -158,8 +159,13 @@ func run(cmd *cobra.Command, args []string) error {
 		runOpts.InputStream = nil
 	}
 
+	passthrough := cliVals.LogDriver == define.PassthroughLogging
+
 	// If attach is set, clear stdin/stdout/stderr and only attach requested
 	if cmd.Flag("attach").Changed {
+		if passthrough {
+			return fmt.Errorf("cannot specify --attach with --log-driver=passthrough: %w", define.ErrInvalidArg)
+		}
 		runOpts.OutputStream = nil
 		runOpts.ErrorStream = nil
 		if !cliVals.Interactive {
@@ -175,19 +181,24 @@ func run(cmd *cobra.Command, args []string) error {
 			case "stdin":
 				runOpts.InputStream = os.Stdin
 			default:
-				return errors.Wrapf(define.ErrInvalidArg, "invalid stream %q for --attach - must be one of stdin, stdout, or stderr", stream)
+				return fmt.Errorf("invalid stream %q for --attach - must be one of stdin, stdout, or stderr: %w", stream, define.ErrInvalidArg)
 			}
 		}
 	}
+
 	cliVals.PreserveFDs = runOpts.PreserveFDs
 	s := specgen.NewSpecGenerator(imageName, cliVals.RootFS)
 	if err := specgenutil.FillOutSpecGen(s, &cliVals, args); err != nil {
 		return err
 	}
 	s.RawImageName = rawImageName
+	s.ImageOS = cliVals.OS
+	s.ImageArch = cliVals.Arch
+	s.ImageVariant = cliVals.Variant
+	s.Passwd = &runOpts.Passwd
 	runOpts.Spec = s
 
-	if _, err := createPodIfNecessary(s, cliVals.Net); err != nil {
+	if err := createPodIfNecessary(cmd, s, cliVals.Net); err != nil {
 		return err
 	}
 
@@ -200,7 +211,7 @@ func run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if runOpts.Detach {
+	if runOpts.Detach && !passthrough {
 		fmt.Println(report.Id)
 		return nil
 	}

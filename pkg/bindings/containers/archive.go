@@ -2,14 +2,14 @@ package containers
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
 
-	"github.com/containers/podman/v3/pkg/bindings"
-	"github.com/containers/podman/v3/pkg/copy"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/pkg/errors"
+	"github.com/containers/podman/v4/pkg/bindings"
+	"github.com/containers/podman/v4/pkg/copy"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 )
 
 // Stat checks if the specified path is on the container.  Note that the stat
@@ -23,7 +23,7 @@ func Stat(ctx context.Context, nameOrID string, path string) (*entities.Containe
 	params := url.Values{}
 	params.Set("path", path)
 
-	response, err := conn.DoRequest(nil, http.MethodHead, "/containers/%s/archive", params, nil, nameOrID)
+	response, err := conn.DoRequest(ctx, nil, http.MethodHead, "/containers/%s/archive", params, nil, nameOrID)
 	if err != nil {
 		return nil, err
 	}
@@ -55,8 +55,6 @@ func CopyFromArchive(ctx context.Context, nameOrID string, path string, reader i
 }
 
 // CopyFromArchiveWithOptions copy files into container
-//
-// FIXME: remove this function and make CopyFromArchive accept the option as the last parameter in podman 4.0
 func CopyFromArchiveWithOptions(ctx context.Context, nameOrID string, path string, reader io.Reader, options *CopyOptions) (entities.ContainerCopyFunc, error) {
 	conn, err := bindings.GetClient(ctx)
 	if err != nil {
@@ -71,7 +69,7 @@ func CopyFromArchiveWithOptions(ctx context.Context, nameOrID string, path strin
 	params.Set("path", path)
 
 	return func() error {
-		response, err := conn.DoRequest(reader, http.MethodPut, "/containers/%s/archive", params, nil, nameOrID)
+		response, err := conn.DoRequest(ctx, reader, http.MethodPut, "/containers/%s/archive", params, nil, nameOrID)
 		if err != nil {
 			return err
 		}
@@ -92,7 +90,7 @@ func CopyToArchive(ctx context.Context, nameOrID string, path string, writer io.
 	params := url.Values{}
 	params.Set("path", path)
 
-	response, err := conn.DoRequest(nil, http.MethodGet, "/containers/%s/archive", params, nil, nameOrID)
+	response, err := conn.DoRequest(ctx, nil, http.MethodGet, "/containers/%s/archive", params, nil, nameOrID)
 	if err != nil {
 		return nil, err
 	}

@@ -8,21 +8,30 @@ import (
 
 // PlayKubeOptions controls playing kube YAML files.
 type PlayKubeOptions struct {
+	// Annotations - Annotations to add to Pods
+	Annotations map[string]string
 	// Authfile - path to an authentication file.
 	Authfile string
 	// Indicator to build all images with Containerfile or Dockerfile
-	Build bool
+	Build types.OptionalBool
 	// CertDir - to a directory containing TLS certifications and keys.
 	CertDir string
+	// ContextDir - directory containing image contexts used for Build
+	ContextDir string
 	// Down indicates whether to bring contents of a yaml file "down"
 	// as in stop
 	Down bool
+	// Replace indicates whether to delete and recreate a yaml file
+	Replace bool
+	// Do not create /etc/hosts within the pod's containers,
+	// instead use the version from the image
+	NoHosts bool
 	// Username for authenticating against the registry.
 	Username string
 	// Password for authenticating against the registry.
 	Password string
-	// Network - name of the CNI network to connect to.
-	Network string
+	// Networks - name of the network to connect to.
+	Networks []string
 	// Quiet - suppress output when pulling images.
 	Quiet bool
 	// SignaturePolicy - path to a signature-policy file.
@@ -41,8 +50,14 @@ type PlayKubeOptions struct {
 	ConfigMaps []string
 	// LogDriver for the container. For example: journald
 	LogDriver string
+	// LogOptions for the log driver for the container.
+	LogOptions []string
 	// Start - don't start the pod if false
 	Start types.OptionalBool
+	// ServiceContainer - creates a service container that is started before and is stopped after all pods.
+	ServiceContainer bool
+	// Userns - define the user namespace to use.
+	Userns string
 }
 
 // PlayKubePod represents a single pod and associated containers created by play kube
@@ -73,7 +88,10 @@ type PlayKubeReport struct {
 	// Volumes - volumes created by play kube.
 	Volumes []PlayKubeVolume
 	PlayKubeTeardown
+	Secrets []PlaySecret
 }
+
+type KubePlayReport = PlayKubeReport
 
 // PlayKubeDownOptions are options for tearing down pods
 type PlayKubeDownOptions struct{}
@@ -82,4 +100,8 @@ type PlayKubeDownOptions struct{}
 type PlayKubeTeardown struct {
 	StopReport []*PodStopReport
 	RmReport   []*PodRmReport
+}
+
+type PlaySecret struct {
+	CreateReport *SecretCreateReport
 }

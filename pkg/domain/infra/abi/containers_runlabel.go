@@ -2,6 +2,7 @@ package abi
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,12 +10,11 @@ import (
 
 	"github.com/containers/common/libimage"
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	envLib "github.com/containers/podman/v3/pkg/env"
-	"github.com/containers/podman/v3/utils"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	envLib "github.com/containers/podman/v4/pkg/env"
+	"github.com/containers/podman/v4/utils"
 	"github.com/google/shlex"
-	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
 
@@ -40,7 +40,7 @@ func (ic *ContainerEngine) ContainerRunlabel(ctx context.Context, label string, 
 	}
 
 	if len(pulledImages) != 1 {
-		return errors.Errorf("internal error: expected an image to be pulled (or an error)")
+		return errors.New("internal error: expected an image to be pulled (or an error)")
 	}
 
 	// Extract the runlabel from the image.
@@ -57,7 +57,7 @@ func (ic *ContainerEngine) ContainerRunlabel(ctx context.Context, label string, 
 		}
 	}
 	if runlabel == "" {
-		return errors.Errorf("cannot find the value of label: %s in image: %s", label, imageRef)
+		return fmt.Errorf("cannot find the value of label: %s in image: %s", label, imageRef)
 	}
 
 	cmd, env, err := generateRunlabelCommand(runlabel, pulledImages[0], imageRef, args, options)
@@ -86,13 +86,14 @@ func (ic *ContainerEngine) ContainerRunlabel(ctx context.Context, label string, 
 				name := cmd[i+1]
 				ctr, err := ic.Libpod.LookupContainer(name)
 				if err != nil {
-					if errors.Cause(err) != define.ErrNoSuchCtr {
-						logrus.Debugf("Error occurred searching for container %s: %s", name, err.Error())
+					if !errors.Is(err, define.ErrNoSuchCtr) {
+						logrus.Debugf("Error occurred searching for container %s: %v", name, err)
 						return err
 					}
 				} else {
 					logrus.Debugf("Runlabel --replace option given. Container %s will be deleted. The new container will be named %s", ctr.ID(), name)
-					if err := ic.Libpod.RemoveContainer(ctx, ctr, true, false); err != nil {
+					var timeout *uint
+					if err := ic.Libpod.RemoveContainer(ctx, ctr, true, false, timeout); err != nil {
 						return err
 					}
 				}
@@ -110,7 +111,6 @@ func generateRunlabelCommand(runlabel string, img *libimage.Image, inputName str
 	var (
 		err             error
 		name, imageName string
-		globalOpts      string
 		cmd             []string
 	)
 
@@ -143,7 +143,7 @@ func generateRunlabelCommand(runlabel string, img *libimage.Image, inputName str
 		runlabel = fmt.Sprintf("%s %s", runlabel, strings.Join(args, " "))
 	}
 
-	cmd, err = generateCommand(runlabel, imageName, name, globalOpts)
+	cmd, err = generateCommand(runlabel, imageName, name)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -167,7 +167,7 @@ func generateRunlabelCommand(runlabel string, img *libimage.Image, inputName str
 			// I would prefer to use os.getenv but it appears PWD is not in the os env list.
 			d, err := os.Getwd()
 			if err != nil {
-				logrus.Error("unable to determine current working directory")
+				logrus.Error("Unable to determine current working directory")
 				return ""
 			}
 			return d
@@ -208,7 +208,7 @@ func replaceImage(arg, image string) string {
 }
 
 // generateCommand takes a label (string) and converts it to an executable command
-func generateCommand(command, imageName, name, globalOpts string) ([]string, error) {
+func generateCommand(command, imageName, name string) ([]string, error) {
 	if name == "" {
 		name = imageName
 	}
@@ -230,8 +230,6 @@ func generateCommand(command, imageName, name, globalOpts string) ([]string, err
 			newArg = fmt.Sprintf("IMAGE=%s", imageName)
 		case "NAME=NAME":
 			newArg = fmt.Sprintf("NAME=%s", name)
-		case "$GLOBAL_OPTS":
-			newArg = globalOpts
 		default:
 			newArg = replaceName(arg, name)
 			newArg = replaceImage(newArg, imageName)

@@ -1,4 +1,4 @@
-% podman-system-df(1)
+% podman-system-df 1
 
 ## NAME
 podman\-system\-df - Show podman disk usage
@@ -51,7 +51,7 @@ Containers      5
 Local Volumes   1
 ```
 ## SEE ALSO
-podman-system(1)
+**[podman(1)](podman.1.md)**, **[podman-system(1)](podman-system.1.md)**
 
 ## HISTORY
 March 2019, Originally compiled by Qi Wang (qiwan at redhat dot com)

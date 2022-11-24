@@ -1,4 +1,4 @@
-% podman-volume-ls(1)
+% podman-volume-ls 1
 
 ## NAME
 podman\-volume\-ls - List all the available volumes
@@ -14,7 +14,7 @@ flag. Use the **--quiet** flag to print only the volume names.
 
 ## OPTIONS
 
-#### **--filter**=*filter*, **-f**
+#### **--filter**, **-f**=*filter*
 
 Volumes can be filtered by the following attributes:
 
@@ -26,7 +26,7 @@ Volumes can be filtered by the following attributes:
 | name       | [Name] Volume name (accepts regex)                                                    |
 | opt        | Matches a storage driver options                                                      |
 | scope      | Filters volume by scope                                                               |
-| until      | Only remove volumes created before given timestamp                                   |
+| until      | Only remove volumes created before given timestamp                                    |
 
 #### **--format**=*format*
 
@@ -59,7 +59,7 @@ $ podman volume ls --filter label=key=value
 ```
 
 ## SEE ALSO
-podman-volume(1)
+**[podman(1)](podman.1.md)**, **[podman-volume(1)](podman-volume.1.md)**
 
 ## HISTORY
 November 2018, Originally compiled by Urvashi Mohnani <umohnani@redhat.com>

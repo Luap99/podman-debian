@@ -30,6 +30,49 @@ load helpers
     run_podman rm $cid
 }
 
+function _log_test_tail() {
+    local driver=$1
+
+    run_podman run -d --log-driver=$driver $IMAGE sh -c "echo test1; echo test2"
+    cid="$output"
+
+    run_podman wait $cid
+    run_podman logs --tail 1 --timestamps $cid
+    log1="$output"
+    assert "$log1" =~ "^[0-9-]+T[0-9:.]+([\+-][0-9:]+|Z) test2" \
+           "logs should only show last line"
+
+    # Sigh. I hate doing this, but podman-remote --timestamp only has 1-second
+    # resolution (regular podman has sub-second). For the timestamps-differ
+    # check below, we need to force a different second.
+    if is_remote; then
+        sleep 2
+    fi
+
+    run_podman restart $cid
+    run_podman wait $cid
+
+    run_podman logs -t --tail 1 $cid
+    log2="$output"
+    assert "$log2" =~ "^[0-9-]+T[0-9:.]+([\+-][0-9:]+|Z) test2" \
+           "logs, after restart, shows only last line"
+
+    assert "$log2" != "$log1" "log timestamps should differ"
+
+    run_podman rm $cid
+}
+
+@test "podman logs - tail test, k8s-file" {
+    _log_test_tail k8s-file
+}
+
+@test "podman logs - tail test, journald" {
+    # We can't use journald on RHEL as rootless: rhbz#1895105
+    skip_if_journald_unavailable
+
+    _log_test_tail journald
+}
+
 function _additional_events_backend() {
     local driver=$1
     # Since PR#10431, 'logs -f' with journald driver is only supported with journald events backend.
@@ -96,7 +139,7 @@ function _log_test_restarted() {
     # FIXME: #9597
     # run/start is flaking for remote so let's wait for the container condition
     # to stop wasting energy until the root cause gets fixed.
-    run_podman container wait --condition=exited logtest
+    run_podman container wait --condition=exited --condition=stopped logtest
     run_podman ${events_backend} start -a logtest
     logfile=$(mktemp -p ${PODMAN_TMPDIR} logfileXXXXXXXX)
     $PODMAN $_PODMAN_TEST_OPTS ${events_backend} logs -f logtest > $logfile
@@ -154,7 +197,7 @@ $s_after"
 
     run_podman logs --since $after test
     is "$output" "$s_after"
-    run_podman rm -f test
+    run_podman rm -t 1 -f test
 }
 
 @test "podman logs - since k8s-file" {
@@ -196,9 +239,8 @@ $s_after"
         retries=$((retries - 1))
         sleep 0.1
     done
-    if [[ $retries -eq 0 ]]; then
-        die "Timed out waiting for before&after in podman logs: $output"
-    fi
+    assert $retries -gt 0 \
+           "Timed out waiting for before&after in podman logs: $output"
 
     run_podman logs --until $before test
     is "$output" "" "podman logs --until before"
@@ -207,7 +249,7 @@ $s_after"
 
     run_podman logs --until $after test
     is "$output" "$s_both" "podman logs --until after"
-    run_podman rm -f test
+    run_podman rm -t 0 -f test
 }
 
 @test "podman logs - until k8s-file" {
@@ -240,7 +282,7 @@ function _log_test_follow() {
 $contentB
 $contentC" "logs -f on exitted container works"
 
-    run_podman ${events_backend} rm -f $cname
+    run_podman ${events_backend} rm -t 0 -f $cname
 }
 
 @test "podman logs - --follow k8s-file" {

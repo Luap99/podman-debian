@@ -40,32 +40,34 @@ case $1 in
     packages)
         # These names are common to Fedora and Ubuntu
         PKG_NAMES=(\
-                    conmon \
-                    containernetworking-plugins \
-                    containers-common \
-                    criu \
-                    crun \
-                    golang \
-                    podman \
-                    runc \
-                    skopeo \
-                    slirp4netns \
+                    conmon
+                    containernetworking-plugins
+                    containers-common
+                    criu
+                    crun
+                    golang
+                    podman
+                    runc
+                    skopeo
+                    slirp4netns
         )
         case $OS_RELEASE_ID in
             fedora)
                 cat /etc/fedora-release
                 PKG_LST_CMD='rpm -q --qf=%{N}-%{V}-%{R}-%{ARCH}\n'
                 PKG_NAMES+=(\
-                    container-selinux \
-                    libseccomp \
+                    aardvark
+                    container-selinux
+                    libseccomp
+                    netavark
                 )
                 ;;
             ubuntu)
                 cat /etc/issue
                 PKG_LST_CMD='dpkg-query --show --showformat=${Package}-${Version}-${Architecture}\n'
                 PKG_NAMES+=(\
-                    cri-o-runc \
-                    libseccomp2 \
+                    cri-o-runc
+                    libseccomp2
                 )
                 ;;
             *) bad_os_id_ver ;;

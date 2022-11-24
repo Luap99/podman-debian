@@ -1,4 +1,4 @@
-% podman-events(1)
+% podman-events 1
 
 ## NAME
 podman\-events - Monitor Podman events
@@ -22,8 +22,12 @@ The *container* event type will report the follow statuses:
  * checkpoint
  * cleanup
  * commit
+ * connect
  * create
+ * disconnect
  * exec
+ * exec_died
+ * exited
  * export
  * import
  * init
@@ -32,6 +36,7 @@ The *container* event type will report the follow statuses:
  * pause
  * prune
  * remove
+ * rename
  * restart
  * restore
  * start
@@ -50,12 +55,14 @@ The *pod* event type will report the follow statuses:
  * unpause
 
 The *image* event type will report the following statuses:
- * prune
+ * loadFromArchive,
+ * mount
  * pull
  * push
  * remove
  * save
  * tag
+ * unmount
  * untag
 
 The *system* type will report the following statuses:
@@ -70,16 +77,7 @@ The *volume* type will report the following statuses:
 
 ## OPTIONS
 
-#### **--help**
-
-Print usage statement.
-
-#### **--format**
-
-Format the output to JSON Lines or using the given Go template.
-
-
-#### **--filter**=*filter*
+#### **--filter**, **-f**=*filter*
 
 Filter events that are displayed.  They must be in the format of "filter=value".  The following
 filters are supported:
@@ -92,6 +90,32 @@ filters are supported:
  * type=event_type (described above)
 
 In the case where an ID is used, the ID may be in its full or shortened form.
+
+#### **--format**
+
+Format the output to JSON Lines or using the given Go template.
+
+| **Placeholder**    | **Description**                               |
+|--------------------|-----------------------------------------------|
+| .Attributes        | created_at, _by, labels, and more (map[])     |
+| .ContainerExitCode | Exit code (int)                               |
+| .Details ...       | Internal structure, not actually useful       |
+| .HealthStatus      | Health Status (string)                        |
+| .ID                | Container ID (full 64-bit SHA)                |
+| .Image             | Name of image being run (string)              |
+| .Name              | Container name (string)                       |
+| .Network           | Name of network being used (string)           |
+| .Status            | Event status (e.g., create, start, died, ...) |
+| .Time              | Event timestamp (string)                      |
+| .Type              | Event type (e.g., image, container, pod, ...) |
+
+#### **--help**
+
+Print usage statement.
+
+#### **--no-trunc**
+
+Do not truncate the output (default *true*).
 
 #### **--since**=*timestamp*
 
@@ -119,7 +143,7 @@ $ podman events
 
 Show only Podman create events
 ```
-$ podman events --filter event=create
+$ podman events -f event=create
 2019-03-02 10:36:01.375685062 -0600 CST container create 20dc581f6fbf (image=docker.io/library/alpine:latest, name=sharp_morse)
 2019-03-02 10:36:08.561188337 -0600 CST container create 58e7e002344c (image=k8s.gcr.io/pause:3.1, name=3e701f270d54-infra)
 2019-03-02 10:36:13.146899437 -0600 CST volume create cad6dc50e087 (image=, name=cad6dc50e0879568e7d656bd004bd343d6035e7fc4024e1711506fe2fd459e6f)
@@ -151,7 +175,7 @@ $ podman events --format json
 ```
 
 ## SEE ALSO
-podman(1), containers.conf(5)
+**[podman(1)](podman.1.md)**, **[containers.conf(5)](https://github.com/containers/common/blob/main/docs/containers.conf.5.md)**
 
 ## HISTORY
 March 2019, Originally compiled by Brent Baude <bbaude@redhat.com>

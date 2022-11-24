@@ -1,0 +1,153 @@
+% podman-pod-clone 1
+
+## NAME
+podman\-pod\-clone - Creates a copy of an existing pod
+
+## SYNOPSIS
+**podman pod clone** [*options*] *pod* *name*
+
+## DESCRIPTION
+**podman pod clone** creates a copy of a pod, recreating the identical config for the pod and for all of its containers. Users can modify the pods new name and select pod details within the infra container
+
+## OPTIONS
+
+@@option blkio-weight
+
+@@option blkio-weight-device
+
+@@option cgroup-parent
+
+@@option cpu-shares
+
+#### **--cpus**
+
+Set a number of CPUs for the pod that overrides the original pods CPU limits. If none are specified, the original pod's Nano CPUs are used.
+
+@@option cpuset-cpus
+
+If none are specified, the original pod's CPUset is used.
+
+@@option cpuset-mems
+
+@@option destroy
+
+@@option device
+
+Note: the pod implements devices by storing the initial configuration passed by the user and recreating the device on each container added to the pod.
+
+@@option device-read-bps
+
+@@option device-write-bps
+
+@@option gidmap.pod
+
+#### **--help**, **-h**
+
+Print usage statement.
+
+@@option hostname.pod
+
+@@option infra-command
+
+@@option infra-conmon-pidfile
+
+@@option infra-name
+
+@@option label
+
+@@option label-file
+
+@@option memory
+
+@@option memory-swap
+
+#### **--name**, **-n**
+
+Set a custom name for the cloned pod. The default if not specified is of the syntax: **<ORIGINAL_NAME>-clone**
+
+@@option pid.pod
+
+#### **--security-opt**=*option*
+
+Security Options
+
+- `apparmor=unconfined` : Turn off apparmor confinement for the pod
+- `apparmor=your-profile` : Set the apparmor confinement profile for the pod
+
+- `label=user:USER`     : Set the label user for the pod processes
+- `label=role:ROLE`     : Set the label role for the pod processes
+- `label=type:TYPE`     : Set the label process type for the pod processes
+- `label=level:LEVEL`   : Set the label level for the pod processes
+- `label=filetype:TYPE` : Set the label file type for the pod files
+- `label=disable`       : Turn off label separation for the pod
+
+Note: Labeling can be disabled for all pods/containers by setting label=false in the **containers.conf** (`/etc/containers/containers.conf` or `$HOME/.config/containers/containers.conf`) file.
+
+- `mask=/path/1:/path/2` : The paths to mask separated by a colon. A masked path
+  cannot be accessed inside the containers within the pod.
+
+- `no-new-privileges` : Disable container processes from gaining additional privileges.
+
+- `seccomp=unconfined` : Turn off seccomp confinement for the pod
+- `seccomp=profile.json` :  Whitelisted syscalls seccomp Json file to be used as a seccomp filter
+
+- `proc-opts=OPTIONS` : Comma-separated list of options to use for the /proc mount. More details for the
+  possible mount options are specified in the **proc(5)** man page.
+
+- **unmask**=_ALL_ or _/path/1:/path/2_, or shell expanded paths (/proc/*): Paths to unmask separated by a colon. If set to **ALL**, it will unmask all the paths that are masked or made read-only by default.
+  The default masked paths are **/proc/acpi, /proc/kcore, /proc/keys, /proc/latency_stats, /proc/sched_debug, /proc/scsi, /proc/timer_list, /proc/timer_stats, /sys/firmware, and /sys/fs/selinux.**  The default paths that are read-only are **/proc/asound, /proc/bus, /proc/fs, /proc/irq, /proc/sys, /proc/sysrq-trigger, /sys/fs/cgroup**.
+
+Note: Labeling can be disabled for all containers by setting label=false in the **containers.conf** (`/etc/containers/containers.conf` or `$HOME/.config/containers/containers.conf`) file.
+
+@@option shm-size
+
+#### **--start**
+
+When set to true, this flag starts the newly created pod after the
+clone process has completed. All containers within the pod are started.
+
+@@option subgidname
+
+@@option subuidname
+
+@@option sysctl
+
+@@option uidmap.pod
+
+@@option userns.pod
+
+@@option uts.pod
+
+@@option volume
+
+@@option volumes-from
+
+## EXAMPLES
+```
+# podman pod clone pod-name
+6b2c73ff8a1982828c9ae2092954bcd59836a131960f7e05221af9df5939c584
+```
+
+```
+# podman pod clone --name=cloned-pod
+d0cf1f782e2ed67e8c0050ff92df865a039186237a4df24d7acba5b1fa8cc6e7
+6b2c73ff8a1982828c9ae2092954bcd59836a131960f7e05221af9df5939c584
+```
+
+```
+# podman pod clone --destroy --cpus=5 d0cf1f782e2ed67e8c0050ff92df865a039186237a4df24d7acba5b1fa8cc6e7
+6b2c73ff8a1982828c9ae2092954bcd59836a131960f7e05221af9df5939c584
+```
+
+```
+# podman pod clone 2d4d4fca7219b4437e0d74fcdc272c4f031426a6eacd207372691207079551de new_name
+5a9b7851013d326aa4ac4565726765901b3ecc01fcbc0f237bc7fd95588a24f9
+```
+## SEE ALSO
+**[podman-pod-create(1)](podman-pod-create.1.md)**
+
+## HISTORY
+May 2022, Originally written by Charlie Doern <cdoern@redhat.com>
+
+## FOOTNOTES
+<a name="Footnote1">1</a>: The Podman project is committed to inclusivity, a core value of open source. The `master` and `slave` mount propagation terminology used here is problematic and divisive, and should be changed. However, these terms are currently used within the Linux kernel and must be used as-is at this time. When the kernel maintainers rectify this usage, Podman will follow suit immediately.

@@ -4,22 +4,21 @@ import "io"
 
 // GenerateSystemdOptions control the generation of systemd unit files.
 type GenerateSystemdOptions struct {
-	// Name - use container/pod name instead of its ID.
-	Name bool
-	// New - create a new container instead of starting a new one.
-	New bool
-	// RestartPolicy - systemd restart policy.
-	RestartPolicy *string
-	// StopTimeout - time when stopping the container.
-	StopTimeout *uint
-	// ContainerPrefix - systemd unit name prefix for containers
-	ContainerPrefix string
-	// PodPrefix - systemd unit name prefix for pods
-	PodPrefix string
-	// Separator - systemd unit name separator between name/id and prefix
-	Separator string
-	// NoHeader - skip header generation
-	NoHeader bool
+	Name                   bool
+	New                    bool
+	RestartPolicy          *string
+	RestartSec             *uint
+	StartTimeout           *uint
+	StopTimeout            *uint
+	ContainerPrefix        string
+	PodPrefix              string
+	Separator              string
+	NoHeader               bool
+	TemplateUnitFile       bool
+	Wants                  []string
+	After                  []string
+	Requires               []string
+	AdditionalEnvVariables []string
 }
 
 // GenerateSystemdReport
@@ -34,10 +33,23 @@ type GenerateKubeOptions struct {
 	Service bool
 }
 
+type KubeGenerateOptions = GenerateKubeOptions
+
 // GenerateKubeReport
 //
 // FIXME: Podman4.0 should change io.Reader to io.ReaderCloser
 type GenerateKubeReport struct {
 	// Reader - the io.Reader to reader the generated YAML file.
 	Reader io.Reader
+}
+
+type GenerateSpecReport struct {
+	Data []byte
+}
+
+type GenerateSpecOptions struct {
+	ID       string
+	FileName string
+	Compact  bool
+	Name     bool
 }

@@ -1,10 +1,10 @@
-% podman-unshare(1)
+% podman-unshare 1
 
 ## NAME
 podman\-unshare - Run a command inside of a modified user namespace
 
 ## SYNOPSIS
-**podman unshare** [*--*] [*command*]
+**podman unshare** [*options*] [*command*]
 
 ## DESCRIPTION
 Launches a process (by default, *$SHELL*) in a new user namespace. The user
@@ -24,18 +24,19 @@ The unshare session defines two environment variables:
 - **CONTAINERS_GRAPHROOT**: the path to the persistent container's data.
 - **CONTAINERS_RUNROOT**: the path to the volatile container's data.
 
+*IMPORTANT: This command is not available with the remote Podman client.*
+
 ## OPTIONS
 
 #### **--help**, **-h**
 
 Print usage statement
 
-#### **--rootless-cni**
+#### **--rootless-netns**
 
-Join the rootless network namespace used for CNI networking. It can be used to
-connect to a rootless container via IP address (CNI networking). This is otherwise
+Join the rootless network namespace used for CNI and netavark networking. It can be used to
+connect to a rootless container via IP address (bridge networking). This is otherwise
 not possible from the host network namespace.
-_Note: Using this option with more than one unshare session can have unexpected results._
 
 ## Exit Codes
 
@@ -57,13 +58,13 @@ the exit codes follow the `chroot` standard, see below:
 
   **127** Executing a _contained command_ and the _command_ cannot be found
 
-    $ podman run busybox foo; echo $?
+    $ podman unshare foo; echo $?
     Error: fork/exec /usr/bin/bogus: no such file or directory
     127
 
   **Exit code** _contained command_ exit code
 
-    $ podman run busybox /bin/sh -c 'exit 3'; echo $?
+    $ podman unshare /bin/sh -c 'exit 3'; echo $?
     3
 
 ## EXAMPLE
@@ -78,7 +79,7 @@ $ podman unshare cat /proc/self/uid_map /proc/self/gid_map
          0       1000          1
          1      10000      65536
 
-$ podman unshare --rootless-cni ip addr
+$ podman unshare --rootless-netns ip addr
 1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
     link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
     inet 127.0.0.1/8 scope host lo
@@ -105,4 +106,4 @@ $ podman unshare --rootless-cni ip addr
 
 
 ## SEE ALSO
-podman(1), podman-mount(1), namespaces(7), newuidmap(1), newgidmap(1), user\_namespaces(7)
+**[podman(1)](podman.1.md)**, **[podman-mount(1)](podman-mount.1.md)**, **namespaces(7)**, **newuidmap(1)**, **newgidmap(1)**, **user\_namespaces(7)**

@@ -2,6 +2,7 @@ package libpod
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -9,10 +10,9 @@ import (
 	"github.com/containers/common/libimage"
 	is "github.com/containers/image/v5/storage"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/libpod/events"
-	libpodutil "github.com/containers/podman/v3/pkg/util"
-	"github.com/pkg/errors"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/libpod/events"
+	libpodutil "github.com/containers/podman/v4/pkg/util"
 	"github.com/sirupsen/logrus"
 )
 
@@ -27,13 +27,14 @@ type ContainerCommitOptions struct {
 	Author         string
 	Message        string
 	Changes        []string
+	Squash         bool
 }
 
 // Commit commits the changes between a container and its image, creating a new
 // image
 func (c *Container) Commit(ctx context.Context, destImage string, options ContainerCommitOptions) (*libimage.Image, error) {
 	if c.config.Rootfs != "" {
-		return nil, errors.Errorf("cannot commit a container that uses an exploded rootfs")
+		return nil, errors.New("cannot commit a container that uses an exploded rootfs")
 	}
 
 	if !c.batched {
@@ -47,11 +48,11 @@ func (c *Container) Commit(ctx context.Context, destImage string, options Contai
 
 	if c.state.State == define.ContainerStateRunning && options.Pause {
 		if err := c.pause(); err != nil {
-			return nil, errors.Wrapf(err, "error pausing container %q to commit", c.ID())
+			return nil, fmt.Errorf("pausing container %q to commit: %w", c.ID(), err)
 		}
 		defer func() {
 			if err := c.unpause(); err != nil {
-				logrus.Errorf("error unpausing container %q: %v", c.ID(), err)
+				logrus.Errorf("Unpausing container %q: %v", c.ID(), err)
 			}
 		}()
 	}
@@ -63,6 +64,7 @@ func (c *Container) Commit(ctx context.Context, destImage string, options Contai
 	commitOptions := buildah.CommitOptions{
 		SignaturePolicyPath:   options.SignaturePolicyPath,
 		ReportWriter:          options.ReportWriter,
+		Squash:                options.Squash,
 		SystemContext:         c.runtime.imageContext,
 		PreferredManifestType: options.PreferredManifestType,
 	}
@@ -134,7 +136,7 @@ func (c *Container) Commit(ctx context.Context, destImage string, options Contai
 			if include {
 				vol, err := c.runtime.GetVolume(v.Name)
 				if err != nil {
-					return nil, errors.Wrapf(err, "volume %s used in container %s has been removed", v.Name, c.ID())
+					return nil, fmt.Errorf("volume %s used in container %s has been removed: %w", v.Name, c.ID(), err)
 				}
 				if vol.Anonymous() {
 					importBuilder.AddVolume(v.Dest)
@@ -200,7 +202,7 @@ func (c *Container) Commit(ctx context.Context, destImage string, options Contai
 
 		imageRef, err := is.Transport.ParseStoreReference(c.runtime.store, resolvedImageName)
 		if err != nil {
-			return nil, errors.Wrapf(err, "error parsing target image name %q", destImage)
+			return nil, fmt.Errorf("parsing target image name %q: %w", destImage, err)
 		}
 		commitRef = imageRef
 	}

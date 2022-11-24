@@ -3,11 +3,9 @@ package libpod
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 
 	rspec "github.com/opencontainers/runtime-spec/specs-go"
@@ -19,11 +17,7 @@ var hookPath string
 
 func TestPostDeleteHooks(t *testing.T) {
 	ctx := context.Background()
-	dir, err := ioutil.TempDir("", "libpod_test_")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	dir := t.TempDir()
 
 	statePath := filepath.Join(dir, "state")
 	copyPath := filepath.Join(dir, "copy")
@@ -57,16 +51,16 @@ func TestPostDeleteHooks(t *testing.T) {
 			},
 		},
 	}
-	err = c.postDeleteHooks(ctx)
+	err := c.postDeleteHooks(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	stateRegexp := `{"ociVersion":"1\.0\.2-dev","id":"123abc","status":"stopped","bundle":"` + strings.TrimSuffix(os.TempDir(), "/") + `/libpod_test_[0-9]*","annotations":{"a":"b"}}`
+	stateRegexp := `{"ociVersion":"1\.0\.2-dev","id":"123abc","status":"stopped","bundle":"` + dir + `","annotations":{"a":"b"}}`
 	for _, p := range []string{statePath, copyPath} {
 		path := p
 		t.Run(path, func(t *testing.T) {
-			content, err := ioutil.ReadFile(path)
+			content, err := os.ReadFile(path)
 			if err != nil {
 				t.Fatal(err)
 			}

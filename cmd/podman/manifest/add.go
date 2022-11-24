@@ -2,15 +2,16 @@ package manifest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/containers/common/pkg/auth"
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/util"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/spf13/cobra"
 )
 
@@ -20,20 +21,21 @@ type manifestAddOptsWrapper struct {
 	entities.ManifestAddOptions
 
 	TLSVerifyCLI   bool // CLI only
+	Insecure       bool // CLI only
 	CredentialsCLI string
 }
 
 var (
 	manifestAddOpts = manifestAddOptsWrapper{}
 	addCmd          = &cobra.Command{
-		Use:               "add [options] LIST LIST",
+		Use:               "add [options] LIST IMAGE [IMAGE...]",
 		Short:             "Add images to a manifest list or image index",
 		Long:              "Adds an image to a manifest list or image index.",
 		RunE:              add,
+		Args:              cobra.MinimumNArgs(2),
 		ValidArgsFunction: common.AutocompleteImages,
 		Example: `podman manifest add mylist:v1.11 image:v1.11-amd64
 		podman manifest add mylist:v1.11 transport:imageName`,
-		Args: cobra.ExactArgs(2),
 	}
 )
 
@@ -77,6 +79,8 @@ func init() {
 	flags.StringVar(&manifestAddOpts.OSVersion, osVersionFlagName, "", "override the OS `version` of the specified image")
 	_ = addCmd.RegisterFlagCompletionFunc(osVersionFlagName, completion.AutocompleteNone)
 
+	flags.BoolVar(&manifestAddOpts.Insecure, "insecure", false, "neither require HTTPS nor verify certificates when accessing the registry")
+	_ = flags.MarkHidden("insecure")
 	flags.BoolVar(&manifestAddOpts.TLSVerifyCLI, "tls-verify", true, "require HTTPS and verify certificates when accessing the registry")
 
 	variantFlagName := "variant"
@@ -89,13 +93,9 @@ func init() {
 }
 
 func add(cmd *cobra.Command, args []string) error {
-	if err := auth.CheckAuthFile(manifestPushOpts.Authfile); err != nil {
+	if err := auth.CheckAuthFile(manifestAddOpts.Authfile); err != nil {
 		return err
 	}
-
-	// FIXME: (@vrothberg) this interface confuses me a lot.  Why are they
-	// not two arguments?
-	manifestAddOpts.Images = []string{args[1], args[0]}
 
 	if manifestAddOpts.CredentialsCLI != "" {
 		creds, err := util.ParseRegistryCreds(manifestAddOpts.CredentialsCLI)
@@ -113,11 +113,17 @@ func add(cmd *cobra.Command, args []string) error {
 	if cmd.Flags().Changed("tls-verify") {
 		manifestAddOpts.SkipTLSVerify = types.NewOptionalBool(!manifestAddOpts.TLSVerifyCLI)
 	}
+	if cmd.Flags().Changed("insecure") {
+		if manifestAddOpts.SkipTLSVerify != types.OptionalBoolUndefined {
+			return errors.New("--insecure may not be used with --tls-verify")
+		}
+		manifestAddOpts.SkipTLSVerify = types.NewOptionalBool(manifestAddOpts.Insecure)
+	}
 
-	listID, err := registry.ImageEngine().ManifestAdd(context.Background(), manifestAddOpts.ManifestAddOptions)
+	listID, err := registry.ImageEngine().ManifestAdd(context.Background(), args[0], args[1:], manifestAddOpts.ManifestAddOptions)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%s\n", listID)
+	fmt.Println(listID)
 	return nil
 }

@@ -13,14 +13,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/containers/common/libnetwork/types"
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/utils"
-	"github.com/cri-o/ocicni/pkg/ocicni"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/utils"
 	"github.com/fsnotify/fsnotify"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/selinux/go-selinux/label"
-	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
 
@@ -55,7 +54,11 @@ func WaitForFile(path string, chWait chan error, timeout time.Duration) (bool, e
 		if err := watcher.Add(filepath.Dir(path)); err == nil {
 			inotifyEvents = watcher.Events
 		}
-		defer watcher.Close()
+		defer func() {
+			if err := watcher.Close(); err != nil {
+				logrus.Errorf("Failed to close fsnotify watcher: %v", err)
+			}
+		}()
 	}
 
 	var timeoutChan <-chan time.Time
@@ -89,7 +92,7 @@ func WaitForFile(path string, chWait chan error, timeout time.Duration) (bool, e
 				return false, err
 			}
 		case <-timeoutChan:
-			return false, errors.Wrapf(define.ErrInternal, "timed out waiting for file %s", path)
+			return false, fmt.Errorf("timed out waiting for file %s: %w", path, define.ErrInternal)
 		}
 	}
 }
@@ -119,15 +122,15 @@ func sortMounts(m []spec.Mount) []spec.Mount {
 
 func validPodNSOption(p *Pod, ctrPod string) error {
 	if p == nil {
-		return errors.Wrapf(define.ErrInvalidArg, "pod passed in was nil. Container may not be associated with a pod")
+		return fmt.Errorf("pod passed in was nil. Container may not be associated with a pod: %w", define.ErrInvalidArg)
 	}
 
 	if ctrPod == "" {
-		return errors.Wrapf(define.ErrInvalidArg, "container is not a member of any pod")
+		return fmt.Errorf("container is not a member of any pod: %w", define.ErrInvalidArg)
 	}
 
 	if ctrPod != p.ID() {
-		return errors.Wrapf(define.ErrInvalidArg, "pod passed in is not the pod the container is associated with")
+		return fmt.Errorf("pod passed in is not the pod the container is associated with: %w", define.ErrInvalidArg)
 	}
 	return nil
 }
@@ -148,6 +151,18 @@ func queryPackageVersion(cmdArg ...string) string {
 		cmd := exec.Command(cmdArg[0], cmdArg[1:]...)
 		if outp, err := cmd.Output(); err == nil {
 			output = string(outp)
+			if cmdArg[0] == "/usr/bin/dpkg" {
+				r := strings.Split(output, ": ")
+				queryFormat := `${Package}_${Version}_${Architecture}`
+				cmd = exec.Command("/usr/bin/dpkg-query", "-f", queryFormat, "-W", r[0])
+				if outp, err := cmd.Output(); err == nil {
+					output = string(outp)
+				}
+			}
+		}
+		if cmdArg[0] == "/sbin/apk" {
+			prefix := cmdArg[len(cmdArg)-1] + " is owned by "
+			output = strings.Replace(output, prefix, "", 1)
 		}
 	}
 	return strings.Trim(output, "\n")
@@ -156,10 +171,11 @@ func queryPackageVersion(cmdArg ...string) string {
 func packageVersion(program string) string { // program is full path
 	packagers := [][]string{
 		{"/usr/bin/rpm", "-q", "-f"},
-		{"/usr/bin/dpkg", "-S"},    // Debian, Ubuntu
-		{"/usr/bin/pacman", "-Qo"}, // Arch
-		{"/usr/bin/qfile", "-qv"},  // Gentoo (quick)
-		{"/usr/bin/equery", "b"},   // Gentoo (slow)
+		{"/usr/bin/dpkg", "-S"},     // Debian, Ubuntu
+		{"/usr/bin/pacman", "-Qo"},  // Arch
+		{"/usr/bin/qfile", "-qv"},   // Gentoo (quick)
+		{"/usr/bin/equery", "b"},    // Gentoo (slow)
+		{"/sbin/apk", "info", "-W"}, // Alpine
 	}
 
 	for _, cmd := range packagers {
@@ -215,18 +231,18 @@ func DefaultSeccompPath() (string, error) {
 func checkDependencyContainer(depCtr, ctr *Container) error {
 	state, err := depCtr.State()
 	if err != nil {
-		return errors.Wrapf(err, "error accessing dependency container %s state", depCtr.ID())
+		return fmt.Errorf("accessing dependency container %s state: %w", depCtr.ID(), err)
 	}
 	if state == define.ContainerStateRemoving {
-		return errors.Wrapf(define.ErrCtrStateInvalid, "cannot use container %s as a dependency as it is being removed", depCtr.ID())
+		return fmt.Errorf("cannot use container %s as a dependency as it is being removed: %w", depCtr.ID(), define.ErrCtrStateInvalid)
 	}
 
 	if depCtr.ID() == ctr.ID() {
-		return errors.Wrapf(define.ErrInvalidArg, "must specify another container")
+		return fmt.Errorf("must specify another container: %w", define.ErrInvalidArg)
 	}
 
 	if ctr.config.Pod != "" && depCtr.PodID() != ctr.config.Pod {
-		return errors.Wrapf(define.ErrInvalidArg, "container has joined pod %s and dependency container %s is not a member of the pod", ctr.config.Pod, depCtr.ID())
+		return fmt.Errorf("container has joined pod %s and dependency container %s is not a member of the pod: %w", ctr.config.Pod, depCtr.ID(), define.ErrInvalidArg)
 	}
 
 	return nil
@@ -240,14 +256,14 @@ func hijackWriteError(toWrite error, cid string, terminal bool, httpBuf *bufio.R
 			// We need a header.
 			header := makeHTTPAttachHeader(2, uint32(len(errString)))
 			if _, err := httpBuf.Write(header); err != nil {
-				logrus.Errorf("Error writing header for container %s attach connection error: %v", cid, err)
+				logrus.Errorf("Writing header for container %s attach connection error: %v", cid, err)
 			}
 		}
 		if _, err := httpBuf.Write(errString); err != nil {
-			logrus.Errorf("Error writing error to container %s HTTP attach connection: %v", cid, err)
+			logrus.Errorf("Writing error to container %s HTTP attach connection: %v", cid, err)
 		}
 		if err := httpBuf.Flush(); err != nil {
-			logrus.Errorf("Error flushing HTTP buffer for container %s HTTP attach connection: %v", cid, err)
+			logrus.Errorf("Flushing HTTP buffer for container %s HTTP attach connection: %v", cid, err)
 		}
 	}
 }
@@ -259,7 +275,7 @@ func hijackWriteErrorAndClose(toWrite error, cid string, terminal bool, httpCon 
 	hijackWriteError(toWrite, cid, terminal, httpBuf)
 
 	if err := httpCon.Close(); err != nil {
-		logrus.Errorf("Error closing container %s HTTP attach connection: %v", cid, err)
+		logrus.Errorf("Closing container %s HTTP attach connection: %v", cid, err)
 	}
 }
 
@@ -295,19 +311,21 @@ func writeHijackHeader(r *http.Request, conn io.Writer) {
 }
 
 // Convert OCICNI port bindings into Inspect-formatted port bindings.
-func makeInspectPortBindings(bindings []ocicni.PortMapping, expose map[uint16][]string) map[string][]define.InspectHostPort {
-	portBindings := make(map[string][]define.InspectHostPort, len(bindings))
+func makeInspectPortBindings(bindings []types.PortMapping, expose map[uint16][]string) map[string][]define.InspectHostPort {
+	portBindings := make(map[string][]define.InspectHostPort)
 	for _, port := range bindings {
-		key := fmt.Sprintf("%d/%s", port.ContainerPort, port.Protocol)
-		hostPorts := portBindings[key]
-		if hostPorts == nil {
-			hostPorts = []define.InspectHostPort{}
+		protocols := strings.Split(port.Protocol, ",")
+		for _, protocol := range protocols {
+			for i := uint16(0); i < port.Range; i++ {
+				key := fmt.Sprintf("%d/%s", port.ContainerPort+i, protocol)
+				hostPorts := portBindings[key]
+				hostPorts = append(hostPorts, define.InspectHostPort{
+					HostIP:   port.HostIP,
+					HostPort: fmt.Sprintf("%d", port.HostPort+i),
+				})
+				portBindings[key] = hostPorts
+			}
 		}
-		hostPorts = append(hostPorts, define.InspectHostPort{
-			HostIP:   port.HostIP,
-			HostPort: fmt.Sprintf("%d", port.HostPort),
-		})
-		portBindings[key] = hostPorts
 	}
 	// add exposed ports without host port information to match docker
 	for port, protocols := range expose {
@@ -328,7 +346,7 @@ func makeInspectPortBindings(bindings []ocicni.PortMapping, expose map[uint16][]
 func writeStringToPath(path, contents, mountLabel string, uid, gid int) error {
 	f, err := os.Create(path)
 	if err != nil {
-		return errors.Wrapf(err, "unable to create %s", path)
+		return fmt.Errorf("unable to create %s: %w", path, err)
 	}
 	defer f.Close()
 	if err := f.Chown(uid, gid); err != nil {
@@ -336,7 +354,7 @@ func writeStringToPath(path, contents, mountLabel string, uid, gid int) error {
 	}
 
 	if _, err := f.WriteString(contents); err != nil {
-		return errors.Wrapf(err, "unable to write %s", path)
+		return fmt.Errorf("unable to write %s: %w", path, err)
 	}
 	// Relabel runDirResolv for the container
 	if err := label.Relabel(path, mountLabel, false); err != nil {

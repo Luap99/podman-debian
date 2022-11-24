@@ -3,12 +3,12 @@ package compat
 import (
 	"net/http"
 
-	api "github.com/containers/podman/v3/pkg/api/types"
+	api "github.com/containers/podman/v4/pkg/api/types"
 	"github.com/sirupsen/logrus"
 
-	"github.com/containers/podman/v3/libpod"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/pkg/api/handlers/utils"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/api/handlers/utils"
 	"github.com/gorilla/schema"
 )
 
@@ -25,7 +25,7 @@ func StartContainer(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(query.DetachKeys) > 0 {
 		// TODO - start does not support adding detach keys
-		logrus.Info("the detach keys parameter is not supported on start container")
+		logrus.Info("The detach keys parameter is not supported on start container")
 	}
 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	name := utils.GetName(r)

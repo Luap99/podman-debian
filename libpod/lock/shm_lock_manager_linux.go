@@ -1,12 +1,13 @@
+//go:build linux
 // +build linux
 
 package lock
 
 import (
+	"fmt"
 	"syscall"
 
-	"github.com/containers/podman/v3/libpod/lock/shm"
-	"github.com/pkg/errors"
+	"github.com/containers/podman/v4/libpod/lock/shm"
 )
 
 // SHMLockManager manages shared memory locks.
@@ -65,8 +66,8 @@ func (m *SHMLockManager) AllocateAndRetrieveLock(id uint32) (Locker, error) {
 	lock.manager = m
 
 	if id >= m.locks.GetMaxLocks() {
-		return nil, errors.Wrapf(syscall.EINVAL, "lock ID %d is too large - max lock size is %d",
-			id, m.locks.GetMaxLocks()-1)
+		return nil, fmt.Errorf("lock ID %d is too large - max lock size is %d: %w",
+			id, m.locks.GetMaxLocks()-1, syscall.EINVAL)
 	}
 
 	if err := m.locks.AllocateGivenSemaphore(id); err != nil {
@@ -83,8 +84,8 @@ func (m *SHMLockManager) RetrieveLock(id uint32) (Locker, error) {
 	lock.manager = m
 
 	if id >= m.locks.GetMaxLocks() {
-		return nil, errors.Wrapf(syscall.EINVAL, "lock ID %d is too large - max lock size is %d",
-			id, m.locks.GetMaxLocks()-1)
+		return nil, fmt.Errorf("lock ID %d is too large - max lock size is %d: %w",
+			id, m.locks.GetMaxLocks()-1, syscall.EINVAL)
 	}
 
 	return lock, nil

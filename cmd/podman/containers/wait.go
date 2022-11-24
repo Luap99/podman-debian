@@ -2,17 +2,17 @@ package containers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/cmd/podman/utils"
-	"github.com/containers/podman/v3/cmd/podman/validate"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/pkg/errors"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/utils"
+	"github.com/containers/podman/v4/cmd/podman/validate"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/spf13/cobra"
 )
 
@@ -41,9 +41,9 @@ var (
 )
 
 var (
-	waitOptions   = entities.WaitOptions{}
-	waitCondition string
-	waitInterval  string
+	waitOptions    = entities.WaitOptions{}
+	waitConditions []string
+	waitInterval   string
 )
 
 func waitFlags(cmd *cobra.Command) {
@@ -54,7 +54,7 @@ func waitFlags(cmd *cobra.Command) {
 	_ = cmd.RegisterFlagCompletionFunc(intervalFlagName, completion.AutocompleteNone)
 
 	conditionFlagName := "condition"
-	flags.StringVar(&waitCondition, conditionFlagName, "stopped", "Condition to wait on")
+	flags.StringSliceVar(&waitConditions, conditionFlagName, []string{}, "Condition to wait on")
 	_ = cmd.RegisterFlagCompletionFunc(conditionFlagName, common.AutocompleteWaitCondition)
 }
 
@@ -86,17 +86,19 @@ func wait(cmd *cobra.Command, args []string) error {
 	}
 
 	if !waitOptions.Latest && len(args) == 0 {
-		return errors.Errorf("%q requires a name, id, or the \"--latest\" flag", cmd.CommandPath())
+		return fmt.Errorf("%q requires a name, id, or the \"--latest\" flag", cmd.CommandPath())
 	}
 	if waitOptions.Latest && len(args) > 0 {
 		return errors.New("--latest and containers cannot be used together")
 	}
 
-	cond, err := define.StringToContainerStatus(waitCondition)
-	if err != nil {
-		return err
+	for _, condition := range waitConditions {
+		cond, err := define.StringToContainerStatus(condition)
+		if err != nil {
+			return err
+		}
+		waitOptions.Condition = append(waitOptions.Condition, cond)
 	}
-	waitOptions.Condition = []define.ContainerStatus{cond}
 
 	responses, err := registry.ContainerEngine().ContainerWait(context.Background(), args, waitOptions)
 	if err != nil {

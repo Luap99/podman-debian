@@ -1,4 +1,4 @@
-% podman-volume-exists(1)
+% podman-volume-exists 1
 
 ## NAME
 podman\-volume\-exists - Check if the given volume exists
@@ -28,7 +28,7 @@ $ echo $?
 $
 ```
 
-Check if an volume called `mysql` exists (the volume does not actually exist).
+Check if a volume called `mysql` exists (the volume does not actually exist).
 ```
 $ podman volume exists mysql
 $ echo $?
@@ -37,7 +37,7 @@ $
 ```
 
 ## SEE ALSO
-podman(1), podman-volume-create(1), podman-volume-rm(1)
+**[podman(1)](podman.1.md)**, **[podman-volume(1)](podman-volume.1.md)**
 
 ## HISTORY
 January 2021, Originally compiled by Paul Holzinger `<paul.holzinger@web.de>`

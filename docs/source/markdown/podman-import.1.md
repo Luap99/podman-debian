@@ -1,4 +1,4 @@
-% podman-import(1)
+% podman-import 1
 
 ## NAME
 podman\-import - Import a tarball and save it as a filesystem image
@@ -19,28 +19,36 @@ Note: `:` is a restricted character and cannot be part of the file name.
 
 ## OPTIONS
 
-#### **--change**=*instruction*, **-c**
+#### **--arch**
+
+Set architecture of the imported image.
+
+#### **--change**, **-c**=*instruction*
 
 Apply the following possible instructions to the created image:
 **CMD** | **ENTRYPOINT** | **ENV** | **EXPOSE** | **LABEL** | **STOPSIGNAL** | **USER** | **VOLUME** | **WORKDIR**
 
 Can be set multiple times
 
+#### **--help**, **-h**
+
+Print usage statement
+
 #### **--message**, **-m**=*message*
 
 Set commit message for imported image
+
+#### **--os**
+
+Set OS of the imported image.
 
 #### **--quiet**, **-q**
 
 Shows progress on the import
 
-**--verbose**
+#### **--variant**
 
-Print additional debugging information
-
-#### **--help**, **-h**
-
-Print usage statement
+Set variant of the imported image.
 
 ## EXAMPLES
 
@@ -107,7 +115,7 @@ db65d991f3bbf7f31ed1064db9a6ced7652e3f8166c4736aa9133dadd3c7acb3
 ```
 
 ## SEE ALSO
-podman(1), podman-export(1)
+**[podman(1)](podman.1.md)**, **[podman-export(1)](podman-export.1.md)**
 
 ## HISTORY
 November 2017, Originally compiled by Urvashi Mohnani <umohnani@redhat.com>

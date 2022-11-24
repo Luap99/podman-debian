@@ -1,4 +1,4 @@
-package test_bindings
+package bindings_test
 
 import (
 	"context"
@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containers/podman/v3/pkg/bindings"
-	"github.com/containers/podman/v3/pkg/bindings/secrets"
+	"github.com/containers/podman/v4/pkg/bindings"
+	"github.com/containers/podman/v4/pkg/bindings/secrets"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
@@ -64,7 +64,7 @@ var _ = Describe("Podman secrets", func() {
 		Expect(data.Spec.Name).To(Equal(name))
 
 		// inspecting non-existent secret should fail
-		data, err = secrets.Inspect(connText, "notasecret", nil)
+		_, err = secrets.Inspect(connText, "notasecret", nil)
 		code, _ := bindings.CheckResponseCode(err)
 		Expect(code).To(BeNumerically("==", http.StatusNotFound))
 	})

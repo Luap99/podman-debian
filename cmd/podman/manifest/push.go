@@ -1,17 +1,18 @@
 package manifest
 
 import (
-	"io/ioutil"
+	"errors"
+	"fmt"
+	"os"
 
 	"github.com/containers/common/pkg/auth"
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/cmd/podman/utils"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/util"
-	"github.com/pkg/errors"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/utils"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/spf13/cobra"
 )
 
@@ -20,8 +21,9 @@ import (
 type manifestPushOptsWrapper struct {
 	entities.ImagePushOptions
 
-	TLSVerifyCLI   bool // CLI only
-	CredentialsCLI string
+	TLSVerifyCLI, Insecure bool // CLI only
+	CredentialsCLI         string
+	SignPassphraseFileCLI  string
 }
 
 var (
@@ -72,12 +74,29 @@ func init() {
 	flags.StringVar(&manifestPushOpts.SignBy, signByFlagName, "", "sign the image using a GPG key with the specified `FINGERPRINT`")
 	_ = pushCmd.RegisterFlagCompletionFunc(signByFlagName, completion.AutocompleteNone)
 
+	signBySigstorePrivateKeyFlagName := "sign-by-sigstore-private-key"
+	flags.StringVar(&manifestPushOpts.SignBySigstorePrivateKeyFile, signBySigstorePrivateKeyFlagName, "", "Sign the image using a sigstore private key at `PATH`")
+	_ = pushCmd.RegisterFlagCompletionFunc(signBySigstorePrivateKeyFlagName, completion.AutocompleteDefault)
+
+	signPassphraseFileFlagName := "sign-passphrase-file"
+	flags.StringVar(&manifestPushOpts.SignPassphraseFileCLI, signPassphraseFileFlagName, "", "Read a passphrase for signing an image from `PATH`")
+	_ = pushCmd.RegisterFlagCompletionFunc(signPassphraseFileFlagName, completion.AutocompleteDefault)
+
 	flags.BoolVar(&manifestPushOpts.TLSVerifyCLI, "tls-verify", true, "require HTTPS and verify certificates when accessing the registry")
+	flags.BoolVar(&manifestPushOpts.Insecure, "insecure", false, "neither require HTTPS nor verify certificates when accessing the registry")
+	_ = flags.MarkHidden("insecure")
 	flags.BoolVarP(&manifestPushOpts.Quiet, "quiet", "q", false, "don't output progress information when pushing lists")
 	flags.SetNormalizeFunc(utils.AliasFlags)
 
+	compressionFormat := "compression-format"
+	flags.StringVar(&manifestPushOpts.CompressionFormat, compressionFormat, "", "compression format to use")
+	_ = pushCmd.RegisterFlagCompletionFunc(compressionFormat, common.AutocompleteCompressionFormat)
+
 	if registry.IsRemote() {
 		_ = flags.MarkHidden("cert-dir")
+		_ = flags.MarkHidden(signByFlagName)
+		_ = flags.MarkHidden(signBySigstorePrivateKeyFlagName)
+		_ = flags.MarkHidden(signPassphraseFileFlagName)
 	}
 }
 
@@ -88,10 +107,10 @@ func push(cmd *cobra.Command, args []string) error {
 	listImageSpec := args[0]
 	destSpec := args[1]
 	if listImageSpec == "" {
-		return errors.Errorf(`invalid image name "%s"`, listImageSpec)
+		return fmt.Errorf(`invalid image name "%s"`, listImageSpec)
 	}
 	if destSpec == "" {
-		return errors.Errorf(`invalid destination "%s"`, destSpec)
+		return fmt.Errorf(`invalid destination "%s"`, destSpec)
 	}
 
 	if manifestPushOpts.CredentialsCLI != "" {
@@ -103,6 +122,14 @@ func push(cmd *cobra.Command, args []string) error {
 		manifestPushOpts.Password = creds.Password
 	}
 
+	if !manifestPushOpts.Quiet {
+		manifestPushOpts.Writer = os.Stderr
+	}
+
+	if err := common.PrepareSigningPassphrase(&manifestPushOpts.ImagePushOptions, manifestPushOpts.SignPassphraseFileCLI); err != nil {
+		return err
+	}
+
 	// TLS verification in c/image is controlled via a `types.OptionalBool`
 	// which allows for distinguishing among set-true, set-false, unspecified
 	// which is important to implement a sane way of dealing with defaults of
@@ -110,12 +137,18 @@ func push(cmd *cobra.Command, args []string) error {
 	if cmd.Flags().Changed("tls-verify") {
 		manifestPushOpts.SkipTLSVerify = types.NewOptionalBool(!manifestPushOpts.TLSVerifyCLI)
 	}
+	if cmd.Flags().Changed("insecure") {
+		if manifestPushOpts.SkipTLSVerify != types.OptionalBoolUndefined {
+			return errors.New("--insecure may not be used with --tls-verify")
+		}
+		manifestPushOpts.SkipTLSVerify = types.NewOptionalBool(manifestPushOpts.Insecure)
+	}
 	digest, err := registry.ImageEngine().ManifestPush(registry.Context(), args[0], args[1], manifestPushOpts.ImagePushOptions)
 	if err != nil {
 		return err
 	}
 	if manifestPushOpts.DigestFile != "" {
-		if err := ioutil.WriteFile(manifestPushOpts.DigestFile, []byte(digest), 0644); err != nil {
+		if err := os.WriteFile(manifestPushOpts.DigestFile, []byte(digest), 0644); err != nil {
 			return err
 		}
 	}

@@ -13,12 +13,41 @@ export GO111MODULE=off
 export DH_GOLANG_GO_GENERATE := 1
 
 export DH_GOLANG_INSTALL_EXTRA := $(wildcard libpod/*/testdata/* libpod/*/cni/*/*/*)
-export DH_GOLANG_EXCLUDES := dependencies test/e2e contrib/perftest test/utils test/endpoint hack/podman-registry-go pkg/bindings/test
+
+# machine/qemu only works on amd64, arm64
+ifeq (,$(filter amd64 arm64,$(DEB_HOST_ARCH)))
+$(info excluding pkg/machine/qemu for $(DEB_HOST_ARCH))
+LOCAL_DH_GOLANG_EXTRA_EXCLUDES := pkg/machine/qemu
+endif
+
+export DH_GOLANG_EXCLUDES := $(LOCAL_DH_GOLANG_EXTRA_EXCLUDES) \
+	contrib/perftest \
+	dependencies \
+	hack/podman-registry-go \
+	pkg/bindings/test \
+	podman/pkg/machine/e2e \
+	test/e2e \
+	test/endpoint \
+	test/utils
+
+# machine/qemu only works on amd64, arm64
+ifneq (,$(filter amd64 arm64,$(DEB_HOST_ARCH)))
+export DH_GOLANG_EXCLUDES += pkg/machine/qemu
+endif
+
+
+export DH_GOLANG_TEST_EXCLUDES := $(DH_GOLANG_EXCLUDES) \
+	libpod/hack/podman-registry-go \
+	libpod/lock/file \
+	libpod/network/cni \
+	libpod/pkg/bindings/test \
+	podman/cmd/podman/common
+
 
 export HOME=$(CURDIR)/debian/tmp
 
 ## https://podman.io/getting-started/installation#build-tags
-BUILDTAGS := apparmor,ostree,seccomp,selinux,systemd
+BUILDTAGS := apparmor,ostree,seccomp,selinux,systemd,libsubid
 # containers_image_openpgp
 
 %:
@@ -46,7 +75,7 @@ ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	  XDG_DATA_HOME=$(CURDIR)/debian/tmp-home/.local/share \
 	  XDG_RUNTIME_DIR=$(CURDIR)/debian/tmp-home/run \
 	  PATH="$(CURDIR)/_output/bin:$$PATH" \
-	  DH_GOLANG_EXCLUDES="$${DH_GOLANG_EXCLUDES} libpod/network/cni libpod/lock/file libpod/hack/podman-registry-go libpod/pkg/bindings/test podman/cmd/podman/common" \
+	  DH_GOLANG_EXCLUDES="$${DH_GOLANG_TEST_EXCLUDES}" \
 	dh_auto_test -v --max-parallel=2 -- -tags "$(BUILDTAGS)"
 	rm -rf $(CURDIR)/debian/tmp-home
 endif
@@ -56,10 +85,13 @@ override_dh_auto_install:
 	# avoid exposing unnecessary vendor libraries
 	rm -rfv debian/tmp/usr/share/gocode/src/github.com/containers/libpod/vendor
 	# generate and install systemd unit files
-	make DESTDIR=debian/tmp PREFIX=/ LIBEXECDIR=/lib/ install.systemd
+	make DESTDIR=debian/tmp PREFIX=/ LIBEXECDIR=/usr/lib/ BINDIR=/usr/bin install.systemd
 
 # Disable dh_missing
 override_dh_missing:
+	# remove unwanted files, cf. #1000521
+	find debian -name '*podman-remote*' -ls -delete
+	dh_missing --list-missing -X goecho -X testvol -X version
 
 override_dh_installsystemd:
 	dh_installsystemd

@@ -1,4 +1,4 @@
-% podman-secret-rm(1)
+% podman-secret-rm 1
 
 ## NAME
 podman\-secret\-rm - Remove one or more secrets
@@ -33,7 +33,7 @@ $ podman secret rm mysecret1 mysecret2
 ```
 
 ## SEE ALSO
-podman-secret(1)
+**[podman(1)](podman.1.md)**, **[podman-secret(1)](podman-secret.1.md)**
 
 ## HISTORY
 January 2021, Originally compiled by Ashley Cui <acui@redhat.com>

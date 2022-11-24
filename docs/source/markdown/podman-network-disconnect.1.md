@@ -1,4 +1,4 @@
-% podman-network-disconnect(1)
+% podman-network-disconnect 1
 
 ## NAME
 podman\-network\-disconnect - Disconnect a container from a network
@@ -26,7 +26,7 @@ podman network disconnect test web
 
 
 ## SEE ALSO
-podman(1), podman-network(1), podman-network-connect(1)
+**[podman(1)](podman.1.md)**, **[podman-network(1)](podman-network.1.md)**, **[podman-network-connect(1)](podman-network-connect.1.md)**
 
 ## HISTORY
 November 2020, Originally compiled by Brent Baude <bbaude@redhat.com>

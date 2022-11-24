@@ -75,6 +75,16 @@ setup() {
     cat >| $pmscript <<EOF
 #!/bin/bash
 
+#
+# Argh! podman >= 3.4 something something namespace something, fails with
+#   Error: invalid config provided: cannot set hostname when running in the host UTS namespace: invalid configuration
+#
+# https://github.com/containers/podman/issues/11969#issuecomment-943386484
+#
+if grep -q utsns /etc/containers/containers.conf; then
+    sed -i -e '/^\utsns=/d' /etc/containers/containers.conf
+fi
+
 # events-backend=journald does not work inside a container
 opts="--events-backend=file $_PODMAN_TEST_OPTS"
 
@@ -97,13 +107,15 @@ podman \$opts run    --name myfailedcontainer  --label mylabel=$LABEL_FAILED \
 podman \$opts run -d --name myrunningcontainer --label mylabel=$LABEL_RUNNING \
                                                --network bridge \
                                                -p $HOST_PORT:80 \
+                                               -p 127.0.0.1:8080-8082:8080-8082 \
                                                -v $pmroot/var/www:/var/www \
                                                -w /var/www \
+                                               --mac-address aa:bb:cc:dd:ee:ff \
                                                $IMAGE /bin/busybox-extras httpd -f -p 80
 
 podman \$opts pod create --name mypod
 
-podman \$opts network create mynetwork
+podman \$opts network create --disable-dns mynetwork
 
 echo READY
 while :;do
@@ -111,6 +123,10 @@ while :;do
         echo STOPPING
         podman \$opts stop -t 0 myrunningcontainer || true
         podman \$opts rm -f     myrunningcontainer || true
+        # sigh, network rm fails with exec: "ip": executable file not found in $PATH
+        # we cannot change the images afterwards so we remove it manually (#11403)
+        # hardcode /etc/cni/net.d dir for now
+        podman \$opts network rm -f mynetwork || rm -f /etc/cni/net.d/mynetwork.conflist
         exit 0
     fi
     sleep 0.5
@@ -121,15 +137,21 @@ EOF
     # Clean up vestiges of previous run
     $PODMAN rm -f podman_parent || true
 
-
-    local netname=testnet-$(random_string 10)
-    $PODMAN network create $netname
-
     # Not entirely a NOP! This is just so we get the /run/... mount points created on a CI VM
-    # --mac-address is needed to create /run/cni, --network is needed to create /run/containers for dnsname
-    $PODMAN run --rm --mac-address 78:28:a6:8d:24:8a --network $netname $OLD_PODMAN true
-    $PODMAN network rm -f $netname
+    # Also use --network host to prevent any netavark/cni conflicts
+    $PODMAN run --rm --network host $OLD_PODMAN true
 
+    # Podman 4.0 might no longer use cni so /run/cni and /run/containers will no be created in this case
+    # Create directories manually to fix this. Also running with netavark can
+    # cause connectivity issues since cni and netavark should never be mixed.
+    mkdir -p /run/netns /run/cni /run/containers /var/lib/cni /etc/cni/net.d
+
+    # Containers-common around release 1-55 no-longer supplies this file
+    sconf=/etc/containers/storage.conf
+    v_sconf=
+    if [[ -e "$sconf" ]]; then
+        v_sconf="-v $sconf:$sconf"
+    fi
 
     #
     # Use new-podman to run the above script under old-podman.
@@ -149,7 +171,7 @@ EOF
             --net=host \
             --cgroupns=host \
             --pid=host \
-            -v /etc/containers/storage.conf:/etc/containers/storage.conf \
+            $v_sconf \
             -v /dev/fuse:/dev/fuse \
             -v /run/crun:/run/crun \
             -v /run/netns:/run/netns:rshared \
@@ -175,6 +197,13 @@ EOF
     :
 }
 
+@test "info" {
+    # check network backend, since this is a old version we should use CNI
+    # when we start testing from 4.0 we should have netavark as backend
+    run_podman info --format '{{.Host.NetworkBackend}}'
+    is "$output" "cni" "correct network backend"
+}
+
 @test "images" {
     run_podman images -a --format '{{.Names}}'
     is "$output" "\[$IMAGE\]" "podman images"
@@ -195,7 +224,7 @@ EOF
     is "${lines[1]}" "mycreatedcontainer--Created----$LABEL_CREATED" "created"
     is "${lines[2]}" "mydonecontainer--Exited (0).*----<no value>" "done"
     is "${lines[3]}" "myfailedcontainer--Exited (17) .*----$LABEL_FAILED" "fail"
-    is "${lines[4]}" "myrunningcontainer--Up .*--0.0.0.0:$HOST_PORT->80/tcp--$LABEL_RUNNING" "running"
+    is "${lines[4]}" "myrunningcontainer--Up .*--0\.0\.0\.0:$HOST_PORT->80\/tcp, 127\.0\.0\.1\:8080-8082->8080-8082\/tcp--$LABEL_RUNNING" "running"
 
     # For debugging: dump containers and IDs
     if [[ -n "$PODMAN_UPGRADE_TEST_DEBUG" ]]; then
@@ -210,7 +239,7 @@ EOF
 @test "inspect - all container status" {
     tests="
 running   | running    |  0
-created   | configured |  0
+created   | created    |  0
 done      | exited     |  0
 failed    | exited     | 17
 "
@@ -229,6 +258,8 @@ failed    | exited     | 17
 # if we can connect on an existing running container
 @test "network - connect" {
     skip_if_version_older 2.2.0
+    touch $PODMAN_UPGRADE_WORKDIR/ran-network-connect-test
+
     run_podman network connect mynetwork myrunningcontainer
     run_podman network disconnect podman myrunningcontainer
     run curl --max-time 3 -s 127.0.0.1:$HOST_PORT/index.txt
@@ -237,7 +268,26 @@ failed    | exited     | 17
 
 @test "network - restart" {
     # restart the container and check if we can still use the port
+
+    # https://github.com/containers/podman/issues/13679
+    # The upgrade to podman4 changes the network db format.
+    # While it is compatible from 3.X to 4.0 it will fail the other way around.
+    # This can be the case when the cleanup process runs before the stop process
+    # can do the cleanup.
+
+    # Since there is no easy way to fix this and downgrading is not something
+    # we support, just fix this bug in the tests by manually calling
+    # network disconnect to teardown the netns.
+    if test -e $PODMAN_UPGRADE_WORKDIR/ran-network-connect-test; then
+        run_podman network disconnect mynetwork myrunningcontainer
+    fi
+
     run_podman stop -t0 myrunningcontainer
+
+    # now connect again, do this before starting the container
+    if test -e $PODMAN_UPGRADE_WORKDIR/ran-network-connect-test; then
+        run_podman network connect mynetwork myrunningcontainer
+    fi
     run_podman start myrunningcontainer
     run curl --max-time 3 -s 127.0.0.1:$HOST_PORT/index.txt
     is "$output" "$RANDOM_STRING_1" "curl on restarted container"
@@ -295,10 +345,10 @@ failed    | exited     | 17
 
 @test "rm a stopped container" {
     run_podman rm myfailedcontainer
-    is "$output" "[0-9a-f]\\{64\\}" "podman rm myfailedcontainer"
+    is "$output" "myfailedcontainer" "podman rm myfailedcontainer"
 
     run_podman rm mydonecontainer
-    is "$output" "[0-9a-f]\\{64\\}" "podman rm mydonecontainer"
+    is "$output" "mydonecontainer" "podman rm mydonecontainer"
 }
 
 
@@ -326,8 +376,6 @@ failed    | exited     | 17
 
     run_podman logs podman_parent
     run_podman rm -f podman_parent
-
-    run_podman network rm -f mynetwork
 
     umount $PODMAN_UPGRADE_WORKDIR/root/overlay || true
 

@@ -7,14 +7,14 @@ PODMAN=${PODMAN:-podman}
 PODMAN_TEST_IMAGE_REGISTRY=${PODMAN_TEST_IMAGE_REGISTRY:-"quay.io"}
 PODMAN_TEST_IMAGE_USER=${PODMAN_TEST_IMAGE_USER:-"libpod"}
 PODMAN_TEST_IMAGE_NAME=${PODMAN_TEST_IMAGE_NAME:-"testimage"}
-PODMAN_TEST_IMAGE_TAG=${PODMAN_TEST_IMAGE_TAG:-"20210610"}
+PODMAN_TEST_IMAGE_TAG=${PODMAN_TEST_IMAGE_TAG:-"20220615"}
 PODMAN_TEST_IMAGE_FQN="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/$PODMAN_TEST_IMAGE_NAME:$PODMAN_TEST_IMAGE_TAG"
 PODMAN_TEST_IMAGE_ID=
 
 # Remote image that we *DO NOT* fetch or keep by default; used for testing pull
 # This has changed in 2021, from 0 through 3, various iterations of getting
 # multiarch to work. It should change only very rarely.
-PODMAN_NONLOCAL_IMAGE_TAG=${PODMAN_NONLOCAL_IMAGE_TAG:-"00000003"}
+PODMAN_NONLOCAL_IMAGE_TAG=${PODMAN_NONLOCAL_IMAGE_TAG:-"00000004"}
 PODMAN_NONLOCAL_IMAGE_FQN="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/$PODMAN_TEST_IMAGE_NAME:$PODMAN_NONLOCAL_IMAGE_TAG"
 
 # Because who wants to spell that out each time?
@@ -36,34 +36,17 @@ fi
 # That way individual tests can override with their own setup/teardown,
 # while retaining the ability to include these if they so desire.
 
-# Some CI systems set this to runc, overriding the default crun.
-# Although it would be more elegant to override options in run_podman(),
-# we instead override $PODMAN itself because some tests (170-run-userns)
-# have to invoke $PODMAN directly.
-if [[ -n $OCI_RUNTIME ]]; then
-    if [[ -z $CONTAINERS_CONF ]]; then
-        # FIXME: BATS provides no mechanism for end-of-run cleanup[1]; how
-        # can we avoid leaving this file behind when we finish?
-        #   [1] https://github.com/bats-core/bats-core/issues/39
-        export CONTAINERS_CONF=$(mktemp --tmpdir=${BATS_TMPDIR:-/tmp} podman-bats-XXXXXXX.containers.conf)
-        cat >$CONTAINERS_CONF <<EOF
-[engine]
-runtime="$OCI_RUNTIME"
-EOF
-    fi
-fi
-
 # Setup helper: establish a test environment with exactly the images needed
 function basic_setup() {
     # Clean up all containers
-    run_podman rm --all --force
+    run_podman rm -t 0 --all --force --ignore
 
     # ...including external (buildah) ones
     run_podman ps --all --external --format '{{.ID}} {{.Names}}'
     for line in "${lines[@]}"; do
         set $line
         echo "# setup(): removing stray external container $1 ($2)" >&3
-        run_podman rm $1
+        run_podman rm -f $1
     done
 
     # Clean up all images except those desired
@@ -109,8 +92,9 @@ function basic_setup() {
 # Basic teardown: remove all pods and containers
 function basic_teardown() {
     echo "# [teardown]" >&2
-    run_podman '?' pod rm --all --force
-    run_podman '?'     rm --all --force
+    run_podman '?' pod rm -t 0 --all --force --ignore
+    run_podman '?'     rm -t 0 --all --force --ignore
+    run_podman '?' network prune --force
 
     command rm -rf $PODMAN_TMPDIR
 }
@@ -193,6 +177,15 @@ function run_podman() {
     # without "quotes", multiple lines are glommed together into one
     if [ -n "$output" ]; then
         echo "$output"
+
+        # FIXME FIXME FIXME: instrumenting to track down #15488. Please
+        # remove once that's fixed. We include the args because, remember,
+        # bats only shows output on error; it's possible that the first
+        # instance of the metacopy warning happens in a test that doesn't
+        # check output, hence doesn't fail.
+        if [[ "$output" =~ Ignoring.global.metacopy.option ]]; then
+            echo "# YO! metacopy warning triggered by: podman $*" >&3
+        fi
     fi
     if [ "$status" -ne 0 ]; then
         echo -n "[ rc=$status ";
@@ -286,13 +279,44 @@ function random_free_port() {
 
     local port
     for port in $(shuf -i ${range}); do
-        if ! { exec {unused_fd}<> /dev/tcp/127.0.0.1/$port; } &>/dev/null; then
+        if port_is_free $port; then
             echo $port
             return
         fi
     done
 
     die "Could not find open port in range $range"
+}
+
+function random_free_port_range() {
+    local size=${1?Usage: random_free_port_range SIZE (as in, number of ports)}
+
+    local maxtries=10
+    while [[ $maxtries -gt 0 ]]; do
+        local firstport=$(random_free_port)
+        local lastport=
+        for i in $(seq 1 $((size - 1))); do
+            lastport=$((firstport + i))
+            if ! port_is_free $lastport; then
+                echo "# port $lastport is in use; trying another." >&3
+                lastport=
+                break
+            fi
+        done
+        if [[ -n "$lastport" ]]; then
+            echo "$firstport-$lastport"
+            return
+        fi
+
+        maxtries=$((maxtries - 1))
+    done
+
+    die "Could not find free port range with size $size"
+}
+
+function port_is_free() {
+     local port=${1?Usage: port_is_free PORT}
+    ! { exec {unused_fd}<> /dev/tcp/127.0.0.1/$port; } &>/dev/null
 }
 
 ###################
@@ -313,11 +337,36 @@ function wait_for_port() {
     die "Timed out waiting for $host:$port"
 }
 
+###################
+#  wait_for_file  #  Returns once file is available on host
+###################
+function wait_for_file() {
+    local file=$1                       # The path to the file
+    local _timeout=${2:-5}              # Optional; default 5 seconds
+
+    # Wait
+    while [ $_timeout -gt 0 ]; do
+        test -e $file && return
+        sleep 1
+        _timeout=$(( $_timeout - 1 ))
+    done
+
+    die "Timed out waiting for $file"
+}
+
 # END   podman helpers
 ###############################################################################
 # BEGIN miscellaneous tools
 
 # Shortcuts for common needs:
+function no_ssh() {
+    [ "$(man ssh)" -ne 0 ]
+}
+
+function is_ubuntu() {
+    grep -qiw ubuntu /etc/os-release
+}
+
 function is_rootless() {
     [ "$(id -u)" -ne 0 ]
 }
@@ -335,6 +384,19 @@ function is_cgroupsv1() {
 function is_cgroupsv2() {
     cgroup_type=$(stat -f -c %T /sys/fs/cgroup)
     test "$cgroup_type" = "cgroup2fs"
+}
+
+# True if podman is using netavark
+function is_netavark() {
+    run_podman info --format '{{.Host.NetworkBackend}}'
+    if [[ "$output" =~ netavark ]]; then
+        return 0
+    fi
+    return 1
+}
+
+function is_aarch64() {
+    [ "$(uname -m)" == "aarch64" ]
 }
 
 # Returns the OCI runtime *basename* (typically crun or runc). Much as we'd
@@ -372,6 +434,41 @@ function journald_unavailable() {
     return 1
 }
 
+# Returns the name of the local pause image.
+function pause_image() {
+    # This function is intended to be used as '$(pause_image)', i.e.
+    # our caller wants our output. run_podman() messes with output because
+    # it emits the command invocation to stdout, hence the redirection.
+    run_podman version --format "{{.Server.Version}}-{{.Server.Built}}" >/dev/null
+    echo "localhost/podman-pause:$output"
+}
+
+# Wait for the pod (1st arg) to transition into the state (2nd arg)
+function _ensure_pod_state() {
+    for i in {0..5}; do
+        run_podman pod inspect $1 --format "{{.State}}"
+        if [[ $output == "$2" ]]; then
+            return
+        fi
+        sleep 0.5
+    done
+
+    die "Timed out waiting for pod $1 to enter state $2"
+}
+
+# Wait for the container's (1st arg) running state (2nd arg)
+function _ensure_container_running() {
+    for i in {0..20}; do
+        run_podman container inspect $1 --format "{{.State.Running}}"
+        if [[ $output == "$2" ]]; then
+            return
+        fi
+        sleep 0.5
+    done
+
+    die "Timed out waiting for container $1 to enter state running=$2"
+}
+
 ###########################
 #  _add_label_if_missing  #  make sure skip messages include rootless/remote
 ###########################
@@ -389,12 +486,33 @@ function _add_label_if_missing() {
 }
 
 ######################
+#  skip_if_no_ssh #  ...with an optional message
+######################
+function skip_if_no_ssh() {
+    if no_ssh; then
+        local msg=$(_add_label_if_missing "$1" "ssh")
+        skip "${msg:-not applicable with no ssh binary}"
+    fi
+}
+
+
+######################
 #  skip_if_rootless  #  ...with an optional message
 ######################
 function skip_if_rootless() {
     if is_rootless; then
         local msg=$(_add_label_if_missing "$1" "rootless")
         skip "${msg:-not applicable under rootless podman}"
+    fi
+}
+
+######################
+#  skip_if_not_rootless  #  ...with an optional message
+######################
+function skip_if_not_rootless() {
+    if ! is_rootless; then
+        local msg=$(_add_label_if_missing "$1" "rootful")
+        skip "${msg:-not applicable under rootlfull podman}"
     fi
 }
 
@@ -428,12 +546,40 @@ function skip_if_cgroupsv1() {
     fi
 }
 
+######################
+#  skip_if_rootless_cgroupsv1  #  ...with an optional message
+######################
+function skip_if_rootless_cgroupsv1() {
+    if is_rootless; then
+        if ! is_cgroupsv2; then
+            local msg=$(_add_label_if_missing "$1" "rootless cgroupvs1")
+            skip "${msg:-not supported as rootless under cgroupsv1}"
+        fi
+    fi
+}
+
 ##################################
 #  skip_if_journald_unavailable  #  rhbz#1895105: rootless journald permissions
 ##################################
 function skip_if_journald_unavailable {
     if journald_unavailable; then
         skip "Cannot use rootless journald on this system"
+    fi
+}
+
+function skip_if_root_ubuntu {
+    if is_ubuntu; then
+        if ! is_remote; then
+            if ! is_rootless; then
+                 skip "Cannot run this test on rootful ubuntu, usually due to user errors"
+            fi
+        fi
+    fi
+}
+
+function skip_if_aarch64 {
+    if is_aarch64; then
+        skip "${msg:-Cannot run this test on aarch64 systems}"
     fi
 }
 
@@ -448,40 +594,145 @@ function die() {
     false
 }
 
-
-########
-#  is  #  Compare actual vs expected string; fail w/diagnostic if mismatch
-########
+############
+#  assert  #  Compare actual vs expected string; fail if mismatch
+############
 #
-# Compares given string against expectations, using 'expr' to allow patterns.
+# Compares string (default: $output) against the given string argument.
+# By default we do an exact-match comparison against $output, but there
+# are two different ways to invoke us, each with an optional description:
+#
+#      assert               "EXPECT" [DESCRIPTION]
+#      assert "RESULT" "OP" "EXPECT" [DESCRIPTION]
+#
+# The first form (one or two arguments) does an exact-match comparison
+# of "$output" against "EXPECT". The second (three or four args) compares
+# the first parameter against EXPECT, using the given OPerator. If present,
+# DESCRIPTION will be displayed on test failure.
 #
 # Examples:
 #
-#   is "$actual" "$expected" "descriptive test name"
-#   is "apple" "orange"  "name of a test that will fail in most universes"
-#   is "apple" "[a-z]\+" "this time it should pass"
+#   assert "this is exactly what we expect"
+#   assert "${lines[0]}" =~ "^abc"  "first line begins with abc"
 #
+function assert() {
+    local actual_string="$output"
+    local operator='=='
+    local expect_string="$1"
+    local testname="$2"
+
+    case "${#*}" in
+        0)   die "Internal error: 'assert' requires one or more arguments" ;;
+        1|2) ;;
+        3|4) actual_string="$1"
+             operator="$2"
+             expect_string="$3"
+             testname="$4"
+             ;;
+        *)   die "Internal error: too many arguments to 'assert'" ;;
+    esac
+
+    # Comparisons.
+    # Special case: there is no !~ operator, so fake it via '! x =~ y'
+    local not=
+    local actual_op="$operator"
+    if [[ $operator == '!~' ]]; then
+        not='!'
+        actual_op='=~'
+    fi
+    if [[ $operator == '=' || $operator == '==' ]]; then
+        # Special case: we can't use '=' or '==' inside [[ ... ]] because
+        # the right-hand side is treated as a pattern... and '[xy]' will
+        # not compare literally. There seems to be no way to turn that off.
+        if [ "$actual_string" = "$expect_string" ]; then
+            return
+        fi
+    elif [[ $operator == '!=' ]]; then
+        # Same special case as above
+        if [ "$actual_string" != "$expect_string" ]; then
+            return
+        fi
+    else
+        if eval "[[ $not \$actual_string $actual_op \$expect_string ]]"; then
+            return
+        elif [ $? -gt 1 ]; then
+            die "Internal error: could not process 'actual' $operator 'expect'"
+        fi
+    fi
+
+    # Test has failed. Get a descriptive test name.
+    if [ -z "$testname" ]; then
+        testname="${MOST_RECENT_PODMAN_COMMAND:-[no test name given]}"
+    fi
+
+    # Display optimization: the typical case for 'expect' is an
+    # exact match ('='), but there are also '=~' or '!~' or '-ge'
+    # and the like. Omit the '=' but show the others; and always
+    # align subsequent output lines for ease of comparison.
+    local op=''
+    local ws=''
+    if [ "$operator" != '==' ]; then
+        op="$operator "
+        ws=$(printf "%*s" ${#op} "")
+    fi
+
+    # This is a multi-line message, which may in turn contain multi-line
+    # output, so let's format it ourself to make it more readable.
+    local actual_split
+    IFS=$'\n' read -rd '' -a actual_split <<<"$actual_string" || true
+    printf "#/vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv\n"    >&2
+    printf "#|     FAIL: %s\n" "$testname"                        >&2
+    printf "#| expected: %s'%s'\n" "$op" "$expect_string"         >&2
+    printf "#|   actual: %s'%s'\n" "$ws" "${actual_split[0]}"     >&2
+    local line
+    for line in "${actual_split[@]:1}"; do
+        printf "#|         > %s'%s'\n" "$ws" "$line"              >&2
+    done
+    printf "#\\^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n"   >&2
+    false
+}
+
+########
+#  is  #  **DEPRECATED**; see assert() above
+########
 function is() {
     local actual="$1"
     local expect="$2"
     local testname="${3:-${MOST_RECENT_PODMAN_COMMAND:-[no test name given]}}"
 
+    local is_expr=
     if [ -z "$expect" ]; then
         if [ -z "$actual" ]; then
+            # Both strings are empty.
             return
         fi
         expect='[no output]'
-    elif expr "$actual" : "$expect" >/dev/null; then
+    elif [[ "$actual" = "$expect" ]]; then
+        # Strings are identical.
         return
+    else
+        # Strings are not identical. Are there wild cards in our expect string?
+        if expr "$expect" : ".*[^\\][\*\[]" >/dev/null; then
+            # There is a '[' or '*' without a preceding backslash.
+            is_expr=' (using expr)'
+        elif [[ "${expect:0:1}" = '[' ]]; then
+            # String starts with '[', e.g. checking seconds like '[345]'
+            is_expr=' (using expr)'
+        fi
+        if [[ -n "$is_expr" ]]; then
+            if expr "$actual" : "$expect" >/dev/null; then
+                return
+            fi
+        fi
     fi
 
     # This is a multi-line message, which may in turn contain multi-line
-    # output, so let's format it ourself, readably
+    # output, so let's format it ourself to make it more readable.
     local -a actual_split
     readarray -t actual_split <<<"$actual"
     printf "#/vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv\n" >&2
     printf "#|     FAIL: $testname\n"                          >&2
-    printf "#| expected: '%s'\n" "$expect"                     >&2
+    printf "#| expected: '%s'%s\n" "$expect" "$is_expr"        >&2
     printf "#|   actual: '%s'\n" "${actual_split[0]}"          >&2
     local line
     for line in "${actual_split[@]:1}"; do
@@ -647,10 +898,63 @@ function remove_same_dev_warning() {
 # return that list.
 function _podman_commands() {
     dprint "$@"
-    run_podman help "$@" |
-        awk '/^Available Commands:/{ok=1;next}/^Options:/{ok=0}ok { print $1 }' |
-        grep .
-    "$output"
+    # &>/dev/null prevents duplicate output
+    run_podman help "$@" &>/dev/null
+    awk '/^Available Commands:/{ok=1;next}/^Options:/{ok=0}ok { print $1 }' <<<"$output" | grep .
+}
+
+###############################
+#  _build_health_check_image  #  Builds a container image with a configured health check
+###############################
+#
+# The health check will fail once the /uh-oh file exists.
+#
+# First argument is the desired name of the image
+# Second argument, if present and non-null, forces removal of the /uh-oh file once the check failed; this way the container can be restarted
+#
+
+function _build_health_check_image {
+    local imagename="$1"
+    local cleanfile=""
+
+    if [[ ! -z "$2" ]]; then
+        cleanfile="rm -f /uh-oh"
+    fi
+    # Create an image with a healthcheck script; said script will
+    # pass until the file /uh-oh gets created (by us, via exec)
+    cat >${PODMAN_TMPDIR}/healthcheck <<EOF
+#!/bin/sh
+
+if test -e /uh-oh; then
+    echo "Uh-oh on stdout!"
+    echo "Uh-oh on stderr!" >&2
+    ${cleanfile}
+    exit 1
+else
+    echo "Life is Good on stdout"
+    echo "Life is Good on stderr" >&2
+    exit 0
+fi
+EOF
+
+    cat >${PODMAN_TMPDIR}/entrypoint <<EOF
+#!/bin/sh
+
+trap 'echo Received SIGTERM, finishing; exit' SIGTERM; echo WAITING; while :; do sleep 0.1; done
+EOF
+
+    cat >${PODMAN_TMPDIR}/Containerfile <<EOF
+FROM $IMAGE
+
+COPY healthcheck /healthcheck
+COPY entrypoint  /entrypoint
+
+RUN  chmod 755 /healthcheck /entrypoint
+
+CMD ["/entrypoint"]
+EOF
+
+    run_podman build -t $imagename ${PODMAN_TMPDIR}
 }
 
 # END   miscellaneous tools

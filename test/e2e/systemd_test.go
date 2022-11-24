@@ -1,11 +1,12 @@
 package integration
 
 import (
-	"io/ioutil"
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -26,7 +27,6 @@ var _ = Describe("Podman systemd", func() {
 		}
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
 		systemdUnitFile = `[Unit]
 Description=redis container
 [Service]
@@ -50,8 +50,8 @@ WantedBy=default.target
 		SkipIfRootless("rootless can not write to /etc")
 		SkipIfContainerized("test does not have systemd as pid 1")
 
-		sys_file := ioutil.WriteFile("/etc/systemd/system/redis.service", []byte(systemdUnitFile), 0644)
-		Expect(sys_file).To(BeNil())
+		sysFile := os.WriteFile("/etc/systemd/system/redis.service", []byte(systemdUnitFile), 0644)
+		Expect(sysFile).To(BeNil())
 		defer func() {
 			stop := SystemExec("bash", []string{"-c", "systemctl stop redis"})
 			os.Remove("/etc/systemd/system/redis.service")
@@ -59,7 +59,7 @@ WantedBy=default.target
 			Expect(stop).Should(Exit(0))
 		}()
 
-		create := podmanTest.Podman([]string{"create", "--name", "redis", redis})
+		create := podmanTest.Podman([]string{"create", "--name", "redis", REDIS_IMAGE})
 		create.WaitWithDefaultTimeout()
 		Expect(create).Should(Exit(0))
 
@@ -78,7 +78,7 @@ WantedBy=default.target
 
 	It("podman run container with systemd PID1", func() {
 		ctrName := "testSystemd"
-		run := podmanTest.Podman([]string{"run", "--name", ctrName, "-t", "-i", "-d", ubi_init, "/sbin/init"})
+		run := podmanTest.Podman([]string{"run", "--name", ctrName, "-t", "-i", "-d", UBI_INIT, "/sbin/init"})
 		run.WaitWithDefaultTimeout()
 		Expect(run).Should(Exit(0))
 
@@ -93,13 +93,13 @@ WantedBy=default.target
 		systemctl := podmanTest.Podman([]string{"exec", "-t", "-i", ctrName, "systemctl", "status", "--no-pager"})
 		systemctl.WaitWithDefaultTimeout()
 		Expect(systemctl).Should(Exit(0))
-		Expect(strings.Contains(systemctl.OutputToString(), "State:")).To(BeTrue())
+		Expect(systemctl.OutputToString()).To(ContainSubstring("State:"))
 
 		result := podmanTest.Podman([]string{"inspect", ctrName})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
 		conData := result.InspectContainerToJSON()
-		Expect(len(conData)).To(Equal(1))
+		Expect(conData).To(HaveLen(1))
 		Expect(conData[0].Config.SystemdMode).To(BeTrue())
 
 		// stats not supported w/ CGv1 rootless or containerized
@@ -118,7 +118,7 @@ WantedBy=default.target
 
 	It("podman create container with systemd entrypoint triggers systemd mode", func() {
 		ctrName := "testCtr"
-		run := podmanTest.Podman([]string{"create", "--name", ctrName, "--entrypoint", "/sbin/init", ubi_init})
+		run := podmanTest.Podman([]string{"create", "--name", ctrName, "--entrypoint", "/sbin/init", UBI_INIT})
 		run.WaitWithDefaultTimeout()
 		Expect(run).Should(Exit(0))
 
@@ -126,7 +126,32 @@ WantedBy=default.target
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
 		conData := result.InspectContainerToJSON()
-		Expect(len(conData)).To(Equal(1))
+		Expect(conData).To(HaveLen(1))
+		Expect(conData[0].Config.SystemdMode).To(BeTrue())
+	})
+
+	It("podman systemd in command triggers systemd mode", func() {
+		containerfile := fmt.Sprintf(`FROM %s
+RUN mkdir -p /usr/lib/systemd/; touch /usr/lib/systemd/systemd
+CMD /usr/lib/systemd/systemd`, ALPINE)
+
+		containerfilePath := filepath.Join(podmanTest.TempDir, "Containerfile")
+		err := os.WriteFile(containerfilePath, []byte(containerfile), 0755)
+		Expect(err).To(BeNil())
+		session := podmanTest.Podman([]string{"build", "-t", "systemd", "--file", containerfilePath, podmanTest.TempDir})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		ctrName := "testCtr"
+		run := podmanTest.Podman([]string{"create", "--name", ctrName, "systemd"})
+		run.WaitWithDefaultTimeout()
+		Expect(run).Should(Exit(0))
+
+		result := podmanTest.Podman([]string{"inspect", ctrName})
+		result.WaitWithDefaultTimeout()
+		Expect(result).Should(Exit(0))
+		conData := result.InspectContainerToJSON()
+		Expect(conData).To(HaveLen(1))
 		Expect(conData[0].Config.SystemdMode).To(BeTrue())
 	})
 
@@ -141,7 +166,7 @@ WantedBy=default.target
 		Expect(session).Should(Exit(0))
 
 		pidFile := strings.TrimSuffix(session.OutputToString(), "\n")
-		_, err := ioutil.ReadFile(pidFile)
+		_, err := os.ReadFile(pidFile)
 		Expect(err).To(BeNil())
 	})
 
@@ -155,7 +180,7 @@ WantedBy=default.target
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
 		conData := result.InspectContainerToJSON()
-		Expect(len(conData)).To(Equal(1))
+		Expect(conData).To(HaveLen(1))
 		Expect(conData[0].Config.SystemdMode).To(BeTrue())
 	})
 

@@ -15,12 +15,10 @@ function setup() {
 @test "podman version emits reasonable output" {
     run_podman version
 
-    # First line of podman-remote is "Client:<blank>".
+    # First line of podman version is "Client: *Podman Engine".
     # Just delete it (i.e. remove the first entry from the 'lines' array)
-    if is_remote; then
-        if expr "${lines[0]}" : "Client:" >/dev/null; then
-            lines=("${lines[@]:1}")
-        fi
+    if expr "${lines[0]}" : "Client: *" >/dev/null; then
+        lines=("${lines[@]:1}")
     fi
 
     is "${lines[0]}" "Version:[ ]\+[1-9][0-9.]\+" "Version line 1"
@@ -30,25 +28,60 @@ function setup() {
     # Test that build date is reasonable, e.g. after 2019-01-01
     local built=$(expr "$output" : ".*Built: \+\(.*\)" | head -n1)
     local built_t=$(date --date="$built" +%s)
-    if [ $built_t -lt 1546300800 ]; then
-        die "Preposterous 'Built' time in podman version: '$built'"
-    fi
+    assert "$built_t" -gt 1546300800 "Preposterous 'Built' time in podman version"
+
+    run_podman -v
+    is "$output" "podman.*version \+"               "'Version line' in output"
+
+    run_podman --config foobar version
+    is "$output" ".*The --config flag is ignored by Podman. Exists for Docker compatibility\+"		  "verify warning for --config option"
+}
+
+@test "podman info" {
+    # These will be displayed on the test output stream, offering an
+    # at-a-glance overview of important system configuration details
+    local -a want=(
+        'Arch:{{.Host.Arch}}'
+        'OS:{{.Host.Distribution.Distribution}}{{.Host.Distribution.Version}}'
+        'Runtime:{{.Host.OCIRuntime.Name}}'
+        'Rootless:{{.Host.Security.Rootless}}'
+        'Events:{{.Host.EventLogger}}'
+        'Logdriver:{{.Host.LogDriver}}'
+        'Cgroups:{{.Host.CgroupsVersion}}+{{.Host.CgroupManager}}'
+        'Net:{{.Host.NetworkBackend}}'
+    )
+    run_podman info --format "$(IFS='/' echo ${want[@]})"
+    echo "# $output" >&3
 }
 
 
 @test "podman --context emits reasonable output" {
+    if ! is_remote; then
+        skip "only applicable on podman-remote"
+    fi
     # All we care about here is that the command passes
     run_podman --context=default version
 
     # This one must fail
     run_podman 125 --context=swarm version
     is "$output" \
-       "Error: Podman does not support swarm, the only --context value allowed is \"default\"" \
-       "--context=default or fail"
+       "Error: failed to resolve active destination: \"swarm\" service destination not found" \
+       "--context=swarm should fail"
 }
 
 @test "podman can pull an image" {
+    run_podman rmi -a
     run_podman pull $IMAGE
+
+    # Regression test for https://github.com/containers/image/pull/1615
+    # Make sure no progress lines are duplicated
+    local -A line_seen
+    for line in "${lines[@]}"; do
+        if [[ -n "${line_seen[$line]}" ]]; then
+            die "duplicate podman-pull output line: $line"
+        fi
+        line_seen[$line]=1
+    done
 
     # Also make sure that the tag@digest syntax is supported.
     run_podman inspect --format "{{ .Digest }}" $IMAGE
@@ -90,7 +123,34 @@ function setup() {
 
     # ...but no matter what, --remote is never allowed after subcommand
     PODMAN="${podman_non_remote} ${podman_args[@]}" run_podman 125 version --remote
-    is "$output" "Error: unknown flag: --remote" "podman version --remote"
+    is "$output" "Error: unknown flag: --remote
+See 'podman version --help'" "podman version --remote"
+}
+
+@test "podman-remote: defaults" {
+    skip_if_remote "only applicable on a local run"
+
+    # By default, podman should include '--remote' in its help output
+    run_podman --help
+    assert "$output" =~ " --remote " "podman --help includes the --remote option"
+
+    # When it detects CONTAINER_HOST or _CONNECTION, --remote is not an option
+    CONTAINER_HOST=foobar run_podman --help
+    assert "$output" !~ " --remote " \
+           "podman --help, with CONTAINER_HOST set, should not show --remote"
+
+    CONTAINER_CONNECTION=foobar run_podman --help
+    assert "$output" !~ " --remote " \
+           "podman --help, with CONTAINER_CONNECTION set, should not show --remote"
+
+    # When it detects --url or --connection, --remote is not an option
+    run_podman --url foobar --help
+    assert "$output" !~ " --remote " \
+           "podman --help, with --url set, should not show --remote"
+
+    run_podman --connection foobar --help
+    assert "$output" !~ " --remote " \
+           "podman --help, with --connection set, should not show --remote"
 }
 
 # Check that just calling "podman-remote" prints the usage message even
@@ -101,7 +161,7 @@ function setup() {
     fi
 
     run_podman 125 --remote
-    is "$output" "Error: missing command 'podman COMMAND'" "podman remote show usage message without running endpoint"
+    is "$output" ".*Usage:" "podman --remote show usage message without running endpoint"
 }
 
 # This is for development only; it's intended to make sure our timeout
@@ -131,14 +191,44 @@ function setup() {
 @test "podman --log-level recognizes log levels" {
     run_podman 1 --log-level=telepathic info
     is "$output" 'Log Level "telepathic" is not supported.*'
+
     run_podman --log-level=trace   info
+    if ! is_remote; then
+        # podman-remote does not do any trace logging
+        assert "$output" =~ " level=trace " "log-level=trace"
+    fi
+    assert "$output" =~ " level=debug " "log-level=trace includes debug"
+    assert "$output" =~ " level=info "  "log-level=trace includes info"
+    assert "$output" !~ " level=warn"   "log-level=trace does not show warn"
+
     run_podman --log-level=debug   info
+    assert "$output" !~ " level=trace " "log-level=debug does not show trace"
+    assert "$output" =~ " level=debug " "log-level=debug"
+    assert "$output" =~ " level=info "  "log-level=debug includes info"
+    assert "$output" !~ " level=warn"   "log-level=debug does not show warn"
+
     run_podman --log-level=info    info
+    assert "$output" !~ " level=trace " "log-level=info does not show trace"
+    assert "$output" !~ " level=debug " "log-level=info does not show debug"
+    assert "$output" =~ " level=info "  "log-level=info"
+
     run_podman --log-level=warn    info
+    assert "$output" !~ " level=" "log-level=warn shows no logs at all"
+
     run_podman --log-level=warning info
+    assert "$output" !~ " level=" "log-level=warning shows no logs at all"
+
     run_podman --log-level=error   info
-    run_podman --log-level=fatal   info
-    run_podman --log-level=panic   info
+    assert "$output" !~ " level=" "log-level=error shows no logs at all"
+
+    # docker compat
+    run_podman --debug   info
+    assert "$output" =~ " level=debug " "podman --debug gives debug output"
+    run_podman -D        info
+    assert "$output" =~ " level=debug " "podman -D gives debug output"
+
+    run_podman 1 --debug --log-level=panic info
+    is "$output" "Setting --log-level and --debug is not allowed"
 }
 
 # vim: filetype=sh

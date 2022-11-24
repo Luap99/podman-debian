@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -24,7 +24,6 @@ var _ = Describe("Podman run", func() {
 		}
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
 	})
 
 	AfterEach(func() {
@@ -47,6 +46,15 @@ var _ = Describe("Podman run", func() {
 		Expect(session).Should(Exit(126))
 	})
 
+	It("podman run a container using a --workdir under a bind mount", func() {
+		volume, err := CreateTempDirInTempDir()
+		Expect(err).To(BeNil())
+
+		session := podmanTest.Podman([]string{"run", "--volume", fmt.Sprintf("%s:/var_ovl/:O", volume), "--workdir", "/var_ovl/log", ALPINE, "true"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+	})
+
 	It("podman run a container on an image with a workdir", func() {
 		dockerfile := fmt.Sprintf(`FROM %s
 RUN  mkdir -p /home/foobar /etc/foobar; chown bin:bin /etc/foobar
@@ -60,7 +68,7 @@ WORKDIR  /etc/foobar`, ALPINE)
 
 		session = podmanTest.Podman([]string{"run", "test", "ls", "-ld", "."})
 		session.WaitWithDefaultTimeout()
-		Expect(session.LineInOutputContains("bin")).To(BeTrue())
+		Expect(session.OutputToString()).To(ContainSubstring("bin"))
 
 		session = podmanTest.Podman([]string{"run", "--workdir", "/home/foobar", "test", "pwd"})
 		session.WaitWithDefaultTimeout()

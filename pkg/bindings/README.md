@@ -30,6 +30,10 @@ rootful connections is `/run/podman/podman.sock` and for rootless it is `/run/US
 information about the Podman system service, see `man podman-system-service`.
 
 ### Creating a connection
+Ensure the [required dependencies](https://podman.io/getting-started/installation#build-and-run-dependencies) are installed,
+as they will be required to compile a Go program making use of the bindings.
+
+
 The first step for using the bindings is to create a connection to the socket.  As mentioned earlier, the destination
 of the socket depends on the user who owns it. In this case, a rootful connection is made.
 
@@ -39,7 +43,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/containers/podman/v3/pkg/bindings"
+	"github.com/containers/podman/v4/pkg/bindings"
 )
 
 func main() {
@@ -70,8 +74,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/containers/podman/v3/pkg/bindings"
-	"github.com/containers/podman/v3/pkg/bindings/containers"
+	"github.com/containers/podman/v4/pkg/bindings"
+	"github.com/containers/podman/v4/pkg/bindings/containers"
 )
 
 func main() {
@@ -98,8 +102,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/containers/podman/v3/pkg/bindings"
-	"github.com/containers/podman/v3/pkg/bindings/images"
+	"github.com/containers/podman/v4/pkg/bindings"
+	"github.com/containers/podman/v4/pkg/bindings/images"
 )
 
 func main() {
@@ -126,10 +130,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/containers/podman/v3/pkg/bindings"
-	"github.com/containers/podman/v3/pkg/bindings/containers"
-	"github.com/containers/podman/v3/pkg/bindings/images"
-	"github.com/containers/podman/v3/pkg/specgen"
+	"github.com/containers/podman/v4/pkg/bindings"
+	"github.com/containers/podman/v4/pkg/bindings/containers"
+	"github.com/containers/podman/v4/pkg/bindings/images"
+	"github.com/containers/podman/v4/pkg/specgen"
 )
 
 func main() {

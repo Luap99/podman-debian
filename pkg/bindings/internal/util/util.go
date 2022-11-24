@@ -74,6 +74,9 @@ func ToParams(o interface{}) (url.Values, error) {
 		}
 		paramName := fieldName
 		if pn, ok := sType.Field(i).Tag.Lookup("schema"); ok {
+			if pn == "-" {
+				continue
+			}
 			paramName = pn
 		}
 		switch {
@@ -103,4 +106,12 @@ func ToParams(o interface{}) (url.Values, error) {
 		}
 	}
 	return params, nil
+}
+
+func MapToArrayString(data map[string]string) []string {
+	l := make([]string, 0)
+	for k, v := range data {
+		l = append(l, k+"="+v)
+	}
+	return l
 }

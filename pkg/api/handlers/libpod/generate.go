@@ -1,58 +1,84 @@
 package libpod
 
 import (
+	"fmt"
 	"net/http"
 
-	"github.com/containers/podman/v3/libpod"
-	"github.com/containers/podman/v3/pkg/api/handlers/utils"
-	api "github.com/containers/podman/v3/pkg/api/types"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/domain/infra/abi"
-	"github.com/containers/podman/v3/pkg/util"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v4/pkg/api/types"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/domain/infra/abi"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/gorilla/schema"
-	"github.com/pkg/errors"
 )
 
 func GenerateSystemd(w http.ResponseWriter, r *http.Request) {
 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	query := struct {
-		Name            bool    `schema:"useName"`
-		New             bool    `schema:"new"`
-		NoHeader        bool    `schema:"noHeader"`
-		RestartPolicy   *string `schema:"restartPolicy"`
-		StopTimeout     uint    `schema:"stopTimeout"`
-		ContainerPrefix string  `schema:"containerPrefix"`
-		PodPrefix       string  `schema:"podPrefix"`
-		Separator       string  `schema:"separator"`
+		Name                   bool     `schema:"useName"`
+		New                    bool     `schema:"new"`
+		NoHeader               bool     `schema:"noHeader"`
+		TemplateUnitFile       bool     `schema:"templateUnitFile"`
+		RestartPolicy          *string  `schema:"restartPolicy"`
+		RestartSec             uint     `schema:"restartSec"`
+		StopTimeout            uint     `schema:"stopTimeout"`
+		StartTimeout           uint     `schema:"startTimeout"`
+		ContainerPrefix        *string  `schema:"containerPrefix"`
+		PodPrefix              *string  `schema:"podPrefix"`
+		Separator              *string  `schema:"separator"`
+		Wants                  []string `schema:"wants"`
+		After                  []string `schema:"after"`
+		Requires               []string `schema:"requires"`
+		AdditionalEnvVariables []string `schema:"additionalEnvVariables"`
 	}{
-		StopTimeout:     util.DefaultContainerConfig().Engine.StopTimeout,
-		ContainerPrefix: "container",
-		PodPrefix:       "pod",
-		Separator:       "-",
+		StartTimeout: 0,
+		StopTimeout:  util.DefaultContainerConfig().Engine.StopTimeout,
 	}
 
 	if err := decoder.Decode(&query, r.URL.Query()); err != nil {
-		utils.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest,
-			errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
+		utils.Error(w, http.StatusBadRequest, fmt.Errorf("failed to parse parameters for %s: %w", r.URL.String(), err))
 		return
+	}
+
+	ContainerPrefix := "container"
+	if query.ContainerPrefix != nil {
+		ContainerPrefix = *query.ContainerPrefix
+	}
+
+	PodPrefix := "pod"
+	if query.PodPrefix != nil {
+		PodPrefix = *query.PodPrefix
+	}
+
+	Separator := "-"
+	if query.Separator != nil {
+		Separator = *query.Separator
 	}
 
 	containerEngine := abi.ContainerEngine{Libpod: runtime}
 	options := entities.GenerateSystemdOptions{
-		Name:            query.Name,
-		New:             query.New,
-		NoHeader:        query.NoHeader,
-		RestartPolicy:   query.RestartPolicy,
-		StopTimeout:     &query.StopTimeout,
-		ContainerPrefix: query.ContainerPrefix,
-		PodPrefix:       query.PodPrefix,
-		Separator:       query.Separator,
+		Name:                   query.Name,
+		New:                    query.New,
+		NoHeader:               query.NoHeader,
+		TemplateUnitFile:       query.TemplateUnitFile,
+		RestartPolicy:          query.RestartPolicy,
+		StartTimeout:           &query.StartTimeout,
+		StopTimeout:            &query.StopTimeout,
+		ContainerPrefix:        ContainerPrefix,
+		PodPrefix:              PodPrefix,
+		Separator:              Separator,
+		RestartSec:             &query.RestartSec,
+		Wants:                  query.Wants,
+		After:                  query.After,
+		Requires:               query.Requires,
+		AdditionalEnvVariables: query.AdditionalEnvVariables,
 	}
 
 	report, err := containerEngine.GenerateSystemd(r.Context(), utils.GetName(r), options)
 	if err != nil {
-		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrap(err, "error generating systemd units"))
+		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("generating systemd units: %w", err))
 		return
 	}
 
@@ -70,8 +96,7 @@ func GenerateKube(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := decoder.Decode(&query, r.URL.Query()); err != nil {
-		utils.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest,
-			errors.Wrapf(err, "failed to parse parameters for %s", r.URL.String()))
+		utils.Error(w, http.StatusBadRequest, fmt.Errorf("failed to parse parameters for %s: %w", r.URL.String(), err))
 		return
 	}
 
@@ -79,9 +104,11 @@ func GenerateKube(w http.ResponseWriter, r *http.Request) {
 	options := entities.GenerateKubeOptions{Service: query.Service}
 	report, err := containerEngine.GenerateKube(r.Context(), query.Names, options)
 	if err != nil {
-		utils.Error(w, "Something went wrong.", http.StatusInternalServerError, errors.Wrap(err, "error generating YAML"))
+		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("generating YAML: %w", err))
 		return
 	}
 
+	// FIXME: Content-Type is being set as application/x-tar NOT text/vnd.yaml
+	// https://mailarchive.ietf.org/arch/msg/media-types/e9ZNC0hDXKXeFlAVRWxLCCaG9GI/
 	utils.WriteResponse(w, http.StatusOK, report.Reader)
 }

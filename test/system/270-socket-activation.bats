@@ -85,7 +85,7 @@ function teardown() {
     is "$status" "0" "curl exit status"
     is "$output" "OK" "podman service responds normally"
 
-    run_podman rm -f $cid
+    run_podman rm -f -t 0 $cid
 }
 
 @test "podman system service - socket activation - kill rootless pause" {
@@ -101,7 +101,7 @@ function teardown() {
         die "Pause pid file does not exist: $pause_pid_file"
     fi
 
-    echo "kill -9 $(< pause_pid_file)"
+    echo "kill -9 $(< $pause_pid_file) [pause process]"
     kill -9 $(< $pause_pid_file)
 
     run curl -s --max-time 3 --unix-socket $SERVICE_SOCK_ADDR $_PING
@@ -109,7 +109,7 @@ function teardown() {
     is "$status" "0" "curl exit status"
     is "$output" "OK" "podman service responds normally"
 
-    run_podman rm -f $cid
+    run_podman rm -f -t 0 $cid
 }
 
 # vim: filetype=sh

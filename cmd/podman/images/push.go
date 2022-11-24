@@ -6,10 +6,10 @@ import (
 	"github.com/containers/common/pkg/auth"
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/util"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/spf13/cobra"
 )
 
@@ -17,8 +17,9 @@ import (
 // CLI-only fields into the API types.
 type pushOptionsWrapper struct {
 	entities.ImagePushOptions
-	TLSVerifyCLI   bool // CLI only
-	CredentialsCLI string
+	TLSVerifyCLI          bool // CLI only
+	CredentialsCLI        string
+	SignPassphraseFileCLI string
 }
 
 var (
@@ -101,23 +102,38 @@ func pushFlags(cmd *cobra.Command) {
 
 	flags.BoolVarP(&pushOptions.Quiet, "quiet", "q", false, "Suppress output information when pushing images")
 	flags.BoolVar(&pushOptions.RemoveSignatures, "remove-signatures", false, "Discard any pre-existing signatures in the image")
-	flags.StringVar(&pushOptions.SignaturePolicy, "signature-policy", "", "Path to a signature-policy file")
 
 	signByFlagName := "sign-by"
 	flags.StringVar(&pushOptions.SignBy, signByFlagName, "", "Add a signature at the destination using the specified key")
 	_ = cmd.RegisterFlagCompletionFunc(signByFlagName, completion.AutocompleteNone)
 
+	signBySigstorePrivateKeyFlagName := "sign-by-sigstore-private-key"
+	flags.StringVar(&pushOptions.SignBySigstorePrivateKeyFile, signBySigstorePrivateKeyFlagName, "", "Sign the image using a sigstore private key at `PATH`")
+	_ = cmd.RegisterFlagCompletionFunc(signBySigstorePrivateKeyFlagName, completion.AutocompleteDefault)
+
+	signPassphraseFileFlagName := "sign-passphrase-file"
+	flags.StringVar(&pushOptions.SignPassphraseFileCLI, signPassphraseFileFlagName, "", "Read a passphrase for signing an image from `PATH`")
+	_ = cmd.RegisterFlagCompletionFunc(signPassphraseFileFlagName, completion.AutocompleteDefault)
+
 	flags.BoolVar(&pushOptions.TLSVerifyCLI, "tls-verify", true, "Require HTTPS and verify certificates when contacting registries")
+
+	compressionFormat := "compression-format"
+	flags.StringVar(&pushOptions.CompressionFormat, compressionFormat, "", "compression format to use")
+	_ = cmd.RegisterFlagCompletionFunc(compressionFormat, common.AutocompleteCompressionFormat)
 
 	if registry.IsRemote() {
 		_ = flags.MarkHidden("cert-dir")
 		_ = flags.MarkHidden("compress")
 		_ = flags.MarkHidden("digestfile")
 		_ = flags.MarkHidden("quiet")
-		_ = flags.MarkHidden("remove-signatures")
-		_ = flags.MarkHidden("sign-by")
+		_ = flags.MarkHidden(signByFlagName)
+		_ = flags.MarkHidden(signBySigstorePrivateKeyFlagName)
+		_ = flags.MarkHidden(signPassphraseFileFlagName)
 	}
-	_ = flags.MarkHidden("signature-policy")
+	if !registry.IsRemote() {
+		flags.StringVar(&pushOptions.SignaturePolicy, "signature-policy", "", "Path to a signature-policy file")
+		_ = flags.MarkHidden("signature-policy")
+	}
 }
 
 // imagePush is implement the command for pushing images.
@@ -146,6 +162,14 @@ func imagePush(cmd *cobra.Command, args []string) error {
 		}
 		pushOptions.Username = creds.Username
 		pushOptions.Password = creds.Password
+	}
+
+	if !pushOptions.Quiet {
+		pushOptions.Writer = os.Stderr
+	}
+
+	if err := common.PrepareSigningPassphrase(&pushOptions.ImagePushOptions, pushOptions.SignPassphraseFileCLI); err != nil {
+		return err
 	}
 
 	// Let's do all the remaining Yoga in the API to prevent us from scattering

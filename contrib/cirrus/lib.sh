@@ -36,11 +36,6 @@ fi
 # Managed by setup_environment.sh; holds task-specific definitions.
 if [[ -r "/etc/ci_environment" ]]; then source /etc/ci_environment; fi
 
-OS_RELEASE_ID="$(source /etc/os-release; echo $ID)"
-# GCE image-name compatible string representation of distribution _major_ version
-OS_RELEASE_VER="$(source /etc/os-release; echo $VERSION_ID | tr -d '.')"
-# Combined to ease some usage
-OS_REL_VER="${OS_RELEASE_ID}-${OS_RELEASE_VER}"
 # This is normally set from .cirrus.yml but default is necessary when
 # running under hack/get_ci_vm.sh since it cannot infer the value.
 DISTRO_NV="${DISTRO_NV:-$OS_REL_VER}"
@@ -74,7 +69,6 @@ PODMAN_SERVER_LOG=$CIRRUS_WORKING_DIR/server.log
 # Defaults when not running under CI
 export CI="${CI:-false}"
 CIRRUS_CI="${CIRRUS_CI:-false}"
-DEST_BRANCH="${DEST_BRANCH:-main}"
 CONTINUOUS_INTEGRATION="${CONTINUOUS_INTEGRATION:-false}"
 CIRRUS_REPO_NAME=${CIRRUS_REPO_NAME:-podman}
 # Cirrus only sets $CIRRUS_BASE_SHA properly for PRs, but $EPOCH_TEST_COMMIT
@@ -97,7 +91,7 @@ EPOCH_TEST_COMMIT="$CIRRUS_BASE_SHA"
 # testing operations on all platforms and versions.  This is necessary
 # to avoid needlessly passing through global/system values across
 # contexts, such as host->container or root->rootless user
-PASSTHROUGH_ENV_RE='(^CI.*)|(^CIRRUS)|(^DISTRO_NV)|(^GOPATH)|(^GOCACHE)|(^GOSRC)|(^SCRIPT_BASE)|(CGROUP_MANAGER)|(OCI_RUNTIME)|(^TEST.*)|(^PODBIN_NAME)|(^PRIV_NAME)|(^ALT_NAME)|(^ROOTLESS_USER)|(SKIP_USERNS)|(.*_NAME)|(.*_FQIN)'
+PASSTHROUGH_ENV_RE='(^CI.*)|(^CIRRUS)|(^DISTRO_NV)|(^GOPATH)|(^GOCACHE)|(^GOSRC)|(^SCRIPT_BASE)|(CGROUP_MANAGER)|(OCI_RUNTIME)|(^TEST.*)|(^PODBIN_NAME)|(^PRIV_NAME)|(^ALT_NAME)|(^ROOTLESS_USER)|(SKIP_USERNS)|(.*_NAME)|(.*_FQIN)|(NETWORK_BACKEND)|(DEST_BRANCH)'
 # Unsafe env. vars for display
 SECRET_ENV_RE='(ACCOUNT)|(GC[EP]..+)|(SSH)|(PASSWORD)|(TOKEN)'
 
@@ -138,7 +132,10 @@ passthrough_envars(){
 }
 
 setup_rootless() {
-    req_env_vars ROOTLESS_USER GOPATH GOSRC SECRET_ENV_RE
+    req_env_vars GOPATH GOSRC SECRET_ENV_RE
+
+    ROOTLESS_USER="${ROOTLESS_USER:-some${RANDOM}dude}"
+    ROOTLESS_UID=""
 
     local rootless_uid
     local rootless_gid
@@ -150,59 +147,86 @@ setup_rootless() {
     # shellcheck disable=SC2154
     if passwd --status $ROOTLESS_USER
     then
-        msg "Updating $ROOTLESS_USER user permissions on possibly changed libpod code"
-        chown -R $ROOTLESS_USER:$ROOTLESS_USER "$GOPATH" "$GOSRC"
-        return 0
+        if [[ $PRIV_NAME = "rootless" ]]; then
+            msg "Updating $ROOTLESS_USER user permissions on possibly changed libpod code"
+            chown -R $ROOTLESS_USER:$ROOTLESS_USER "$GOPATH" "$GOSRC"
+            return 0
+        fi
     fi
     msg "************************************************************"
     msg "Setting up rootless user '$ROOTLESS_USER'"
     msg "************************************************************"
     cd $GOSRC || exit 1
     # Guarantee independence from specific values
-    rootless_uid=$[RANDOM+1000]
-    rootless_gid=$[RANDOM+1000]
+    rootless_uid=$((1500 + RANDOM % 5000))
+    ROOTLESS_UID=$rootless_uid
+    rootless_gid=$((1500 + RANDOM % 5000))
     msg "creating $rootless_uid:$rootless_gid $ROOTLESS_USER user"
     groupadd -g $rootless_gid $ROOTLESS_USER
     useradd -g $rootless_gid -u $rootless_uid --no-user-group --create-home $ROOTLESS_USER
-    chown -R $ROOTLESS_USER:$ROOTLESS_USER "$GOPATH" "$GOSRC"
 
-    msg "creating ssh key pair for $USER"
+    echo "$ROOTLESS_USER ALL=(root) NOPASSWD: ALL" > /etc/sudoers.d/ci-rootless
+
+    mkdir -p "$HOME/.ssh" "/home/$ROOTLESS_USER/.ssh"
+
+    msg "Creating ssh key pairs"
     [[ -r "$HOME/.ssh/id_rsa" ]] || \
-        ssh-keygen -P "" -f "$HOME/.ssh/id_rsa"
+        ssh-keygen -t rsa -P "" -f "$HOME/.ssh/id_rsa"
+    ssh-keygen -t ed25519 -P "" -f "/home/$ROOTLESS_USER/.ssh/id_ed25519"
+    ssh-keygen -t rsa -P "" -f "/home/$ROOTLESS_USER/.ssh/id_rsa"
 
-    msg "Allowing ssh key for $ROOTLESS_USER"
-    akfilepath="/home/$ROOTLESS_USER/.ssh/authorized_keys"
-    (umask 077 && mkdir "/home/$ROOTLESS_USER/.ssh")
+    msg "Set up authorized_keys"
+    cat $HOME/.ssh/*.pub /home/$ROOTLESS_USER/.ssh/*.pub >> $HOME/.ssh/authorized_keys
+    cat $HOME/.ssh/*.pub /home/$ROOTLESS_USER/.ssh/*.pub >> /home/$ROOTLESS_USER/.ssh/authorized_keys
+
+    msg "Configure ssh file permissions"
+    chmod -R 700 "$HOME/.ssh"
+    chmod -R 700 "/home/$ROOTLESS_USER/.ssh"
     chown -R $ROOTLESS_USER:$ROOTLESS_USER "/home/$ROOTLESS_USER/.ssh"
-    install -o $ROOTLESS_USER -g $ROOTLESS_USER -m 0600 \
-        "$HOME/.ssh/id_rsa.pub" "$akfilepath"
-    # Makes debugging easier
-    cat /root/.ssh/authorized_keys >> "$akfilepath"
 
-    msg "Ensure the ssh daemon is up and running within 5 minutes"
-    systemctl start sshd
-    sshcmd="ssh $ROOTLESS_USER@localhost
-           -o UserKnownHostsFile=/dev/null
-           -o StrictHostKeyChecking=no
-           -o CheckHostIP=no"
-    lilto $sshcmd true  # retry until sshd is up
-
-    msg "Configuring rootless user self-access to ssh to localhost"
-    $sshcmd ssh-keygen -P '""' -f "/home/$ROOTLESS_USER/.ssh/id_rsa"
-    cat "/home/$ROOTLESS_USER/.ssh/id_rsa" >> "$akfilepath"
+    # N/B: We're clobbering the known_hosts here on purpose.  There should
+    # never be any non-localhost connections made from tests (using strict-mode).
+    # If there are, it's either a security problem or a broken test, both of which
+    # we want to lead to test failures.
+    msg "   set up known_hosts for $USER"
+    ssh-keyscan localhost > /root/.ssh/known_hosts
+    msg "   set up known_hosts for $ROOTLESS_USER"
+    # Maintain access-permission consistency with all other .ssh files.
+    install -Z -m 700 -o $ROOTLESS_USER -g $ROOTLESS_USER \
+        /root/.ssh/known_hosts /home/$ROOTLESS_USER/.ssh/known_hosts
 }
 
 install_test_configs() {
-    echo "Installing cni config, policy and registry config"
-    req_env_vars GOSRC SCRIPT_BASE
-    cd $GOSRC || exit 1
-    install -v -D -m 644 ./cni/87-podman-bridge.conflist /etc/cni/net.d/
-    # This config must always sort last in the list of networks (podman picks first one
-    # as the default).  This config prevents allocation of network address space used
-    # by default in google cloud.  https://cloud.google.com/vpc/docs/vpc#ip-ranges
-    install -v -D -m 644 $SCRIPT_BASE/99-do-not-use-google-subnets.conflist /etc/cni/net.d/
-
+    msg "Installing ./test/registries.conf system-wide."
     install -v -D -m 644 ./test/registries.conf /etc/containers/
+}
+
+use_cni() {
+    msg "Unsetting NETWORK_BACKEND for all subsequent environments."
+    echo "export -n NETWORK_BACKEND" >> /etc/ci_environment
+    echo "unset NETWORK_BACKEND" >> /etc/ci_environment
+    export -n NETWORK_BACKEND
+    unset NETWORK_BACKEND
+    msg "Installing default CNI configuration"
+    cd $GOSRC || exit 1
+    rm -rvf /etc/cni/net.d
+    mkdir -p /etc/cni/net.d
+    install -v -D -m 644 ./cni/87-podman-bridge.conflist \
+        /etc/cni/net.d/
+    # This config must always sort last in the list of networks (podman picks
+    # first one as the default).  This config prevents allocation of network
+    # address space used by default in google cloud.
+    # https://cloud.google.com/vpc/docs/vpc#ip-ranges
+    install -v -D -m 644 $SCRIPT_BASE/99-do-not-use-google-subnets.conflist \
+        /etc/cni/net.d/
+}
+
+use_netavark() {
+    msg "Forcing NETWORK_BACKEND=netavark for all subsequent environments."
+    echo "NETWORK_BACKEND=netavark" >> /etc/ci_environment
+    export NETWORK_BACKEND=netavark  # needed for install_test_configs()
+    msg "Removing any/all CNI configuration"
+    rm -rvf /etc/cni/net.d/*
 }
 
 # Remove all files provided by the distro version of podman.
@@ -229,6 +253,8 @@ remove_packaged_podman_files() {
         done
     done
 
+    # OS_RELEASE_ID is defined by automation-library
+    # shellcheck disable=SC2154
     if [[ "$OS_RELEASE_ID" =~ "ubuntu" ]]
     then
         LISTING_CMD="dpkg-query -L podman"

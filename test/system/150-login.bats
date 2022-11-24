@@ -52,7 +52,7 @@ function setup() {
     mkdir -p $AUTHDIR
 
     # Registry image; copy of docker.io, but on our own registry
-    local REGISTRY_IMAGE="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/registry:2.7"
+    local REGISTRY_IMAGE="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/registry:2.8"
 
     # Pull registry image, but into a separate container storage
     mkdir -p ${PODMAN_LOGIN_WORKDIR}/root
@@ -83,7 +83,7 @@ function setup() {
     fi
 
     # Run the registry container.
-    run_podman '?' ${PODMAN_LOGIN_ARGS} rm -f registry
+    run_podman '?' ${PODMAN_LOGIN_ARGS} rm -t 0 -f registry
     run_podman ${PODMAN_LOGIN_ARGS} run -d \
                -p ${PODMAN_LOGIN_REGISTRY_PORT}:5000 \
                --name registry \
@@ -122,7 +122,7 @@ function setup() {
                --password-stdin \
                $registry <<< "x${PODMAN_LOGIN_PASS}"
     is "$output" \
-       "Error: error logging into \"$registry\": invalid username/password" \
+       "Error: logging into \"$registry\": invalid username/password" \
        'output from podman login'
 }
 
@@ -245,7 +245,7 @@ function _test_skopeo_credential_sharing() {
     is "$status" "0" "skopeo inspect - exit status"
 
     got_name=$(jq -r .Name <<<"$output")
-    is "$got_name" "$registry/$dest_name" "skopeo inspect -> Name"
+    is "$got_name" "$registry/$destname" "skopeo inspect -> Name"
 
     # Now try without a valid login; it should fail
     run_podman logout "$@" $registry
@@ -314,7 +314,7 @@ function _test_skopeo_credential_sharing() {
     fi
 
     # Make sure socket is closed
-    if { exec 3<> /dev/tcp/127.0.0.1/${PODMAN_LOGIN_REGISTRY_PORT}; } &>/dev/null; then
+    if ! port_is_free $PODMAN_LOGIN_REGISTRY_PORT; then
         die "Socket still seems open"
     fi
 }

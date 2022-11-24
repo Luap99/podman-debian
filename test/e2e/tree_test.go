@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -31,12 +31,12 @@ var _ = Describe("Podman image tree", func() {
 		podmanTest.Cleanup()
 		f := CurrentGinkgoTestDescription()
 		timedResult := fmt.Sprintf("Test: %s completed in %f seconds", f.TestText, f.Duration.Seconds())
-		GinkgoWriter.Write([]byte(timedResult))
+		_, _ = GinkgoWriter.Write([]byte(timedResult))
 	})
 
 	It("podman image tree", func() {
 		SkipIfRemote("podman-image-tree is not supported for remote clients")
-		podmanTest.AddImageToRWStore(cirros)
+		podmanTest.AddImageToRWStore(CIRROS_IMAGE)
 		dockerfile := `FROM quay.io/libpod/cirros:latest
 RUN mkdir hello
 RUN touch test.txt

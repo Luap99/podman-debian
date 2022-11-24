@@ -1,14 +1,15 @@
 package entities
 
 import (
+	"io"
 	"net/url"
 	"time"
 
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/image/v5/manifest"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v3/pkg/inspect"
-	"github.com/containers/podman/v3/pkg/trust"
+	"github.com/containers/podman/v4/pkg/inspect"
+	"github.com/containers/podman/v4/pkg/trust"
 	"github.com/docker/docker/api/types/container"
 	"github.com/opencontainers/go-digest"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
@@ -46,14 +47,14 @@ type Image struct {
 	HealthCheck   *manifest.Schema2HealthConfig `json:",omitempty"`
 }
 
-func (i *Image) Id() string { // nolint
+func (i *Image) Id() string { //nolint:revive,stylecheck
 	return i.ID
 }
 
 // swagger:model LibpodImageSummary
 type ImageSummary struct {
 	ID          string `json:"Id"`
-	ParentId    string // nolint
+	ParentId    string //nolint:revive,stylecheck
 	RepoTags    []string
 	RepoDigests []string
 	Created     int64
@@ -66,13 +67,12 @@ type ImageSummary struct {
 	Dangling    bool `json:",omitempty"`
 
 	// Podman extensions
-	Names        []string `json:",omitempty"`
-	Digest       string   `json:",omitempty"`
-	ConfigDigest string   `json:",omitempty"`
-	History      []string `json:",omitempty"`
+	Names   []string `json:",omitempty"`
+	Digest  string   `json:",omitempty"`
+	History []string `json:",omitempty"`
 }
 
-func (i *ImageSummary) Id() string { // nolint
+func (i *ImageSummary) Id() string { //nolint:revive,stylecheck
 	return i.ID
 }
 
@@ -90,11 +90,15 @@ type ImageRemoveOptions struct {
 	All bool
 	// Foce will force image removal including containers using the images.
 	Force bool
+	// Ignore if a specified image does not exist and do not throw an error.
+	Ignore bool
 	// Confirms if given name is a manifest list and removes it, otherwise returns error.
 	LookupManifest bool
+	// NoPrune will not remove dangling images
+	NoPrune bool
 }
 
-// ImageRemoveResponse is the response for removing one or more image(s) from storage
+// ImageRemoveReport is the response for removing one or more image(s) from storage
 // and images what was untagged vs actually removed.
 type ImageRemoveReport struct {
 	// Deleted images.
@@ -152,6 +156,8 @@ type ImagePullOptions struct {
 	SkipTLSVerify types.OptionalBool
 	// PullPolicy whether to pull new image
 	PullPolicy config.PullPolicy
+	// Writer is used to display copy information including progress bars.
+	Writer io.Writer
 }
 
 // ImagePullReport is the response from pulling one or more images.
@@ -191,8 +197,7 @@ type ImagePushOptions struct {
 	// image. Default is manifest type of source, with fallbacks.
 	// Ignored for remote calls.
 	Format string
-	// Quiet can be specified to suppress pull progress when pulling.  Ignored
-	// for remote calls.
+	// Quiet can be specified to suppress push progress when pushing.
 	Quiet bool
 	// Rm indicates whether to remove the manifest list if push succeeds
 	Rm bool
@@ -204,10 +209,33 @@ type ImagePushOptions struct {
 	// SignBy adds a signature at the destination using the specified key.
 	// Ignored for remote calls.
 	SignBy string
+	// SignPassphrase, if non-empty, specifies a passphrase to use when signing
+	// with the key ID from SignBy.
+	SignPassphrase string
+	// SignBySigstorePrivateKeyFile, if non-empty, asks for a signature to be added
+	// during the copy, using a sigstore private key file at the provided path.
+	// Ignored for remote calls.
+	SignBySigstorePrivateKeyFile string
+	// SignSigstorePrivateKeyPassphrase is the passphrase to use when signing with
+	// SignBySigstorePrivateKeyFile.
+	SignSigstorePrivateKeyPassphrase []byte
 	// SkipTLSVerify to skip HTTPS and certificate verification.
 	SkipTLSVerify types.OptionalBool
 	// Progress to get progress notifications
 	Progress chan types.ProgressProperties
+	// CompressionFormat is the format to use for the compression of the blobs
+	CompressionFormat string
+	// Writer is used to display copy information including progress bars.
+	Writer io.Writer
+}
+
+// ImagePushReport is the response from pushing an image.
+// Currently only used in the remote API.
+type ImagePushReport struct {
+	// Stream used to provide push progress
+	Stream string `json:"stream,omitempty"`
+	// Error contains text of errors from pushing
+	Error string `json:"error,omitempty"`
 }
 
 // ImageSearchOptions are the arguments for searching images.
@@ -219,8 +247,6 @@ type ImageSearchOptions struct {
 	Filters []string
 	// Limit the number of results.
 	Limit int
-	// NoTrunc will not truncate the output.
-	NoTrunc bool
 	// SkipTLSVerify to skip  HTTPS and certificate verification.
 	SkipTLSVerify types.OptionalBool
 	// ListTags search the available tags of the repository
@@ -252,8 +278,9 @@ type ImageListOptions struct {
 }
 
 type ImagePruneOptions struct {
-	All    bool     `json:"all" schema:"all"`
-	Filter []string `json:"filter" schema:"filter"`
+	All      bool     `json:"all" schema:"all"`
+	External bool     `json:"external" schema:"external"`
+	Filter   []string `json:"filter" schema:"filter"`
 }
 
 type ImageTagOptions struct{}
@@ -276,6 +303,7 @@ type ImageLoadReport struct {
 
 type ImageImportOptions struct {
 	Architecture    string
+	Variant         string
 	Changes         []string
 	Message         string
 	OS              string
@@ -287,7 +315,7 @@ type ImageImportOptions struct {
 }
 
 type ImageImportReport struct {
-	Id string // nolint
+	Id string //nolint:revive,stylecheck
 }
 
 // ImageSaveOptions provide options for saving images.
@@ -302,32 +330,39 @@ type ImageSaveOptions struct {
 	// than one image.  Additional tags will be interpreted as references
 	// to images which are added to the archive.
 	MultiImageArchive bool
+	// Accept uncompressed layers when copying OCI images.
+	OciAcceptUncompressedLayers bool
 	// Output - write image to the specified path.
 	Output string
 	// Quiet - suppress output when copying images
-	Quiet bool
+	Quiet           bool
+	SignaturePolicy string
 }
 
-// ImageScpOptions provide options for securely copying images to podman remote
+// ImageScpOptions provide options for securely copying images to and from a remote host
 type ImageScpOptions struct {
-	// SoureImageName is the image the user is providing to load on a remote machine
-	SourceImageName string
-	// Tag allows for a new image to be created under the given name
-	Tag string
-	// ToRemote specifies that we are loading to the remote host
-	ToRemote bool
-	// FromRemote specifies that we are loading from the remote host
-	FromRemote bool
+	// Remote determines if this entity is operating on a remote machine
+	Remote bool `json:"remote,omitempty"`
+	// File is the input/output file for the save and load Operation
+	File string `json:"file,omitempty"`
+	// Quiet Determines if the save and load operation will be done quietly
+	Quiet bool `json:"quiet,omitempty"`
+	// Image is the image the user is providing to save and load
+	Image string `json:"image,omitempty"`
+	// User is used in conjunction with Transfer to determine if a valid user was given to save from/load into
+	User string `json:"user,omitempty"`
+	// Tag is the name to be used for the image on the destination
+	Tag string `json:"tag,omitempty"`
+}
+
+// ImageScpConnections provides the ssh related information used in remote image transfer
+type ImageScpConnections struct {
 	// Connections holds the raw string values for connections (ssh or unix)
 	Connections []string
 	// URI contains the ssh connection URLs to be used by the client
 	URI []*url.URL
-	// Iden contains ssh identity keys to be used by the client
-	Iden []string
-	// Save Options used for first half of the scp operation
-	Save ImageSaveOptions
-	// Load options used for the second half of the scp operation
-	Load ImageLoadOptions
+	// Identities contains ssh identity keys to be used by the client
+	Identities []string
 }
 
 // ImageTreeOptions provides options for ImageEngine.Tree()
@@ -368,6 +403,7 @@ type SignOptions struct {
 	Directory string
 	SignBy    string
 	CertDir   string
+	Authfile  string
 	All       bool
 }
 
@@ -389,8 +425,7 @@ type ImageUnmountOptions struct {
 
 // ImageMountReport describes the response from image mount
 type ImageMountReport struct {
-	Err          error
-	Id           string // nolint
+	Id           string //nolint:revive,stylecheck
 	Name         string
 	Repositories []string
 	Path         string
@@ -399,5 +434,5 @@ type ImageMountReport struct {
 // ImageUnmountReport describes the response from umounting an image
 type ImageUnmountReport struct {
 	Err error
-	Id  string // nolint
+	Id  string //nolint:revive,stylecheck
 }

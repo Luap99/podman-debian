@@ -6,10 +6,10 @@ import (
 
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/report"
-	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/cmd/podman/validate"
-	"github.com/containers/podman/v3/libpod/define"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/validate"
+	"github.com/containers/podman/v4/libpod/define"
 	"github.com/ghodss/yaml"
 	"github.com/spf13/cobra"
 )
@@ -62,10 +62,11 @@ func infoFlags(cmd *cobra.Command) {
 	flags := cmd.Flags()
 
 	flags.BoolVarP(&debug, "debug", "D", false, "Display additional debug information")
+	_ = flags.MarkHidden("debug") // It's a NOP since Podman version 2.0
 
 	formatFlagName := "format"
 	flags.StringVarP(&inFormat, formatFlagName, "f", "", "Change the output format to JSON or a Go template")
-	_ = cmd.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteFormat(define.Info{Host: &define.HostInfo{}, Store: &define.StoreInfo{}}))
+	_ = cmd.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteFormat(&define.Info{}))
 }
 
 func info(cmd *cobra.Command, args []string) error {
@@ -84,11 +85,16 @@ func info(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Println(string(b))
 	case cmd.Flags().Changed("format"):
-		tmpl, err := report.NewTemplate("info").Parse(inFormat)
+		rpt := report.New(os.Stdout, cmd.Name())
+		defer rpt.Flush()
+
+		// Use OriginUnknown so it does not add an extra range since it
+		// will only be called for a single element and not a slice.
+		rpt, err = rpt.Parse(report.OriginUnknown, inFormat)
 		if err != nil {
 			return err
 		}
-		return tmpl.Execute(os.Stdout, info)
+		return rpt.Execute(info)
 	default:
 		b, err := yaml.Marshal(info)
 		if err != nil {

@@ -25,7 +25,7 @@ msg "************************************************************"
 show_env_vars
 
 req_env_vars USER HOME GOSRC SCRIPT_BASE TEST_FLAVOR TEST_ENVIRON \
-             PODBIN_NAME PRIV_NAME DISTRO_NV
+             PODBIN_NAME PRIV_NAME DISTRO_NV DEST_BRANCH
 
 # Verify basic dependencies
 for depbin in go rsync unzip sha256sum curl make python3 git
@@ -36,8 +36,14 @@ do
     fi
 done
 
-# Make sure cni network plugins directory exists
-mkdir -p /etc/cni/net.d
+cp hack/podman-registry /bin
+
+# Some test operations & checks require a git "identity"
+_gc='git config --file /root/.gitconfig'
+$_gc user.email "TMcTestFace@example.com"
+$_gc user.name "Testy McTestface"
+# Bypass git safety/security checks when operating in a throwaway environment
+git config --system --add safe.directory $GOSRC
 
 # Ensure that all lower-level contexts and child-processes have
 # ready access to higher level orchestration (e.g Cirrus-CI)
@@ -65,41 +71,20 @@ fi
 
 cd "${GOSRC}/"
 
-# Defined by lib.sh: Does the host support cgroups v1 or v2
+# Defined by lib.sh: Does the host support cgroups v1 or v2? Use runc or crun
+# respectively.
+# **IMPORTANT**: $OCI_RUNTIME is a fakeout! It is used only in e2e tests.
+# For actual podman, as in system tests, we force runtime in containers.conf
 case "$CG_FS_TYPE" in
     tmpfs)
         if ((CONTAINER==0)); then
             warn "Forcing testing with runc instead of crun"
-            if [[ "$OS_RELEASE_ID" == "ubuntu" ]]; then
-                # Need b/c using cri-o-runc package from OBS
-                echo "OCI_RUNTIME=/usr/lib/cri-o-runc/sbin/runc" \
-                    >> /etc/ci_environment
-            else
-                echo "OCI_RUNTIME=runc" >> /etc/ci_environment
-            fi
-
-            # As a general policy CGv1 + runc should coincide with the "older"
-            # VM Images in CI.  Verify this is the case.
-            if [[ -n "$VM_IMAGE_NAME" ]] && [[ ! "$VM_IMAGE_NAME" =~ prior ]]
-            then
-                die "Most recent distro. version should never run with CGv1"
-            fi
+            echo "OCI_RUNTIME=runc" >> /etc/ci_environment
+            printf "[engine]\nruntime=\"runc\"\n" >>/etc/containers/containers.conf
         fi
         ;;
     cgroup2fs)
-        if ((CONTAINER==0)); then
-            # This is necessary since we've built/installed from source,
-            # which uses runc as the default.
-            warn "Forcing testing with crun instead of runc"
-            echo "OCI_RUNTIME=crun" >> /etc/ci_environment
-
-            # As a general policy CGv2 + crun should coincide with the "newer"
-            # VM Images in CI.  Verify this is the case.
-            if [[ -n "$VM_IMAGE_NAME" ]] && [[ "$VM_IMAGE_NAME" =~ prior ]]
-            then
-                die "Least recent distro. version should never run with CGv2"
-            fi
-        fi
+        # Nothing to do: podman defaults to crun
         ;;
     *) die_unknown CG_FS_TYPE
 esac
@@ -107,11 +92,28 @@ esac
 if ((CONTAINER==0)); then  # Not yet running inside a container
     # Discovered reemergence of BFQ scheduler bug in kernel 5.8.12-200
     # which causes a kernel panic when system is under heavy I/O load.
-    # Previously discovered in F32beta and confirmed fixed. It's been
-    # observed in F31 kernels as well.  Deploy workaround for all VMs
-    # to ensure a more stable I/O scheduler (elevator).
-    echo "mq-deadline" > /sys/block/sda/queue/scheduler
-    warn "I/O scheduler: $(cat /sys/block/sda/queue/scheduler)"
+    # Disable the I/O scheduler (a.k.a. elevator) for all environments,
+    # leaving optimization up to underlying storage infrastructure.
+    testfs="/"  # mountpoint that experiences the most I/O during testing
+    msg "Querying block device owning partition hosting the '$testfs' filesystem"
+    # Need --nofsroot b/c btrfs appends subvolume label to `source` name
+    testdev=$(findmnt --canonicalize --noheadings --nofsroot \
+              --output source --mountpoint $testfs)
+    msg "    found partition: '$testdev'"
+    testdisk=$(lsblk --noheadings --output pkname --paths $testdev)
+    msg "    found block dev: '$testdisk'"
+    testsched="/sys/block/$(basename $testdisk)/queue/scheduler"
+    if [[ -n "$testdev" ]] && [[ -n "$testdisk" ]] && [[ -e "$testsched" ]]; then
+        msg "    Found active I/O scheduler: $(cat $testsched)"
+        if [[ ! "$(<$testsched)" =~ \[none\]  ]]; then
+            msg "    Disabling elevator for '$testsched'"
+            echo "none" > "$testsched"
+        else
+            msg "    Elevator already disabled"
+        fi
+    else
+        warn "Sys node for elevator doesn't exist: '$testsched'"
+    fi
 fi
 
 # Which distribution are we testing on.
@@ -119,15 +121,25 @@ case "$OS_RELEASE_ID" in
     ubuntu) ;;
     fedora)
         if ((CONTAINER==0)); then
-            msg "Configuring / Expanding host storage."
-            # VM is setup to allow flexibility in testing alternate storage.
-            # For general use, simply make use of all available space.
-            bash "$SCRIPT_BASE/add_second_partition.sh"
-            $SCRIPT_BASE/logcollector.sh df
-
             # All SELinux distros need this for systemd-in-a-container
             msg "Enabling container_manage_cgroup"
             setsebool container_manage_cgroup true
+        fi
+
+        # For release 36 and later, netavark/aardvark is the default
+        # networking stack for podman.  All previous releases only have
+        # CNI networking available.  Upgrading from one to the other is
+        # not supported at this time.  Support execution of the upgrade
+        # tests in F36 and later, by disabling Netavark and enabling CNI.
+        #
+        # OS_RELEASE_VER is defined by automation-library
+        # shellcheck disable=SC2154
+        if [[ "$OS_RELEASE_VER" -ge 36 ]] && \
+           [[ "$TEST_FLAVOR" != "upgrade_test" ]];
+        then
+            use_netavark
+        else # Fedora < 36, or upgrade testing.
+            use_cni
         fi
         ;;
     *) die_unknown OS_RELEASE_ID
@@ -164,6 +176,18 @@ case "$TEST_ENVIRON" in
             # affected/related tests are sensitive to this variable.
             warn "Disabling usernamespace integration testing"
             echo "SKIP_USERNS=1" >> /etc/ci_environment
+
+            # In F35 the hard-coded default
+            # (from containers-common-1-32.fc35.noarch) is 'journald' despite
+            # the upstream repository having this line commented-out.
+            # Containerized integration tests cannot run with 'journald'
+            # as there is no daemon/process there to receive them.
+            cconf="/usr/share/containers/containers.conf"
+            note="- commented-out by setup_environment.sh"
+            if grep -Eq '^log_driver.+journald' "$cconf"; then
+                warn "Patching out $cconf journald log_driver"
+                sed -r -i -e "s/^log_driver(.*)/# log_driver\1 $note/" "$cconf"
+            fi
         fi
         ;;
     *) die_unknown TEST_ENVIRON
@@ -171,15 +195,27 @@ esac
 
 # Required to be defined by caller: Are we testing as root or a regular user
 case "$PRIV_NAME" in
-    root) ;;
+    root)
+        if [[ "$TEST_FLAVOR" = "sys" || "$TEST_FLAVOR" = "apiv2" ]]; then
+            # Used in local image-scp testing
+            setup_rootless
+            echo "PODMAN_ROOTLESS_USER=$ROOTLESS_USER" >> /etc/ci_environment
+            echo "PODMAN_ROOTLESS_UID=$ROOTLESS_UID" >> /etc/ci_environment
+        fi
+        ;;
     rootless)
-        # Needs to exist for setup_rootless()
-        ROOTLESS_USER="${ROOTLESS_USER:-some${RANDOM}dude}"
-        echo "ROOTLESS_USER=$ROOTLESS_USER" >> /etc/ci_environment
+        # load kernel modules since the rootless user has no permission to do so
+        modprobe ip6_tables || :
+        modprobe ip6table_nat || :
         setup_rootless
         ;;
     *) die_unknown PRIV_NAME
 esac
+
+if [[ -n "$ROOTLESS_USER" ]]; then
+    echo "ROOTLESS_USER=$ROOTLESS_USER" >> /etc/ci_environment
+    echo "ROOTLESS_UID=$ROOTLESS_UID" >> /etc/ci_environment
+fi
 
 # Required to be defined by caller: Are we testing podman or podman-remote client
 # shellcheck disable=SC2154
@@ -192,39 +228,52 @@ esac
 # Required to be defined by caller: The primary type of testing that will be performed
 # shellcheck disable=SC2154
 case "$TEST_FLAVOR" in
-    ext_svc) ;;
     validate)
+        dnf install -y $PACKAGE_DOWNLOAD_DIR/python3*.rpm
         # For some reason, this is also needed for validation
-        make .install.pre-commit
+        make .install.pre-commit .install.gitvalidation
         ;;
-    automation) ;;
     altbuild)
         # Defined in .cirrus.yml
         # shellcheck disable=SC2154
         if [[ "$ALT_NAME" =~ RPM ]]; then
-            bigto dnf install -y glibc-minimal-langpack rpm-build
+            bigto dnf install -y glibc-minimal-langpack go-rpm-macros rpkg rpm-build shadow-utils-subid-devel
         fi
-        ;&
+        ;;
     docker-py)
         remove_packaged_podman_files
         make install PREFIX=/usr ETCDIR=/etc
 
-        # TODO: Don't install stuff at test runtime!  Do this from
-        # cache_images/fedora_packaging.sh in containers/automation_images
-        # and STRONGLY prefer installing RPMs vs pip packages in venv
-        dnf install -y python3-virtualenv python3-pytest4
-        virtualenv venv
-        source venv/bin/activate
+        msg "Installing previously downloaded/cached packages"
+        dnf install -y $PACKAGE_DOWNLOAD_DIR/python3*.rpm
+        virtualenv .venv/docker-py
+        source .venv/docker-py/bin/activate
         pip install --upgrade pip
         pip install --requirement $GOSRC/test/python/requirements.txt
         ;;
     build) make clean ;;
-    unit) ;;
-    apiv2) ;&  # use next item
-    compose)
-        rpm -ivh $PACKAGE_DOWNLOAD_DIR/podman-docker*
+    unit)
+        make .install.ginkgo
+        ;;
+    compose_v2)
+        dnf -y remove docker-compose
+        curl -SL https://github.com/docker/compose/releases/download/v2.2.3/docker-compose-linux-x86_64 -o /usr/local/bin/docker-compose
+        chmod +x /usr/local/bin/docker-compose
+        ;& # Continue with next item
+    apiv2)
+        msg "Installing previously downloaded/cached packages"
+        dnf install -y $PACKAGE_DOWNLOAD_DIR/python3*.rpm
+        virtualenv .venv/requests
+        source .venv/requests/bin/activate
+        pip install --upgrade pip
+        pip install --requirement $GOSRC/test/apiv2/python/requirements.txt
         ;&  # continue with next item
-    int) ;&
+    compose)
+        dnf install -y $PACKAGE_DOWNLOAD_DIR/podman-docker*
+        ;&  # continue with next item
+    int)
+        make .install.ginkgo
+        ;&
     sys) ;&
     upgrade_test) ;&
     bud) ;&
@@ -233,15 +282,90 @@ case "$TEST_FLAVOR" in
         # Use existing host bits when testing is to happen inside a container
         # since this script will run again in that environment.
         # shellcheck disable=SC2154
-        if ((CONTAINER==0)) && [[ "$TEST_ENVIRON" == "host" ]]; then
+        if [[ "$TEST_ENVIRON" =~ host ]]; then
+            if ((CONTAINER)); then
+                die "Refusing to config. host-test in container";
+            fi
             remove_packaged_podman_files
             make install PREFIX=/usr ETCDIR=/etc
+        elif [[ "$TEST_ENVIRON" == "container" ]]; then
+            if ((CONTAINER)); then
+                remove_packaged_podman_files
+                make install PREFIX=/usr ETCDIR=/etc
+            fi
+        else
+            die "Invalid value for \$TEST_ENVIRON=$TEST_ENVIRON"
         fi
 
         install_test_configs
         ;;
-    swagger) ;&  # use next item
-    consistency) make clean ;;
+    machine)
+        dnf install -y $PACKAGE_DOWNLOAD_DIR/podman-gvproxy*
+        remove_packaged_podman_files
+        make install PREFIX=/usr ETCDIR=/etc
+        install_test_configs
+        ;;
+    gitlab)
+        # ***WARNING*** ***WARNING*** ***WARNING*** ***WARNING***
+        # This sets up a special ubuntu environment exclusively for
+        # running the upstream gitlab-runner unit tests through
+        # podman as a drop-in replacement for the Docker daemon.
+        # Test and setup information can be found here:
+        # https://gitlab.com/gitlab-org/gitlab-runner/-/issues/27270#note_499585550
+        #
+        # Unless you know what you're doing, and/or are in contact
+        # with the upstream gitlab-runner developers/community,
+        # please don't make changes willy-nilly to this setup.
+        # It's designed to follow upstream gitlab-runner development
+        # and alert us if any podman change breaks their foundation.
+        #
+        # That said, if this task does break in strange ways or requires
+        # updates you're unsure of.  Please consult with the upstream
+        # community through an issue near the one linked above.  If
+        # an extended period of breakage is expected, please un-comment
+        # the related `allow_failures: $CI == $CI` line in `.cirrus.yml`.
+        # ***WARNING*** ***WARNING*** ***WARNING*** ***WARNING***
+
+        if [[ "$OS_RELEASE_ID" != "ubuntu" ]]; then
+            die "This test only runs on Ubuntu due to sheer laziness"
+        fi
+
+        remove_packaged_podman_files
+        make install PREFIX=/usr ETCDIR=/etc
+
+        msg "Installing docker and containerd"
+        # N/B: Tests check/expect `docker info` output, and this `!= podman info`
+        ooe.sh dpkg -i \
+            $PACKAGE_DOWNLOAD_DIR/containerd.io*.deb \
+            $PACKAGE_DOWNLOAD_DIR/docker-ce*.deb
+
+        msg "Disabling docker service and socket activation"
+        systemctl stop docker.service docker.socket
+        systemctl disable docker.service docker.socket
+        rm -rf /run/docker*
+        # Guarantee the docker daemon can't be started, even by accident
+        rm -vf $(type -P dockerd)
+
+        msg "Recursively chowning source to $ROOTLESS_USER"
+        chown -R $ROOTLESS_USER:$ROOTLESS_USER "$GOPATH" "$GOSRC"
+
+        msg "Obtaining necessary gitlab-runner testing bits"
+        slug="gitlab.com/gitlab-org/gitlab-runner"
+        helper_fqin="registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:x86_64-latest-pwsh"
+        ssh="ssh $ROOTLESS_USER@localhost -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o CheckHostIP=no env GOPATH=$GOPATH"
+        showrun $ssh go install github.com/jstemmer/go-junit-report/v2@v2.0.0
+        showrun $ssh git clone https://$slug $GOPATH/src/$slug
+        showrun $ssh make -C $GOPATH/src/$slug development_setup
+        showrun $ssh bash -c "'cd $GOPATH/src/$slug && GOPATH=$GOPATH go get .'"
+
+        showrun $ssh podman pull $helper_fqin
+        # Tests expect image with this exact name
+        showrun $ssh podman tag $helper_fqin \
+            docker.io/gitlab/gitlab-runner-helper:x86_64-latest-pwsh
+        ;;
+    swagger)
+        make .install.swagger
+        ;;
     release) ;;
     *) die_unknown TEST_FLAVOR
 esac

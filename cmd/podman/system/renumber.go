@@ -1,3 +1,4 @@
+//go:build !remote
 // +build !remote
 
 package system
@@ -7,11 +8,11 @@ import (
 	"os"
 
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/cmd/podman/validate"
-	"github.com/containers/podman/v3/libpod/define"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/domain/infra"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/validate"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/domain/infra"
 	"github.com/spf13/cobra"
 )
 
@@ -55,6 +56,9 @@ func renumber(cmd *cobra.Command, args []string) {
 	err = engine.Renumber(registry.Context(), cmd.Flags(), registry.PodmanConfig())
 	if err != nil {
 		fmt.Println(err)
+		// FIXME change this to return the error like other commands
+		// defer will never run on os.Exit()
+		//nolint:gocritic
 		os.Exit(define.ExecErrorCodeGeneric)
 	}
 	os.Exit(0)

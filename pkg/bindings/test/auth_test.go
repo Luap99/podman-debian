@@ -1,14 +1,13 @@
-package test_bindings
+package bindings_test
 
 import (
-	"io/ioutil"
 	"os"
 	"time"
 
 	"github.com/containers/common/pkg/auth"
 	"github.com/containers/image/v5/types"
-	podmanRegistry "github.com/containers/podman/v3/hack/podman-registry-go"
-	"github.com/containers/podman/v3/pkg/bindings/images"
+	podmanRegistry "github.com/containers/podman/v4/hack/podman-registry-go"
+	"github.com/containers/podman/v4/pkg/bindings/images"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
@@ -40,7 +39,8 @@ var _ = Describe("Podman images", func() {
 	AfterEach(func() {
 		s.Kill()
 		bt.cleanup()
-		registry.Stop()
+		err := registry.Stop()
+		Expect(err).To(BeNil())
 	})
 
 	// Test using credentials.
@@ -75,7 +75,7 @@ var _ = Describe("Podman images", func() {
 		imageRef := imageRep + ":" + imageTag
 
 		// Create a temporary authentication file.
-		tmpFile, err := ioutil.TempFile("", "auth.json.")
+		tmpFile, err := os.CreateTemp("", "auth.json.")
 		Expect(err).To(BeNil())
 		_, err = tmpFile.Write([]byte{'{', '}'})
 		Expect(err).To(BeNil())

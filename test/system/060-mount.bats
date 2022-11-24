@@ -50,6 +50,10 @@ load helpers
     run_podman image mount $IMAGE
     mount_path="$output"
 
+    # Make sure that `mount -a` prints a table
+    run_podman image mount -a
+    is "$output" "$IMAGE .*$mount_path"
+
     test -d $mount_path
 
     # Image is custom-built and has a file containing the YMD tag. Check it.
@@ -62,8 +66,8 @@ load helpers
     run_podman image mount
     is "$output" "$IMAGE *$mount_path" "podman image mount with no args"
 
-    # Clean up
-    run_podman image umount $IMAGE
+    # Clean up: -f since we mounted it twice
+    run_podman image umount -f $IMAGE
     is "$output" "$iid" "podman image umount: image ID of what was umounted"
 
     run_podman image umount $IMAGE
@@ -83,7 +87,7 @@ load helpers
     # Run a container with an image mount
     run_podman run --rm --mount type=image,src=$IMAGE,dst=/image-mount $IMAGE diff /etc/os-release /image-mount/etc/os-release
 
-    # Make sure the mount is read only
+    # Make sure the mount is read-only
     run_podman 1 run --rm --mount type=image,src=$IMAGE,dst=/image-mount $IMAGE touch /image-mount/read-only
     is "$output" "touch: /image-mount/read-only: Read-only file system"
 
@@ -125,8 +129,7 @@ load helpers
     run_podman exec $cid find /image-mount/etc/
 
     # Clean up
-    run_podman stop -t 0 $cid
-    run_podman rm -f $cid
+    run_podman rm -t 0 -f $cid
 }
 
 @test "podman run --mount image inspection" {
@@ -148,8 +151,7 @@ load helpers
     run_podman inspect --format "{{(index .Mounts 0).RW}}" $cid
     is "$output" "true" "inspect data includes image mount source"
 
-    run_podman stop -t 0 $cid
-    run_podman rm -f $cid
+    run_podman rm -t 0 -f $cid
 }
 
 @test "podman mount external container - basic test" {

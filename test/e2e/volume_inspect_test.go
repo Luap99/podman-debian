@@ -2,9 +2,8 @@ package integration
 
 import (
 	"os"
-	"strings"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -24,7 +23,6 @@ var _ = Describe("Podman volume inspect", func() {
 		}
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
 	})
 
 	AfterEach(func() {
@@ -43,7 +41,7 @@ var _ = Describe("Podman volume inspect", func() {
 		session = podmanTest.Podman([]string{"volume", "inspect", volName})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(session.IsJSONOutputValid()).To(BeTrue())
+		Expect(session.OutputToString()).To(BeValidJSON())
 	})
 
 	It("podman inspect volume with Go format", func() {
@@ -72,7 +70,7 @@ var _ = Describe("Podman volume inspect", func() {
 		session = podmanTest.Podman([]string{"volume", "inspect", "--format", "{{.Name}}", "--all"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(len(session.OutputToStringArray())).To(Equal(2))
+		Expect(session.OutputToStringArray()).To(HaveLen(2))
 		Expect(session.OutputToStringArray()[0]).To(Equal(volName1))
 		Expect(session.OutputToStringArray()[1]).To(Equal(volName2))
 	})
@@ -86,6 +84,6 @@ var _ = Describe("Podman volume inspect", func() {
 		inspect := podmanTest.Podman([]string{"volume", "inspect", volName})
 		inspect.WaitWithDefaultTimeout()
 		Expect(inspect).Should(Exit(0))
-		Expect(strings.Contains(inspect.OutputToString(), "tmpfs")).To(BeTrue())
+		Expect(inspect.OutputToString()).To(ContainSubstring("tmpfs"))
 	})
 })

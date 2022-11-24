@@ -3,7 +3,7 @@ package server
 import (
 	"net/http"
 
-	"github.com/containers/podman/v3/pkg/api/handlers/compat"
+	"github.com/containers/podman/v4/pkg/api/handlers/compat"
 	"github.com/gorilla/mux"
 )
 
@@ -23,9 +23,9 @@ func (s *APIServer) registerAuthHandlers(r *mux.Router) error {
 	//        $ref: "#/definitions/AuthConfig"
 	//   responses:
 	//     200:
-	//       $ref: "#/responses/SystemAuthResponse"
+	//       $ref: "#/responses/systemAuthResponse"
 	//     500:
-	//       $ref: "#/responses/InternalError"
+	//       $ref: "#/responses/internalError"
 	r.Handle(VersionedPath("/auth"), s.APIHandler(compat.Auth)).Methods(http.MethodPost)
 	// Added non version path to URI to support docker non versioned paths
 	r.Handle("/auth", s.APIHandler(compat.Auth)).Methods(http.MethodPost)

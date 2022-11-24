@@ -13,16 +13,34 @@ load helpers
     run_podman run --label $labelname=$labelvalue --name $cname --rm $IMAGE ls
 
     expect=".* container start [0-9a-f]\+ (image=$IMAGE, name=$cname,.* ${labelname}=${labelvalue}"
-    run_podman events --filter type=container --filter container=$cname --filter label=${labelname}=${labelvalue} --filter event=start --stream=false
+    run_podman events --filter type=container -f container=$cname --filter label=${labelname}=${labelvalue} --filter event=start --stream=false
     is "$output" "$expect" "filtering by container name and label"
 
     # Same thing, but without the container-name filter
-    run_podman events --filter type=container --filter label=${labelname}=${labelvalue} --filter event=start --stream=false
+    run_podman events -f type=container --filter label=${labelname}=${labelvalue} --filter event=start --stream=false
     is "$output" "$expect" "filtering just by label"
 
     # Now filter just by container name, no label
     run_podman events --filter type=container --filter container=$cname --filter event=start --stream=false
-    is "$output" "$expect" "filtering just by label"
+    is "$output" "$expect" "filtering just by container"
+}
+
+@test "truncate events" {
+    cname=test-$(random_string 30 | tr A-Z a-z)
+
+    run_podman run -d --name=$cname --rm $IMAGE echo hi
+    id="$output"
+
+    run_podman events --filter container=$cname --filter event=start --stream=false
+    is "$output" ".* $id " "filtering by container name full id"
+
+    truncID=${id:0:12}
+    run_podman events --filter container=$cname --filter event=start --stream=false --no-trunc=false
+    is "$output" ".* $truncID " "filtering by container name trunc id"
+
+    # --no-trunc does not affect --format; we always get the full ID
+    run_podman events --filter container=$cname --filter event=died --stream=false --format='{{.ID}}--{{.Image}}' --no-trunc=false
+    assert "$output" = "${id}--${IMAGE}"
 }
 
 @test "image events" {
@@ -47,7 +65,8 @@ load helpers
     run_podman --events-backend=file tag $IMAGE $tag
     run_podman --events-backend=file untag $IMAGE $tag
     run_podman --events-backend=file tag $IMAGE $tag
-    run_podman --events-backend=file rmi $tag
+    run_podman --events-backend=file rmi -f $imageID
+    run_podman --events-backend=file load -i $tarball
 
     run_podman --events-backend=file events --stream=false --filter type=image --since $t0
     is "$output" ".*image push $imageID dir:$pushedDir
@@ -57,8 +76,29 @@ load helpers
 .*image tag $imageID $tag
 .*image untag $imageID $tag:latest
 .*image tag $imageID $tag
-.*image remove $imageID $tag.*" \
+.*image untag $imageID $IMAGE
+.*image untag $imageID $tag:latest
+.*image remove $imageID $imageID" \
        "podman events"
+
+    # With --format we can check the _exact_ output, not just substrings
+    local -a expect=("push--dir:$pushedDir"
+                     "save--$tarball"
+                     "loadfromarchive--$tarball"
+                     "pull--docker-archive:$tarball"
+                     "tag--$tag"
+                     "untag--$tag:latest"
+                     "tag--$tag"
+                     "untag--$IMAGE"
+                     "untag--$tag:latest"
+                     "remove--$imageID"
+                     "loadfromarchive--$tarball"
+                    )
+    run_podman --events-backend=file events --stream=false --filter type=image --since $t0 --format '{{.Status}}--{{.Name}}'
+    for i in $(seq 0 ${#expect[@]}); do
+        assert "${lines[$i]}" = "${expect[$i]}" "events, line $i"
+    done
+    assert "${#lines[@]}" = "${#expect[@]}" "Total lines of output"
 }
 
 function _events_disjunctive_filters() {
@@ -92,10 +132,120 @@ function _events_disjunctive_filters() {
     is "$output" "hi" "Should support events-backend=file"
 
     run_podman 125 --events-backend=file logs --follow test
-    is "$output" "Error: using --follow with the journald --log-driver but without the journald --events-backend (file) is not supported" "Should fail with reasonable error message when events-backend and events-logger do not match"
+    is "$output" "Error: using --follow with the journald --log-driver but without the journald --events-backend (file) is not supported" \
+       "Should fail with reasonable error message when events-backend and events-logger do not match"
 
 }
 
 @test "events with disjunctive filters - default" {
     _events_disjunctive_filters ""
+}
+
+@test "events with events_logfile_path in containers.conf" {
+    skip_if_remote "remote does not support --events-backend"
+    events_file=$PODMAN_TMPDIR/events.log
+    containersconf=$PODMAN_TMPDIR/containers.conf
+    cat >$containersconf <<EOF
+[engine]
+events_logfile_path="$events_file"
+EOF
+    CONTAINERS_CONF="$containersconf" run_podman --events-backend=file pull $IMAGE
+    assert "$(< $events_file)" =~ "\"Name\":\"$IMAGE\"" "Image found in events"
+}
+
+function _populate_events_file() {
+    # Create 100 duplicate entries to populate the events log file.
+    local events_file=$1
+    truncate --size=0 $events_file
+    for i in {0..99}; do
+        printf '{"Name":"busybox","Status":"pull","Time":"2022-04-06T11:26:42.7236679%02d+02:00","Type":"image","Attributes":null}\n' $i >> $events_file
+    done
+}
+
+@test "events log-file rotation" {
+    skip_if_remote "setting CONTAINERS_CONF logger options does not affect remote client"
+
+    # Make sure that the events log file is (not) rotated depending on the
+    # settings in containers.conf.
+
+    # Config without a limit
+    eventsFile=$PODMAN_TMPDIR/events.txt
+    containersConf=$PODMAN_TMPDIR/containers.conf
+    cat >$containersConf <<EOF
+[engine]
+events_logger="file"
+events_logfile_path="$eventsFile"
+EOF
+
+    # Check that a non existing event file does not cause a hang (#15688)
+    CONTAINERS_CONF=$containersConf run_podman events --stream=false
+
+    _populate_events_file $eventsFile
+
+    # Create events *without* a limit and make sure that it has not been
+    # rotated/truncated.
+    contentBefore=$(head -n100 $eventsFile)
+    CONTAINERS_CONF=$containersConf run_podman run --rm $IMAGE true
+    contentAfter=$(head -n100 $eventsFile)
+    is "$contentBefore" "$contentAfter" "events file has not been rotated"
+
+    # Repopulate events file
+    rm $eventsFile
+    _populate_events_file $eventsFile
+
+    # Config with a limit
+    rm $containersConf
+    cat >$containersConf <<EOF
+[engine]
+events_logger="file"
+events_logfile_path="$eventsFile"
+# The limit of 4750 is the *exact* half of the initial events file.
+events_logfile_max_size=4750
+EOF
+
+    # Create events *with* a limit and make sure that it has been
+    # rotated/truncated.  Once rotated, the events file should only contain the
+    # second half of its previous events plus the new ones.
+    expectedContentAfterTruncation=$PODMAN_TMPDIR/truncated.txt
+
+    run_podman create $IMAGE
+    CONTAINERS_CONF=$containersConf run_podman rm $output
+    tail -n52 $eventsFile >> $expectedContentAfterTruncation
+
+    # Make sure the events file looks as expected.
+    is "$(cat $eventsFile)" "$(cat $expectedContentAfterTruncation)" "events file has been rotated"
+
+    # Make sure that `podman events` can read the file, and that it returns the
+    # same amount of events.  We checked the contents before.
+    CONTAINERS_CONF=$containersConf run_podman events --stream=false --since="2022-03-06T11:26:42.723667984+02:00"
+    assert "${#lines[@]}" = 51 "Number of events returned"
+    is "${lines[-2]}" ".* log-rotation $eventsFile"
+}
+
+# Prior to #15633, container labels would not appear in 'die' log events
+@test "events - labels included in container die" {
+    skip_if_remote "remote does not support --events-backend"
+    local cname=c$(random_string 15)
+    local lname=l$(random_string 10)
+    local lvalue="v$(random_string 10) $(random_string 5)"
+
+    run_podman 17 --events-backend=file run --rm \
+               --name=$cname \
+               --label=$lname="$lvalue" \
+               $IMAGE sh -c 'exit 17'
+    run_podman --events-backend=file events \
+               --filter=container=$cname \
+               --filter=status=died \
+               --stream=false \
+               --format="{{.Attributes.$lname}}"
+    assert "$output" = "$lvalue" "podman-events output includes container label"
+}
+
+@test "events - backend none should error" {
+    skip_if_remote "remote does not support --events-backend"
+
+    run_podman 125 --events-backend none events
+    is "$output" "Error: cannot read events with the \"none\" backend" "correct error message"
+    run_podman 125 --events-backend none events --stream=false
+    is "$output" "Error: cannot read events with the \"none\" backend" "correct error message"
 }

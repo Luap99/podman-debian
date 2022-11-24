@@ -1,3 +1,4 @@
+//go:build !remote
 // +build !remote
 
 // build for play kube is not supported on remote yet.
@@ -8,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -28,7 +29,6 @@ var _ = Describe("Podman play kube with build", func() {
 		}
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
 	})
 
 	AfterEach(func() {
@@ -95,6 +95,7 @@ LABEL marge=mom
 		// Setup
 		yamlDir := filepath.Join(tempdir, RandomString(12))
 		err := os.Mkdir(yamlDir, 0755)
+		Expect(err).To(BeNil(), "mkdir "+yamlDir)
 		err = writeYaml(testYAML, filepath.Join(yamlDir, "top.yaml"))
 		Expect(err).To(BeNil())
 		app1Dir := filepath.Join(yamlDir, "foobar")
@@ -124,13 +125,14 @@ LABEL marge=mom
 		Expect(inspect).Should(Exit(0))
 		inspectData := inspect.InspectContainerToJSON()
 		Expect(len(inspectData)).To(BeNumerically(">", 0))
-		Expect(inspectData[0].Config.Labels["homer"]).To(Equal("dad"))
+		Expect(inspectData[0].Config.Labels).To(HaveKeyWithValue("homer", "dad"))
 	})
 
 	It("Check that image is built using Containerfile", func() {
 		// Setup
 		yamlDir := filepath.Join(tempdir, RandomString(12))
 		err := os.Mkdir(yamlDir, 0755)
+		Expect(err).To(BeNil(), "mkdir "+yamlDir)
 		err = writeYaml(testYAML, filepath.Join(yamlDir, "top.yaml"))
 		Expect(err).To(BeNil())
 		app1Dir := filepath.Join(yamlDir, "foobar")
@@ -160,17 +162,18 @@ LABEL marge=mom
 		Expect(inspect).Should(Exit(0))
 		inspectData := inspect.InspectContainerToJSON()
 		Expect(len(inspectData)).To(BeNumerically(">", 0))
-		Expect(inspectData[0].Config.Labels["homer"]).To(Equal("dad"))
+		Expect(inspectData[0].Config.Labels).To(HaveKeyWithValue("homer", "dad"))
 	})
 
 	It("Do not build image if already in the local store", func() {
 		// Setup
 		yamlDir := filepath.Join(tempdir, RandomString(12))
 		err := os.Mkdir(yamlDir, 0755)
+		Expect(err).To(BeNil(), "mkdir "+yamlDir)
 		err = writeYaml(testYAML, filepath.Join(yamlDir, "top.yaml"))
 		Expect(err).To(BeNil())
 
-		// build an image called foobar but make sure it doesnt have
+		// build an image called foobar but make sure it doesn't have
 		// the same label as the yaml buildfile, so we can check that
 		// the image is NOT rebuilt.
 		err = writeYaml(prebuiltImage, filepath.Join(yamlDir, "Containerfile"))
@@ -205,18 +208,66 @@ LABEL marge=mom
 		Expect(inspect).Should(Exit(0))
 		inspectData := inspect.InspectContainerToJSON()
 		Expect(len(inspectData)).To(BeNumerically(">", 0))
-		Expect(inspectData[0].Config.Labels["homer"]).To(Equal(""))
-		Expect(inspectData[0].Config.Labels["marge"]).To(Equal("mom"))
+		Expect(inspectData[0].Config.Labels).To(Not(HaveKey("homer")))
+		Expect(inspectData[0].Config.Labels).To(HaveKeyWithValue("marge", "mom"))
+	})
+
+	It("Do not build image at all if --build=false", func() {
+		// Setup
+		yamlDir := filepath.Join(tempdir, RandomString(12))
+		err := os.Mkdir(yamlDir, 0755)
+		Expect(err).To(BeNil(), "mkdir "+yamlDir)
+		err = writeYaml(testYAML, filepath.Join(yamlDir, "top.yaml"))
+		Expect(err).To(BeNil())
+
+		// build an image called foobar but make sure it doesn't have
+		// the same label as the yaml buildfile, so we can check that
+		// the image is NOT rebuilt.
+		err = writeYaml(prebuiltImage, filepath.Join(yamlDir, "Containerfile"))
+		Expect(err).To(BeNil())
+
+		app1Dir := filepath.Join(yamlDir, "foobar")
+		err = os.Mkdir(app1Dir, 0755)
+		Expect(err).To(BeNil())
+		err = writeYaml(playBuildFile, filepath.Join(app1Dir, "Containerfile"))
+		Expect(err).To(BeNil())
+		// Write a file to be copied
+		err = writeYaml(copyFile, filepath.Join(app1Dir, "copyfile"))
+		Expect(err).To(BeNil())
+
+		// Switch to temp dir and restore it afterwards
+		cwd, err := os.Getwd()
+		Expect(err).To(BeNil())
+		Expect(os.Chdir(yamlDir)).To(BeNil())
+		defer func() { (Expect(os.Chdir(cwd)).To(BeNil())) }()
+
+		// Build the image into the local store
+		build := podmanTest.Podman([]string{"build", "-t", "foobar", "-f", "Containerfile"})
+		build.WaitWithDefaultTimeout()
+		Expect(build).Should(Exit(0))
+
+		session := podmanTest.Podman([]string{"play", "kube", "--build=false", "top.yaml"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		inspect := podmanTest.Podman([]string{"container", "inspect", "top_pod-foobar"})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect).Should(Exit(0))
+		inspectData := inspect.InspectContainerToJSON()
+		Expect(len(inspectData)).To(BeNumerically(">", 0))
+		Expect(inspectData[0].Config.Labels).To(Not(HaveKey("homer")))
+		Expect(inspectData[0].Config.Labels).To(HaveKeyWithValue("marge", "mom"))
 	})
 
 	It("--build should override image in store", func() {
 		// Setup
 		yamlDir := filepath.Join(tempdir, RandomString(12))
 		err := os.Mkdir(yamlDir, 0755)
+		Expect(err).To(BeNil(), "os.Mkdir "+yamlDir)
 		err = writeYaml(testYAML, filepath.Join(yamlDir, "top.yaml"))
 		Expect(err).To(BeNil())
 
-		// build an image called foobar but make sure it doesnt have
+		// build an image called foobar but make sure it doesn't have
 		// the same label as the yaml buildfile, so we can check that
 		// the image is NOT rebuilt.
 		err = writeYaml(prebuiltImage, filepath.Join(yamlDir, "Containerfile"))
@@ -251,8 +302,8 @@ LABEL marge=mom
 		Expect(inspect).Should(Exit(0))
 		inspectData := inspect.InspectContainerToJSON()
 		Expect(len(inspectData)).To(BeNumerically(">", 0))
-		Expect(inspectData[0].Config.Labels["homer"]).To(Equal("dad"))
-		Expect(inspectData[0].Config.Labels["marge"]).To(Equal(""))
+		Expect(inspectData[0].Config.Labels).To(HaveKeyWithValue("homer", "dad"))
+		Expect(inspectData[0].Config.Labels).To(Not(HaveKey("marge")))
 	})
 
 })

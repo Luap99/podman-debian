@@ -1,9 +1,10 @@
 package specgenutil
 
 import (
+	"errors"
+
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/pkg/errors"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 )
 
 // validate determines if the flags and values given by the user are valid. things checked
@@ -11,24 +12,12 @@ import (
 func validate(c *entities.ContainerCreateOptions) error {
 	var ()
 	if c.Rm && (c.Restart != "" && c.Restart != "no" && c.Restart != "on-failure") {
-		return errors.Errorf(`the --rm option conflicts with --restart, when the restartPolicy is not "" and "no"`)
+		return errors.New(`the --rm option conflicts with --restart, when the restartPolicy is not "" and "no"`)
 	}
 
 	if _, err := config.ParsePullPolicy(c.Pull); err != nil {
 		return err
 	}
 
-	var imageVolType = map[string]string{
-		"bind":   "",
-		"tmpfs":  "",
-		"ignore": "",
-	}
-	if _, ok := imageVolType[c.ImageVolume]; !ok {
-		if c.IsInfra {
-			c.ImageVolume = "bind"
-		} else {
-			return errors.Errorf("invalid image-volume type %q. Pick one of bind, tmpfs, or ignore", c.ImageVolume)
-		}
-	}
-	return nil
+	return config.ValidateImageVolumeMode(c.ImageVolume)
 }

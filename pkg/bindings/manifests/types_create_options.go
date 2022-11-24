@@ -4,7 +4,7 @@ package manifests
 import (
 	"net/url"
 
-	"github.com/containers/podman/v3/pkg/bindings/internal/util"
+	"github.com/containers/podman/v4/pkg/bindings/internal/util"
 )
 
 // Changed returns true if named field has been set
@@ -30,4 +30,19 @@ func (o *CreateOptions) GetAll() bool {
 		return z
 	}
 	return *o.All
+}
+
+// WithAmend set field Amend to given value
+func (o *CreateOptions) WithAmend(value bool) *CreateOptions {
+	o.Amend = &value
+	return o
+}
+
+// GetAmend returns value of field Amend
+func (o *CreateOptions) GetAmend() bool {
+	if o.Amend == nil {
+		var z bool
+		return z
+	}
+	return *o.Amend
 }

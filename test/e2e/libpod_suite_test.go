@@ -1,22 +1,19 @@
+//go:build !remote
 // +build !remote
 
 package integration
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
-	"strings"
 
-	"github.com/containers/podman/v3/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/rootless"
+	. "github.com/onsi/gomega"
 )
 
 func IsRemote() bool {
 	return false
-}
-
-func SkipIfRemote(string) {
 }
 
 // Podman is the exec call to podman on the filesystem
@@ -43,13 +40,15 @@ func (p *PodmanTestIntegration) PodmanExtraFiles(args []string, extraFiles []*os
 
 func (p *PodmanTestIntegration) setDefaultRegistriesConfigEnv() {
 	defaultFile := filepath.Join(INTEGRATION_ROOT, "test/registries.conf")
-	os.Setenv("CONTAINERS_REGISTRIES_CONF", defaultFile)
+	err := os.Setenv("CONTAINERS_REGISTRIES_CONF", defaultFile)
+	Expect(err).ToNot(HaveOccurred())
 }
 
 func (p *PodmanTestIntegration) setRegistriesConfigEnv(b []byte) {
 	outfile := filepath.Join(p.TempDir, "registries.conf")
 	os.Setenv("CONTAINERS_REGISTRIES_CONF", outfile)
-	ioutil.WriteFile(outfile, b, 0644)
+	err := os.WriteFile(outfile, b, 0644)
+	Expect(err).ToNot(HaveOccurred())
 }
 
 func resetRegistriesConfigEnv() {
@@ -62,21 +61,22 @@ func PodmanTestCreate(tempDir string) *PodmanTestIntegration {
 
 // RestoreArtifact puts the cached image into our test store
 func (p *PodmanTestIntegration) RestoreArtifact(image string) error {
-	fmt.Printf("Restoring %s...\n", image)
-	dest := strings.Split(image, "/")
-	destName := fmt.Sprintf("/tmp/%s.tar", strings.Replace(strings.Join(strings.Split(dest[len(dest)-1], "/"), ""), ":", "-", -1))
-	restore := p.PodmanNoEvents([]string{"load", "-q", "-i", destName})
-	restore.Wait(90)
+	tarball := imageTarPath(image)
+	if _, err := os.Stat(tarball); err == nil {
+		fmt.Printf("Restoring %s...\n", image)
+		restore := p.PodmanNoEvents([]string{"load", "-q", "-i", tarball})
+		restore.Wait(90)
+	}
 	return nil
 }
 
 func (p *PodmanTestIntegration) StopRemoteService() {}
 
-// SeedImages is a no-op for localized testing
-func (p *PodmanTestIntegration) SeedImages() error {
-	return nil
-}
-
 // We don't support running API service when local
 func (p *PodmanTestIntegration) StartRemoteService() {
+}
+
+// Just a stub for compiling with `!remote`.
+func getRemoteOptions(p *PodmanTestIntegration, args []string) []string {
+	return nil
 }

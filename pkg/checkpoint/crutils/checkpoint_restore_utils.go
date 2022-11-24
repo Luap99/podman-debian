@@ -2,15 +2,17 @@ package crutils
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 
 	metadata "github.com/checkpoint-restore/checkpointctl/lib"
+	"github.com/checkpoint-restore/go-criu/v5/stats"
 	"github.com/containers/storage/pkg/archive"
 	"github.com/opencontainers/selinux/go-selinux/label"
-	"github.com/pkg/errors"
 )
 
 // This file mainly exist to make the checkpoint/restore functions
@@ -21,7 +23,7 @@ import (
 func CRImportCheckpointWithoutConfig(destination, input string) error {
 	archiveFile, err := os.Open(input)
 	if err != nil {
-		return errors.Wrapf(err, "Failed to open checkpoint archive %s for import", input)
+		return fmt.Errorf("failed to open checkpoint archive %s for import: %w", input, err)
 	}
 
 	defer archiveFile.Close()
@@ -33,7 +35,37 @@ func CRImportCheckpointWithoutConfig(destination, input string) error {
 		},
 	}
 	if err = archive.Untar(archiveFile, destination, options); err != nil {
-		return errors.Wrapf(err, "Unpacking of checkpoint archive %s failed", input)
+		return fmt.Errorf("unpacking of checkpoint archive %s failed: %w", input, err)
+	}
+
+	return nil
+}
+
+// CRImportCheckpointConfigOnly only imports the checkpoint configuration
+// from the checkpoint archive (input) into the directory destination.
+// Only the files "config.dump" and "spec.dump" are extracted.
+func CRImportCheckpointConfigOnly(destination, input string) error {
+	archiveFile, err := os.Open(input)
+	if err != nil {
+		return fmt.Errorf("failed to open checkpoint archive %s for import: %w", input, err)
+	}
+
+	defer archiveFile.Close()
+	options := &archive.TarOptions{
+		// Here we only need the files config.dump and spec.dump
+		ExcludePatterns: []string{
+			"ctr.log",
+			"artifacts",
+			stats.StatsDump,
+			metadata.RootFsDiffTar,
+			metadata.DeletedFilesFile,
+			metadata.NetworkStatusFile,
+			metadata.CheckpointDirectory,
+			metadata.CheckpointVolumesDirectory,
+		},
+	}
+	if err = archive.Untar(archiveFile, destination, options); err != nil {
+		return fmt.Errorf("unpacking of checkpoint archive %s failed: %w", input, err)
 	}
 
 	return nil
@@ -49,14 +81,14 @@ func CRRemoveDeletedFiles(id, baseDirectory, containerRootDirectory string) erro
 	}
 
 	if err != nil {
-		return errors.Wrapf(err, "failed to read deleted files file")
+		return fmt.Errorf("failed to read deleted files file: %w", err)
 	}
 
 	for _, deleteFile := range deletedFiles {
 		// Using RemoveAll as deletedFiles, which is generated from 'podman diff'
 		// lists completely deleted directories as a single entry: 'D /root'.
 		if err := os.RemoveAll(filepath.Join(containerRootDirectory, deleteFile)); err != nil {
-			return errors.Wrapf(err, "failed to delete files from container %s during restore", id)
+			return fmt.Errorf("failed to delete files from container %s during restore: %w", id, err)
 		}
 	}
 
@@ -67,19 +99,18 @@ func CRRemoveDeletedFiles(id, baseDirectory, containerRootDirectory string) erro
 // root file system changes on top of containerRootDirectory
 func CRApplyRootFsDiffTar(baseDirectory, containerRootDirectory string) error {
 	rootfsDiffPath := filepath.Join(baseDirectory, metadata.RootFsDiffTar)
-	if _, err := os.Stat(rootfsDiffPath); err != nil {
-		// Only do this if a rootfs-diff.tar actually exists
-		return nil
-	}
-
+	// Only do this if a rootfs-diff.tar actually exists
 	rootfsDiffFile, err := os.Open(rootfsDiffPath)
 	if err != nil {
-		return errors.Wrap(err, "failed to open root file-system diff file")
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("failed to open root file-system diff file: %w", err)
 	}
 	defer rootfsDiffFile.Close()
 
 	if err := archive.Untar(rootfsDiffFile, containerRootDirectory, nil); err != nil {
-		return errors.Wrapf(err, "failed to apply root file-system diff file %s", rootfsDiffPath)
+		return fmt.Errorf("failed to apply root file-system diff file %s: %w", rootfsDiffPath, err)
 	}
 
 	return nil
@@ -127,11 +158,11 @@ func CRCreateRootFsDiffTar(changes *[]archive.Change, mountPoint, destination st
 			IncludeFiles:     rootfsIncludeFiles,
 		})
 		if err != nil {
-			return includeFiles, errors.Wrapf(err, "error exporting root file-system diff to %q", rootfsDiffPath)
+			return includeFiles, fmt.Errorf("exporting root file-system diff to %q: %w", rootfsDiffPath, err)
 		}
 		rootfsDiffFile, err := os.Create(rootfsDiffPath)
 		if err != nil {
-			return includeFiles, errors.Wrapf(err, "error creating root file-system diff file %q", rootfsDiffPath)
+			return includeFiles, fmt.Errorf("creating root file-system diff file %q: %w", rootfsDiffPath, err)
 		}
 		defer rootfsDiffFile.Close()
 		if _, err = io.Copy(rootfsDiffFile, rootfsTar); err != nil {
@@ -164,11 +195,11 @@ func CRCreateFileWithLabel(directory, fileName, fileLabel string) error {
 
 	logFile, err := os.OpenFile(logFileName, os.O_CREATE, 0o600)
 	if err != nil {
-		return errors.Wrapf(err, "failed to create file %q", logFileName)
+		return fmt.Errorf("failed to create file %q: %w", logFileName, err)
 	}
 	defer logFile.Close()
 	if err = label.SetFileLabel(logFileName, fileLabel); err != nil {
-		return errors.Wrapf(err, "failed to label file %q", logFileName)
+		return fmt.Errorf("failed to label file %q: %w", logFileName, err)
 	}
 
 	return nil
@@ -199,4 +230,27 @@ func CRRuntimeSupportsPodCheckpointRestore(runtimePath string) bool {
 	cmd := exec.Command(runtimePath, "restore", "--lsm-mount-context")
 	out, _ := cmd.CombinedOutput()
 	return bytes.Contains(out, []byte("flag needs an argument"))
+}
+
+// CRGetRuntimeFromArchive extracts the checkpoint metadata from the
+// given checkpoint archive and returns the runtime used to create
+// the given checkpoint archive.
+func CRGetRuntimeFromArchive(input string) (*string, error) {
+	dir, err := os.MkdirTemp("", "checkpoint")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(dir)
+
+	if err := CRImportCheckpointConfigOnly(dir, input); err != nil {
+		return nil, err
+	}
+
+	// Load config.dump from temporary directory
+	ctrConfig := new(metadata.ContainerConfig)
+	if _, err = metadata.ReadJSONFile(ctrConfig, dir, metadata.ConfigDumpFile); err != nil {
+		return nil, err
+	}
+
+	return &ctrConfig.OCIRuntime, nil
 }

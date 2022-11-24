@@ -20,6 +20,9 @@ use warnings;
 
 our $VERSION = '0.1';
 
+# Autoflush stdout
+$| = 1;
+
 # For debugging, show data structures using DumpTree($var)
 #use Data::TreeDumper; $Data::TreeDumper::Displayaddress = 0;
 
@@ -187,6 +190,22 @@ END_HTML
     print { $out_fh } "<h2>Synopsis</h2>\n<hr/>\n",
         job_synopsis($test_name), "<hr/>\n";
 
+    # FOR DEBUGGING: dump environment, but in HTML comments to not clutter
+    # This is safe. There is a TOKEN envariable, but it's not sensitive.
+    # There are no sensitive/secret values in our execution environment,
+    # but we're careful anyway. $SECRET_ENV_RE is set in lib.sh
+    my $filter_re = $ENV{SECRET_ENV_RE} || 'ACCOUNT|GC[EP]|PASSW|SECRET|TOKEN';
+    $filter_re .= '|BASH_FUNC';   # These are long and un-useful
+
+    print { $out_fh } "<!-- Environment: -->\n";
+    for my $e (sort keys %ENV) {
+        next if $e =~ /$filter_re/;
+
+        my $val = escapeHTML($ENV{$e});
+        $val =~ s/--/-&#x002D;/g;       # double dash not valid in comments
+        printf { $out_fh } "<!--  %-20s %s -->\n", $e, $val;
+    }
+
     # State variables
     my $previous_timestamp = '';  # timestamp of previous line
     my $cirrus_task;              # Cirrus task number, used for linking
@@ -307,10 +326,18 @@ END_HTML
             elsif ($line =~ /^#\s#\|\s/)       { $css = 'log-esm' }
             elsif ($line =~ /^#\s/)            { $css = 'log'     }
 
+            # Link to source file. This is ugly: we have to hardcode 'podman'
+            # and 'test/system' because there's no way to get them from log.
+            #
+            #          1  2      2               13     4         43           5
+            $line =~ s{(in(\stest)?\s+file\s+\S+/)(\S+\.(bats|bash)),\s+line\s+(\d+)}{$1<a class="codelink" href="https://github.com/containers/podman/blob/$git_commit/test/system/$3#L$5">$3, line $5</a>};
+
             if ($css) {
                 # Make it linkable, e.g. foo.html#t--00001
-                if ($line =~ /^(not\s+)?ok\s+(\d+)/) {
+                if ($line =~ /^(not\s+)?ok\s+(\d+)\s+(.*)/) {
                     $line = sprintf("<a name='t--%05d'>%s</a>", $2, $line);
+
+                    push @{$bats_count{__fail_list}}, [ $2, $3 ] if $1;
                 }
                 $line = "<span class='bats-$css'>$line</span>";
 
@@ -393,7 +420,7 @@ END_HTML
             # Highlight the important (non-boilerplate) podman command.
             $line =~ s/\s+--remote\s+/ /g;      # --remote takes no args
             # Strip out the global podman options, but show them on hover
-            $line =~ s{(\S+\/podman(-remote)?)((\s+--(root|runroot|runtime|tmpdir|storage-opt|conmon|cgroup-manager|network-config-dir|storage-driver|events-backend|url) \S+)*)(.*)}{
+            $line =~ s{(\S+\/podman(-remote)?)((\s+--(root|runroot|runtime|tmpdir|storage-opt|conmon|cgroup-manager|network-backend|network-config-dir|storage-driver|events-backend|url) \S+)*)(.*)}{
                 my ($full_path, $remote, $options, $args) = ($1, $2||'', $3, $6);
 
                 $options =~ s/^\s+//;
@@ -515,30 +542,32 @@ END_HTML
         }
     }
 
+    # Grumble. Github only shows the last N lines of the log... which is
+    # anti-helpful when you want a quick synopsis of what failed. Write a
+    # summary at the tail, to make it easier for humans to see what went wrong.
+    if (my $fails = $bats_count{__fail_list}) {
+        print  "\n";
+        printf "Failed tests (%d):\n", scalar(@$fails);
+        printf " - %d %s\n", @$_ for @$fails;
+    }
+
     # If Cirrus magic envariables are available, write a link to results.
     # FIXME: it'd be so nice to make this a clickable live link.
     #
-    # STATIC_MAGIC_BLOB is the name of a google-storage bucket. It is
-    # unlikely to change often, but if it does you will suddenly start
-    # seeing errors when trying to view formatted logs:
+    # As of June 2022 we use the Cirrus API[1] as the source of our logs,
+    # instead of linking directly to googleapis.com. This will allow us
+    # to abstract cloud-specific details, so we can one day use Amazon cloud.
+    # See #14569 for more info.
     #
-    #    AccessDeniedAccess denied.Anonymous caller does not have storage.objects.get access to the Google Cloud Storage object.
-    #
-    # This happened in July 2020 when github.com/containers/libpod was
-    # renamed to podman. If something like that ever happens again, you
-    # will need to get the new magic blob value from:
-    #
-    #   https://console.cloud.google.com/storage/browser?project=libpod-218412
-    #
-    # You will also probably need to set the bucket Public by clicking on
-    # the bucket name, then the Permissions tab. This is safe, since this
-    # project is fully open-source.
+    #   [1] https://cirrus-ci.org/guide/writing-tasks/#latest-build-artifacts
     if ($have_formatted_log && $ENV{CIRRUS_TASK_ID}) {
-        my $URL_BASE          = "https://storage.googleapis.com";
-        my $STATIC_MAGIC_BLOB = "cirrus-ci-6707778565701632-fcae48";
-        my $ARTIFACT_NAME     = "html";
+        my $URL_BASE = "https://api.cirrus-ci.com";
+        my $task_id  = $ENV{CIRRUS_TASK_ID};
 
-        my $URL = "${URL_BASE}/${STATIC_MAGIC_BLOB}/artifacts/$ENV{CIRRUS_REPO_FULL_NAME}/$ENV{CIRRUS_TASK_ID}/${ARTIFACT_NAME}/${outfile}";
+        # Link by *taskID*, not buildID + taskname. First, this is shorter
+        # and less duplicaty. Second, and more important, buildID + taskname
+        # is non-unique, and a link to a flake log will be clobbered.
+        my $URL = "${URL_BASE}/v1/artifact/task/$task_id/html/${outfile}";
 
         print "\n\nAnnotated results:\n  $URL\n";
     }

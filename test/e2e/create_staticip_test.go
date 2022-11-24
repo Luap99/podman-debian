@@ -4,8 +4,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/containers/podman/v3/pkg/rootless"
-	. "github.com/containers/podman/v3/test/utils"
+	"github.com/containers/podman/v4/pkg/rootless"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -25,8 +25,7 @@ var _ = Describe("Podman create with --ip flag", func() {
 		}
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
-		// Cleanup the CNI networks used by the tests
+		// Clean up the CNI networks used by the tests
 		os.RemoveAll("/var/lib/cni/networks/podman")
 	})
 
@@ -39,12 +38,6 @@ var _ = Describe("Podman create with --ip flag", func() {
 
 	It("Podman create --ip with garbage address", func() {
 		result := podmanTest.Podman([]string{"create", "--name", "test", "--ip", "114232346", ALPINE, "ls"})
-		result.WaitWithDefaultTimeout()
-		Expect(result).To(ExitWithError())
-	})
-
-	It("Podman create --ip with v6 address", func() {
-		result := podmanTest.Podman([]string{"create", "--name", "test", "--ip", "2001:db8:bad:beef::1", ALPINE, "ls"})
 		result.WaitWithDefaultTimeout()
 		Expect(result).To(ExitWithError())
 	})
@@ -112,6 +105,10 @@ var _ = Describe("Podman create with --ip flag", func() {
 		result = podmanTest.Podman([]string{"start", "test2"})
 		result.WaitWithDefaultTimeout()
 		Expect(result).To(ExitWithError())
-		Expect(result.ErrorToString()).To(ContainSubstring("requested IP address " + ip + " is not available"))
+		if podmanTest.NetworkBackend == CNI {
+			Expect(result.ErrorToString()).To(ContainSubstring("requested IP address " + ip + " is not available"))
+		} else if podmanTest.NetworkBackend == Netavark {
+			Expect(result.ErrorToString()).To(ContainSubstring("requested ip address %s is already allocated", ip))
+		}
 	})
 })

@@ -1,4 +1,4 @@
-% podman-rmi(1)
+% podman-rmi 1
 
 ## NAME
 podman\-rmi - Removes one or more locally stored images
@@ -24,6 +24,13 @@ Remove all images in the local storage.
 
 This option will cause podman to remove all containers that are using the image before removing the image from the system.
 
+#### **--ignore**, **-i**
+
+If a specified image does not exist in the local storage, ignore it and do not throw an error.
+
+#### **--no-prune**
+
+This options will not remove dangling parents of specified image
 
 Remove an image by its short ID
 ```
@@ -43,6 +50,16 @@ Remove all images and containers.
 ```
 $ podman rmi -a -f
 ```
+
+Remove an absent image with and without the `--ignore` flag.
+```
+$ podman rmi --ignore nothing
+$ podman rmi nothing
+Error: nothing: image not known
+
+```
+
+
 ## Exit Status
   **0**   All specified images removed
 
@@ -53,7 +70,7 @@ $ podman rmi -a -f
   **125** The command fails for any other reason
 
 ## SEE ALSO
-podman(1), skopeo-delete(1)
+**[podman(1)](podman.1.md)**, **[skopeo-delete(1)](https://github.com/containers/skopeo/blob/main/docs/skopeo-delete.1.md)**
 
 ## HISTORY
 March 2017, Originally compiled by Dan Walsh <dwalsh@redhat.com>

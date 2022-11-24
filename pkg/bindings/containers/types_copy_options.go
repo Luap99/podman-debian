@@ -4,7 +4,7 @@ package containers
 import (
 	"net/url"
 
-	"github.com/containers/podman/v3/pkg/bindings/internal/util"
+	"github.com/containers/podman/v4/pkg/bindings/internal/util"
 )
 
 // Changed returns true if named field has been set
@@ -45,4 +45,19 @@ func (o *CopyOptions) GetRename() map[string]string {
 		return z
 	}
 	return o.Rename
+}
+
+// WithNoOverwriteDirNonDir set field NoOverwriteDirNonDir to given value
+func (o *CopyOptions) WithNoOverwriteDirNonDir(value bool) *CopyOptions {
+	o.NoOverwriteDirNonDir = &value
+	return o
+}
+
+// GetNoOverwriteDirNonDir returns value of field NoOverwriteDirNonDir
+func (o *CopyOptions) GetNoOverwriteDirNonDir() bool {
+	if o.NoOverwriteDirNonDir == nil {
+		var z bool
+		return z
+	}
+	return *o.NoOverwriteDirNonDir
 }

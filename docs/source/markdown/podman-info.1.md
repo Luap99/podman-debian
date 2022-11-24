@@ -1,4 +1,4 @@
-% podman-info(1)
+% podman-info 1
 
 ## NAME
 podman\-info - Displays Podman related system information
@@ -15,23 +15,30 @@ Displays information pertinent to the host, current storage stats, configured co
 
 ## OPTIONS
 
-#### **--debug**, **-D**
-
-Show additional information
-
-#### **--format**=*format*, **-f**
+#### **--format**, **-f**=*format*
 
 Change output format to "json" or a Go template.
 
+| **Placeholder**     | **Info pertaining to ...**              |
+| ------------------- | --------------------------------------- |
+| .Host ...           | ...the host on which podman is running  |
+| .Plugins ...        | ...external plugins                     |
+| .Registries ...     | ...configured registries                |
+| .Store ...          | ...the storage driver and paths         |
+| .Version ...        | ...podman version                       |
 
-## EXAMPLE
+Each of the above branch out into further subfields, more than can
+reasonably be enumerated in this document.
 
-Run podman info with plain text response:
+## EXAMPLES
+
+Run `podman info` for a YAML formatted response:
+
 ```
 $ podman info
 host:
   arch: amd64
-  buildahVersion: 1.22.3
+  buildahVersion: 1.23.0
   cgroupControllers: []
   cgroupManager: systemd
   cgroupVersion: v2
@@ -39,6 +46,10 @@ host:
     package: conmon-2.0.29-2.fc34.x86_64
     path: /usr/bin/conmon
     version: 'conmon version 2.0.29, commit: '
+ cpu_utilization:
+   idle_percent: 96.84
+   system_percent: 0.71
+   user_percent: 2.45
   cpus: 8
   distribution:
     distribution: fedora
@@ -64,7 +75,7 @@ host:
   kernel: 5.13.13-200.fc34.x86_64
   linkmode: dynamic
   logDriver: journald
-  memFree: 1351262208
+  memFree: 1833385984
   memTotal: 16401895424
   ociRuntime:
     name: crun
@@ -95,9 +106,9 @@ host:
       libslirp: 4.4.0
       SLIRP_CONFIG_VERSION_MAX: 3
       libseccomp: 2.5.0
-  swapFree: 16818888704
+  swapFree: 15687475200
   swapTotal: 16886259712
-  uptime: 33h 57m 32.85s (Approximately 1.38 days)
+  uptime: 47h 15m 9.91s (Approximately 1.96 days)
 plugins:
   log:
   - k8s-file
@@ -109,52 +120,51 @@ plugins:
   volume:
   - local
 registries:
-  localhost:5000:
-    Blocked: false
-    Insecure: true
-    Location: localhost:5000
-    MirrorByDigestOnly: false
-    Mirrors: null
-    Prefix: localhost:5000
   search:
   - registry.fedoraproject.org
   - registry.access.redhat.com
   - docker.io
+  - quay.io
 store:
   configFile: /home/dwalsh/.config/containers/storage.conf
   containerStore:
-    number: 2
+    number: 9
     paused: 0
     running: 1
-    stopped: 1
+    stopped: 8
   graphDriverName: overlay
   graphOptions: {}
   graphRoot: /home/dwalsh/.local/share/containers/storage
+  graphRootAllocated: 510389125120
+  graphRootUsed: 129170714624
   graphStatus:
     Backing Filesystem: extfs
     Native Overlay Diff: "true"
     Supports d_type: "true"
     Using metacopy: "false"
+  imageCopyTmpDir: /home/dwalsh/.local/share/containers/storage/tmp
   imageStore:
-    number: 37
+    number: 5
   runRoot: /run/user/3267/containers
   volumePath: /home/dwalsh/.local/share/containers/storage/volumes
 version:
-  APIVersion: 3.3.1
-  Built: 1631137208
-  BuiltTime: Wed Sep  8 17:40:08 2021
-  GitCommit: ab272d1e9bf4daac224fb230e0c9b5c56c4cab4d-dirty
+  APIVersion: 4.0.0
+  Built: 1631648722
+  BuiltTime: Tue Sep 14 15:45:22 2021
+  GitCommit: 23677f92dd83e96d2bc8f0acb611865fb8b1a56d
   GoVersion: go1.16.6
   OsArch: linux/amd64
-  Version: 3.3.1
+  Version: 4.0.0
 ```
-Run podman info with JSON formatted response:
+
+Run `podman info --format json` for a JSON formatted response:
+
 ```
-$ ./bin/podman info --format json
+$ podman info --format json
 {
   "host": {
     "arch": "amd64",
-    "buildahVersion": "1.22.3",
+    "buildahVersion": "1.23.0",
     "cgroupManager": "systemd",
     "cgroupVersion": "v2",
     "cgroupControllers": [],
@@ -172,33 +182,33 @@ $ ./bin/podman info --format json
     "hostname": "localhost.localdomain",
     "idMappings": {
       "gidmap": [
-        {
-          "container_id": 0,
-          "host_id": 3267,
-          "size": 1
-        },
-        {
-          "container_id": 1,
-          "host_id": 100000,
-          "size": 65536
-        }
+	{
+	  "container_id": 0,
+	  "host_id": 3267,
+	  "size": 1
+	},
+	{
+	  "container_id": 1,
+	  "host_id": 100000,
+	  "size": 65536
+	}
       ],
       "uidmap": [
-        {
-          "container_id": 0,
-          "host_id": 3267,
-          "size": 1
-        },
-        {
-          "container_id": 1,
-          "host_id": 100000,
-          "size": 65536
-        }
+	{
+	  "container_id": 0,
+	  "host_id": 3267,
+	  "size": 1
+	},
+	{
+	  "container_id": 1,
+	  "host_id": 100000,
+	  "size": 65536
+	}
       ]
     },
     "kernel": "5.13.13-200.fc34.x86_64",
     "logDriver": "journald",
-    "memFree": 1274040320,
+    "memFree": 1785753600,
     "memTotal": 16401895424,
     "ociRuntime": {
       "name": "crun",
@@ -224,21 +234,22 @@ $ ./bin/podman info --format json
       "package": "slirp4netns-1.1.12-2.fc34.x86_64",
       "version": "slirp4netns version 1.1.12\ncommit: 7a104a101aa3278a2152351a082a6df71f57c9a3\nlibslirp: 4.4.0\nSLIRP_CONFIG_VERSION_MAX: 3\nlibseccomp: 2.5.0"
     },
-    "swapFree": 16818888704,
+    "swapFree": 15687475200,
     "swapTotal": 16886259712,
-    "uptime": "33h 59m 25.69s (Approximately 1.38 days)",
+    "uptime": "47h 17m 29.75s (Approximately 1.96 days)",
     "linkmode": "dynamic"
   },
   "store": {
     "configFile": "/home/dwalsh/.config/containers/storage.conf",
     "containerStore": {
-      "number": 2,
+      "number": 9,
       "paused": 0,
       "running": 1,
-      "stopped": 1
+      "stopped": 8
     },
     "graphDriverName": "overlay",
     "graphOptions": {
+
     },
     "graphRoot": "/home/dwalsh/.local/share/containers/storage",
     "graphStatus": {
@@ -247,25 +258,19 @@ $ ./bin/podman info --format json
       "Supports d_type": "true",
       "Using metacopy": "false"
     },
+    "imageCopyTmpDir": "/home/dwalsh/.local/share/containers/storage/tmp",
     "imageStore": {
-      "number": 37
+      "number": 5
     },
     "runRoot": "/run/user/3267/containers",
     "volumePath": "/home/dwalsh/.local/share/containers/storage/volumes"
   },
   "registries": {
-    "localhost:5000": {
-  "Prefix": "localhost:5000",
-  "Location": "localhost:5000",
-  "Insecure": true,
-  "Mirrors": null,
-  "Blocked": false,
-  "MirrorByDigestOnly": false
-},
     "search": [
   "registry.fedoraproject.org",
   "registry.access.redhat.com",
-  "docker.io"
+  "docker.io",
+  "quay.io"
 ]
   },
   "plugins": {
@@ -283,21 +288,78 @@ $ ./bin/podman info --format json
     ]
   },
   "version": {
-    "APIVersion": "3.3.1",
-    "Version": "3.3.1",
+    "APIVersion": "4.0.0",
+    "Version": "4.0.0",
     "GoVersion": "go1.16.6",
-    "GitCommit": "",
-    "BuiltTime": "Mon Aug 30 16:46:36 2021",
-    "Built": 1630356396,
+    "GitCommit": "23677f92dd83e96d2bc8f0acb611865fb8b1a56d",
+    "BuiltTime": "Tue Sep 14 15:45:22 2021",
+    "Built": 1631648722,
     "OsArch": "linux/amd64"
   }
 }
 ```
-Run podman info and only get the registries information.
+
+#### Extracting the list of container registries with a Go template
+
+If shell completion is enabled, type `podman info --format={{.` and then press `[TAB]` twice.
+
 ```
-$ podman info --format={{".Registries"}}
-map[registries:[docker.io quay.io registry.fedoraproject.org registry.access.redhat.com]]
+$ podman info --format={{.
+{{.Host.         {{.Plugins.      {{.Registries}}  {{.Store.        {{.Version.
 ```
 
+Press `R` `[TAB]` `[ENTER]` to print the registries information.
+
+```
+$ podman info -f {{.Registries}}
+map[search:[registry.fedoraproject.org registry.access.redhat.com docker.io quay.io]]
+$
+```
+
+The output still contains a map and an array. The map value can be extracted with
+
+```
+$ podman info -f '{{index .Registries "search"}}'
+[registry.fedoraproject.org registry.access.redhat.com docker.io quay.io]
+```
+
+The array can be printed as one entry per line
+
+```
+$ podman info -f '{{range index .Registries "search"}}{{.}}\n{{end}}'
+registry.fedoraproject.org
+registry.access.redhat.com
+docker.io
+quay.io
+
+```
+
+#### Extracting the list of container registries from JSON with jq
+
+The command-line JSON processor [__jq__](https://stedolan.github.io/jq/) can be used to extract the list
+of container registries.
+
+```
+$ podman info -f json | jq '.registries["search"]'
+[
+  "registry.fedoraproject.org",
+  "registry.access.redhat.com",
+  "docker.io",
+  "quay.io"
+]
+```
+
+The array can be printed as one entry per line
+
+```
+$ podman info -f json | jq -r '.registries["search"] | .[]'
+registry.fedoraproject.org
+registry.access.redhat.com
+docker.io
+quay.io
+```
+
+Note, the Go template struct fields start with upper case. When running `podman info` or `podman info --format=json`, the same names start with lower case.
+
 ## SEE ALSO
-podman(1), containers-registries.conf(5), containers-storage.conf(5)
+**[podman(1)](podman.1.md)**, **[containers-registries.conf(5)](https://github.com/containers/image/blob/main/docs/containers-registries.conf.5.md)**, **[containers-storage.conf(5)](https://github.com/containers/storage/blob/main/docs/containers-storage.conf.5.md)**

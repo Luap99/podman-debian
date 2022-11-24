@@ -1,8 +1,8 @@
 package images
 
 import (
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/cmd/podman/validate"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/validate"
 	"github.com/spf13/cobra"
 )
 
@@ -14,11 +14,12 @@ var (
 	// If we are adding new buildx features, we will add them by default
 	// to podman build.
 	buildxCmd = &cobra.Command{
-		Use:    "buildx",
-		Short:  "Build images",
-		Long:   "Build images",
-		RunE:   validate.SubCommandExists,
-		Hidden: true,
+		Use:     "buildx",
+		Aliases: []string{"builder"},
+		Short:   "Build images",
+		Long:    "Build images",
+		RunE:    validate.SubCommandExists,
+		Hidden:  true,
 	}
 )
 

@@ -1,14 +1,13 @@
 package compat
 
 import (
-	"io/ioutil"
+	"fmt"
 	"net/http"
 	"os"
 
-	"github.com/containers/podman/v3/libpod"
-	"github.com/containers/podman/v3/pkg/api/handlers/utils"
-	api "github.com/containers/podman/v3/pkg/api/types"
-	"github.com/pkg/errors"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v4/pkg/api/types"
 )
 
 func ExportContainer(w http.ResponseWriter, r *http.Request) {
@@ -19,23 +18,23 @@ func ExportContainer(w http.ResponseWriter, r *http.Request) {
 		utils.ContainerNotFound(w, name, err)
 		return
 	}
-	tmpfile, err := ioutil.TempFile("", "api.tar")
+	tmpfile, err := os.CreateTemp("", "api.tar")
 	if err != nil {
-		utils.Error(w, "unable to create tarball tempfile", http.StatusInternalServerError, errors.Wrap(err, "unable to create tempfile"))
+		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("unable to create tempfile: %w", err))
 		return
 	}
 	defer os.Remove(tmpfile.Name())
 	if err := tmpfile.Close(); err != nil {
-		utils.Error(w, "unable to close tempfile", http.StatusInternalServerError, errors.Wrap(err, "unable to close tempfile"))
+		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("unable to close tempfile: %w", err))
 		return
 	}
 	if err := con.Export(tmpfile.Name()); err != nil {
-		utils.Error(w, "failed to save the image", http.StatusInternalServerError, errors.Wrap(err, "failed to save image"))
+		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("failed to save image: %w", err))
 		return
 	}
 	rdr, err := os.Open(tmpfile.Name())
 	if err != nil {
-		utils.Error(w, "failed to read temp tarball", http.StatusInternalServerError, errors.Wrap(err, "failed to read the exported tarfile"))
+		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("failed to read the exported tarfile: %w", err))
 		return
 	}
 	defer rdr.Close()

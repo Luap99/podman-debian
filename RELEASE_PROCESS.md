@@ -162,10 +162,12 @@ spelled with complete minutiae.
       release branch (`git checkout upstream/vX.Y`).
    1. Create a new local working-branch to develop the release PR,
       `git checkout -b bump_vX.Y.Z`.
-   1. Lookup the *COMMIT ID* of the last release,
+   1. Look up the *COMMIT ID* of the last release,
       `git log -1 $(git tag | sort -V | tail -1)`.
    1. Edit `version/version.go` and bump the `Version` value to the new
       release version.  If there were API changes, also bump `APIVersion` value.
+      Make sure to also bump the version in the swagger.yaml `pkg/api/server/docs.go`
+      and to add a new entry in `docs/source/Reference.rst` for major and minor releases.
    1. Commit this and sign the commit (`git commit -a -s -S`). The commit message
       should be `Bump to vX.Y.Z` (using the actual version numbers).
    1. Push this single change to your github fork, and make a new PR,
@@ -234,18 +236,25 @@ spelled with complete minutiae.
 
    1. Return to the Cirrus-CI Build page for the new release tag, confirm
       (or wait for) it to complete, re-running any failed tasks as appropriate.
-   1. For anything other than an RC, download the new release artifacts
-      (the binaries which were actually tested).  Visit each of the
-      "Build for ...", "Static Build", and "... Cross" tasks.
-   1. Under the "Artifacts" section of each task, click the "gosrc" item,
-      find and download the release archive (`zip`, `tar.gz` or `.msi`).
-      Save the the archive with a meaningful name, for example
-      `podman-v3.0.0.msi`.
-   1. For the "Static Build" task, find the compiled `podman` and `podman-remote`
-      binaries under the "binary", "bin" links.  Tar these files as
-      `podman-static.tar.gz`.
+   1. For anything other than an RC, the release artifacts need to be published along
+      with the release. These can be built locally using:
+
+      ```shell
+      $ git checkout vX.Y.Z
+      $ make podman-remote-release-darwin_amd64.zip \
+          podman-remote-release-darwin_arm64.zip \
+          podman-remote-release-windows_amd64.zip \
+          podman-remote-static
+      $ mv podman-* bin/
+      $ cd bin/
+      $ tar -cvzf podman-remote-static.tar.gz podman-remote-static
+      $ sha256sum *.zip *.tar.gz > shasums
+      ```
+
+   1. The `podman-vX.Y.Z.dmg` file is produced manually by someone in
+      possession of a developer signing key.
    1. In the directory where you downloaded the archives, run
-      `sha256sum *.tar.gz *.zip *.msi > shasums` to generate SHA sums.
+      `sha256sum *.tar.gz *.zip > shasums` to generate SHA sums.
    1. Go to `https://github.com/containers/podman/releases/tag/vX.Y.Z` and
       press the "Edit Release" button.  Change the name to the form `vX.Y.Z`
    1. If this is a release candidate be certain to click the pre-release
@@ -257,9 +266,40 @@ spelled with complete minutiae.
       that to upload the artifacts you previously downloaded, including
       the `shasums` file.
 
-      * podman-remote-release-darwin.zip
-      * podman-remote-release-windows.zip
-      * podman-remote-static.tar.gz
+      * podman-remote-release-darwin_amd64.zip
+      * podman-remote-release-darwin_arm64.zip
+      * podman-remote-release-windows_amd64.zip
       * podman-vX.Y.Z.msi
+      * podman-remote-static.tar.gz
       * shasums
-   1. Save the release.
+   1. Click the Publish button to make the release (or pre-release)
+      available.
+   1. Check the "Actions" tab, after the publish you should see a job
+      automatically launch to build the windows installer (named after
+      the release). There may be more than one running due to the multiple
+      event states triggered, but this can be ignored, as any duplicates
+      will gracefully back-off. The job takes 5-6 minutes to complete.
+   1. Confirm the podman-[version]-setup.exe file is now on the release
+      page. This might not be the case if you accidentally published the
+      release before uploading the binaries, as the job may look before
+      they are available. If that happens, you can either manually kick
+      off the job (see below), or just make a harmless edit to the
+      release (e.g. add an extra whitespace character somewhere). As
+      long as the body content is different in some way, a new run will
+      be triggered.
+
+      ## Manually Triggering Windows Installer Build & Upload
+
+
+      ### *CLI Approach*
+      1. Install the GitHub CLI (e.g. `sudo dnf install gh`)
+      1. Run (replacing below version number to release version)
+         ```
+         gh workflow run "Upload Windows Installer" -F version="4.2.0"
+         ```
+      ### *GUI Approach*
+      1. Go to the "Actions" tab
+      1. On the left pick the "Update Windows Installer" category
+      1. A blue box will appear above the job list with a right side drop
+         -down. Click the drop-down and specify the version number in the
+         dialog that appears

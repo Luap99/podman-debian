@@ -7,11 +7,11 @@ import (
 
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/report"
-	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/cmd/podman/validate"
-	"github.com/containers/podman/v3/libpod/events"
-	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/validate"
+	"github.com/containers/podman/v4/libpod/events"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/spf13/cobra"
 )
 
@@ -36,6 +36,7 @@ var (
 var (
 	eventOptions entities.EventsOptions
 	eventFormat  string
+	noTrunc      bool
 )
 
 func init() {
@@ -45,18 +46,20 @@ func init() {
 	flags := eventsCommand.Flags()
 
 	filterFlagName := "filter"
-	flags.StringArrayVar(&eventOptions.Filter, filterFlagName, []string{}, "filter output")
+	flags.StringArrayVarP(&eventOptions.Filter, filterFlagName, "f", []string{}, "filter output")
 	_ = eventsCommand.RegisterFlagCompletionFunc(filterFlagName, common.AutocompleteEventFilter)
 
 	formatFlagName := "format"
 	flags.StringVar(&eventFormat, formatFlagName, "", "format the output using a Go template")
-	_ = eventsCommand.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteFormat(events.Event{}))
+	_ = eventsCommand.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteFormat(&events.Event{}))
 
 	flags.BoolVar(&eventOptions.Stream, "stream", true, "stream new events; for testing only")
 
 	sinceFlagName := "since"
 	flags.StringVar(&eventOptions.Since, sinceFlagName, "", "show all events created since timestamp")
 	_ = eventsCommand.RegisterFlagCompletionFunc(sinceFlagName, completion.AutocompleteNone)
+
+	flags.BoolVar(&noTrunc, "no-trunc", true, "do not truncate the output")
 
 	untilFlagName := "until"
 	flags.StringVar(&eventOptions.Until, untilFlagName, "", "show all events until timestamp")
@@ -74,7 +77,7 @@ func eventsCmd(cmd *cobra.Command, _ []string) error {
 	errChannel := make(chan error)
 
 	var (
-		tmpl   *report.Template
+		rpt    *report.Formatter
 		doJSON bool
 	)
 
@@ -82,7 +85,9 @@ func eventsCmd(cmd *cobra.Command, _ []string) error {
 		doJSON = report.IsJSON(eventFormat)
 		if !doJSON {
 			var err error
-			tmpl, err = report.NewTemplate("events").Parse(eventFormat)
+			// Use OriginUnknown so it does not add an extra range since it
+			// will only be called for each single element and not a slice.
+			rpt, err = report.New(os.Stdout, cmd.Name()).Parse(report.OriginUnknown, eventFormat)
 			if err != nil {
 				return err
 			}
@@ -94,25 +99,33 @@ func eventsCmd(cmd *cobra.Command, _ []string) error {
 		errChannel <- err
 	}()
 
-	for event := range eventChannel {
-		switch {
-		case event == nil:
-			// no-op
-		case doJSON:
-			jsonStr, err := event.ToJSONString()
+	for {
+		select {
+		case event, ok := <-eventChannel:
+			if !ok {
+				// channel was closed we can exit
+				return nil
+			}
+			switch {
+			case doJSON:
+				jsonStr, err := event.ToJSONString()
+				if err != nil {
+					return err
+				}
+				fmt.Println(jsonStr)
+			case cmd.Flags().Changed("format"):
+				if err := rpt.Execute(event); err != nil {
+					return err
+				}
+			default:
+				fmt.Println(event.ToHumanReadable(!noTrunc))
+			}
+		case err := <-errChannel:
+			// only exit in case of an error,
+			// otherwise keep reading events until the event channel is closed
 			if err != nil {
 				return err
 			}
-			fmt.Println(jsonStr)
-		case cmd.Flags().Changed("format"):
-			if err := tmpl.Execute(os.Stdout, event); err != nil {
-				return err
-			}
-			fmt.Println("")
-		default:
-			fmt.Println(event.ToHumanReadable())
 		}
 	}
-
-	return <-errChannel
 }

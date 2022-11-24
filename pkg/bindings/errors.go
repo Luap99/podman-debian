@@ -2,10 +2,11 @@ package bindings
 
 import (
 	"encoding/json"
-	"io/ioutil"
+	"errors"
+	"fmt"
+	"io"
 
-	"github.com/containers/podman/v3/pkg/errorhandling"
-	"github.com/pkg/errors"
+	"github.com/containers/podman/v4/pkg/errorhandling"
 )
 
 var (
@@ -25,12 +26,12 @@ func (h APIResponse) Process(unmarshalInto interface{}) error {
 	return h.ProcessWithError(unmarshalInto, &errorhandling.ErrorModel{})
 }
 
-// Process drains the response body, and processes the HTTP status code
+// ProcessWithError drains the response body, and processes the HTTP status code
 // Note: Closing the response.Body is left to the caller
 func (h APIResponse) ProcessWithError(unmarshalInto interface{}, unmarshalErrorInto interface{}) error {
-	data, err := ioutil.ReadAll(h.Response.Body)
+	data, err := io.ReadAll(h.Response.Body)
 	if err != nil {
-		return errors.Wrap(err, "unable to process API response")
+		return fmt.Errorf("unable to process API response: %w", err)
 	}
 	if h.IsSuccess() || h.IsRedirection() {
 		if unmarshalInto != nil {
@@ -54,6 +55,6 @@ func CheckResponseCode(inError error) (int, error) {
 	case *errorhandling.PodConflictErrorModel:
 		return e.Code(), nil
 	default:
-		return -1, errors.New("error is not type ErrorModel")
+		return -1, errors.New("is not type ErrorModel")
 	}
 }

@@ -1,17 +1,21 @@
 package specgen
 
 import (
+	"errors"
 	"net"
+	"strings"
 	"syscall"
 
+	"github.com/containers/common/libimage"
+	nettypes "github.com/containers/common/libnetwork/types"
 	"github.com/containers/image/v5/manifest"
-	nettypes "github.com/containers/podman/v3/libpod/network/types"
+	"github.com/containers/podman/v4/libpod/define"
 	"github.com/containers/storage/types"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
-	"github.com/pkg/errors"
 )
 
-//  LogConfig describes the logging characteristics for a container
+// LogConfig describes the logging characteristics for a container
+// swagger:model LogConfigLibpod
 type LogConfig struct {
 	// LogDriver is the container's log driver.
 	// Optional.
@@ -101,6 +105,12 @@ type ContainerBasicConfig struct {
 	// RawImageName is the user-specified and unprocessed input referring
 	// to a local or a remote image.
 	RawImageName string `json:"raw_image_name,omitempty"`
+	// ImageOS is the user-specified image OS
+	ImageOS string `json:"image_os,omitempty"`
+	// ImageArch is the user-specified image architecture
+	ImageArch string `json:"image_arch,omitempty"`
+	// ImageVariant is the user-specified image variant
+	ImageVariant string `json:"image_variant,omitempty"`
 	// RestartPolicy is the container's restart policy - an action which
 	// will be taken when the container exits.
 	// If not given, the default policy, which does nothing, will be used.
@@ -150,6 +160,9 @@ type ContainerBasicConfig struct {
 	// Conflicts with UtsNS if UtsNS is not set to private.
 	// Optional.
 	Hostname string `json:"hostname,omitempty"`
+	// HostUses is a list of host usernames or UIDs to add to the container
+	// /etc/passwd file
+	HostUsers []string `json:"hostusers,omitempty"`
 	// Sysctl sets kernel parameters for the container
 	Sysctl map[string]string `json:"sysctl,omitempty"`
 	// Remove indicates if the container should be removed once it has been started
@@ -192,6 +205,20 @@ type ContainerBasicConfig struct {
 	// The execution domain system allows Linux to provide limited support
 	// for binaries compiled under other UNIX-like operating systems.
 	Personality *spec.LinuxPersonality `json:"personality,omitempty"`
+	// EnvMerge takes the specified environment variables from image and preprocess them before injecting them into the
+	// container.
+	EnvMerge []string `json:"envmerge,omitempty"`
+	// UnsetEnv unsets the specified default environment variables from the image or from buildin or containers.conf
+	// Optional.
+	UnsetEnv []string `json:"unsetenv,omitempty"`
+	// UnsetEnvAll unsetall default environment variables from the image or from buildin or containers.conf
+	// UnsetEnvAll unsets all default environment variables from the image or from buildin
+	// Optional.
+	UnsetEnvAll bool `json:"unsetenvall,omitempty"`
+	// Passwd is a container run option that determines if we are validating users/groups before running the container
+	Passwd *bool `json:"manage_password,omitempty"`
+	// PasswdEntry specifies arbitrary data to append to a file.
+	PasswdEntry string `json:"passwd_entry,omitempty"`
 }
 
 // ContainerStorageConfig contains information on the storage configuration of a
@@ -209,6 +236,8 @@ type ContainerStorageConfig struct {
 	// Conflicts with Image.
 	// At least one of Image or Rootfs must be specified.
 	Rootfs string `json:"rootfs,omitempty"`
+	// RootfsOverlay tells if rootfs is actually an overlay on top of base path
+	RootfsOverlay bool `json:"rootfs_overlay,omitempty"`
 	// ImageVolumeMode indicates how image volumes will be created.
 	// Supported modes are "ignore" (do not create), "tmpfs" (create as
 	// tmpfs), and "anonymous" (create as anonymous volumes).
@@ -248,9 +277,13 @@ type ContainerStorageConfig struct {
 	// Devices are devices that will be added to the container.
 	// Optional.
 	Devices []spec.LinuxDevice `json:"devices,omitempty"`
-	// DeviceCGroupRule are device cgroup rules that allow containers
+	// DeviceCgroupRule are device cgroup rules that allow containers
 	// to use additional types of devices.
-	DeviceCGroupRule []spec.LinuxDeviceCgroup `json:"device_cgroup_rule,omitempty"`
+	DeviceCgroupRule []spec.LinuxDeviceCgroup `json:"device_cgroup_rule,omitempty"`
+	// DevicesFrom is a way to ensure your container inherits device specific information from another container
+	DevicesFrom []string `json:"devices_from,omitempty"`
+	// HostDeviceList is used to recreate the mounted device on inherited containers
+	HostDeviceList []spec.LinuxDevice `json:"host_device_list,omitempty"`
 	// IpcNS is the container's IPC namespace.
 	// Default is private.
 	// Conflicts with ShmSize if not set to private.
@@ -268,6 +301,9 @@ type ContainerStorageConfig struct {
 	// If unset, it doesn't create it.
 	// Optional.
 	CreateWorkingDir bool `json:"create_working_dir,omitempty"`
+	// StorageOpts is the container's storage options
+	// Optional.
+	StorageOpts map[string]string `json:"storage_opts,omitempty"`
 	// RootfsPropagation is the rootfs propagation mode for the container.
 	// If not set, the default of rslave will be used.
 	// Optional.
@@ -278,6 +314,10 @@ type ContainerStorageConfig struct {
 	// Volatile specifies whether the container storage can be optimized
 	// at the cost of not syncing all the dirty files in memory.
 	Volatile bool `json:"volatile,omitempty"`
+	// ChrootDirs is an additional set of directories that need to be
+	// treated as root directories. Standard bind mounts will be mounted
+	// into paths relative to these directories.
+	ChrootDirs []string `json:"chroot_directories,omitempty"`
 }
 
 // ContainerSecurityConfig is a container's security features, including
@@ -367,7 +407,7 @@ type ContainerCgroupConfig struct {
 	// CgroupsMode sets a policy for how cgroups will be created in the
 	// container, including the ability to disable creation entirely.
 	CgroupsMode string `json:"cgroups_mode,omitempty"`
-	// CgroupParent is the container's CGroup parent.
+	// CgroupParent is the container's Cgroup parent.
 	// If not set, the default for the current cgroup driver will be used.
 	// Optional.
 	CgroupParent string `json:"cgroup_parent,omitempty"`
@@ -376,25 +416,10 @@ type ContainerCgroupConfig struct {
 // ContainerNetworkConfig contains information on a container's network
 // configuration.
 type ContainerNetworkConfig struct {
-	// Aliases are a list of network-scoped aliases for container
-	// Optional
-	Aliases map[string][]string `json:"aliases"`
 	// NetNS is the configuration to use for the container's network
 	// namespace.
 	// Mandatory.
 	NetNS Namespace `json:"netns,omitempty"`
-	// StaticIP is the a IPv4 address of the container.
-	// Only available if NetNS is set to Bridge.
-	// Optional.
-	StaticIP *net.IP `json:"static_ip,omitempty"`
-	// StaticIPv6 is a static IPv6 address to set in the container.
-	// Only available if NetNS is set to Bridge.
-	// Optional.
-	StaticIPv6 *net.IP `json:"static_ipv6,omitempty"`
-	// StaticMAC is a static MAC address to set in the container.
-	// Only available if NetNS is set to bridge.
-	// Optional.
-	StaticMAC *net.HardwareAddr `json:"static_mac,omitempty"`
 	// PortBindings is a set of ports to map into the container.
 	// Only available if NetNS is set to bridge or slirp.
 	// Optional.
@@ -408,19 +433,27 @@ type ContainerNetworkConfig struct {
 	// Expose is a number of ports that will be forwarded to the container
 	// if PublishExposedPorts is set.
 	// Expose is a map of uint16 (port number) to a string representing
-	// protocol. Allowed protocols are "tcp", "udp", and "sctp", or some
+	// protocol i.e map[uint16]string. Allowed protocols are "tcp", "udp", and "sctp", or some
 	// combination of the three separated by commas.
 	// If protocol is set to "" we will assume TCP.
 	// Only available if NetNS is set to Bridge or Slirp, and
 	// PublishExposedPorts is set.
 	// Optional.
 	Expose map[uint16]string `json:"expose,omitempty"`
+	// Map of networks names or ids that the container should join.
+	// You can request additional settings for each network, you can
+	// set network aliases, static ips, static mac address  and the
+	// network interface name for this container on the specific network.
+	// If the map is empty and the bridge network mode is set the container
+	// will be joined to the default network.
+	Networks map[string]nettypes.PerNetworkOptions
 	// CNINetworks is a list of CNI networks to join the container to.
 	// If this list is empty, the default CNI network will be joined
 	// instead. If at least one entry is present, we will not join the
 	// default network (unless it is part of this list).
 	// Only available if NetNS is set to bridge.
 	// Optional.
+	// Deprecated: as of podman 4.0 use "Networks" instead.
 	CNINetworks []string `json:"cni_networks,omitempty"`
 	// UseImageResolvConf indicates that resolv.conf should not be managed
 	// by Podman, but instead sourced from the image.
@@ -447,7 +480,13 @@ type ContainerNetworkConfig struct {
 	// UseImageHosts indicates that /etc/hosts should not be managed by
 	// Podman, and instead sourced from the image.
 	// Conflicts with HostAdd.
-	UseImageHosts bool `json:"use_image_hosts,omitempty"`
+	// Do not set omitempty here, if this is false it should be set to not get
+	// the server default.
+	// Ideally this would be a pointer so we could differentiate between an
+	// explicitly false/true and unset (containers.conf default). However
+	// specgen is stable so we can not change this right now.
+	// TODO (5.0): change to pointer
+	UseImageHosts bool `json:"use_image_hosts"`
 	// HostAdd is a set of hosts which will be added to the container's
 	// /etc/hosts file.
 	// Conflicts with UseImageHosts.
@@ -495,7 +534,8 @@ type ContainerResourceConfig struct {
 // ContainerHealthCheckConfig describes a container healthcheck with attributes
 // like command, retries, interval, start period, and timeout.
 type ContainerHealthCheckConfig struct {
-	HealthConfig *manifest.Schema2HealthConfig `json:"healthconfig,omitempty"`
+	HealthConfig               *manifest.Schema2HealthConfig     `json:"healthconfig,omitempty"`
+	HealthCheckOnFailureAction define.HealthCheckOnFailureAction `json:"health_check_on_failure_action,omitempty"`
 }
 
 // SpecGenerator creates an OCI spec and Libpod configuration options to create
@@ -509,6 +549,21 @@ type SpecGenerator struct {
 	ContainerNetworkConfig
 	ContainerResourceConfig
 	ContainerHealthCheckConfig
+
+	image             *libimage.Image `json:"-"`
+	resolvedImageName string          `json:"-"`
+}
+
+// SetImage sets the associated for the generator.
+func (s *SpecGenerator) SetImage(image *libimage.Image, resolvedImageName string) {
+	s.image = image
+	s.resolvedImageName = resolvedImageName
+}
+
+// Image returns the associated image for the generator.
+// May be nil if no image has been set yet.
+func (s *SpecGenerator) GetImage() (*libimage.Image, string) {
+	return s.image, s.resolvedImageName
 }
 
 type Secret struct {
@@ -522,10 +577,12 @@ type Secret struct {
 var (
 	// ErrNoStaticIPRootless is used when a rootless user requests to assign a static IP address
 	// to a pod or container
-	ErrNoStaticIPRootless error = errors.New("rootless containers and pods cannot be assigned static IP addresses")
+	ErrNoStaticIPRootless = errors.New("rootless containers and pods cannot be assigned static IP addresses")
 	// ErrNoStaticMACRootless is used when a rootless user requests to assign a static MAC address
 	// to a pod or container
-	ErrNoStaticMACRootless error = errors.New("rootless containers and pods cannot be assigned static MAC addresses")
+	ErrNoStaticMACRootless = errors.New("rootless containers and pods cannot be assigned static MAC addresses")
+	// Multiple volume mounts to the same destination is not allowed
+	ErrDuplicateDest = errors.New("duplicate mount destination")
 )
 
 // NewSpecGenerator returns a SpecGenerator struct given one of two mandatory inputs
@@ -533,6 +590,12 @@ func NewSpecGenerator(arg string, rootfs bool) *SpecGenerator {
 	csc := ContainerStorageConfig{}
 	if rootfs {
 		csc.Rootfs = arg
+		// check if rootfs should use overlay
+		lastColonIndex := strings.LastIndex(csc.Rootfs, ":")
+		if lastColonIndex != -1 && lastColonIndex+1 < len(csc.Rootfs) && csc.Rootfs[lastColonIndex+1:] == "O" {
+			csc.RootfsOverlay = true
+			csc.Rootfs = csc.Rootfs[:lastColonIndex]
+		}
 	} else {
 		csc.Image = arg
 	}
@@ -545,4 +608,16 @@ func NewSpecGenerator(arg string, rootfs bool) *SpecGenerator {
 func NewSpecGeneratorWithRootfs(rootfs string) *SpecGenerator {
 	csc := ContainerStorageConfig{Rootfs: rootfs}
 	return &SpecGenerator{ContainerStorageConfig: csc}
+}
+
+func StringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i, v := range a {
+		if v != b[i] {
+			return false
+		}
+	}
+	return true
 }

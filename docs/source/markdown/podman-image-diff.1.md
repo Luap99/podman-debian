@@ -1,4 +1,4 @@
-% podman-image-diff(1)
+% podman-image-diff 1
 
 ## NAME
 podman-image-diff - Inspect changes on an image's filesystem
@@ -48,7 +48,7 @@ $ podman diff --format json redis:old redis:alpine
 ```
 
 ## SEE ALSO
-podman(1)
+**[podman(1)](podman.1.md)**, **[podman-image(1)](podman-image.1.md)**
 
 ## HISTORY
 August 2017, Originally compiled by Ryan Cole <rycole@redhat.com>

@@ -1,3 +1,4 @@
+//go:build linux && !cgo
 // +build linux,!cgo
 
 package generate
@@ -6,7 +7,7 @@ import (
 	"errors"
 
 	"github.com/containers/common/libimage"
-	"github.com/containers/podman/v3/pkg/specgen"
+	"github.com/containers/podman/v4/pkg/specgen"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 )
 

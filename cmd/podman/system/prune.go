@@ -8,12 +8,12 @@ import (
 	"strings"
 
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/parse"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/cmd/podman/utils"
-	"github.com/containers/podman/v3/cmd/podman/validate"
-	"github.com/containers/podman/v3/pkg/domain/entities"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/parse"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/utils"
+	"github.com/containers/podman/v4/cmd/podman/validate"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/docker/go-units"
 	"github.com/spf13/cobra"
 )
@@ -75,6 +75,7 @@ func prune(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Remove all unused pods, containers, images, networks, and volume data.
 	pruneOptions.Filters, err = parse.FilterArgumentsIntoFilters(filters)
 	if err != nil {
 		return err
@@ -103,6 +104,11 @@ func prune(cmd *cobra.Command, args []string) error {
 	}
 	// Print Images prune results
 	err = utils.PrintImagePruneResults(response.ImagePruneReports, true)
+	if err != nil {
+		return err
+	}
+	// Print Network prune results
+	err = utils.PrintNetworkPruneResults(response.NetworkPruneReports, true)
 	if err != nil {
 		return err
 	}

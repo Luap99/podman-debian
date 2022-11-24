@@ -1,16 +1,16 @@
 package entities
 
 import (
+	"errors"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/containers/podman/v3/pkg/ps/define"
-	"github.com/cri-o/ocicni/pkg/ocicni"
-	"github.com/pkg/errors"
+	"github.com/containers/common/libnetwork/types"
+	"github.com/containers/podman/v4/pkg/ps/define"
 )
 
-// Listcontainer describes a container suitable for listing
+// ListContainer describes a container suitable for listing
 type ListContainer struct {
 	// AutoRemove
 	AutoRemove bool
@@ -18,7 +18,7 @@ type ListContainer struct {
 	Command []string
 	// Container creation time
 	Created time.Time
-	// Human readable container creation time.
+	// Human-readable container creation time.
 	CreatedAt string
 	// If container has exited/stopped
 	Exited bool
@@ -54,7 +54,7 @@ type ListContainer struct {
 	// boolean to be set
 	PodName string
 	// Port mappings
-	Ports []ocicni.PortMapping
+	Ports []types.PortMapping
 	// Size of the container rootfs.  Requires the size boolean to be true
 	Size *define.ContainerSize
 	// Time when container started
@@ -65,7 +65,7 @@ type ListContainer struct {
 	Status string
 }
 
-// ListContainer Namespaces contains the identifiers of the container's Linux namespaces
+// ListContainerNamespaces contains the identifiers of the container's Linux namespaces
 type ListContainerNamespaces struct {
 	// Mount namespace
 	MNT string `json:"Mnt,omitempty"`
@@ -166,7 +166,7 @@ func SortPsOutput(sortBy string, psOutput SortListContainers) (SortListContainer
 	case "pod":
 		sort.Sort(psSortedPod{psOutput})
 	default:
-		return nil, errors.Errorf("invalid option for --sort, options are: command, created, id, image, names, runningfor, size, or status")
+		return nil, errors.New("invalid option for --sort, options are: command, created, id, image, names, runningfor, size, or status")
 	}
 	return psOutput, nil
 }

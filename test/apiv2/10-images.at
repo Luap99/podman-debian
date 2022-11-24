@@ -53,8 +53,8 @@ t POST "images/create?fromImage=alpine" 200 .error~null .status~".*Download comp
 t POST "images/create?fromImage=alpine&tag=latest" 200
 
 # 10977 - handle platform parameter correctly
-t POST "images/create?fromImage=alpine&platform=linux/arm64" 200
-t GET  "images/alpine/json" 200 \
+t POST "images/create?fromImage=quay.io/libpod/testimage:20210610&platform=linux/arm64" 200
+t GET  "images/testimage:20210610/json" 200 \
   .Architecture=arm64
 
 # Make sure that new images are pulled
@@ -62,7 +62,7 @@ old_iid=$(podman image inspect --format "{{.ID}}" docker.io/library/alpine:lates
 podman rmi -f docker.io/library/alpine:latest
 podman tag $IMAGE docker.io/library/alpine:latest
 t POST "images/create?fromImage=alpine" 200 .error~null .status~".*$old_iid.*"
-podman untag $IMAGE docker.io/library/alpine:latest
+podman untag docker.io/library/alpine:latest
 
 t POST "images/create?fromImage=quay.io/libpod/alpine&tag=sha256:fa93b01658e3a5a1686dc3ae55f170d8de487006fb53a28efcd12ab0710a2e5f" 200
 
@@ -156,6 +156,17 @@ t GET images/json?filters='{"reference":["test1"]}' 200 length=1
 
 t DELETE libpod/images/test1:latest 200
 
+# to be used in prune until filter tests
+podman image build -t docker.io/library/test1:latest -<<EOF
+from alpine
+RUN >file4
+EOF
+podman create --name test1 test1 echo hi
+
+t DELETE images/test1:latest 409
+podman rm test1
+t DELETE images/test1:latest 200
+
 t GET "images/get?names=alpine" 200 '[POSIX tar archive]'
 
 podman pull busybox
@@ -171,63 +182,81 @@ function cleanBuildTest() {
 }
 CONTAINERFILE_TAR="${TMPD}/containerfile.tar"
 cat > $TMPD/containerfile << EOF
-FROM quay.io/libpod/alpine_labels:latest
+FROM $IMAGE
 EOF
 tar --format=posix -C $TMPD -cvf ${CONTAINERFILE_TAR} containerfile &> /dev/null
 
-curl -XPOST --data-binary @<(cat $CONTAINERFILE_TAR) \
-    -H "content-type: application/x-tar" \
-    --dump-header "${TMPD}/headers.txt" \
-    -o "${TMPD}/response.txt" \
-    "http://$HOST:$PORT/v1.40/libpod/build?dockerfile=containerfile" &> /dev/null
+t POST "libpod/build?dockerfile=containerfile" $CONTAINERFILE_TAR 200 \
+  .stream~"STEP 1/1: FROM $IMAGE"
 
-BUILD_TEST_ERROR=""
+# With -q, all we should get is image ID. Test both libpod & compat endpoints.
+t POST "libpod/build?dockerfile=containerfile&q=true" $CONTAINERFILE_TAR 200 \
+  .stream~'^[0-9a-f]\{64\}$'
+t POST "build?dockerfile=containerfile&q=true" $CONTAINERFILE_TAR 200 \
+  .stream~'^[0-9a-f]\{64\}$'
 
-if ! grep -q '200 OK' "${TMPD}/headers.txt"; then
-    echo -e "${red}NOK: Image build from tar failed response was not 200 OK (application/x-tar)"
-    BUILD_TEST_ERROR="1"
-fi
+# Override content-type and confirm that libpod rejects, but compat accepts
+t POST "libpod/build?dockerfile=containerfile" $CONTAINERFILE_TAR application/json 400 \
+  .cause='Content-Type: application/json is not supported. Should be "application/x-tar"'
+t POST "build?dockerfile=containerfile" $CONTAINERFILE_TAR application/json 200 \
+  .stream~"STEP 1/1: FROM $IMAGE"
 
-if ! grep -q 'quay.io/libpod/alpine_labels' "${TMPD}/response.txt"; then
-    echo -e "${red}NOK: Image build from tar failed image name not in response"
-    BUILD_TEST_ERROR="1"
-fi
+# Libpod: allow building from url: https://github.com/alpinelinux/docker-alpine.git and must ignore any provided tar
+t POST "libpod/build?remote=https%3A%2F%2Fgithub.com%2Falpinelinux%2Fdocker-alpine.git" $CONTAINERFILE_TAR 200 \
+  .stream~"STEP 1/5: FROM alpine:"
 
-curl -XPOST --data-binary @<(cat $CONTAINERFILE_TAR) \
-    -H "content-type: application/tar" \
-    --dump-header "${TMPD}/headers.txt" \
-    -o /dev/null \
-    "http://$HOST:$PORT/v1.40/libpod/build?dockerfile=containerfile" &> /dev/null
-if ! grep -q '200 OK' "${TMPD}/headers.txt"; then
-    echo -e "${red}NOK: Image build from tar failed response was not 200 OK (application/tar)"
-    BUILD_TEST_ERROR="1"
-fi
+# Build api response header must contain Content-type: application/json
+t POST "build?dockerfile=containerfile" $CONTAINERFILE_TAR application/json 200
+response_headers=$(cat "$WORKDIR/curl.headers.out")
+like "$response_headers" ".*application/json.*" "header does not contains application/json"
 
-# Yes, this is very un-RESTful re: Content-Type header ignored when compatibility endpoint used
-# See https://github.com/containers/podman/issues/11012
-curl -XPOST --data-binary @<(cat $CONTAINERFILE_TAR) \
-    -H "content-type: application/json" \
-    --dump-header "${TMPD}/headers.txt" \
-    -o /dev/null \
-    "http://$HOST:$PORT/v1.40/build?dockerfile=containerfile" &> /dev/null
-if ! grep -q '200 OK' "${TMPD}/headers.txt"; then
-    echo -e "${red}NOK: Image build from tar failed response was not 200 OK (application/tar)"
-    BUILD_TEST_ERROR="1"
-fi
+# PR #12091: output from compat API must now include {"aux":{"ID":"sha..."}}
+t POST "build?dockerfile=containerfile" $CONTAINERFILE_TAR 200 \
+  '.aux|select(has("ID")).ID~^sha256:[0-9a-f]\{64\}$'
 
-curl -XPOST --data-binary @<(cat $CONTAINERFILE_TAR) \
-    -H "content-type: application/json" \
-    --dump-header "${TMPD}/headers.txt" \
-    -o /dev/null \
-    "http://$HOST:$PORT/v1.40/libpod/build?dockerfile=containerfile" &> /dev/null
-if ! grep -q '400 Bad Request' "${TMPD}/headers.txt"; then
-    echo -e "${red}NOK: Image build should have failed with 400 (wrong Content-Type)"
-    BUILD_TEST_ERROR="1"
+t POST libpod/images/prune 200
+t POST libpod/images/prune 200 length=0 []
+
+# compat api must allow loading tar which contain multiple images
+podman pull quay.io/libpod/alpine:latest quay.io/libpod/busybox:latest
+podman save -o ${TMPD}/test.tar quay.io/libpod/alpine:latest quay.io/libpod/busybox:latest
+t POST "images/load" ${TMPD}/test.tar 200 \
+  .stream="Loaded image: quay.io/libpod/busybox:latest,quay.io/libpod/alpine:latest"
+t GET libpod/images/quay.io/libpod/alpine:latest/exists  204
+t GET libpod/images/quay.io/libpod/busybox:latest/exists  204
+
+CONTAINERFILE_WITH_ERR_TAR="${TMPD}/containerfile.tar"
+cat > $TMPD/containerfile << EOF
+FROM $IMAGE
+RUN echo 'some error' >&2
+EOF
+tar --format=posix -C $TMPD -cvf ${CONTAINERFILE_WITH_ERR_TAR} containerfile &> /dev/null
+t POST "/build?q=1&dockerfile=containerfile" $CONTAINERFILE_WITH_ERR_TAR 200
+if [[ $output == *"some error"* ]];then
+    _show_ok 0 "compat quiet build" "[should not contain 'some error']" "$output"
+else
+    _show_ok 1 "compat quiet build"
 fi
 
 cleanBuildTest
-if [[ "${BUILD_TEST_ERROR}" ]]; then
-    exit 1
-fi
+
+# compat API vs libpod API event differences:
+# on image removal, libpod produces 'remove' events.
+# compat produces 'delete' events.
+podman image build -t test:test -<<EOF
+from $IMAGE
+EOF
+
+START=$(date +%s)
+
+t DELETE libpod/images/test:test 200
+# HACK HACK HACK There is a race around events being added to the journal
+# This sleep seems to avoid the race.
+# If it fails and begins to flake, investigate a retry loop.
+sleep 1
+t GET "libpod/events?stream=false&since=$START"  200  \
+  'select(.status | contains("remove")).Action=remove'
+t GET "events?stream=false&since=$START"  200  \
+  'select(.status | contains("delete")).Action=delete'
 
 # vim: filetype=sh

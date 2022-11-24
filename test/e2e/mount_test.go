@@ -3,7 +3,7 @@ package integration
 import (
 	"os"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -78,7 +78,7 @@ var _ = Describe("Podman mount", func() {
 		j := podmanTest.Podman([]string{"mount", "--format=json"})
 		j.WaitWithDefaultTimeout()
 		Expect(j).Should(Exit(0))
-		Expect(j.IsJSONOutputValid()).To(BeTrue())
+		Expect(j.OutputToString()).To(BeValidJSON())
 
 		j = podmanTest.Podman([]string{"mount", "--format='{{.foobar}}'"})
 		j.WaitWithDefaultTimeout()
@@ -169,7 +169,7 @@ var _ = Describe("Podman mount", func() {
 		Expect(setup).Should(Exit(0))
 		cid := setup.OutputToString()
 
-		lmount := podmanTest.Podman([]string{"mount", "--notruncate"})
+		lmount := podmanTest.Podman([]string{"mount", "--no-trunc"})
 		lmount.WaitWithDefaultTimeout()
 		Expect(lmount).Should(Exit(0))
 		Expect(lmount.OutputToString()).To(Equal(""))
@@ -178,7 +178,7 @@ var _ = Describe("Podman mount", func() {
 		mount.WaitWithDefaultTimeout()
 		Expect(mount).Should(Exit(0))
 
-		lmount = podmanTest.Podman([]string{"mount", "--notruncate"})
+		lmount = podmanTest.Podman([]string{"mount", "--no-trunc"})
 		lmount.WaitWithDefaultTimeout()
 		Expect(lmount).Should(Exit(0))
 		Expect(lmount.OutputToString()).To(ContainSubstring(cid))
@@ -195,7 +195,7 @@ var _ = Describe("Podman mount", func() {
 		Expect(setup).Should(Exit(0))
 		cid := setup.OutputToString()
 
-		lmount := podmanTest.Podman([]string{"mount", "--notruncate"})
+		lmount := podmanTest.Podman([]string{"mount", "--no-trunc"})
 		lmount.WaitWithDefaultTimeout()
 		Expect(lmount).Should(Exit(0))
 		Expect(lmount.OutputToString()).To(ContainSubstring(cid))
@@ -204,7 +204,7 @@ var _ = Describe("Podman mount", func() {
 		stop.WaitWithDefaultTimeout()
 		Expect(stop).Should(Exit(0))
 
-		lmount = podmanTest.Podman([]string{"mount", "--notruncate"})
+		lmount = podmanTest.Podman([]string{"mount", "--no-trunc"})
 		lmount.WaitWithDefaultTimeout()
 		Expect(lmount).Should(Exit(0))
 		Expect(lmount.OutputToString()).To(Equal(""))
@@ -227,7 +227,7 @@ var _ = Describe("Podman mount", func() {
 		Expect(setup).Should(Exit(0))
 		cid3 := setup.OutputToString()
 
-		lmount := podmanTest.Podman([]string{"mount", "--notruncate"})
+		lmount := podmanTest.Podman([]string{"mount", "--no-trunc"})
 		lmount.WaitWithDefaultTimeout()
 		Expect(lmount).Should(Exit(0))
 		Expect(lmount.OutputToString()).To(Equal(""))
@@ -236,7 +236,7 @@ var _ = Describe("Podman mount", func() {
 		mount.WaitWithDefaultTimeout()
 		Expect(mount).Should(Exit(0))
 
-		lmount = podmanTest.Podman([]string{"mount", "--notruncate"})
+		lmount = podmanTest.Podman([]string{"mount", "--no-trunc"})
 		lmount.WaitWithDefaultTimeout()
 		Expect(lmount).Should(Exit(0))
 		Expect(lmount.OutputToString()).To(ContainSubstring(cid1))
@@ -247,7 +247,7 @@ var _ = Describe("Podman mount", func() {
 		umount.WaitWithDefaultTimeout()
 		Expect(umount).Should(Exit(0))
 
-		lmount = podmanTest.Podman([]string{"mount", "--notruncate"})
+		lmount = podmanTest.Podman([]string{"mount", "--no-trunc"})
 		lmount.WaitWithDefaultTimeout()
 		Expect(lmount).Should(Exit(0))
 		Expect(lmount.OutputToString()).To(Equal(""))
@@ -261,7 +261,7 @@ var _ = Describe("Podman mount", func() {
 		Expect(setup).Should(Exit(0))
 		cid := setup.OutputToString()
 
-		lmount := podmanTest.Podman([]string{"mount", "--notruncate"})
+		lmount := podmanTest.Podman([]string{"mount", "--no-trunc"})
 		lmount.WaitWithDefaultTimeout()
 		Expect(lmount).Should(Exit(0))
 		Expect(lmount.OutputToString()).To(Equal(""))
@@ -270,6 +270,7 @@ var _ = Describe("Podman mount", func() {
 		mount.WaitWithDefaultTimeout()
 		Expect(mount).Should(Exit(0))
 
+		// test --notruncate alias
 		lmount = podmanTest.Podman([]string{"mount", "--notruncate"})
 		lmount.WaitWithDefaultTimeout()
 		Expect(lmount).Should(Exit(0))
@@ -331,7 +332,7 @@ var _ = Describe("Podman mount", func() {
 		j := podmanTest.Podman([]string{"image", "mount", "--format=json"})
 		j.WaitWithDefaultTimeout()
 		Expect(j).Should(Exit(0))
-		Expect(j.IsJSONOutputValid()).To(BeTrue())
+		Expect(j.OutputToString()).To(BeValidJSON())
 
 		umount := podmanTest.Podman([]string{"image", "umount", fedoraMinimal})
 		umount.WaitWithDefaultTimeout()
@@ -347,7 +348,7 @@ var _ = Describe("Podman mount", func() {
 		umount := podmanTest.Podman([]string{"image", "umount", "--all"})
 		umount.WaitWithDefaultTimeout()
 		Expect(umount).Should(Exit(0))
-		Expect(len(umount.OutputToStringArray())).To(Equal(1))
+		Expect(umount.OutputToStringArray()).To(HaveLen(1))
 	})
 
 	It("podman mount many", func() {

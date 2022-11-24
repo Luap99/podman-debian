@@ -1,11 +1,11 @@
-![PODMAN logo](../../logo/podman-logo-source.svg)
+![PODMAN logo](https://raw.githubusercontent.com/containers/common/main/logos/podman-logo-full-vert.png)
 
 # Basic Setup and Use of Podman
 Podman is a utility provided as part of the libpod library.  It can be used to create and maintain
 containers. The following tutorial will teach you how to set up Podman and perform some basic
 commands with Podman.
 
-If you are running on a Mac or Windows PC, you should instead follow the [Mac and Windows tutorial](https://github.com/containers/podman/blob/master/docs/tutorials/mac_win_client.md)
+If you are running on a Mac or Windows PC, you should instead follow the [Mac and Windows tutorial](https://github.com/containers/podman/blob/main/docs/tutorials/mac_win_client.md)
 to set up the remote Podman client.
 
 **NOTE**: the code samples are intended to be run as a non-root user, and use `sudo` where
@@ -13,7 +13,7 @@ root escalation is required.
 
 ## Installing Podman
 
-For installing or building Podman, please see the [installation instructions](https://github.com/containers/podman/blob/master/install.md).
+For installing or building Podman, please see the [installation instructions](https://podman.io/getting-started/installation).
 
 ## Familiarizing yourself with Podman
 
@@ -142,7 +142,7 @@ podman rm --latest
 You can verify the deletion of the container by running *podman ps -a*.
 
 ## Integration Tests
-For more information on how to setup and run the integration tests in your environment, checkout the Integration Tests [README.md](../../test/README.md)
+For more information on how to set up and run the integration tests in your environment, checkout the Integration Tests [README.md](../../test/README.md)
 
 ## More information
 

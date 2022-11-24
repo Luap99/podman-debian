@@ -1,4 +1,4 @@
-% podman-volume-inspect(1)
+% podman-volume-inspect 1
 
 ## NAME
 podman\-volume\-inspect - Get detailed information on one or more volumes
@@ -20,7 +20,7 @@ Volumes can be queried individually by providing their full name or a unique par
 
 Inspect all volumes.
 
-#### **--format**=*format*, **-f**
+#### **--format**, **-f**=*format*
 
 Format volume output using Go template
 
@@ -40,7 +40,7 @@ $ podman volume inspect --format "{{.Driver}} {{.Scope}}" myvol
 ```
 
 ## SEE ALSO
-**[podman(1)](podman.1.md)**,**[podman-volume(1)](podman-volume.1.md)**, **[podman-inspect(1)](podman-inspect.1.md)**
+**[podman(1)](podman.1.md)**, **[podman-volume(1)](podman-volume.1.md)**, **[podman-inspect(1)](podman-inspect.1.md)**
 
 ## HISTORY
 November 2018, Originally compiled by Urvashi Mohnani <umohnani@redhat.com>

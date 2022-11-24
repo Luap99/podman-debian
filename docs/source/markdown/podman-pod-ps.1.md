@@ -1,4 +1,4 @@
-% podman-pod-ps(1)
+% podman-pod-ps 1
 
 ## NAME
 podman\-pod\-ps - Prints out information about pods
@@ -28,37 +28,48 @@ By default it lists:
 
 ## OPTIONS
 
-#### **--ctr-names**
-
-Display the container names
-
 #### **--ctr-ids**
 
 Display the container IDs
+
+#### **--ctr-names**
+
+Display the container names
 
 #### **--ctr-status**
 
 Display the container statuses
 
-#### **--latest**, **-l**
+#### **--filter**, **-f**=*filter*
 
-Show the latest pod created (all states) (This option is not available with the remote Podman client)
+Provide filter values.
 
-#### **--noheading**
+The *filters* argument format is of `key=value`. If there is more than one *filter*, then pass multiple OPTIONS: **--filter** *foo=bar* **--filter** *bif=baz*.
 
-Omit the table headings from the listing of pods.
+Supported filters:
 
-#### **--no-trunc**
+|   Filter    |   Description                                                                                      |
+| ----------  | -------------------------------------------------------------------------------------------------- |
+| *ctr-ids*   | Filter by container ID within the pod.                                                             |
+| *ctr-names* | Filter by container name within the pod.                                                           |
+| *ctr-number*| Filter by number of containers in the pod.                                                         |
+| *ctr-status*| Filter by container status within the pod.                                                         |
+| *id*        | Filter by pod ID.                                                                                  |
+| *label*     | Filter by container with (or without, in the case of label!=[...] is used) the specified labels.   |
+| *name*      | Filter by pod name.                                                                                |
+| *network*   | Filter by network name or full ID of network.                                                      |
+| *status*    | Filter by pod status.                                                                              |
+| *until*     | Filter by pods created before given timestamp.                                                     |
 
-Display the extended information
+The `ctr-ids`, `ctr-names`, `id`, `name` filters accept `regex` format.
 
-#### **--ns**
+The `ctr-status` filter accepts values: `created`, `running`, `paused`, `stopped`, `exited`, `unknown`.
 
-Display namespace information of the pod
+The `label` *filter* accepts two formats. One is the `label`=*key* or `label`=*key*=*value*, which removes containers with the specified labels. The other format is the `label!`=*key* or `label!`=*key*=*value*, which removes containers without the specified labels.
 
-#### **--quiet**, **-q**
+The `until` *filter* can be Unix timestamps, date formatted timestamps, or Go duration strings (e.g. 10m, 1h30m) computed relative to the machine’s time.
 
-Print the numeric IDs of the pods only
+The `status` filter accepts values: `stopped`, `running`, `paused`, `exited`, `dead`, `created`, `degraded`.
 
 #### **--format**=*format*
 
@@ -78,37 +89,35 @@ Valid placeholders for the Go template are listed below:
 | .InfraID            | Pod infra container ID                                                                          |
 | .Networks           | Show all networks connected to the infra container                                              |
 
+#### **--help**, **-h**
+
+Print usage statement
+
+#### **--latest**, **-l**
+
+Show the latest pod created (all states) (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
+
+#### **--namespace**, **--ns**
+
+Display namespace information of the pod
+
+#### **--no-trunc**
+
+Do not truncate the output (default *false*).
+
+#### **--noheading**
+
+Omit the table headings from the listing of pods.
+
+#### **--quiet**, **-q**
+
+Print the numeric IDs of the pods only
+
 #### **--sort**
 
 Sort by created, ID, name, status, or number of containers
 
 Default: created
-
-#### **--filter**, **-f**=*filter*
-
-Filter output based on conditions given.
-Multiple filters can be given with multiple uses of the --filter flag.
-Filters with the same key work inclusive with the only exception being
-`label` which is exclusive. Filters with different keys always work exclusive.
-
-Valid filters are listed below:
-
-| **Filter** | **Description**                                                                       |
-| ---------- | ------------------------------------------------------------------------------------- |
-| id         | [ID] Pod's ID (accepts regex)                                                         |
-| name       | [Name] Pod's name (accepts regex)                                                     |
-| label      | [Key] or [Key=Value] Label assigned to a container                                    |
-| until      | Only list pods created before given timestamp                                         |
-| status     | Pod's status: `stopped`, `running`, `paused`, `exited`, `dead`, `created`, `degraded` |
-| network    | [Network] name or full ID of network                                                  |
-| ctr-names  | Container name within the pod (accepts regex)                                         |
-| ctr-ids    | Container ID within the pod (accepts regex)                                           |
-| ctr-status | Container status within the pod                                                       |
-| ctr-number | Number of containers in the pod                                                       |
-
-#### **--help**, **-h**
-
-Print usage statement
 
 ## EXAMPLES
 
@@ -169,7 +178,7 @@ POD ID         NAME   STATUS    CREATED        INFRA ID       NAMES
 Print a list of pods
 
 ## SEE ALSO
-podman-pod(1)
+**[podman(1)](podman.1.md)**, **[podman-pod(1)](podman-pod.1.md)**
 
 ## HISTORY
 July 2018, Originally compiled by Peter Hunt <pehunt@redhat.com>

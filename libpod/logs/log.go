@@ -1,6 +1,7 @@
 package logs
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -8,9 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/containers/podman/v3/libpod/logs/reversereader"
-	"github.com/hpcloud/tail"
-	"github.com/pkg/errors"
+	"github.com/containers/podman/v4/libpod/logs/reversereader"
+	"github.com/nxadm/tail"
 	"github.com/sirupsen/logrus"
 )
 
@@ -27,6 +27,9 @@ const (
 
 	// FullLogType signifies a log line is full
 	FullLogType = "F"
+
+	// ANSIEscapeResetCode is a code that resets all colors and text effects
+	ANSIEscapeResetCode = "\033[0m"
 )
 
 // LogOptions is the options you can use for logs
@@ -37,6 +40,7 @@ type LogOptions struct {
 	Until      time.Time
 	Tail       int64
 	Timestamps bool
+	Colors     bool
 	Multi      bool
 	WaitGroup  *sync.WaitGroup
 	UseName    bool
@@ -50,6 +54,7 @@ type LogLine struct {
 	Msg          string
 	CID          string
 	CName        string
+	ColorID      int64
 }
 
 // GetLogFile returns an hp tail for a container given options
@@ -100,7 +105,7 @@ func getTailLog(path string, tail int) ([]*LogLine, error) {
 		for {
 			s, err := rr.Read()
 			if err != nil {
-				if errors.Cause(err) == io.EOF {
+				if errors.Is(err, io.EOF) {
 					inputs <- []string{leftover}
 				} else {
 					logrus.Error(err)
@@ -162,6 +167,24 @@ func getTailLog(path string, tail int) ([]*LogLine, error) {
 	return tailLog, nil
 }
 
+// getColor returns a ANSI escape code for color based on the colorID
+func getColor(colorID int64) string {
+	colors := map[int64]string{
+		0: "\033[37m", // Light Gray
+		1: "\033[31m", // Red
+		2: "\033[33m", // Yellow
+		3: "\033[34m", // Blue
+		4: "\033[35m", // Magenta
+		5: "\033[36m", // Cyan
+		6: "\033[32m", // Green
+	}
+	return colors[colorID%int64(len(colors))]
+}
+
+func (l *LogLine) colorize(prefix string) string {
+	return getColor(l.ColorID) + prefix + l.Msg + ANSIEscapeResetCode
+}
+
 // String converts a log line to a string for output given whether a detail
 // bool is specified.
 func (l *LogLine) String(options *LogOptions) string {
@@ -177,10 +200,18 @@ func (l *LogLine) String(options *LogOptions) string {
 			out = fmt.Sprintf("%s ", cid)
 		}
 	}
+
 	if options.Timestamps {
 		out += fmt.Sprintf("%s ", l.Time.Format(LogTimeFormat))
 	}
-	return out + l.Msg
+
+	if options.Colors {
+		out = l.colorize(out)
+	} else {
+		out += l.Msg
+	}
+
+	return out
 }
 
 // Since returns a bool as to whether a log line occurred after a given time
@@ -197,11 +228,11 @@ func (l *LogLine) Until(until time.Time) bool {
 func NewLogLine(line string) (*LogLine, error) {
 	splitLine := strings.Split(line, " ")
 	if len(splitLine) < 4 {
-		return nil, errors.Errorf("'%s' is not a valid container log line", line)
+		return nil, fmt.Errorf("'%s' is not a valid container log line", line)
 	}
 	logTime, err := time.Parse(LogTimeFormat, splitLine[0])
 	if err != nil {
-		return nil, errors.Wrapf(err, "unable to convert time %s from container log", splitLine[0])
+		return nil, fmt.Errorf("unable to convert time %s from container log: %w", splitLine[0], err)
 	}
 	l := LogLine{
 		Time:         logTime,
@@ -218,11 +249,11 @@ func NewLogLine(line string) (*LogLine, error) {
 func NewJournaldLogLine(line string, withID bool) (*LogLine, error) {
 	splitLine := strings.Split(line, " ")
 	if len(splitLine) < 4 {
-		return nil, errors.Errorf("'%s' is not a valid container log line", line)
+		return nil, fmt.Errorf("'%s' is not a valid container log line", line)
 	}
 	logTime, err := time.Parse(LogTimeFormat, splitLine[0])
 	if err != nil {
-		return nil, errors.Wrapf(err, "unable to convert time %s from container log", splitLine[0])
+		return nil, fmt.Errorf("unable to convert time %s from container log: %w", splitLine[0], err)
 	}
 	var msg, id string
 	if withID {
@@ -251,14 +282,22 @@ func (l *LogLine) Write(stdout io.Writer, stderr io.Writer, logOpts *LogOptions)
 	switch l.Device {
 	case "stdout":
 		if stdout != nil {
-			fmt.Fprintln(stdout, l.String(logOpts))
+			if l.Partial() {
+				fmt.Fprint(stdout, l.String(logOpts))
+			} else {
+				fmt.Fprintln(stdout, l.String(logOpts))
+			}
 		}
 	case "stderr":
 		if stderr != nil {
-			fmt.Fprintln(stderr, l.String(logOpts))
+			if l.Partial() {
+				fmt.Fprint(stderr, l.String(logOpts))
+			} else {
+				fmt.Fprintln(stderr, l.String(logOpts))
+			}
 		}
 	default:
 		// Warn the user if the device type does not match. Most likely the file is corrupted.
-		logrus.Warnf("unknown Device type '%s' in log file from Container %s", l.Device, l.CID)
+		logrus.Warnf("Unknown Device type '%s' in log file from Container %s", l.Device, l.CID)
 	}
 }

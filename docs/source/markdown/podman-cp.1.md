@@ -1,4 +1,4 @@
-% podman-cp(1)
+% podman-cp 1
 
 ## NAME
 podman\-cp - Copy files/folders between a container and the local filesystem
@@ -56,12 +56,16 @@ Further note that `podman cp` does not support globbing (e.g., `cp dir/*.txt`). 
 
 ## OPTIONS
 
-#### **--archive**, **-a**=**true** | *false*
+#### **--archive**, **-a**
 
 Archive mode (copy all uid/gid information).
 When set to true, files copied to a container will have changed ownership to the primary UID/GID of the container.
 When set to false, maintain uid/gid from archive sources instead of changing them to the primary uid/gid of the destination container.
 The default is **true**.
+
+#### **--overwrite**
+
+Allow directories to be overwritten with non-directories and vice versa.  By default, `podman cp` errors out when attempting to overwrite, for instance, a regular file with a directory.  Use this option, if you want to allow this behavior.
 
 ## ALTERNATIVES
 

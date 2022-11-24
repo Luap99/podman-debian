@@ -22,10 +22,8 @@ load helpers
     # The initial SIGTERM is ignored, so this operation should take
     # exactly 10 seconds. Give it some leeway.
     delta_t=$(( $t1 - $t0 ))
-    [ $delta_t -gt 8 ]  ||\
-        die "podman stop: ran too quickly! ($delta_t seconds; expected >= 10)"
-    [ $delta_t -le 14 ] ||\
-        die "podman stop: took too long ($delta_t seconds; expected ~10)"
+    assert $delta_t -gt  8 "podman stop: ran too quickly!"
+    assert $delta_t -le 14 "podman stop: took too long"
 
     run_podman rm $cid
 }
@@ -59,6 +57,22 @@ load helpers
     is "${lines[1]}" "c2--Exited.*"  "ps -a, second stopped container"
     is "${lines[2]}" "c3--Exited.*"  "ps -a, third stopped container"
     is "${lines[3]}" "c4--Created.*" "ps -a, created container (unaffected)"
+}
+
+@test "podman stop print IDs or raw input" {
+    # stop -a must print the IDs
+    run_podman run -d $IMAGE top
+    ctrID="$output"
+    run_podman stop --all
+    is "$output" "$ctrID"
+
+    # stop $input must print $input
+    cname=$(random_string)
+    run_podman run -d --name $cname $IMAGE top
+    run_podman stop $cname
+    is "$output" $cname
+
+    run_podman rm -t 0 -f $ctrID $cname
 }
 
 # #9051 : podman stop --ignore was not working with podman-remote
@@ -103,8 +117,7 @@ load helpers
 
         # The 'stop' command should return almost instantaneously
         delta_t=$(( $t1 - $t0 ))
-        [ $delta_t -le 2 ] ||\
-            die "podman stop: took too long ($delta_t seconds; expected <= 2)"
+        assert $delta_t -le 2 "podman stop: took too long"
 
         run_podman rm $cid
     done
@@ -138,9 +151,7 @@ load helpers
             break
         fi
         timeout=$((timeout - 1))
-        if [[ $timeout -eq 0 ]]; then
-            die "Timed out waiting for container to receive SIGERM"
-        fi
+        assert $timeout -gt 0 "Timed out waiting for container to receive SIGTERM"
         sleep 0.5
     done
 
@@ -154,9 +165,7 @@ load helpers
     # Time check: make sure we were able to run 'ps' before the container
     # exited. If this takes too long, it means ps had to wait for lock.
     local delta_t=$(( $SECONDS - t0 ))
-    if [[ $delta_t -gt 5 ]]; then
-        die "Operations took too long ($delta_t seconds)"
-    fi
+    assert $delta_t -le 5 "Operations took too long"
 
     run_podman kill stopme
     run_podman wait stopme
@@ -166,4 +175,31 @@ load helpers
     is "$output" "137" "Exit code of killed container"
 }
 
+@test "podman stop -t 1 Generate warning" {
+    skip_if_remote "warning only happens on server side"
+    run_podman run --rm --name stopme -d $IMAGE sleep 100
+    run_podman stop -t 1 stopme
+    is "$output" ".*StopSignal SIGTERM failed to stop container stopme in 1 seconds, resorting to SIGKILL"  "stopping container should print warning"
+}
+
+@test "podman stop --noout" {
+    run_podman run --rm --name stopme -d $IMAGE top
+    run_podman --noout stop -t 0 stopme
+    is "$output" "" "output should be empty"
+}
+
+@test "podman stop, with --rm container" {
+    OCIDir=/run/$(podman_runtime)
+
+    if is_rootless; then
+        OCIDir=/run/user/$(id -u)/$(podman_runtime)
+    fi
+
+    run_podman run --rm -d --name rmstop $IMAGE sleep infinity
+    local cid="$output"
+    run_podman stop rmstop
+
+    # Check the OCI runtime directory has removed.
+    is "$(ls $OCIDir | grep $cid)" "" "The OCI runtime directory should have been removed"
+}
 # vim: filetype=sh

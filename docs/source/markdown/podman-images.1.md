@@ -1,14 +1,14 @@
-% podman-images(1)
+% podman-images 1
 
 ## NAME
 podman\-images - List images in local storage
 
 ## SYNOPSIS
-**podman images** [*options*]
+**podman images** [*options*] [image]
 
-**podman image list** [*options*]
+**podman image list** [*options*] [image]
 
-**podman image ls** [*options*]
+**podman image ls** [*options*] [image]
 
 ## DESCRIPTION
 Displays locally stored images, their names, and their IDs.
@@ -23,29 +23,49 @@ Show all images (by default filter out the intermediate image layers). The defau
 
 Show image digests
 
-#### **--filter**=*filter*, **-f**
+#### **--filter**, **-f**=*filter*
 
-Filter output based on conditions provided
+Provide filter values.
 
-  Filters:
+The *filters* argument format is of `key=value` or `key!=value`. If there is more than one *filter*, then pass multiple OPTIONS: **--filter** *foo=bar* **--filter** *bif=baz*.
 
-  **since=IMAGE**
-    Filter on images created after the given IMAGE (name or tag).
+Supported filters:
 
-  **before=IMAGE**
-    Filter on images created before the given IMAGE (name or tag).
+| Filter             | Description                                                                                   |
+| :----------------: | --------------------------------------------------------------------------------------------- |
+| *id*               | Filter by image id.                                                                           |
+| *before*           | Filter by images created before the given IMAGE (name or tag).                                |
+| *containers*       | Filter by images with a running container.                                                    |
+| *dangling*         | Filter by dangling (unused) images.                                                           |
+| *intermediate*     | Filter by images that are dangling and have no children                                       |
+| *label*            | Filter by images with (or without, in the case of label!=[...] is used) the specified labels. |
+| *manifest*         | Filter by images that are manifest lists.                                                     |
+| *readonly*         | Filter by read-only or read/write images.                                                     |
+| *reference*        | Filter by image name.                                                                         |
+| *after*/*since*    | Filter by images created after the given IMAGE (name or tag).                                 |
+| *until*            | Filter by images created until the given duration or time.                                    |
 
-  **dangling=true|false**
-    Show dangling images. Dangling images are a file system layer that was used in a previous build of an image and is no longer referenced by any image. They are denoted with the `<none>` tag, consume disk space and serve no active purpose.
+The `id` *filter* accepts the image id string.
 
-  **label**
-    Filter by images labels key and/or value.
+The `before` *filter* accepts formats: `<image-name>[:<tag>]`, `<image id>` or `<image@digest>`.
 
-  **readonly=true|false**
-     Show only read only images or Read/Write images. The default is to show both.  Read/Only images can be configured by modifying the  "additionalimagestores" in the /etc/containers/storage.conf file.
+The `containers` *filter* shows images that have a running container based on that image.
 
-  **reference=**
-     Filter by image name, specified as regular expressions.
+The `dangling` *filter* shows images that are taking up disk space and serve no purpose. Dangling image is a file system layer that was used in a previous build of an image and is no longer referenced by any image. They are denoted with the `<none>` tag, consume disk space and serve no active purpose.
+
+The `intermediate` *filter* shows images that are dangling and have no children.
+
+The `label` *filter* accepts two formats. One is the `label`=*key* or `label`=*key*=*value*, which shows images with the specified labels. The other format is the `label!`=*key* or `label!`=*key*=*value*, which shows images without the specified labels.
+
+The `manifest` *filter* shows images that are manifest lists.
+
+The `readonly` *filter* shows, as a default, both read-only and read/write images. Read-only images can be configured by modifying the  `additionalimagestores` in the `/etc/containers/storage.conf` file.
+
+The `reference` *filter* accepts the pattern of an image reference `<image-name>[:<tag>]`.
+
+The `after` or `since` *filter* accepts formats: `<image-name>[:<tag>]`, `<image id>` or `<image@digest>`.
+
+The `until` *filter* accepts formats: golang duration, RFC3339 time, or a Unix timestamp and shows all images that are created until that time.
 
 #### **--format**=*format*
 
@@ -68,13 +88,13 @@ Valid placeholders for the Go template are listed below:
 
 Display the history of image names.  If an image gets re-tagged or untagged, then the image name history gets prepended (latest image first).  This is especially useful when undoing a tag operation or an image does not contain any name because it has been untagged.
 
+#### **--no-trunc**
+
+Do not truncate the output (default *false*).
+
 #### **--noheading**, **-n**
 
 Omit the table headings from the listing of images.
-
-#### **--no-trunc**
-
-Do not truncate output.
 
 #### **--quiet**, **-q**
 
@@ -82,20 +102,27 @@ Lists only the image IDs.
 
 #### **--sort**=*sort*
 
-Sort by created, id, repository, size or tag (default: created)
+Sort by *created*, *id*, *repository*, *size* or *tag* (default: **created**)
 
 ## EXAMPLE
 
 ```
-# podman images
-REPOSITORY                                   TAG      IMAGE ID       CREATED       SIZE
-docker.io/kubernetes/pause                   latest   e3d42bcaf643   3 years ago   251 kB
-<none>                                       <none>   ebb91b73692b   4 weeks ago   27.2 MB
-docker.io/library/ubuntu                     latest   4526339ae51c   6 weeks ago   126 MB
+$ podman images
+REPOSITORY                         TAG         IMAGE ID      CREATED       SIZE
+quay.io/podman/stable              latest      e0b7dabc3352  22 hours ago  331 MB
+docker.io/library/alpine           latest      9c6f07244728  5 days ago    5.83 MB
+registry.fedoraproject.org/fedora  latest      2ecb6df95994  3 weeks ago   169 MB
+quay.io/libpod/testimage           20220615    f26aa69bb3f3  2 months ago  8.4 MB
 ```
 
 ```
-# podman images --quiet
+$ podman images stable
+REPOSITORY             TAG         IMAGE ID      CREATED       SIZE
+quay.io/podman/stable  latest      e0b7dabc3352  22 hours ago  331 MB
+```
+
+```
+# podman image ls --quiet
 e3d42bcaf643
 ebb91b73692b
 4526339ae51c
@@ -109,7 +136,7 @@ docker.io/library/ubuntu                     latest   4526339ae51c   6 weeks ago
 ```
 
 ```
-# podman images --no-trunc
+# podman image list --no-trunc
 REPOSITORY                                   TAG      IMAGE ID                                                                  CREATED       SIZE
 docker.io/kubernetes/pause                   latest   sha256:e3d42bcaf643097dd1bb0385658ae8cbe100a80f773555c44690d22c25d16b27   3 years ago   251 kB
 <none>                                       <none>   sha256:ebb91b73692bd27890685846412ae338d13552165eacf7fcd5f139bfa9c2d6d9   4 weeks ago   27.2 MB
@@ -188,7 +215,7 @@ docker.io/library/alpine   latest   3fd9065eaf02   5 months ago    4.41 MB
 ```
 
 ## SEE ALSO
-podman(1), containers-storage.conf(5)
+**[podman(1)](podman.1.md)**, **[containers-storage.conf(5)](https://github.com/containers/storage/blob/main/docs/containers-storage.conf.5.md)**
 
 ## HISTORY
 March 2017, Originally compiled by Dan Walsh `<dwalsh@redhat.com>`

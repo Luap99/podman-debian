@@ -1,4 +1,4 @@
-% podman-history(1)
+% podman-history 1
 
 ## NAME
 podman\-history - Show the history of an image
@@ -17,40 +17,40 @@ set, the time of creation and size are printed out in a human readable format.
 The **--quiet** flag displays the ID of the image only when set and the **--format**
 flag is used to print the information using the Go template provided by the user.
 
+## OPTIONS
+
+#### **--format**=*format*
+
+Alter the output for a format like 'json' or a Go template.
+
 Valid placeholders for the Go template are listed below:
 
 | **Placeholder** | **Description**                                                               |
 | --------------- | ----------------------------------------------------------------------------- |
 | .ID             | Image ID                                                                      |
 | .Created        | if --human, time elapsed since creation, otherwise time stamp of creation     |
-| .CreatedBy      | Command used to create the layer                                              |
-| .Size           | Size of layer on disk                                                         |
-| .Comment        | Comment for the layer                                                         |
-
-## OPTIONS
-
-#### **--human**, **-H**=*true|false*
-
-Display sizes and dates in human readable format (default *true*).
-
-#### **--no-trunc**=*true|false*
-
-Do not truncate the output (default *false*).
-
-#### **--notruncate**
-
-Do not truncate the output
-
-#### **--quiet**, **-q**=*true|false*
-
-Print the numeric IDs only (default *false*).
-#### **--format**=*format*
-
-Alter the output for a format like 'json' or a Go template.
+| .CreatedAt      | Time when the image layer was created                |
+| .CreatedBy      | Command used to create the layer                     |
+| .CreatedSince   | Elapsed time since the image layer was created       |
+| .Size           | Size of layer on disk                                |
+| .Comment        | Comment for the layer                                |
+| .Tags           | Image tags |
 
 #### **--help**, **-h**
 
 Print usage statement
+
+#### **--human**, **-H**
+
+Display sizes and dates in human readable format (default *true*).
+
+#### **--no-trunc**
+
+Do not truncate the output (default *false*).
+
+#### **--quiet**, **-q**
+
+Print the numeric IDs only (default *false*).
 
 ## EXAMPLES
 
@@ -95,7 +95,7 @@ $ podman history --format json debian
 ```
 
 ## SEE ALSO
-podman(1)
+**[podman(1)](podman.1.md)**
 
 ## HISTORY
 July 2017, Originally compiled by Urvashi Mohnani <umohnani@redhat.com>

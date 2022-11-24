@@ -3,15 +3,13 @@ package containers
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"strings"
 
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/pkg/errors"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/spf13/cobra"
 )
 
@@ -77,6 +75,7 @@ func commitFlags(cmd *cobra.Command) {
 
 	flags.BoolVarP(&commitOptions.Pause, "pause", "p", false, "Pause container during commit")
 	flags.BoolVarP(&commitOptions.Quiet, "quiet", "q", false, "Suppress output")
+	flags.BoolVarP(&commitOptions.Squash, "squash", "s", false, "squash newly built layers into a single new layer")
 	flags.BoolVar(&commitOptions.IncludeVolumes, "include-volumes", false, "Include container volumes as image volumes")
 }
 
@@ -107,8 +106,8 @@ func commit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if len(iidFile) > 0 {
-		if err = ioutil.WriteFile(iidFile, []byte(response.Id), 0644); err != nil {
-			return errors.Wrap(err, "failed to write image ID")
+		if err = os.WriteFile(iidFile, []byte(response.Id), 0644); err != nil {
+			return fmt.Errorf("failed to write image ID: %w", err)
 		}
 	}
 	fmt.Println(response.Id)

@@ -1,3 +1,4 @@
+//go:build linux || darwin
 // +build linux darwin
 
 package utils
@@ -5,17 +6,16 @@ package utils
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/containers/podman/v3/pkg/cgroups"
-	"github.com/containers/podman/v3/pkg/rootless"
+	"github.com/containers/common/pkg/cgroups"
+	"github.com/containers/podman/v4/pkg/rootless"
 	systemdDbus "github.com/coreos/go-systemd/v22/dbus"
 	"github.com/godbus/dbus/v5"
-	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
 
@@ -31,7 +31,7 @@ func RunUnderSystemdScope(pid int, slice string, unitName string) error {
 			return err
 		}
 	} else {
-		conn, err = systemdDbus.New()
+		conn, err = systemdDbus.NewWithContext(context.Background())
 		if err != nil {
 			return err
 		}
@@ -42,10 +42,10 @@ func RunUnderSystemdScope(pid int, slice string, unitName string) error {
 	properties = append(properties, newProp("Delegate", true))
 	properties = append(properties, newProp("DefaultDependencies", false))
 	ch := make(chan string)
-	_, err = conn.StartTransientUnit(unitName, "replace", properties, ch)
+	_, err = conn.StartTransientUnitContext(context.Background(), unitName, "replace", properties, ch)
 	if err != nil {
 		// On errors check if the cgroup already exists, if it does move the process there
-		if props, err := conn.GetUnitTypeProperties(unitName, "Scope"); err == nil {
+		if props, err := conn.GetUnitTypePropertiesContext(context.Background(), unitName, "Scope"); err == nil {
 			if cgroup, ok := props["ControlGroup"].(string); ok && cgroup != "" {
 				if err := moveUnderCgroup(cgroup, "", []uint32{uint32(pid)}); err == nil {
 					return nil
@@ -62,7 +62,7 @@ func RunUnderSystemdScope(pid int, slice string, unitName string) error {
 	return nil
 }
 
-func getCgroupProcess(procFile string) (string, error) {
+func getCgroupProcess(procFile string, allowRoot bool) (string, error) {
 	f, err := os.Open(procFile)
 	if err != nil {
 		return "", err
@@ -70,12 +70,12 @@ func getCgroupProcess(procFile string) (string, error) {
 	defer f.Close()
 
 	scanner := bufio.NewScanner(f)
-	cgroup := "/"
+	cgroup := ""
 	for scanner.Scan() {
 		line := scanner.Text()
 		parts := strings.SplitN(line, ":", 3)
 		if len(parts) != 3 {
-			return "", errors.Errorf("cannot parse cgroup line %q", line)
+			return "", fmt.Errorf("cannot parse cgroup line %q", line)
 		}
 		if strings.HasPrefix(line, "0::") {
 			cgroup = line[3:]
@@ -85,20 +85,24 @@ func getCgroupProcess(procFile string) (string, error) {
 			cgroup = parts[2]
 		}
 	}
-	if cgroup == "/" {
-		return "", errors.Errorf("could not find cgroup mount in %q", procFile)
+	if len(cgroup) == 0 || (!allowRoot && cgroup == "/") {
+		return "", fmt.Errorf("could not find cgroup mount in %q", procFile)
 	}
 	return cgroup, nil
 }
 
 // GetOwnCgroup returns the cgroup for the current process.
 func GetOwnCgroup() (string, error) {
-	return getCgroupProcess("/proc/self/cgroup")
+	return getCgroupProcess("/proc/self/cgroup", true)
+}
+
+func GetOwnCgroupDisallowRoot() (string, error) {
+	return getCgroupProcess("/proc/self/cgroup", false)
 }
 
 // GetCgroupProcess returns the cgroup for the specified process process.
 func GetCgroupProcess(pid int) (string, error) {
-	return getCgroupProcess(fmt.Sprintf("/proc/%d/cgroup", pid))
+	return getCgroupProcess(fmt.Sprintf("/proc/%d/cgroup", pid), true)
 }
 
 // MoveUnderCgroupSubtree moves the PID under a cgroup subtree.
@@ -127,11 +131,11 @@ func moveUnderCgroup(cgroup, subtree string, processes []uint32) error {
 		line := scanner.Text()
 		parts := strings.SplitN(line, ":", 3)
 		if len(parts) != 3 {
-			return errors.Errorf("cannot parse cgroup line %q", line)
+			return fmt.Errorf("cannot parse cgroup line %q", line)
 		}
 
 		// root cgroup, skip it
-		if parts[2] == "/" {
+		if parts[2] == "/" && !(unifiedMode && parts[1] == "") {
 			continue
 		}
 
@@ -176,7 +180,7 @@ func moveUnderCgroup(cgroup, subtree string, processes []uint32) error {
 				}
 			}
 		} else {
-			processesData, err := ioutil.ReadFile(filepath.Join(cgroupRoot, parts[2], "cgroup.procs"))
+			processesData, err := os.ReadFile(filepath.Join(cgroupRoot, parts[2], "cgroup.procs"))
 			if err != nil {
 				return err
 			}

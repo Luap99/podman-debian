@@ -6,12 +6,12 @@ import (
 	"os"
 	"strings"
 
-	"github.com/containers/podman/v3/cmd/podman/common"
-	"github.com/containers/podman/v3/cmd/podman/registry"
-	"github.com/containers/podman/v3/cmd/podman/utils"
-	"github.com/containers/podman/v3/cmd/podman/validate"
-	"github.com/containers/podman/v3/pkg/domain/entities"
-	"github.com/containers/podman/v3/pkg/specgenutil"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/parse"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/utils"
+	"github.com/containers/podman/v4/cmd/podman/validate"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -52,10 +52,7 @@ func init() {
 }
 
 func networkPrune(cmd *cobra.Command, _ []string) error {
-	var (
-		errs utils.OutputErrors
-		err  error
-	)
+	var err error
 	if !force {
 		reader := bufio.NewReader(os.Stdin)
 		fmt.Println("WARNING! This will remove all networks not used by at least one container.")
@@ -68,7 +65,7 @@ func networkPrune(cmd *cobra.Command, _ []string) error {
 			return nil
 		}
 	}
-	networkPruneOptions.Filters, err = specgenutil.ParseFilters(filter)
+	networkPruneOptions.Filters, err = parse.FilterArgumentsIntoFilters(filter)
 	if err != nil {
 		return err
 	}
@@ -77,13 +74,5 @@ func networkPrune(cmd *cobra.Command, _ []string) error {
 		setExitCode(err)
 		return err
 	}
-	for _, r := range responses {
-		if r.Error == nil {
-			fmt.Println(r.Name)
-		} else {
-			setExitCode(r.Error)
-			errs = append(errs, r.Error)
-		}
-	}
-	return errs.PrintErrors()
+	return utils.PrintNetworkPruneResults(responses, false)
 }

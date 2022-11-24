@@ -1,4 +1,4 @@
-% podman-volume-export(1)
+% podman-volume-export 1
 
 ## NAME
 podman\-volume\-export - Exports volume to external tar
@@ -18,14 +18,13 @@ Note: Following command is not supported by podman-remote.
 
 ## OPTIONS
 
-#### **--output**, **-o**=*file*
-
-Write to a file, default is STDOUT
-
 #### **--help**
 
 Print usage statement
 
+#### **--output**, **-o**=*file*
+
+Write to a file, default is STDOUT
 
 ## EXAMPLES
 
@@ -35,4 +34,4 @@ $ podman volume export myvol --output myvol.tar
 ```
 
 ## SEE ALSO
-podman-volume(1), podman-volume-import(1)
+**[podman(1)](podman.1.md)**, **[podman-volume(1)](podman-volume.1.md)**, **[podman-volume-import(1)](podman-volume-import.1.md)**

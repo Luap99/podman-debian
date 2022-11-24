@@ -1,4 +1,4 @@
-% podman-image-tree(1)
+% podman-image-tree 1
 
 ## NAME
 podman\-image\-tree - Prints layer hierarchy of an image in a tree format
@@ -82,7 +82,7 @@ Image Layers
 
 
 ## SEE ALSO
-podman(1)
+**[podman(1)](podman.1.md)**
 
 ## HISTORY
 Feb 2019, Originally compiled by Kunal Kushwaha `<kushwaha_kunal_v7@lab.ntt.co.jp>`

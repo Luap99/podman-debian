@@ -5,7 +5,7 @@ import (
 	"os"
 	"sort"
 
-	. "github.com/containers/podman/v3/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	"github.com/containers/storage/pkg/stringid"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -26,7 +26,6 @@ var _ = Describe("Podman ps", func() {
 		}
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
-		podmanTest.SeedImages()
 	})
 
 	AfterEach(func() {
@@ -135,14 +134,14 @@ var _ = Describe("Podman ps", func() {
 		Expect(result).Should(Exit(0))
 
 		output := result.OutputToStringArray()
-		Expect(len(output)).To(Equal(2))
+		Expect(output).To(HaveLen(2))
 
 		result = podmanTest.Podman([]string{"pod", "ps", "-q", "--no-trunc", "--filter", "name=mypod$"})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
 
 		output = result.OutputToStringArray()
-		Expect(len(output)).To(Equal(1))
+		Expect(output).To(HaveLen(1))
 		Expect(output[0]).To(Equal(podid))
 	})
 
@@ -174,7 +173,7 @@ var _ = Describe("Podman ps", func() {
 	})
 
 	It("podman pod ps --ctr-names", func() {
-		SkipIfRootlessCgroupsV1("Not supported for rootless + CGroupsV1")
+		SkipIfRootlessCgroupsV1("Not supported for rootless + CgroupsV1")
 		_, ec, podid := podmanTest.CreatePod(nil)
 		Expect(ec).To(Equal(0))
 
@@ -295,11 +294,11 @@ var _ = Describe("Podman ps", func() {
 	})
 
 	It("podman pod ps filter network", func() {
-		net := stringid.GenerateNonCryptoID()
+		net := stringid.GenerateRandomID()
 		session := podmanTest.Podman([]string{"network", "create", net})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		defer podmanTest.removeCNINetwork(net)
+		defer podmanTest.removeNetwork(net)
 
 		session = podmanTest.Podman([]string{"pod", "create", "--network", net})
 		session.WaitWithDefaultTimeout()
@@ -334,16 +333,16 @@ var _ = Describe("Podman ps", func() {
 			Expect(session.OutputToString()).To(Equal("podman"))
 		}
 
-		net1 := stringid.GenerateNonCryptoID()
+		net1 := stringid.GenerateRandomID()
 		session = podmanTest.Podman([]string{"network", "create", net1})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		defer podmanTest.removeCNINetwork(net1)
-		net2 := stringid.GenerateNonCryptoID()
+		defer podmanTest.removeNetwork(net1)
+		net2 := stringid.GenerateRandomID()
 		session = podmanTest.Podman([]string{"network", "create", net2})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		defer podmanTest.removeCNINetwork(net2)
+		defer podmanTest.removeNetwork(net2)
 
 		session = podmanTest.Podman([]string{"pod", "create", "--network", net1 + "," + net2})
 		session.WaitWithDefaultTimeout()
@@ -368,7 +367,7 @@ var _ = Describe("Podman ps", func() {
 
 		infra := podmanTest.Podman([]string{"pod", "ps", "--format", "{{.InfraId}}"})
 		infra.WaitWithDefaultTimeout()
-		Expect(len(infra.OutputToString())).To(BeZero())
+		Expect(infra.OutputToString()).To(BeEmpty())
 	})
 
 	It("podman pod ps format with labels", func() {
