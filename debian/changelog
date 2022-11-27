@@ -1,3 +1,10 @@
+libpod (4.3.1+ds1-5) unstable; urgency=medium
+
+  * Drop golang-github-containers-libpod-dev
+  * Add a simple smoketest
+
+ -- Reinhard Tartler <siretart@tauware.de>  Sun, 27 Nov 2022 12:25:39 -0500
+
 libpod (4.3.1+ds1-4) unstable; urgency=medium
 
   * upload to unstable
