@@ -82,8 +82,6 @@ endif
 
 override_dh_auto_install:
 	dh_auto_install --destdir=debian/tmp --buildsystem=golang --builddirectory=_output
-	# avoid exposing unnecessary vendor libraries
-	rm -rfv debian/tmp/usr/share/gocode/src/github.com/containers/podman/vendor
 	# generate and install systemd unit files
 	make DESTDIR=debian/tmp PREFIX=/ LIBEXECDIR=/usr/lib/ BINDIR=/usr/bin install.systemd
 
