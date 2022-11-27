@@ -1,0 +1,4 @@
+Tests: info
+Depends: @
+Restrictions: needs-root, allow-stderr
+
