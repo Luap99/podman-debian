@@ -1,0 +1,18 @@
+#!/bin/sh -ex
+
+export DH_GOLANG_EXCLUDES="
+	contrib/perftest
+	dependencies
+	hack/podman-registry-go
+	pkg/bindings/test
+	podman/pkg/machine/e2e
+	test/e2e
+	test/endpoint
+	test/utils
+"
+
+dh_auto_configure -O--buildsystem=golang -O--builddirectory=_build
+dh_auto_build -O--buildsystem=golang -O--builddirectory=_build
+
+dh_auto_test -O--buildsystem=golang -O--builddirectory=_build --no-parallel -- -timeout 30m
+
