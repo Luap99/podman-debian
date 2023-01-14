@@ -29,8 +29,8 @@ Index: libpod/libpod/container_internal_test.go
 ===================================================================
 --- libpod.orig/libpod/container_internal_test.go
 +++ libpod/libpod/container_internal_test.go
-@@ -16,6 +16,7 @@ import (
- var hookPath string
+@@ -112,6 +112,7 @@ func TestParseIDMapMountOption(t *testin
+ }
  
  func TestPostDeleteHooks(t *testing.T) {
 +t.Skip("DM-skipped")
