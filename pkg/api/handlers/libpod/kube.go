@@ -19,15 +19,16 @@ func KubePlay(w http.ResponseWriter, r *http.Request) {
 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	query := struct {
-		Annotations map[string]string `schema:"annotations"`
-		Network     []string          `schema:"network"`
-		TLSVerify   bool              `schema:"tlsVerify"`
-		LogDriver   string            `schema:"logDriver"`
-		LogOptions  []string          `schema:"logOptions"`
-		Start       bool              `schema:"start"`
-		StaticIPs   []string          `schema:"staticIPs"`
-		StaticMACs  []string          `schema:"staticMACs"`
-		NoHosts     bool              `schema:"noHosts"`
+		Annotations  map[string]string `schema:"annotations"`
+		Network      []string          `schema:"network"`
+		TLSVerify    bool              `schema:"tlsVerify"`
+		LogDriver    string            `schema:"logDriver"`
+		LogOptions   []string          `schema:"logOptions"`
+		Start        bool              `schema:"start"`
+		StaticIPs    []string          `schema:"staticIPs"`
+		StaticMACs   []string          `schema:"staticMACs"`
+		NoHosts      bool              `schema:"noHosts"`
+		PublishPorts []string          `schema:"publishPorts"`
 	}{
 		TLSVerify: true,
 		Start:     true,
@@ -82,17 +83,19 @@ func KubePlay(w http.ResponseWriter, r *http.Request) {
 
 	containerEngine := abi.ContainerEngine{Libpod: runtime}
 	options := entities.PlayKubeOptions{
-		Annotations: query.Annotations,
-		Authfile:    authfile,
-		Username:    username,
-		Password:    password,
-		Networks:    query.Network,
-		NoHosts:     query.NoHosts,
-		Quiet:       true,
-		LogDriver:   logDriver,
-		LogOptions:  query.LogOptions,
-		StaticIPs:   staticIPs,
-		StaticMACs:  staticMACs,
+		Annotations:  query.Annotations,
+		Authfile:     authfile,
+		Username:     username,
+		Password:     password,
+		Networks:     query.Network,
+		NoHosts:      query.NoHosts,
+		Quiet:        true,
+		LogDriver:    logDriver,
+		LogOptions:   query.LogOptions,
+		StaticIPs:    staticIPs,
+		StaticMACs:   staticMACs,
+		IsRemote:     true,
+		PublishPorts: query.PublishPorts,
 	}
 	if _, found := r.URL.Query()["tlsVerify"]; found {
 		options.SkipTLSVerify = types.NewOptionalBool(!query.TLSVerify)
@@ -111,9 +114,20 @@ func KubePlay(w http.ResponseWriter, r *http.Request) {
 
 func KubePlayDown(w http.ResponseWriter, r *http.Request) {
 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
+	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
+	query := struct {
+		Force bool `schema:"force"`
+	}{
+		Force: false,
+	}
+
+	if err := decoder.Decode(&query, r.URL.Query()); err != nil {
+		utils.Error(w, http.StatusBadRequest, fmt.Errorf("failed to parse parameters for %s: %w", r.URL.String(), err))
+		return
+	}
+
 	containerEngine := abi.ContainerEngine{Libpod: runtime}
-	options := new(entities.PlayKubeDownOptions)
-	report, err := containerEngine.PlayKubeDown(r.Context(), r.Body, *options)
+	report, err := containerEngine.PlayKubeDown(r.Context(), r.Body, entities.PlayKubeDownOptions{Force: query.Force})
 	_ = r.Body.Close()
 	if err != nil {
 		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("tearing down YAML file: %w", err))
@@ -124,4 +138,30 @@ func KubePlayDown(w http.ResponseWriter, r *http.Request) {
 
 func KubeGenerate(w http.ResponseWriter, r *http.Request) {
 	GenerateKube(w, r)
+}
+
+func KubeApply(w http.ResponseWriter, r *http.Request) {
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
+	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
+	query := struct {
+		CACertFile string `schema:"caCertFile"`
+		Kubeconfig string `schema:"kubeconfig"`
+		Namespace  string `schema:"namespace"`
+	}{
+		// Defaults would go here.
+	}
+
+	if err := decoder.Decode(&query, r.URL.Query()); err != nil {
+		utils.Error(w, http.StatusBadRequest, fmt.Errorf("failed to parse parameters for %s: %w", r.URL.String(), err))
+		return
+	}
+
+	containerEngine := abi.ContainerEngine{Libpod: runtime}
+	options := entities.ApplyOptions{CACertFile: query.CACertFile, Kubeconfig: query.Kubeconfig, Namespace: query.Namespace}
+	if err := containerEngine.KubeApply(r.Context(), r.Body, options); err != nil {
+		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("error applying YAML to k8s cluster: %w", err))
+		return
+	}
+
+	utils.WriteResponse(w, http.StatusOK, "Deployed!")
 }

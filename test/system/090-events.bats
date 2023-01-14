@@ -17,7 +17,7 @@ load helpers
     is "$output" "$expect" "filtering by container name and label"
 
     # Same thing, but without the container-name filter
-    run_podman events -f type=container --filter label=${labelname}=${labelvalue} --filter event=start --stream=false
+    run_podman system events -f type=container --filter label=${labelname}=${labelvalue} --filter event=start --stream=false
     is "$output" "$expect" "filtering just by label"
 
     # Now filter just by container name, no label
@@ -248,4 +248,58 @@ EOF
     is "$output" "Error: cannot read events with the \"none\" backend" "correct error message"
     run_podman 125 --events-backend none events --stream=false
     is "$output" "Error: cannot read events with the \"none\" backend" "correct error message"
+}
+
+function _events_container_create_inspect_data {
+    containersConf=$PODMAN_TMPDIR/containers.conf
+    cat >$containersConf <<EOF
+[engine]
+events_logger="$1"
+events_container_create_inspect_data=true
+EOF
+
+    local cname=c$(random_string 15)
+    t0=$(date --iso-8601=seconds)
+
+    CONTAINERS_CONF=$containersConf run_podman create --name=$cname $IMAGE
+    CONTAINERS_CONF=$containersConf run_podman container inspect --size=true $cname
+    inspect_json=$(jq -r --tab . <<< "$output")
+
+    CONTAINERS_CONF=$containersConf run_podman --events-backend=$1 events \
+        --since="$t0"           \
+        --filter=status=$cname  \
+        --filter=status=create  \
+        --stream=false          \
+        --format="{{.ContainerInspectData}}"
+    events_json=$(jq -r --tab . <<< "[$output]")
+    assert "$inspect_json" = "$events_json" "JSON payload in event attributes is the same as the inspect one"
+
+    # Make sure that the inspect data doesn't show by default in
+    # podman-events.
+    CONTAINERS_CONF=$containersConf run_podman --events-backend=$1 events \
+        --since="$t0"           \
+        --filter=status=$cname  \
+        --filter=status=create  \
+        --stream=false
+    assert "$output" != ".*ConmonPidFile.*"
+    assert "$output" != ".*EffectiveCaps.*"
+}
+
+@test "events - container inspect data" {
+    skip_if_remote "remote does not support --events-backend"
+
+    _events_container_create_inspect_data journald
+    _events_container_create_inspect_data file
+}
+
+@test "events - docker compat" {
+    local cname=c$(random_string 15)
+    t0=$(date --iso-8601=seconds)
+    run_podman run --name=$cname --rm $IMAGE true
+    run_podman events \
+        --since="$t0"           \
+        --filter=status=$cname  \
+        --filter=status=die     \
+        --stream=false
+    is "${lines[0]}" ".* container died .* (image=$IMAGE, name=$cname, .*)"
 }

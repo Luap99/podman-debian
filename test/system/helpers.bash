@@ -2,14 +2,20 @@
 
 # Podman command to run; may be podman-remote
 PODMAN=${PODMAN:-podman}
+QUADLET=${QUADLET:-quadlet}
 
 # Standard image to use for most tests
 PODMAN_TEST_IMAGE_REGISTRY=${PODMAN_TEST_IMAGE_REGISTRY:-"quay.io"}
 PODMAN_TEST_IMAGE_USER=${PODMAN_TEST_IMAGE_USER:-"libpod"}
 PODMAN_TEST_IMAGE_NAME=${PODMAN_TEST_IMAGE_NAME:-"testimage"}
-PODMAN_TEST_IMAGE_TAG=${PODMAN_TEST_IMAGE_TAG:-"20220615"}
+PODMAN_TEST_IMAGE_TAG=${PODMAN_TEST_IMAGE_TAG:-"20221018"}
 PODMAN_TEST_IMAGE_FQN="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/$PODMAN_TEST_IMAGE_NAME:$PODMAN_TEST_IMAGE_TAG"
 PODMAN_TEST_IMAGE_ID=
+
+# Larger image containing systemd tools.
+PODMAN_SYSTEMD_IMAGE_NAME=${PODMAN_SYSTEMD_IMAGE_NAME:-"systemd-image"}
+PODMAN_SYSTEMD_IMAGE_TAG=${PODMAN_SYSTEMD_IMAGE_TAG:-"20230106"}
+PODMAN_SYSTEMD_IMAGE_FQN="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/$PODMAN_SYSTEMD_IMAGE_NAME:$PODMAN_SYSTEMD_IMAGE_TAG"
 
 # Remote image that we *DO NOT* fetch or keep by default; used for testing pull
 # This has changed in 2021, from 0 through 3, various iterations of getting
@@ -19,6 +25,7 @@ PODMAN_NONLOCAL_IMAGE_FQN="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/$
 
 # Because who wants to spell that out each time?
 IMAGE=$PODMAN_TEST_IMAGE_FQN
+SYSTEMD_IMAGE=$PODMAN_SYSTEMD_IMAGE_FQN
 
 # Default timeout for a podman command.
 PODMAN_TIMEOUT=${PODMAN_TIMEOUT:-120}
@@ -54,12 +61,15 @@ function basic_setup() {
     run_podman images --all --format '{{.Repository}}:{{.Tag}} {{.ID}}'
     for line in "${lines[@]}"; do
         set $line
-        if [ "$1" == "$PODMAN_TEST_IMAGE_FQN" ]; then
+        if [[ "$1" == "$PODMAN_TEST_IMAGE_FQN" ]]; then
             if [[ -z "$PODMAN_TEST_IMAGE_ID" ]]; then
                 # This will probably only trigger the 2nd time through setup
                 PODMAN_TEST_IMAGE_ID=$2
             fi
             found_needed_image=1
+        elif [[ "$1" == "$PODMAN_SYSTEMD_IMAGE_FQN" ]]; then
+            # This is a big image, don't force unnecessary pulls
+            :
         else
             # Always remove image that doesn't match by name
             echo "# setup(): removing stray image $1" >&3
@@ -95,6 +105,7 @@ function basic_teardown() {
     run_podman '?' pod rm -t 0 --all --force --ignore
     run_podman '?'     rm -t 0 --all --force --ignore
     run_podman '?' network prune --force
+    run_podman '?' volume rm -a -f
 
     command rm -rf $PODMAN_TMPDIR
 }
@@ -257,6 +268,13 @@ function wait_for_output {
         if [ $output != "true" ]; then
             run_podman inspect --format '{{.State.ExitCode}}' $cid
             exitcode=$output
+
+            # One last chance: maybe the container exited just after logs cmd
+            run_podman logs $cid
+            if expr "$logs" : ".*$expect" >/dev/null; then
+                return
+            fi
+
             die "Container exited (status: $exitcode) before we saw '$expect': $logs"
         fi
 
@@ -269,72 +287,6 @@ function wait_for_output {
 # Shortcut for the lazy
 function wait_for_ready {
     wait_for_output 'READY' "$@"
-}
-
-######################
-#  random_free_port  #  Pick an available port within a specified range
-######################
-function random_free_port() {
-    local range=${1:-5000-5999}
-
-    local port
-    for port in $(shuf -i ${range}); do
-        if port_is_free $port; then
-            echo $port
-            return
-        fi
-    done
-
-    die "Could not find open port in range $range"
-}
-
-function random_free_port_range() {
-    local size=${1?Usage: random_free_port_range SIZE (as in, number of ports)}
-
-    local maxtries=10
-    while [[ $maxtries -gt 0 ]]; do
-        local firstport=$(random_free_port)
-        local lastport=
-        for i in $(seq 1 $((size - 1))); do
-            lastport=$((firstport + i))
-            if ! port_is_free $lastport; then
-                echo "# port $lastport is in use; trying another." >&3
-                lastport=
-                break
-            fi
-        done
-        if [[ -n "$lastport" ]]; then
-            echo "$firstport-$lastport"
-            return
-        fi
-
-        maxtries=$((maxtries - 1))
-    done
-
-    die "Could not find free port range with size $size"
-}
-
-function port_is_free() {
-     local port=${1?Usage: port_is_free PORT}
-    ! { exec {unused_fd}<> /dev/tcp/127.0.0.1/$port; } &>/dev/null
-}
-
-###################
-#  wait_for_port  #  Returns once port is available on host
-###################
-function wait_for_port() {
-    local host=$1                      # Probably "localhost"
-    local port=$2                      # Numeric port
-    local _timeout=${3:-5}              # Optional; default to 5 seconds
-
-    # Wait
-    while [ $_timeout -gt 0 ]; do
-        { exec {unused_fd}<> /dev/tcp/$host/$port; } &>/dev/null && return
-        sleep 1
-        _timeout=$(( $_timeout - 1 ))
-    done
-
-    die "Timed out waiting for $host:$port"
 }
 
 ###################
@@ -359,10 +311,6 @@ function wait_for_file() {
 # BEGIN miscellaneous tools
 
 # Shortcuts for common needs:
-function no_ssh() {
-    [ "$(man ssh)" -ne 0 ]
-}
-
 function is_ubuntu() {
     grep -qiw ubuntu /etc/os-release
 }
@@ -494,7 +442,6 @@ function skip_if_no_ssh() {
         skip "${msg:-not applicable with no ssh binary}"
     fi
 }
-
 
 ######################
 #  skip_if_rootless  #  ...with an optional message
@@ -813,36 +760,6 @@ function random_string() {
     head /dev/urandom | tr -dc a-zA-Z0-9 | head -c$length
 }
 
-
-###########################
-#  random_rfc1918_subnet  #
-###########################
-#
-# Use the class B set, because much of our CI environment (Google, RH)
-# already uses up much of the class A, and it's really hard to test
-# if a block is in use.
-#
-# This returns THREE OCTETS! It is up to our caller to append .0/24, .255, &c.
-#
-function random_rfc1918_subnet() {
-    local retries=1024
-
-    while [ "$retries" -gt 0 ];do
-        local cidr=172.$(( 16 + $RANDOM % 16 )).$(( $RANDOM & 255 ))
-
-        in_use=$(ip route list | fgrep $cidr)
-        if [ -z "$in_use" ]; then
-            echo "$cidr"
-            return
-        fi
-
-        retries=$(( retries - 1 ))
-    done
-
-    die "Could not find a random not-in-use rfc1918 subnet"
-}
-
-
 #########################
 #  find_exec_pid_files  #  Returns nothing or exec_pid hash files
 #########################
@@ -955,6 +872,14 @@ CMD ["/entrypoint"]
 EOF
 
     run_podman build -t $imagename ${PODMAN_TMPDIR}
+}
+
+##########################
+#  sleep_to_next_second  #  Sleep until second rolls over
+##########################
+
+function sleep_to_next_second() {
+    sleep 0.$(printf '%04d' $((10000 - 10#$(date +%4N))))
 }
 
 # END   miscellaneous tools

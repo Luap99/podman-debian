@@ -51,9 +51,8 @@ $ podman push myimage oci-archive:/tmp/myimage
 
 @@option cert-dir
 
-#### **--compress**
+@@option dir-compress
 
-Compress tarball image layers when pushing to a directory using the 'dir' transport. (default is same compression type, compressed or uncompressed, as source)
 Note: This flag can only be set when using the **dir** transport
 
 @@option compression-format
@@ -63,6 +62,14 @@ Note: This flag can only be set when using the **dir** transport
 @@option digestfile
 
 @@option disable-content-trust
+
+#### **--encrypt-layer**=*layer(s)*
+
+Layer(s) to encrypt: 0-indexed layer indices with support for negative indexing (e.g. 0 is the first layer, -1 is the last layer). If not defined, will encrypt all layers if encryption-key flag is specified.
+
+#### **--encryption-key**=*key*
+
+The [protocol:keyfile] specifies the encryption protocol, which can be JWE (RFC7516), PGP (RFC4880), and PKCS7 (RFC2315) and the key material required for image encryption. For instance, jwe:/path/to/key.pem or pgp:admin@example.com or pkcs7:/path/to/x509-file.
 
 #### **--format**, **-f**=*format*
 

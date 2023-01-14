@@ -1,3 +1,7 @@
+####> This option file is used in:
+####>   podman create, pod clone, pod create, run
+####> If file is edited, make sure the changes
+####> are applicable to all of those.
 #### **--volume**, **-v**=*[[SOURCE-VOLUME|HOST-DIR:]CONTAINER-DIR[:OPTIONS]]*
 
 Create a bind mount. If `-v /HOST-DIR:/CONTAINER-DIR` is specified, Podman
@@ -23,6 +27,7 @@ The _OPTIONS_ is a comma-separated list and can be: <sup>[[1]](#Footnote1)</sup>
 * [**no**]**suid**
 * [**r**]**bind**
 * [**r**]**shared**|[**r**]**slave**|[**r**]**private**[**r**]**unbindable**
+* **idmap**[=**options**]
 
 The `CONTAINER-DIR` must be an absolute path such as `/src/docs`. The volume
 will be mounted into the container at this directory.
@@ -50,33 +55,41 @@ See examples.
   `Chowning Volume Mounts`
 
 By default, Podman does not change the owner and group of source volume
-directories mounted into containers. If a <<container|pod>> is created in a new user
-namespace, the UID and GID in the container may correspond to another UID and
-GID on the host.
+directories mounted into containers. If a <<container|pod>> is created in a new
+user namespace, the UID and GID in the container may correspond to another UID
+and GID on the host.
 
 The `:U` suffix tells Podman to use the correct host UID and GID based on the
-UID and GID within the <<container|pod>>, to change recursively the owner and group of
-the source volume.
+UID and GID within the <<container|pod>>, to change recursively the owner and
+group of the source volume. Chowning walks the file system under the volume and
+changes the UID/GID on each file, it the volume has thousands of inodes, this
+process will take a long time, delaying the start of the <<container|pod>>.
 
 **Warning** use with caution since this will modify the host filesystem.
 
   `Labeling Volume Mounts`
 
 Labeling systems like SELinux require that proper labels are placed on volume
-content mounted into a <<container|pod>>. Without a label, the security system might
-prevent the processes running inside the <<container|pod>> from using the content. By
-default, Podman does not change the labels set by the OS.
+content mounted into a <<container|pod>>. Without a label, the security system
+might prevent the processes running inside the <<container|pod>> from using the
+content. By default, Podman does not change the labels set by the OS.
 
 To change a label in the <<container|pod>> context, add either of two suffixes
 **:z** or **:Z** to the volume mount. These suffixes tell Podman to relabel file
-objects on the shared volumes. The **z** option tells Podman that two <<containers|pods>>
-share the volume content. As a result, Podman labels the content with a shared
-content label. Shared volume labels allow all containers to read/write content.
-The **Z** option tells Podman to label the content with a private unshared label.
-Only the current <<container|pod>> can use a private volume.
+objects on the shared volumes. The **z** option tells Podman that two or more
+<<containers|pods>> share the volume content. As a result, Podman labels the
+content with a shared content label. Shared volume labels allow all containers
+to read/write content. The **Z** option tells Podman to label the content with
+a private unshared label Only the current <<container|pod>> can use a private
+volume. Relabeling walks the file system under the volume and changes the label
+on each file, it the volume has thousands of inodes, this process will take a
+long time, delaying the start of the <<container|pod>>. If the volume
+was previously relabeled with the `z` option, Podman is optimized to not relabel
+a second time. If files are moved into the volume, then the labels can be
+manually change with the `chcon -R container_file_t PATH` command.
 
 Note: Do not relabel system files and directories. Relabeling system content
-might cause other confined services on your machine to fail.  For these types
+might cause other confined services on the machine to fail.  For these types
 of containers we recommend disabling SELinux separation.  The option
 **--security-opt label=disable** disables SELinux separation for the <<container|pod>>.
 For example if a user wanted to volume mount their entire home directory into a
@@ -143,6 +156,12 @@ To recursively mount a volume and all of its submounts into a
 used, and submounts of the source directory will not be mounted into the
 <<container|pod>>.
 
+Mounting the volume with a **copy** option tells podman to copy content from
+the underlying destination directory onto newly created internal volumes. The
+**copy** only happens on the initial creation of the volume. Content is not
+copied up when the volume is subsequently used on different containers. The
+**copy** option is ignored on bind mounts and has no effect.
+
 Mounting the volume with the **nosuid** options means that SUID applications on
 the volume will not be able to change their privilege. By default volumes
 are mounted with **nosuid**.
@@ -174,3 +193,15 @@ _/foo_, then use **mount --make-shared /** to convert _/_ into a shared mount.
 
 Note: if the user only has access rights via a group, accessing the volume
 from inside a rootless <<container|pod>> will fail.
+
+ `Idmapped mount`
+
+If `idmap` is specified, create an idmapped mount to the target user
+namespace in the container. The idmap option supports a custom mapping
+that can be different than the user namespace used by the
+container. The mapping can be specified after the idmap option like:
+`idmap=uids=0-1-10#10-11-10;gids=0-100-10`.
+For each triplet, the first value is the start of the backing file
+system IDs that are mapped to the second value on the host.  The
+length of this mapping is given in the third value.
+Multiple ranges are separated with #.

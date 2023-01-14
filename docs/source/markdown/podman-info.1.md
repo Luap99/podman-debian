@@ -91,7 +91,7 @@ host:
     path: /run/user/3267/podman/podman.sock
   security:
     apparmorEnabled: false
-    capabilities: CAP_CHOWN,CAP_DAC_OVERRIDE,CAP_FOWNER,CAP_FSETID,CAP_KILL,CAP_NET_BIND_SERVICE,CAP_SETFCAP,CAP_SETGID,CAP_SETPCAP,CAP_SETUID,CAP_SYS_CHROOT
+    capabilities: CAP_CHOWN,CAP_DAC_OVERRIDE,CAP_FOWNER,CAP_FSETID,CAP_KILL,CAP_NET_BIND_SERVICE,CAP_SETFCAP,CAP_SETGID,CAP_SETPCAP,CAP_SETUID
     rootless: true
     seccompEnabled: true
     seccompProfilePath: /usr/share/containers/seccomp.json
@@ -146,6 +146,7 @@ store:
   imageStore:
     number: 5
   runRoot: /run/user/3267/containers
+  transientStore: false
   volumePath: /home/dwalsh/.local/share/containers/storage/volumes
 version:
   APIVersion: 4.0.0
@@ -223,7 +224,7 @@ $ podman info --format json
     "serviceIsRemote": false,
     "security": {
       "apparmorEnabled": false,
-      "capabilities": "CAP_CHOWN,CAP_DAC_OVERRIDE,CAP_FOWNER,CAP_FSETID,CAP_KILL,CAP_NET_BIND_SERVICE,CAP_SETFCAP,CAP_SETGID,CAP_SETPCAP,CAP_SETUID,CAP_SYS_CHROOT",
+      "capabilities": "CAP_CHOWN,CAP_DAC_OVERRIDE,CAP_FOWNER,CAP_FSETID,CAP_KILL,CAP_NET_BIND_SERVICE,CAP_SETFCAP,CAP_SETGID,CAP_SETPCAP,CAP_SETUID",
       "rootless": true,
       "seccompEnabled": true,
       "seccompProfilePath": "/usr/share/containers/seccomp.json",
@@ -263,7 +264,8 @@ $ podman info --format json
       "number": 5
     },
     "runRoot": "/run/user/3267/containers",
-    "volumePath": "/home/dwalsh/.local/share/containers/storage/volumes"
+    "volumePath": "/home/dwalsh/.local/share/containers/storage/volumes",
+    "transientStore": false
   },
   "registries": {
     "search": [

@@ -1,3 +1,7 @@
+####> This option file is used in:
+####>   podman build, container runlabel, create, kube play, login, manifest add, manifest create, manifest inspect, manifest push, pull, push, run, search
+####> If file is edited, make sure the changes
+####> are applicable to all of those.
 #### **--tls-verify**
 
 Require HTTPS and verify certificates when contacting registries (default: **true**).

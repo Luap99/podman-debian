@@ -118,6 +118,12 @@ function _run_endpoint() {
     make endpoint
 }
 
+function _run_minikube() {
+    _bail_if_test_can_be_skipped test/minikube
+    msg "Testing  minikube."
+    bats test/minikube |& logformatter
+}
+
 exec_container() {
     local var_val
     local cmd
@@ -130,17 +136,17 @@ exec_container() {
 
     # Line-separated arguments which include shell-escaped special characters
     declare -a envargs
-    while read -r var_val; do
+    while read -r var; do
         # Pass "-e VAR" on the command line, not "-e VAR=value". Podman can
         # do a much better job of transmitting the value than we can,
         # especially when value includes spaces.
-        envargs+=("-e" "$(awk -F= '{print $1}' <<<$var_val)")
+        envargs+=("-e" "$var")
     done <<<"$(passthrough_envars)"
 
     # VM Images and Container images are built using (nearly) identical operations.
     set -x
     # shellcheck disable=SC2154
-    exec podman run --rm --privileged --net=host --cgroupns=host \
+    exec bin/podman run --rm --privileged --net=host --cgroupns=host \
         -v `mktemp -d -p /var/tmp`:/tmp:Z \
         -v /dev/fuse:/dev/fuse \
         -v "$GOPATH:$GOPATH:Z" \
@@ -181,7 +187,7 @@ function _run_swagger() {
 
     # Swagger validation takes a significant amount of time
     msg "Pulling \$CTR_FQIN '$CTR_FQIN' (background process)"
-    podman pull --quiet $CTR_FQIN &
+    bin/podman pull --quiet $CTR_FQIN &
 
     cd $GOSRC
     make swagger
@@ -203,7 +209,7 @@ eof
 
     msg "Waiting for backgrounded podman pull to complete..."
     wait %%
-    podman run -it --rm --security-opt label=disable \
+    bin/podman run -it --rm --security-opt label=disable \
         --env-file=$envvarsfile \
         -v $GOSRC:$GOSRC:ro \
         --workdir $GOSRC \
@@ -230,14 +236,16 @@ function _run_build() {
 }
 
 function _run_altbuild() {
-    # We can skip all these steps for test-only PRs, but not doc-only ones
-    _bail_if_test_can_be_skipped docs
+    # Subsequent windows-based tasks require a build.  Var. defined in .cirrus.yml
+    # shellcheck disable=SC2154
+    if [[ ! "$ALT_NAME" =~ Windows ]]; then
+        # We can skip all these steps for test-only PRs, but not doc-only ones
+        _bail_if_test_can_be_skipped docs
+    fi
 
     local -a arches
     local arch
     req_env_vars ALT_NAME
-    # Defined in .cirrus.yml
-    # shellcheck disable=SC2154
     msg "Performing alternate build: $ALT_NAME"
     msg "************************************************************"
     set -x
@@ -267,12 +275,16 @@ function _run_altbuild() {
         *Windows*)
             make podman-remote-release-windows_amd64.zip
             make podman.msi
+            docs/version-check
             ;;
         *Without*)
             make build-no-cgo
             ;;
         *RPM*)
             make package
+            ;;
+        FreeBSD*Cross)
+            make bin/podman.cross.freebsd.amd64
             ;;
         Alt*Cross)
             arches=(\
@@ -369,11 +381,22 @@ dotest() {
         podman)  localremote="local" ;;
     esac
 
+    # We've had some oopsies where tests invoke 'podman' instead of
+    # /path/to/built/podman. Let's catch those.
+    sudo rm -f /usr/bin/podman /usr/bin/podman-remote
+    fallback_podman=$(type -p podman || true)
+    if [[ -n "$fallback_podman" ]]; then
+        die "Found fallback podman '$fallback_podman' in \$PATH; tests require none, as a guarantee that we're testing the right binary."
+    fi
+
     make ${localremote}${testsuite} PODMAN_SERVER_LOG=$PODMAN_SERVER_LOG \
         |& logformatter
 }
 
 _run_machine() {
+    # This environment is convenient for executing some benchmarking
+    localbenchmarks
+
     # N/B: Can't use _bail_if_test_can_be_skipped here b/c content isn't under test/
     make localmachine |& logformatter
 }
@@ -479,6 +502,12 @@ if [[ "$PRIV_NAME" == "rootless" ]] && [[ "$UID" -eq 0 ]]; then
     # Does not return!
 fi
 # else: not running rootless, do nothing special
+
+# Dump important package versions. Before 2022-11-16 this took place as
+# a separate .cirrus.yml step, but it really belongs here.
+$(dirname $0)/logcollector.sh packages
+msg "************************************************************"
+
 
 cd "${GOSRC}/"
 

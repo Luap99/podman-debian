@@ -1,3 +1,7 @@
+####> This option file is used in:
+####>   podman create, pod create, run
+####> If file is edited, make sure the changes
+####> are applicable to all of those.
 #### **--ip**=*ipv4*
 
 Specify a static IPv4 address for the <<container|pod>>, for example **10.88.64.128**.

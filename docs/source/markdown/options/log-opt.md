@@ -1,3 +1,7 @@
+####> This option file is used in:
+####>   podman create, kube play, run
+####> If file is edited, make sure the changes
+####> are applicable to all of those.
 #### **--log-opt**=*name=value*
 
 Logging driver specific options.

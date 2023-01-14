@@ -168,16 +168,7 @@ func buildFlags(cmd *cobra.Command) {
 		logrus.Errorf("Setting up build flags: %v", err)
 		os.Exit(1)
 	}
-	// --http-proxy flag
-	// containers.conf defaults to true but we want to force false by default for remote, since settings do not apply
-	if registry.IsRemote() {
-		flag = fromAndBudFlags.Lookup("http-proxy")
-		buildOpts.HTTPProxy = false
-		if err := flag.Value.Set("false"); err != nil {
-			logrus.Errorf("Unable to set --https-proxy to %v: %v", false, err)
-		}
-		flag.DefValue = "false"
-	}
+
 	flags.AddFlagSet(&fromAndBudFlags)
 	// Add the completion functions
 	fromAndBudFlagsCompletions := buildahCLI.GetFromAndBudFlagsCompletions()
@@ -189,7 +180,6 @@ func buildFlags(cmd *cobra.Command) {
 		_ = flags.MarkHidden("signature-policy")
 		_ = flags.MarkHidden("tls-verify")
 		_ = flags.MarkHidden("compress")
-		_ = flags.MarkHidden("volume")
 		_ = flags.MarkHidden("output")
 		_ = flags.MarkHidden("logsplit")
 	}
@@ -504,11 +494,11 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 		runtimeFlags = append(runtimeFlags, "--"+arg)
 	}
 
-	containerConfig := registry.PodmanConfig()
-	for _, arg := range containerConfig.RuntimeFlags {
+	podmanConfig := registry.PodmanConfig()
+	for _, arg := range podmanConfig.RuntimeFlags {
 		runtimeFlags = append(runtimeFlags, "--"+arg)
 	}
-	if containerConfig.Engine.CgroupManager == config.SystemdCgroupsManager {
+	if podmanConfig.ContainersConf.Engine.CgroupManager == config.SystemdCgroupsManager {
 		runtimeFlags = append(runtimeFlags, "--systemd-cgroup")
 	}
 
@@ -537,16 +527,16 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 			}
 		}
 	}
-	var cacheTo reference.Named
-	var cacheFrom reference.Named
+	var cacheTo []reference.Named
+	var cacheFrom []reference.Named
 	if c.Flag("cache-to").Changed {
-		cacheTo, err = parse.RepoNameToNamedReference(flags.CacheTo)
+		cacheTo, err = parse.RepoNamesToNamedReferences(flags.CacheTo)
 		if err != nil {
 			return nil, fmt.Errorf("unable to parse value provided `%s` to --cache-to: %w", flags.CacheTo, err)
 		}
 	}
 	if c.Flag("cache-from").Changed {
-		cacheFrom, err = parse.RepoNameToNamedReference(flags.CacheFrom)
+		cacheFrom, err = parse.RepoNamesToNamedReferences(flags.CacheFrom)
 		if err != nil {
 			return nil, fmt.Errorf("unable to parse value provided `%s` to --cache-from: %w", flags.CacheTo, err)
 		}
@@ -576,7 +566,7 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 		ConfigureNetwork:        networkPolicy,
 		ContextDirectory:        contextDir,
 		CPPFlags:                flags.CPPFlags,
-		DefaultMountsFilePath:   containerConfig.Containers.DefaultMountsFile,
+		DefaultMountsFilePath:   podmanConfig.ContainersConfDefaultsRO.Containers.DefaultMountsFile,
 		Devices:                 flags.Devices,
 		DropCapabilities:        flags.CapDrop,
 		Envs:                    flags.Envs,
@@ -608,7 +598,7 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 		Quiet:                   flags.Quiet,
 		RemoveIntermediateCtrs:  flags.Rm,
 		ReportWriter:            reporter,
-		Runtime:                 containerConfig.RuntimePath,
+		Runtime:                 podmanConfig.RuntimePath,
 		RuntimeArgs:             runtimeFlags,
 		RusageLogFile:           flags.RusageLogFile,
 		SignBy:                  flags.SignBy,

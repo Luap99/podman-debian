@@ -196,8 +196,7 @@ skip_if_remote "secret files not implemented under podman-remote" \
                "bud with containerfile env secret" \
                "bud with containerfile env secret priority"
 
-skip_if_remote "volumes don't work with podman-remote" \
-               "buildah bud --volume" \
+skip_if_remote "--signature-policy does not work with podman-remote" \
                "buildah-bud-policy"
 
 skip_if_remote "--build-context option not implemented in podman-remote" \
@@ -247,17 +246,6 @@ skip_if_remote "Explicit request in buildah PR 4190 to skip this on remote" \
 
 skip_if_remote "different error messages between podman & podman-remote" \
                "bud with .dockerignore #2"
-
-# These two tests, new in 2022-01, invoke podman (create, export) in ways
-# that don't work with podman-remote due to the use of --registries-conf
-skip_if_remote "FIXME FIXME FIXME: find a way to clean up their podman calls" \
-               "bud with run should not leave mounts behind cleanup test" \
-               "bud with custom files in /run/ should persist cleanup test"
-
-# Under podman-remote, the "Ignoring <stdin>:5:2: error: #error" message
-# is never seen. (Not even as stdout/stderr on the server; Ed checked).
-skip_if_remote "FIXME FIXME FIXME: 'Ignoring' warning is never seen" \
-               "bud with preprocessor error"
 
 # END   tests which are skipped due to actual podman or podman-remote bugs.
 ###############################################################################

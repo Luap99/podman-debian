@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/checkpoint-restore/go-criu/v5/stats"
+	"github.com/checkpoint-restore/go-criu/v6/stats"
 	"github.com/containers/podman/v4/pkg/checkpoint/crutils"
 	"github.com/containers/podman/v4/pkg/criu"
 	"github.com/containers/podman/v4/pkg/domain/entities"
@@ -59,7 +59,7 @@ var _ = Describe("Podman checkpoint", func() {
 		SkipIfRootless("checkpoint not supported in rootless mode")
 		SkipIfContainerized("FIXME: #15015. All checkpoint tests hang when containerized.")
 		tempdir, err = CreateTempDirInTempDir()
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
@@ -230,7 +230,7 @@ var _ = Describe("Podman checkpoint", func() {
 		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(1))
 		Expect(podmanTest.GetContainerStatus()).To(ContainSubstring("Up"))
 
-		// Restore a container which name is equal to a image name (#15055)
+		// Restore a container which name is equal to an image name (#15055)
 		localRunString = getRunString([]string{"--name", "alpine", "quay.io/libpod/alpine:latest", "top"})
 		session = podmanTest.Podman(localRunString)
 		session.WaitWithDefaultTimeout()
@@ -389,7 +389,7 @@ var _ = Describe("Podman checkpoint", func() {
 
 		// Open a network connection to the redis server
 		conn, err := net.DialTimeout("tcp4", IP.OutputToString()+":6379", time.Duration(3)*time.Second)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		// This should fail as the container has established TCP connections
 		result := podmanTest.Podman([]string{"container", "checkpoint", cid})
@@ -1135,7 +1135,7 @@ var _ = Describe("Podman checkpoint", func() {
 		// Open a network connection to the redis server via initial port mapping
 		// This should fail
 		_, err = net.DialTimeout("tcp4", fmt.Sprintf("localhost:%d", randomPort), time.Duration(3)*time.Second)
-		Expect(err).ToNot(BeNil())
+		Expect(err).To(HaveOccurred())
 		Expect(err.Error()).To(ContainSubstring("connection refused"))
 		// Open a network connection to the redis server via new port mapping
 		fmt.Fprintf(os.Stderr, "Trying to reconnect to redis server at localhost:%d", newRandomPort)
@@ -1396,7 +1396,7 @@ var _ = Describe("Podman checkpoint", func() {
 		_, err = os.Stat(filepath.Join(destinationDirectory, stats.StatsDump))
 		Expect(err).ShouldNot(HaveOccurred())
 
-		Expect(os.RemoveAll(destinationDirectory)).To(BeNil())
+		Expect(os.RemoveAll(destinationDirectory)).To(Succeed())
 
 		// Remove exported checkpoint
 		os.Remove(fileName)

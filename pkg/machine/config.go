@@ -5,6 +5,7 @@ package machine
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"os"
@@ -113,7 +114,11 @@ type SSHOptions struct {
 	Username string
 	Args     []string
 }
-type StartOptions struct{}
+
+type StartOptions struct {
+	NoInfo bool
+	Quiet  bool
+}
 
 type StopOptions struct{}
 
@@ -235,6 +240,15 @@ func ConfDirPrefix() (string, error) {
 	}
 	confDir := filepath.Join(conf, "containers", "podman", "machine")
 	return confDir, nil
+}
+
+// GuardedRemoveAll functions much like os.RemoveAll but
+// will not delete certain catastrophic paths.
+func GuardedRemoveAll(path string) error {
+	if path == "" || path == "/" {
+		return fmt.Errorf("refusing to recursively delete `%s`", path)
+	}
+	return os.RemoveAll(path)
 }
 
 // ResourceConfig describes physical attributes of the machine

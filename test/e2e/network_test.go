@@ -48,14 +48,6 @@ var _ = Describe("Podman network", func() {
 		Expect(session).Should(Exit(0))
 		// default network always exists
 		Expect(session.OutputToStringArray()).To(HaveLen(1))
-
-		// check that the only file in the directory is the network lockfile
-		dir, err := os.Open(netDir)
-		Expect(err).ToNot(HaveOccurred())
-		names, err := dir.Readdirnames(5)
-		Expect(err).ToNot(HaveOccurred())
-		Expect(names).To(HaveLen(1))
-		Expect(names[0]).To(Or(Equal("netavark.lock"), Equal("cni.lock")))
 	})
 
 	It("podman network list", func() {
@@ -618,7 +610,7 @@ var _ = Describe("Podman network", func() {
 		// JSON the network configuration into something usable
 		var results []types.Network
 		err := json.Unmarshal([]byte(inspect.OutputToString()), &results)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(results).To(HaveLen(1))
 		result := results[0]
 		Expect(result).To(HaveField("NetworkInterface", ""))
@@ -644,11 +636,40 @@ var _ = Describe("Podman network", func() {
 
 		var results []types.Network
 		err := json.Unmarshal([]byte(inspect.OutputToString()), &results)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(results).To(HaveLen(1))
 		result := results[0]
 
 		Expect(result).To(HaveField("Driver", "macvlan"))
+		Expect(result).To(HaveField("NetworkInterface", "lo"))
+		Expect(result.IPAMOptions).To(HaveKeyWithValue("driver", "dhcp"))
+		Expect(result.Subnets).To(HaveLen(0))
+
+		nc = podmanTest.Podman([]string{"network", "rm", net})
+		nc.WaitWithDefaultTimeout()
+		Expect(nc).Should(Exit(0))
+	})
+
+	It("podman network create/remove ipvlan as driver (-d) with device name", func() {
+		// Netavark currently does not support ipvlan
+		SkipIfNetavark(podmanTest)
+		net := "ipvlan" + stringid.GenerateRandomID()
+		nc := podmanTest.Podman([]string{"network", "create", "-d", "ipvlan", "-o", "parent=lo", net})
+		nc.WaitWithDefaultTimeout()
+		defer podmanTest.removeNetwork(net)
+		Expect(nc).Should(Exit(0))
+
+		inspect := podmanTest.Podman([]string{"network", "inspect", net})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect).Should(Exit(0))
+
+		var results []types.Network
+		err := json.Unmarshal([]byte(inspect.OutputToString()), &results)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(results).To(HaveLen(1))
+		result := results[0]
+
+		Expect(result).To(HaveField("Driver", "ipvlan"))
 		Expect(result).To(HaveField("NetworkInterface", "lo"))
 		Expect(result.IPAMOptions).To(HaveKeyWithValue("driver", "dhcp"))
 		Expect(result.Subnets).To(HaveLen(0))
@@ -687,7 +708,7 @@ var _ = Describe("Podman network", func() {
 
 		var results []types.Network
 		err := json.Unmarshal([]byte(inspect.OutputToString()), &results)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(results).To(HaveLen(1))
 		result := results[0]
 

@@ -218,7 +218,7 @@ func migrateVM(configPath string, config []byte, vm *MachineVM) error {
 	}
 	// Write the config file
 	if err := vm.writeConfig(); err != nil {
-		// If the config file fails to be written, put the origina
+		// If the config file fails to be written, put the original
 		// config file back before erroring
 		if renameError := os.Rename(configPath+".orig", configPath); renameError != nil {
 			logrus.Warn(renameError)
@@ -305,7 +305,7 @@ func (v *MachineVM) Init(opts machine.InitOptions) (bool, error) {
 		source := paths[0]
 		target := source
 		readonly := false
-		securityModel := "mapped-xattr"
+		securityModel := "none"
 		if len(paths) > 1 {
 			target = paths[1]
 		}
@@ -467,7 +467,7 @@ func (v *MachineVM) Set(_ string, opts machine.SetOptions) ([]error, error) {
 }
 
 // Start executes the qemu command line and forks it
-func (v *MachineVM) Start(name string, _ machine.StartOptions) error {
+func (v *MachineVM) Start(name string, opts machine.StartOptions) error {
 	var (
 		conn           net.Conn
 		err            error
@@ -560,18 +560,7 @@ func (v *MachineVM) Start(name string, _ machine.StartOptions) error {
 	attr.Files = files
 	cmdLine := v.CmdLine
 
-	// It is here for providing the ability to propagate
-	// proxy settings (e.g. HTTP_PROXY and others) on a start
-	// and avoid a need of re-creating/re-initiating a VM
-	if proxyOpts := machine.GetProxyVariables(); len(proxyOpts) > 0 {
-		proxyStr := "name=opt/com.coreos/environment,string="
-		var proxies string
-		for k, v := range proxyOpts {
-			proxies = fmt.Sprintf("%s%s=\"%s\"|", proxies, k, v)
-		}
-		proxyStr = fmt.Sprintf("%s%s", proxyStr, base64.StdEncoding.EncodeToString([]byte(proxies)))
-		cmdLine = append(cmdLine, "-fw_cfg", proxyStr)
-	}
+	cmdLine = propagateHostEnv(cmdLine)
 
 	// Disable graphic window when not in debug mode
 	// Done in start, so we're not suck with the debug level we used on init
@@ -613,7 +602,11 @@ func (v *MachineVM) Start(name string, _ machine.StartOptions) error {
 		}
 	}
 	defer cmd.Process.Release() //nolint:errcheck
-	fmt.Println("Waiting for VM ...")
+
+	if !opts.Quiet {
+		fmt.Println("Waiting for VM ...")
+	}
+
 	socketPath, err := getRuntimeDir()
 	if err != nil {
 		return err
@@ -659,7 +652,9 @@ func (v *MachineVM) Start(name string, _ machine.StartOptions) error {
 		}
 	}
 	for _, mount := range v.Mounts {
-		fmt.Printf("Mounting volume... %s:%s\n", mount.Source, mount.Target)
+		if !opts.Quiet {
+			fmt.Printf("Mounting volume... %s:%s\n", mount.Source, mount.Target)
+		}
 		// create mountpoint directory if it doesn't exist
 		// because / is immutable, we have to monkey around with permissions
 		// if we dont mount in /home or /mnt
@@ -692,8 +687,37 @@ func (v *MachineVM) Start(name string, _ machine.StartOptions) error {
 		}
 	}
 
-	v.waitAPIAndPrintInfo(forwardState, forwardSock)
+	v.waitAPIAndPrintInfo(forwardState, forwardSock, opts.NoInfo)
 	return nil
+}
+
+// propagateHostEnv is here for providing the ability to propagate
+// proxy and SSL settings (e.g. HTTP_PROXY and others) on a start
+// and avoid a need of re-creating/re-initiating a VM
+func propagateHostEnv(cmdLine []string) []string {
+	varsToPropagate := make([]string, 0)
+
+	for k, v := range machine.GetProxyVariables() {
+		varsToPropagate = append(varsToPropagate, fmt.Sprintf("%s=%q", k, v))
+	}
+
+	if sslCertFile, ok := os.LookupEnv("SSL_CERT_FILE"); ok {
+		pathInVM := filepath.Join(machine.UserCertsTargetPath, filepath.Base(sslCertFile))
+		varsToPropagate = append(varsToPropagate, fmt.Sprintf("%s=%q", "SSL_CERT_FILE", pathInVM))
+	}
+
+	if _, ok := os.LookupEnv("SSL_CERT_DIR"); ok {
+		varsToPropagate = append(varsToPropagate, fmt.Sprintf("%s=%q", "SSL_CERT_DIR", machine.UserCertsTargetPath))
+	}
+
+	if len(varsToPropagate) > 0 {
+		prefix := "name=opt/com.coreos/environment,string="
+		envVarsJoined := strings.Join(varsToPropagate, "|")
+		fwCfgArg := prefix + base64.StdEncoding.EncodeToString([]byte(envVarsJoined))
+		return append(cmdLine, "-fw_cfg", fwCfgArg)
+	}
+
+	return cmdLine
 }
 
 func (v *MachineVM) checkStatus(monitor *qmp.SocketMonitor) (machine.Status, error) {
@@ -1384,7 +1408,7 @@ func (v *MachineVM) setPIDSocket() error {
 	return nil
 }
 
-// Deprecated: getSocketandPid is being replace by setPIDSocket and
+// Deprecated: getSocketandPid is being replaced by setPIDSocket and
 // machinefiles.
 func (v *MachineVM) getSocketandPid() (string, string, error) {
 	rtPath, err := getRuntimeDir()
@@ -1439,7 +1463,7 @@ func waitAndPingAPI(sock string) {
 	}
 }
 
-func (v *MachineVM) waitAPIAndPrintInfo(forwardState apiForwardingState, forwardSock string) {
+func (v *MachineVM) waitAPIAndPrintInfo(forwardState apiForwardingState, forwardSock string, noInfo bool) {
 	suffix := ""
 	if v.Name != machine.DefaultMachineName {
 		suffix = " " + v.Name
@@ -1467,38 +1491,41 @@ func (v *MachineVM) waitAPIAndPrintInfo(forwardState apiForwardingState, forward
 	}
 
 	waitAndPingAPI(forwardSock)
-	if !v.Rootful {
-		fmt.Printf("\nThis machine is currently configured in rootless mode. If your containers\n")
-		fmt.Printf("require root permissions (e.g. ports < 1024), or if you run into compatibility\n")
-		fmt.Printf("issues with non-podman clients, you can switch using the following command: \n")
-		fmt.Printf("\n\tpodman machine set --rootful%s\n\n", suffix)
-	}
 
-	fmt.Printf("API forwarding listening on: %s\n", forwardSock)
-	if forwardState == dockerGlobal {
-		fmt.Printf("Docker API clients default to this address. You do not need to set DOCKER_HOST.\n\n")
-	} else {
-		stillString := "still "
-		switch forwardState {
-		case notInstalled:
-			fmt.Printf("\nThe system helper service is not installed; the default Docker API socket\n")
-			fmt.Printf("address can't be used by podman. ")
-			if helper := findClaimHelper(); len(helper) > 0 {
-				fmt.Printf("If you would like to install it run the\nfollowing commands:\n")
-				fmt.Printf("\n\tsudo %s install\n", helper)
-				fmt.Printf("\tpodman machine stop%s; podman machine start%s\n\n", suffix, suffix)
-			}
-		case machineLocal:
-			fmt.Printf("\nAnother process was listening on the default Docker API socket address.\n")
-		case claimUnsupported:
-			fallthrough
-		default:
-			stillString = ""
+	if !noInfo {
+		if !v.Rootful {
+			fmt.Printf("\nThis machine is currently configured in rootless mode. If your containers\n")
+			fmt.Printf("require root permissions (e.g. ports < 1024), or if you run into compatibility\n")
+			fmt.Printf("issues with non-podman clients, you can switch using the following command: \n")
+			fmt.Printf("\n\tpodman machine set --rootful%s\n\n", suffix)
 		}
 
-		fmt.Printf("You can %sconnect Docker API clients by setting DOCKER_HOST using the\n", stillString)
-		fmt.Printf("following command in your terminal session:\n")
-		fmt.Printf("\n\texport DOCKER_HOST='unix://%s'\n\n", forwardSock)
+		fmt.Printf("API forwarding listening on: %s\n", forwardSock)
+		if forwardState == dockerGlobal {
+			fmt.Printf("Docker API clients default to this address. You do not need to set DOCKER_HOST.\n\n")
+		} else {
+			stillString := "still "
+			switch forwardState {
+			case notInstalled:
+				fmt.Printf("\nThe system helper service is not installed; the default Docker API socket\n")
+				fmt.Printf("address can't be used by podman. ")
+				if helper := findClaimHelper(); len(helper) > 0 {
+					fmt.Printf("If you would like to install it run the\nfollowing commands:\n")
+					fmt.Printf("\n\tsudo %s install\n", helper)
+					fmt.Printf("\tpodman machine stop%s; podman machine start%s\n\n", suffix, suffix)
+				}
+			case machineLocal:
+				fmt.Printf("\nAnother process was listening on the default Docker API socket address.\n")
+			case claimUnsupported:
+				fallthrough
+			default:
+				stillString = ""
+			}
+
+			fmt.Printf("You can %sconnect Docker API clients by setting DOCKER_HOST using the\n", stillString)
+			fmt.Printf("following command in your terminal session:\n")
+			fmt.Printf("\n\texport DOCKER_HOST='unix://%s'\n\n", forwardSock)
+		}
 	}
 }
 
@@ -1690,7 +1717,7 @@ func (p *Provider) RemoveAndCleanMachines() error {
 		}
 		prevErr = err
 	} else {
-		err := os.RemoveAll(dataDir)
+		err := machine.GuardedRemoveAll(dataDir)
 		if err != nil {
 			if prevErr != nil {
 				logrus.Error(prevErr)
@@ -1707,7 +1734,7 @@ func (p *Provider) RemoveAndCleanMachines() error {
 		}
 		prevErr = err
 	} else {
-		err := os.RemoveAll(confDir)
+		err := machine.GuardedRemoveAll(confDir)
 		if err != nil {
 			if prevErr != nil {
 				logrus.Error(prevErr)

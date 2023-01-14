@@ -23,6 +23,8 @@ function teardown() {
 @test "podman run --volumes : basic" {
     run_podman volume list --noheading
     is "$output" "" "baseline: empty results from list --noheading"
+    run_podman volume list -n
+    is "$output" "" "baseline: empty results from list -n"
 
     # Create three temporary directories
     vol1=${PODMAN_TMPDIR}/v1_$(random_string)
@@ -120,7 +122,7 @@ function teardown() {
     mylabel=$(random_string)
 
     # Create a named volume
-    run_podman volume create --label l=$mylabel  $myvolume
+    run_podman volume create -d local --label l=$mylabel  $myvolume
     is "$output" "$myvolume" "output from volume create"
 
     # Confirm that it shows up in 'volume ls', and confirm values
@@ -246,7 +248,7 @@ EOF
 # Podman volume import test
 @test "podman volume import test" {
     skip_if_remote "volumes import is not applicable on podman-remote"
-    run_podman volume create my_vol
+    run_podman volume create --driver local my_vol
     run_podman run --rm -v my_vol:/data $IMAGE sh -c "echo hello >> /data/test"
     run_podman volume create my_vol2
 
@@ -506,5 +508,21 @@ EOF
     run_podman volume rm --force bogus
     is "$output" "" "Should print no output"
 }
+
+@test "podman ps -f" {
+    vol1="/v1_$(random_string)"
+    run_podman run -d --rm --volume ${PODMAN_TMPDIR}:$vol1 $IMAGE top
+    cid=$output
+
+    run_podman ps --noheading --no-trunc -q -f volume=$vol1
+    is "$output" "$cid" "Should find container by volume"
+
+    run_podman ps --noheading --no-trunc -q --filter volume=/NoSuchVolume
+    is "$output" "" "ps --filter volume=/NoSuchVolume"
+
+    # Clean up
+    run_podman rm -f -t 0 -a
+}
+
 
 # vim: filetype=sh

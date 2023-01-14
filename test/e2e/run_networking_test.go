@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/containernetworking/plugins/pkg/ns"
+	"github.com/containers/common/libnetwork/types"
 	. "github.com/containers/podman/v4/test/utils"
 	"github.com/containers/storage/pkg/stringid"
 	. "github.com/onsi/ginkgo"
@@ -41,39 +43,88 @@ var _ = Describe("Podman run networking", func() {
 
 	})
 
+	It("podman verify network scoped DNS server and also verify updating network dns server", func() {
+		// TODO: Unskip after https://github.com/containers/podman/pull/16525
+		Skip("TODO: unskip after https://github.com/containers/podman/pull/16525")
+		// Following test is only functional with netavark and aardvark
+		SkipIfCNI(podmanTest)
+		net := createNetworkName("IntTest")
+		session := podmanTest.Podman([]string{"network", "create", net, "--dns", "1.1.1.1"})
+		session.WaitWithDefaultTimeout()
+		defer podmanTest.removeNetwork(net)
+		Expect(session).Should(Exit(0))
+
+		session = podmanTest.Podman([]string{"network", "inspect", net})
+		session.WaitWithDefaultTimeout()
+		defer podmanTest.removeNetwork(net)
+		var results []types.Network
+		err := json.Unmarshal([]byte(session.OutputToString()), &results)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(results).To(HaveLen(1))
+		result := results[0]
+		Expect(result.Subnets).To(HaveLen(1))
+		aardvarkDNSGateway := result.Subnets[0].Gateway.String()
+		Expect(session.OutputToString()).To(ContainSubstring("1.1.1.1"))
+		Expect(session).Should(Exit(0))
+
+		session = podmanTest.Podman([]string{"run", "-d", "--name", "con1", "--network", net, "busybox", "top"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		session = podmanTest.Podman([]string{"exec", "-i", "con1", "nslookup", "google.com", aardvarkDNSGateway})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToString()).To(ContainSubstring("Non-authoritative answer: Name: google.com Address:"))
+
+		// Update to a bad DNS Server
+		session = podmanTest.Podman([]string{"network", "update", net, "--dns-add", "7.7.7.7"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		// Remove good DNS server
+		session = podmanTest.Podman([]string{"network", "update", net, "--dns-drop=1.1.1.1"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		session = podmanTest.Podman([]string{"exec", "-i", "con1", "nslookup", "google.com", aardvarkDNSGateway})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(1))
+		Expect(session.OutputToString()).To(ContainSubstring(";; connection timed out; no servers could be reached"))
+
+	})
+
 	It("podman run network connection with default bridge", func() {
-		session := podmanTest.Podman([]string{"run", "-dt", ALPINE, "wget", "www.podman.io"})
-		session.Wait(90)
+		session := podmanTest.RunContainerWithNetworkTest("")
+		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 	})
 
 	It("podman run network connection with host", func() {
-		session := podmanTest.Podman([]string{"run", "-dt", "--network", "host", ALPINE, "wget", "www.podman.io"})
-		session.Wait(90)
+		session := podmanTest.RunContainerWithNetworkTest("host")
+		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 	})
 
 	It("podman run network connection with default", func() {
-		session := podmanTest.Podman([]string{"run", "--network", "default", ALPINE, "wget", "www.podman.io"})
+		session := podmanTest.RunContainerWithNetworkTest("default")
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 	})
 
 	It("podman run network connection with none", func() {
-		session := podmanTest.Podman([]string{"run", "--network", "none", ALPINE, "wget", "www.podman.io"})
+		session := podmanTest.RunContainerWithNetworkTest("none")
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(1))
-		Expect(session.ErrorToString()).To(ContainSubstring("wget: bad address 'www.podman.io'"))
+		if _, found := os.LookupEnv("http_proxy"); found {
+			Expect(session).Should(Exit(5))
+			Expect(session.ErrorToString()).To(ContainSubstring("Could not resolve proxy:"))
+		} else {
+			Expect(session).Should(Exit(6))
+			Expect(session.ErrorToString()).To(ContainSubstring("Could not resolve host: www.redhat.com"))
+		}
 	})
 
 	It("podman run network connection with private", func() {
-		session := podmanTest.Podman([]string{"run", "--network", "private", ALPINE, "wget", "www.podman.io"})
-		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
-	})
-
-	It("podman run network connection with loopback", func() {
-		session := podmanTest.Podman([]string{"run", "--network", "host", ALPINE, "wget", "www.podman.io"})
+		session := podmanTest.RunContainerWithNetworkTest("private")
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 	})
@@ -435,7 +486,7 @@ EXPOSE 2004-2005/tcp`, ALPINE)
 	})
 
 	It("podman run slirp4netns network with host loopback", func() {
-		session := podmanTest.Podman([]string{"run", "--network", "slirp4netns:allow_host_loopback=true", ALPINE, "ping", "-c1", "10.0.2.2"})
+		session := podmanTest.Podman([]string{"run", "--cap-add", "net_raw", "--network", "slirp4netns:allow_host_loopback=true", ALPINE, "ping", "-c1", "10.0.2.2"})
 		session.Wait(30)
 		Expect(session).Should(Exit(0))
 	})
@@ -452,7 +503,7 @@ EXPOSE 2004-2005/tcp`, ALPINE)
 		Expect(slirp4netnsHelp).Should(Exit(0))
 
 		networkConfiguration := "slirp4netns:cidr=192.168.0.0/24,allow_host_loopback=true"
-		session := podmanTest.Podman([]string{"run", "--network", networkConfiguration, ALPINE, "ping", "-c1", "192.168.0.2"})
+		session := podmanTest.Podman([]string{"run", "--cap-add", "net_raw", "--network", networkConfiguration, ALPINE, "ping", "-c1", "192.168.0.2"})
 		session.Wait(30)
 
 		if strings.Contains(slirp4netnsHelp.OutputToString(), "cidr") {
@@ -488,7 +539,7 @@ EXPOSE 2004-2005/tcp`, ALPINE)
 
 	It("podman run network bind to HostIP", func() {
 		ip, err := utils.HostIP()
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		port := GetPort()
 
 		slirp4netnsHelp := SystemExec("slirp4netns", []string{"--help"})
@@ -679,7 +730,7 @@ EXPOSE 2004-2005/tcp`, ALPINE)
 			Expect(delXXX).Should(Exit(0))
 		}()
 
-		session := podmanTest.Podman([]string{"run", "-dt", "--net", "ns:/run/netns/xxx", ALPINE, "wget", "www.podman.io"})
+		session := podmanTest.Podman([]string{"run", "-dt", "--net", "ns:/run/netns/xxx", ALPINE, "wget", "www.redhat.com"})
 		session.Wait(90)
 		Expect(session).Should(Exit(0))
 	})
@@ -711,7 +762,7 @@ EXPOSE 2004-2005/tcp`, ALPINE)
 
 	addAddr := func(cidr string, containerInterface netlink.Link) error {
 		_, ipnet, err := net.ParseCIDR(cidr)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		addr := &netlink.Addr{IPNet: ipnet, Label: ""}
 		if err := netlink.AddrAdd(containerInterface, addr); err != nil && err != syscall.EEXIST {
 			return err
@@ -721,25 +772,25 @@ EXPOSE 2004-2005/tcp`, ALPINE)
 
 	loopbackup := func() {
 		lo, err := netlink.LinkByName("lo")
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		err = netlink.LinkSetUp(lo)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 	}
 
 	linkup := func(name string, mac string, addresses []string) {
 		linkAttr := netlink.NewLinkAttrs()
 		linkAttr.Name = name
 		m, err := net.ParseMAC(mac)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		linkAttr.HardwareAddr = m
 		eth := &netlink.Dummy{LinkAttrs: linkAttr}
 		err = netlink.LinkAdd(eth)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		err = netlink.LinkSetUp(eth)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		for _, address := range addresses {
 			err := addAddr(address, eth)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 		}
 	}
 
@@ -765,14 +816,14 @@ EXPOSE 2004-2005/tcp`, ALPINE)
 		inspectOut := podmanTest.InspectContainer(name)
 		Expect(inspectOut[0].NetworkSettings).To(HaveField("IPAddress", "10.25.40.0"))
 		Expect(inspectOut[0].NetworkSettings).To(HaveField("IPPrefixLen", 24))
-		Expect(len(inspectOut[0].NetworkSettings.SecondaryIPAddresses)).To(Equal(1))
+		Expect(inspectOut[0].NetworkSettings.SecondaryIPAddresses).To(HaveLen(1))
 		Expect(inspectOut[0].NetworkSettings.SecondaryIPAddresses[0]).To(HaveField("Addr", "10.88.0.0"))
 		Expect(inspectOut[0].NetworkSettings.SecondaryIPAddresses[0]).To(HaveField("PrefixLength", 16))
 		Expect(inspectOut[0].NetworkSettings).To(HaveField("GlobalIPv6Address", "fd04:3e42:4a4e:3381::"))
 		Expect(inspectOut[0].NetworkSettings).To(HaveField("GlobalIPv6PrefixLen", 64))
-		Expect(len(inspectOut[0].NetworkSettings.SecondaryIPv6Addresses)).To(Equal(0))
+		Expect(inspectOut[0].NetworkSettings.SecondaryIPv6Addresses).To(BeEmpty())
 		Expect(inspectOut[0].NetworkSettings).To(HaveField("MacAddress", "46:7f:45:6e:4f:c8"))
-		Expect(len(inspectOut[0].NetworkSettings.AdditionalMacAddresses)).To(Equal(1))
+		Expect(inspectOut[0].NetworkSettings.AdditionalMacAddresses).To(HaveLen(1))
 		Expect(inspectOut[0].NetworkSettings.AdditionalMacAddresses[0]).To(Equal("56:6e:35:5d:3e:a8"))
 		Expect(inspectOut[0].NetworkSettings).To(HaveField("Gateway", "10.25.40.0"))
 
@@ -797,7 +848,7 @@ EXPOSE 2004-2005/tcp`, ALPINE)
 
 		inspectOut := podmanTest.InspectContainer(name)
 		Expect(inspectOut[0].NetworkSettings).To(HaveField("IPAddress", ""))
-		Expect(len(inspectOut[0].NetworkSettings.Networks)).To(Equal(0))
+		Expect(inspectOut[0].NetworkSettings.Networks).To(BeEmpty())
 	})
 
 	It("podman inspect can handle joined network ns with multiple interfaces", func() {
@@ -862,7 +913,7 @@ EXPOSE 2004-2005/tcp`, ALPINE)
 	})
 
 	It("podman run network in bogus user created network namespace", func() {
-		session := podmanTest.Podman([]string{"run", "-dt", "--net", "ns:/run/netns/xxy", ALPINE, "wget", "www.podman.io"})
+		session := podmanTest.Podman([]string{"run", "-dt", "--net", "ns:/run/netns/xxy", ALPINE, "wget", "www.redhat.com"})
 		session.Wait(90)
 		Expect(session).To(ExitWithError())
 		Expect(session.ErrorToString()).To(ContainSubstring("stat /run/netns/xxy: no such file or directory"))
@@ -989,11 +1040,11 @@ EXPOSE 2004-2005/tcp`, ALPINE)
 
 	pingTest := func(netns string) {
 		hostname := "testctr"
-		run := podmanTest.Podman([]string{"run", netns, "--hostname", hostname, ALPINE, "ping", "-c", "1", hostname})
+		run := podmanTest.Podman([]string{"run", netns, "--cap-add", "net_raw", "--hostname", hostname, ALPINE, "ping", "-c", "1", hostname})
 		run.WaitWithDefaultTimeout()
 		Expect(run).Should(Exit(0))
 
-		run = podmanTest.Podman([]string{"run", netns, "--hostname", hostname, "--name", "test", ALPINE, "ping", "-c", "1", "test"})
+		run = podmanTest.Podman([]string{"run", netns, "--cap-add", "net_raw", "--hostname", hostname, "--name", "test", ALPINE, "ping", "-c", "1", "test"})
 		run.WaitWithDefaultTimeout()
 		Expect(run).Should(Exit(0))
 	}
@@ -1133,8 +1184,6 @@ EXPOSE 2004-2005/tcp`, ALPINE)
 	})
 
 	It("podman run with ipam none driver", func() {
-		// Test fails, issue #13931
-		SkipIfNetavark(podmanTest)
 		net := "ipam" + stringid.GenerateRandomID()
 		session := podmanTest.Podman([]string{"network", "create", "--ipam-driver=none", net})
 		session.WaitWithDefaultTimeout()

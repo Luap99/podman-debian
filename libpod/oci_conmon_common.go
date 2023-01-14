@@ -429,6 +429,10 @@ func (r *ConmonOCIRuntime) StopContainer(ctr *Container, timeout uint, all bool)
 	}
 
 	if err := r.KillContainer(ctr, uint(unix.SIGKILL), all); err != nil {
+		// If the PID is 0, then the container is already stopped.
+		if ctr.state.PID == 0 {
+			return nil
+		}
 		// Again, check if the container is gone. If it is, exit cleanly.
 		if aliveErr := unix.Kill(ctr.state.PID, 0); errors.Is(aliveErr, unix.ESRCH) {
 			return nil
@@ -594,6 +598,10 @@ func (r *ConmonOCIRuntime) HTTPAttach(ctr *Container, req *http.Request, w http.
 					device := logLine.Device
 					var header []byte
 					headerLen := uint32(len(logLine.Msg))
+					if !logLine.Partial() {
+						// we append an extra newline in this case so we need to increment the len as well
+						headerLen++
+					}
 					logSize += len(logLine.Msg)
 					switch strings.ToLower(device) {
 					case "stdin":
@@ -1438,7 +1446,7 @@ func readConmonPipeData(runtimeName string, pipe *os.File, ociLog string) (int, 
 		ch <- syncStruct{si: si}
 	}()
 
-	data := -1 //nolint: wastedassign
+	data := -1
 	select {
 	case ss := <-ch:
 		if ss.err != nil {

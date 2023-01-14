@@ -12,9 +12,8 @@ podman\-create - Create a new container
 
 Creates a writable container layer over the specified image and prepares it for
 running the specified command. The container ID is then printed to STDOUT. This
-is similar to **podman run -d** except the container is never started. You can
-then use the **podman start** *container* command to start the container at
-any point.
+is similar to **podman run -d** except the container is never started. Use the
+**podman start** *container* command to start the container at any point.
 
 The initial status of the container created with **podman create** is 'created'.
 
@@ -114,6 +113,8 @@ and specified with a _tag_.
 
 @@option cpuset-mems
 
+@@option decryption-key
+
 @@option device
 
 Note: if the user only has access rights via a group, accessing the device
@@ -169,6 +170,16 @@ See [**Environment**](#environment) note below for precedence and examples.
 @@option health-retries
 
 @@option health-start-period
+
+@@option health-startup-cmd
+
+@@option health-startup-interval
+
+@@option health-startup-retries
+
+@@option health-startup-success
+
+@@option health-startup-timeout
 
 @@option health-timeout
 
@@ -277,7 +288,7 @@ This option conflicts with **--add-host**.
 
 **Note:** If a container will be run within a pod, it is not necessary to publish the port for
 the containers in the pod. The port must only be published by the pod itself. Pod network
-stacks act like the network stack on the host - you have a variety of containers in the pod,
+stacks act like the network stack on the host - when there are a variety of containers in the pod,
 and programs in the container, all sharing a single interface and IP address, and
 associated ports. If one container binds to a port, no other container can use that port
 within the pod while it is in use. Containers in the pod can also communicate over localhost
@@ -313,38 +324,7 @@ Automatically remove the container when it exits. The default is *false*.
 
 @@option secret
 
-#### **--security-opt**=*option*
-
-Security Options
-
-- `apparmor=unconfined` : Turn off apparmor confinement for the container
-- `apparmor=your-profile` : Set the apparmor confinement profile for the container
-
-- `label=user:USER`     : Set the label user for the container processes
-- `label=role:ROLE`     : Set the label role for the container processes
-- `label=type:TYPE`     : Set the label process type for the container processes
-- `label=level:LEVEL`   : Set the label level for the container processes
-- `label=filetype:TYPE` : Set the label file type for the container files
-- `label=disable`       : Turn off label separation for the container
-
-Note: Labeling can be disabled for all containers by setting label=false in the **containers.conf** (`/etc/containers/containers.conf` or `$HOME/.config/containers/containers.conf`) file.
-
-- `mask=/path/1:/path/2` : The paths to mask separated by a colon. A masked path
-  cannot be accessed inside the container.
-
-- `no-new-privileges` : Disable container processes from gaining additional privileges
-
-- `seccomp=unconfined` : Turn off seccomp confinement for the container.
-- `seccomp=profile.json` : JSON file to be used as a seccomp filter. Note that the `io.podman.annotations.seccomp` annotation is set with the specified value as shown in `podman inspect`.
-
-- `proc-opts=OPTIONS` : Comma-separated list of options to use for the /proc mount. More details for the
-  possible mount options are specified in the **proc(5)** man page.
-
-
-- **unmask**=_ALL_ or _/path/1:/path/2_, or shell expanded paths (/proc/*): Paths to unmask separated by a colon. If set to **ALL**, it will unmask all the paths that are masked or made read-only by default.
-  The default masked paths are **/proc/acpi, /proc/kcore, /proc/keys, /proc/latency_stats, /proc/sched_debug, /proc/scsi, /proc/timer_list, /proc/timer_stats, /sys/firmware, and /sys/fs/selinux.**  The default paths that are read-only are **/proc/asound, /proc/bus, /proc/fs, /proc/irq, /proc/sys, /proc/sysrq-trigger, /sys/fs/cgroup**.
-
-Note: Labeling can be disabled for all containers by setting label=false in the **containers.conf** (`/etc/containers/containers.conf` or `$HOME/.config/containers/containers.conf`) file.
+@@option security-opt
 
 @@option shm-size
 
@@ -491,8 +471,11 @@ In order for users to run rootless, there must be an entry for their username in
 
 Rootless Podman works better if the fuse-overlayfs and slirp4netns packages are installed.
 The fuse-overlayfs package provides a userspace overlay storage driver, otherwise users need to use
-the vfs storage driver, which is diskspace expensive and does not perform well. slirp4netns is
-required for VPN, without it containers need to be run with the --network=host flag.
+the vfs storage driver, which can be disk space expensive and less performant
+than other drivers.
+
+To enable VPN on the container, slirp4netns or pasta needs to be specified;
+without either, containers need to be run with the --network=host flag.
 
 ## ENVIRONMENT
 
@@ -541,7 +524,7 @@ page.
 NOTE: Use the environment variable `TMPDIR` to change the temporary storage location of downloaded container images. Podman defaults to use `/var/tmp`.
 
 ## SEE ALSO
-**[podman(1)](podman.1.md)**, **[podman-save(1)](podman-save.1.md)**, **[podman-ps(1)](podman-ps.1.md)**, **[podman-attach(1)](podman-attach.1.md)**, **[podman-pod-create(1)](podman-pod-create.1.md)**, **[podman-port(1)](podman-port.1.md)**, **[podman-start(1)](podman-start.1.md)**, **[podman-kill(1)](podman-kill.1.md)**, **[podman-stop(1)](podman-stop.1.md)**, **[podman-generate-systemd(1)](podman-generate-systemd.1.md)**, **[podman-rm(1)](podman-rm.1.md)**, **[subgid(5)](https://www.unix.com/man-page/linux/5/subgid)**, **[subuid(5)](https://www.unix.com/man-page/linux/5/subuid)**, **[containers.conf(5)](https://github.com/containers/common/blob/main/docs/containers.conf.5.md)**, **[systemd.unit(5)](https://www.freedesktop.org/software/systemd/man/systemd.unit.html)**, **[setsebool(8)](https://man7.org/linux/man-pages/man8/setsebool.8.html)**, **[slirp4netns(1)](https://github.com/rootless-containers/slirp4netns/blob/master/slirp4netns.1.md)**, **[fuse-overlayfs(1)](https://github.com/containers/fuse-overlayfs/blob/main/fuse-overlayfs.1.md)**, **proc(5)**, **[conmon(8)](https://github.com/containers/conmon/blob/main/docs/conmon.8.md)**, **personality(2)**
+**[podman(1)](podman.1.md)**, **[podman-save(1)](podman-save.1.md)**, **[podman-ps(1)](podman-ps.1.md)**, **[podman-attach(1)](podman-attach.1.md)**, **[podman-pod-create(1)](podman-pod-create.1.md)**, **[podman-port(1)](podman-port.1.md)**, **[podman-start(1)](podman-start.1.md)**, **[podman-kill(1)](podman-kill.1.md)**, **[podman-stop(1)](podman-stop.1.md)**, **[podman-generate-systemd(1)](podman-generate-systemd.1.md)**, **[podman-rm(1)](podman-rm.1.md)**, **[subgid(5)](https://www.unix.com/man-page/linux/5/subgid)**, **[subuid(5)](https://www.unix.com/man-page/linux/5/subuid)**, **[containers.conf(5)](https://github.com/containers/common/blob/main/docs/containers.conf.5.md)**, **[systemd.unit(5)](https://www.freedesktop.org/software/systemd/man/systemd.unit.html)**, **[setsebool(8)](https://man7.org/linux/man-pages/man8/setsebool.8.html)**, **[slirp4netns(1)](https://github.com/rootless-containers/slirp4netns/blob/master/slirp4netns.1.md)**, **[pasta(1)](https://passt.top/builds/latest/web/passt.1.html)**, **[fuse-overlayfs(1)](https://github.com/containers/fuse-overlayfs/blob/main/fuse-overlayfs.1.md)**, **proc(5)**, **[conmon(8)](https://github.com/containers/conmon/blob/main/docs/conmon.8.md)**, **personality(2)**
 
 ## HISTORY
 October 2017, converted from Docker documentation to Podman by Dan Walsh for Podman `<dwalsh@redhat.com>`

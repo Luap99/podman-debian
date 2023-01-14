@@ -138,6 +138,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		Timestamp               int64    `schema:"timestamp"`
 		Ulimits                 string   `schema:"ulimits"`
 		UnsetEnvs               []string `schema:"unsetenv"`
+		Volumes                 []string `schema:"volume"`
 	}{
 		Dockerfile:       "Dockerfile",
 		IdentityLabel:    true,
@@ -399,17 +400,27 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var cacheFrom reference.Named
+	cacheFrom := []reference.Named{}
 	if _, found := r.URL.Query()["cachefrom"]; found {
-		cacheFrom, err = parse.RepoNameToNamedReference(query.CacheFrom)
+		var cacheFromSrcList []string
+		if err := json.Unmarshal([]byte(query.CacheFrom), &cacheFromSrcList); err != nil {
+			utils.BadRequest(w, "cacheFrom", query.CacheFrom, err)
+			return
+		}
+		cacheFrom, err = parse.RepoNamesToNamedReferences(cacheFromSrcList)
 		if err != nil {
 			utils.BadRequest(w, "cacheFrom", query.CacheFrom, err)
 			return
 		}
 	}
-	var cacheTo reference.Named
+	cacheTo := []reference.Named{}
 	if _, found := r.URL.Query()["cacheto"]; found {
-		cacheTo, err = parse.RepoNameToNamedReference(query.CacheTo)
+		var cacheToDestList []string
+		if err := json.Unmarshal([]byte(query.CacheTo), &cacheToDestList); err != nil {
+			utils.BadRequest(w, "cacheTo", query.CacheTo, err)
+			return
+		}
+		cacheTo, err = parse.RepoNamesToNamedReferences(cacheToDestList)
 		if err != nil {
 			utils.BadRequest(w, "cacheto", query.CacheTo, err)
 			return
@@ -643,6 +654,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 			ShmSize:            strconv.Itoa(query.ShmSize),
 			Ulimit:             ulimits,
 			Secrets:            secrets,
+			Volumes:            query.Volumes,
 		},
 		Compression:                    compression,
 		ConfigureNetwork:               parseNetworkConfigurationPolicy(query.ConfigureNetwork),
@@ -804,6 +816,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 					if err := enc.Encode(m); err != nil {
 						logrus.Warnf("failed to json encode error %v", err)
 					}
+					flush()
 					m.Aux = nil
 					m.Stream = fmt.Sprintf("Successfully built %12.12s\n", imageID)
 					if err := enc.Encode(m); err != nil {

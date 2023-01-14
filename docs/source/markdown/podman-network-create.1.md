@@ -11,15 +11,22 @@ Create a network configuration for use with Podman. By default, Podman creates a
 A *Macvlan* connection can be created with the *-d macvlan* option. A parent device for macvlan can
 be designated with the *-o parent=`<device>`* option.
 
-If no options are provided, Podman will assign a free subnet and name for your network.
+If no options are provided, Podman will assign a free subnet and name for the network.
 
 Upon completion of creating the network, Podman will display the name of the newly added network.
+
+NOTE: The support for the network name pasta is deprecated and will be removed in the next major
+release because it is used as a special network mode in **podman run/create --network**.
 
 ## OPTIONS
 #### **--disable-dns**
 
 Disables the DNS plugin for this network which if enabled, can perform container to container name
 resolution.
+
+#### **--dns**=*ip*
+
+Set network-scoped DNS resolver/nameserver for containers in this network. If not set, the host servers from `/etc/resolv.conf` will be used.  It can be overwritten on the container level with the `podman run/create --dns` option. This option can be specified multiple times to set more than one IP.
 
 #### **--driver**, **-d**
 
@@ -32,9 +39,13 @@ Special considerations for the *netavark* backend:
 
 #### **--gateway**
 
-Define a gateway for the subnet. If you want to provide a gateway address, you must also provide a
-*subnet* option. Can be specified multiple times.
+Define a gateway for the subnet. To provide a gateway address, a
+*subnet* option is required. Can be specified multiple times.
 The argument order of the **--subnet**, **--gateway** and **--ip-range** options must match.
+
+#### **--ignore**
+Ignore the create request if a network with the same name already exists instead of failing.
+Note, trying to create a network with an existing name and different parameters, will not change the configuration of the existing one
 
 #### **--internal**
 
@@ -52,14 +63,14 @@ The argument order of the **--subnet**, **--gateway** and **--ip-range** options
 Set the ipam driver (IP Address Management Driver) for the network. When unset podman will choose an
 ipam driver automatically based on the network driver. Valid values are:
  - `host-local`: IP addresses are assigned locally.
- - `dhcp`: IP addresses are assigned from a dhcp server on your network. This driver is not yet supported with netavark. For CNI the *dhcp* plugin needs to be activated before.
+ - `dhcp`: IP addresses are assigned from a dhcp server on the network. This driver is not yet supported with netavark. For CNI the *dhcp* plugin needs to be activated before.
  - `none`: No ip addresses are assigned to the interfaces.
 
-You can see the driver in the **podman network inspect** output under the `ipam_options` field.
+View the driver in the **podman network inspect** output under the `ipam_options` field.
 
 #### **--ipv6**
 
-Enable IPv6 (Dual Stack) networking. If not subnets are given it will allocate a ipv4 and ipv6 subnet.
+Enable IPv6 (Dual Stack) networking. If not subnets are given it will allocate an ipv4 and an ipv6 subnet.
 
 #### **--label**
 
@@ -69,7 +80,9 @@ Set metadata for a network (e.g., --label mykey=value).
 
 Set driver specific options.
 
-All drivers accept the `mtu` option. The `mtu` option sets the Maximum Transmission Unit (MTU) and takes an integer value.
+All drivers accept the `mtu` and `metric` options.
+- `mtu`: Sets the Maximum Transmission Unit (MTU) and takes an integer value.
+- `metric` Sets the Route Metric for the default route created in every container joined to this network. Accepts a positive integer value. Can only be used with the Netavark network backend.
 
 Additionally the `bridge` driver supports the following options:
 - `vlan`: This option assign VLAN tag and enables vlan\_filtering. Defaults to none.
@@ -127,7 +140,7 @@ podman4
 
 Create a Macvlan based network using the host interface eth0. Macvlan networks can only be used as root.
 ```
-# podman network create -d macvlan -o parent=eth0 --subnet 192.5.0.0/16 newnet
+$ sudo podman network create -d macvlan -o parent=eth0 --subnet 192.5.0.0/16 newnet
 newnet
 ```
 

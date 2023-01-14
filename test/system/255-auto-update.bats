@@ -26,17 +26,16 @@ function teardown() {
     done < $SNAME_FILE
 
     rm -f $SNAME_FILE
-    run_podman ? rmi -f                            \
+    run_podman '?' rmi -f                            \
             quay.io/libpod/alpine:latest           \
             quay.io/libpod/busybox:latest          \
             quay.io/libpod/localtest:latest        \
             quay.io/libpod/autoupdatebroken:latest \
-            quay.io/libpod/test:latest             \
-            quay.io/libpod/fedora:31
+            quay.io/libpod/test:latest
 
     # The rollback tests may leave some dangling images behind, so let's prune
     # them to leave a clean state.
-    run_podman ? image prune -f
+    run_podman '?' image prune -f
     basic_teardown
 }
 
@@ -241,9 +240,8 @@ function _confirm_update() {
 @test "podman auto-update - label io.containers.autoupdate=local" {
     generate_service localtest local
     image=quay.io/libpod/localtest:latest
-    podman commit --change CMD=/bin/bash $cname $image
-    podman image inspect --format "{{.ID}}" $image
-    imageID="$output"
+    run_podman commit --change CMD=/bin/bash $cname $image
+    run_podman image inspect --format "{{.ID}}" $image
 
     _wait_service_ready container-$cname.service
     run_podman auto-update --dry-run --format "{{.Unit}},{{.Image}},{{.Updated}},{{.Policy}}"
@@ -268,7 +266,7 @@ function _confirm_update() {
 
     dockerfile1=$PODMAN_TMPDIR/Dockerfile.1
     cat >$dockerfile1 <<EOF
-FROM quay.io/libpod/fedora:31
+FROM $SYSTEMD_IMAGE
 RUN echo -e "#!/bin/sh\n\
 printenv NOTIFY_SOCKET; echo READY; systemd-notify --ready;\n\
 trap 'echo Received SIGTERM, finishing; exit' SIGTERM; echo WAITING; while :; do sleep 0.1; done" \
@@ -278,7 +276,7 @@ EOF
 
     dockerfile2=$PODMAN_TMPDIR/Dockerfile.2
     cat >$dockerfile2 <<EOF
-FROM quay.io/libpod/fedora:31
+FROM $SYSTEMD_IMAGE
 RUN echo -e "#!/bin/sh\n\
 exit 1" >> /runme
 RUN chmod +x /runme
@@ -393,7 +391,7 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/podman auto-update
+ExecStart=$PODMAN auto-update
 Environment="http_proxy=${http_proxy}"
 Environment="HTTP_PROXY=${HTTP_PROXY}"
 Environment="https_proxy=${https_proxy}"
@@ -447,7 +445,7 @@ EOF
 
     dockerfile1=$PODMAN_TMPDIR/Dockerfile.1
     cat >$dockerfile1 <<EOF
-FROM quay.io/libpod/fedora:31
+FROM $SYSTEMD_IMAGE
 RUN echo -e "#!/bin/sh\n\
 printenv NOTIFY_SOCKET; echo READY; systemd-notify --ready;\n\
 trap 'echo Received SIGTERM, finishing; exit' SIGTERM; echo WAITING; while :; do sleep 0.1; done" \
@@ -457,7 +455,7 @@ EOF
 
     dockerfile2=$PODMAN_TMPDIR/Dockerfile.2
     cat >$dockerfile2 <<EOF
-FROM quay.io/libpod/fedora:31
+FROM $SYSTEMD_IMAGE
 RUN echo -e "#!/bin/sh\n\
 exit 1" >> /runme
 RUN chmod +x /runme

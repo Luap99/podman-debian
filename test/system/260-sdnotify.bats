@@ -144,20 +144,15 @@ READY=1" "sdnotify sent MAINPID and READY"
 # These tests can fail in dev. environment because of SELinux.
 # quick fix: chcon -t container_runtime_exec_t ./bin/podman
 @test "sdnotify : container" {
-    # Sigh... we need to pull a humongous image because it has systemd-notify.
-    # (IMPORTANT: fedora:32 and above silently removed systemd-notify; this
-    # caused CI to hang. That's why we explicitly require fedora:31)
-    # FIXME: is there a smaller image we could use?
-    local _FEDORA="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/fedora:31"
-    # Pull that image. Retry in case of flakes.
-    run_podman pull $_FEDORA || \
-        run_podman pull $_FEDORA || \
-        run_podman pull $_FEDORA
+    # Pull our systemd image. Retry in case of flakes.
+    run_podman pull $SYSTEMD_IMAGE || \
+        run_podman pull $SYSTEMD_IMAGE || \
+        run_podman pull $SYSTEMD_IMAGE
 
     export NOTIFY_SOCKET=$PODMAN_TMPDIR/container.sock
     _start_socat
 
-    run_podman run -d --sdnotify=container $_FEDORA \
+    run_podman run -d --sdnotify=container $SYSTEMD_IMAGE \
                sh -c 'printenv NOTIFY_SOCKET; echo READY; while ! test -f /stop;do sleep 0.1;done;systemd-notify --ready'
     cid="$output"
     wait_for_ready $cid
@@ -191,7 +186,6 @@ READY=1" "sdnotify sent MAINPID and READY"
 READY=1"
 
     run_podman rm $cid
-    run_podman rmi $_FEDORA
     _stop_socat
 }
 
@@ -206,9 +200,10 @@ metadata:
     app: test
   name: test_pod
 spec:
+  restartPolicy: "Never"
   containers:
   - command:
-    - top
+    - true
     image: $IMAGE
     name: test
     resources: {}
@@ -219,26 +214,26 @@ EOF
     yaml_sha=$(sha256sum $yaml_source)
     service_container="${yaml_sha:0:12}-service"
 
-
     export NOTIFY_SOCKET=$PODMAN_TMPDIR/conmon.sock
     _start_socat
+    wait_for_file $_SOCAT_LOG
 
-    run_podman play kube --service-container=true $yaml_source
+    # Will run until all containers have stopped.
+    run_podman play kube --service-container=true --log-driver journald $yaml_source
+    run_podman container wait $service_container test_pod-test
 
     # Make sure the containers have the correct policy.
     run_podman container inspect test_pod-test $service_container --format "{{.Config.SdNotifyMode}}"
     is "$output" "ignore
 ignore"
 
-    run_podman container inspect $service_container --format "{{.State.ConmonPid}}"
-    mainPID="$output"
-    wait_for_file $_SOCAT_LOG
     # The 'echo's help us debug failed runs
     run cat $_SOCAT_LOG
     echo "socat log:"
     echo "$output"
 
-    is "$output" "MAINPID=$mainPID
+    # The "with policies" test below checks the MAINPID.
+    is "$output" "MAINPID=.*
 READY=1" "sdnotify sent MAINPID and READY"
 
     _stop_socat
@@ -249,15 +244,10 @@ READY=1" "sdnotify sent MAINPID and READY"
 }
 
 @test "sdnotify : play kube - with policies" {
-    # Sigh... we need to pull a humongous image because it has systemd-notify.
-    # (IMPORTANT: fedora:32 and above silently removed systemd-notify; this
-    # caused CI to hang. That's why we explicitly require fedora:31)
-    # FIXME: is there a smaller image we could use?
-    local _FEDORA="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/fedora:31"
     # Pull that image. Retry in case of flakes.
-    run_podman pull $_FEDORA || \
-        run_podman pull $_FEDORA || \
-        run_podman pull $_FEDORA
+    run_podman pull $SYSTEMD_IMAGE || \
+        run_podman pull $SYSTEMD_IMAGE || \
+        run_podman pull $SYSTEMD_IMAGE
 
     # Create the YAMl file
     yaml_source="$PODMAN_TMPDIR/test.yaml"
@@ -272,12 +262,13 @@ metadata:
     io.containers.sdnotify:   "container"
     io.containers.sdnotify/b: "conmon"
 spec:
+  restartPolicy: "Never"
   containers:
   - command:
     - /bin/sh
     - -c
-    - 'printenv NOTIFY_SOCKET; echo READY; while ! test -f /stop;do sleep 0.1;done;systemd-notify --ready'
-    image: $_FEDORA
+    - 'printenv NOTIFY_SOCKET; while ! test -f /stop;do sleep 0.1;done'
+    image: $SYSTEMD_IMAGE
     name: a
   - command:
     - /bin/sh
@@ -300,7 +291,7 @@ EOF
     # Run `play kube` in the background as it will wait for all containers to
     # send the READY=1 message.
     timeout --foreground -v --kill=10 60 \
-        $PODMAN play kube --service-container=true $yaml_source &>/dev/null &
+        $PODMAN play kube --service-container=true --log-driver journald $yaml_source &>/dev/null &
 
     # Wait for both containers to be running
     for i in $(seq 1 20); do
@@ -332,27 +323,33 @@ ignore"
     run_podman logs $container_a
     is "${lines[0]}" "/run/notify/notify.sock" "NOTIFY_SOCKET is passed to container"
 
-    # Instruct the container to send the READY
+    # Send the READY message.  Doing it in an exec session helps debug
+    # potential issues.
+    run_podman exec --env NOTIFY_SOCKET="/run/notify/notify.sock" $container_a /usr/bin/systemd-notify --ready
+
+    # Instruct the container to stop
     run_podman exec $container_a /bin/touch /stop
 
-    run_podman container inspect $service_container --format "{{.State.ConmonPid}}"
-    main_pid="$output"
-
     run_podman container wait $container_a
+    run_podman container inspect $container_a --format "{{.State.ExitCode}}"
+    is "$output" "0" "container exited cleanly after sending READY message"
     wait_for_file $_SOCAT_LOG
     # The 'echo's help us debug failed runs
     run cat $_SOCAT_LOG
     echo "socat log:"
     echo "$output"
 
-    is "$output" "MAINPID=$main_pid
+    is "$output" "MAINPID=.*
 READY=1" "sdnotify sent MAINPID and READY"
 
+    # Make sure that Podman is the service's MainPID
+    main_pid=$(awk -F= '{print $2}' <<< ${lines[0]})
+    is "$(</proc/$main_pid/comm)" "podman" "podman is the service mainPID"
     _stop_socat
 
     # Clean up pod and pause image
     run_podman play kube --down $yaml_source
-    run_podman rmi $_FEDORA $(pause_image)
+    run_podman rmi $(pause_image)
 }
 
 # vim: filetype=sh

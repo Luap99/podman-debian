@@ -1,3 +1,7 @@
+####> This option file is used in:
+####>   podman create, run
+####> If file is edited, make sure the changes
+####> are applicable to all of those.
 #### **--restart**=*policy*
 
 Restart policy to follow when containers exit.
@@ -10,6 +14,6 @@ Valid _policy_ values are:
 - `always`                   : Restart containers when they exit, regardless of status, retrying indefinitely
 - `unless-stopped`           : Identical to **always**
 
-Please note that restart will not restart containers after a system reboot.
-If this functionality is required in your environment, you can invoke Podman from a **systemd.unit**(5) file, or create an init script for whichever init system is in use.
-To generate systemd unit files, please see **podman generate systemd**.
+Podman provides a systemd unit file, podman-restart.service, which restarts containers after a system reboot.
+
+If container will run as a system service, generate a systemd unit file to manage it. See **podman generate systemd**.

@@ -366,7 +366,7 @@ var _ = Describe("Podman pod create", func() {
 		result = podmanTest.Podman([]string{"ps", "-aq"})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
-		Expect(len(result.OutputToStringArray())).Should(BeNumerically(">", 0))
+		Expect(result.OutputToStringArray()).ShouldNot(BeEmpty())
 
 		Expect(result.OutputToString()).To(ContainSubstring(infraID))
 	})
@@ -394,7 +394,7 @@ var _ = Describe("Podman pod create", func() {
 		result = podmanTest.Podman([]string{"ps", "-aq"})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
-		Expect(len(result.OutputToStringArray())).Should(BeNumerically(">", 0))
+		Expect(result.OutputToStringArray()).ShouldNot(BeEmpty())
 
 		Expect(result.OutputToString()).To(ContainSubstring(infraID))
 	})
@@ -411,7 +411,7 @@ var _ = Describe("Podman pod create", func() {
 		Expect(session.ErrorToString()).To(ContainSubstring("extra host entries must be specified on the pod: network cannot be configured when it is shared with a pod"))
 
 		// verify we can see the pods hosts
-		session = podmanTest.Podman([]string{"run", "--pod", podID, ALPINE, "ping", "-c", "1", "host1"})
+		session = podmanTest.Podman([]string{"run", "--cap-add", "net_raw", "--pod", podID, ALPINE, "ping", "-c", "1", "host1"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 	})

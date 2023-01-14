@@ -253,6 +253,16 @@ var _ = Describe("podman system connection", func() {
 			u, err := user.Current()
 			Expect(err).ShouldNot(HaveOccurred())
 
+			// Ensure that the remote end uses our built podman
+			if os.Getenv("PODMAN_BINARY") == "" {
+				err = os.Setenv("PODMAN_BINARY", podmanTest.PodmanBinary)
+				Expect(err).ShouldNot(HaveOccurred())
+
+				defer func() {
+					os.Unsetenv("PODMAN_BINARY")
+				}()
+			}
+
 			cmd := exec.Command(podmanTest.RemotePodmanBinary,
 				"system", "connection", "add",
 				"--default",
@@ -265,6 +275,20 @@ var _ = Describe("podman system connection", func() {
 			Eventually(session, DefaultWaitTimeout).Should(Exit(0))
 			Expect(session.Out.Contents()).Should(BeEmpty())
 			Expect(session.Err.Contents()).Should(BeEmpty())
+
+			cmd = exec.Command(podmanTest.RemotePodmanBinary,
+				"--connection", "QA", "ps")
+			_, err = Start(cmd, GinkgoWriter, GinkgoWriter)
+			Expect(err).ToNot(HaveOccurred())
+
+			// export the container_host env var and try again
+			err = os.Setenv("CONTAINER_HOST", fmt.Sprintf("ssh://%s@localhost", u.Username))
+			Expect(err).ToNot(HaveOccurred())
+			defer os.Unsetenv("CONTAINER_HOST")
+
+			cmd = exec.Command(podmanTest.RemotePodmanBinary, "ps")
+			_, err = Start(cmd, GinkgoWriter, GinkgoWriter)
+			Expect(err).ToNot(HaveOccurred())
 
 			uri := url.URL{
 				Scheme: "ssh",

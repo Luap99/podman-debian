@@ -31,8 +31,17 @@ func CreateNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	query := struct {
+		IgnoreIfExists bool `schema:"ignoreIfExists"`
+	}{}
+	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
+	if err := decoder.Decode(&query, r.URL.Query()); err != nil {
+		utils.Error(w, http.StatusBadRequest, fmt.Errorf("failed to parse parameters for %s: %w", r.URL.String(), err))
+		return
+	}
+
 	ic := abi.ContainerEngine{Libpod: runtime}
-	report, err := ic.NetworkCreate(r.Context(), network)
+	report, err := ic.NetworkCreate(r.Context(), network, &types.NetworkCreateOptions{IgnoreIfExists: query.IgnoreIfExists})
 	if err != nil {
 		if errors.Is(err, types.ErrNetworkExists) {
 			utils.Error(w, http.StatusConflict, err)
@@ -42,6 +51,26 @@ func CreateNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	utils.WriteResponse(w, http.StatusOK, report)
+}
+
+func UpdateNetwork(w http.ResponseWriter, r *http.Request) {
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
+	ic := abi.ContainerEngine{Libpod: runtime}
+
+	networkUpdateOptions := entities.NetworkUpdateOptions{}
+	if err := json.NewDecoder(r.Body).Decode(&networkUpdateOptions); err != nil {
+		utils.Error(w, http.StatusBadRequest, fmt.Errorf("failed to decode request JSON payload: %w", err))
+		return
+	}
+
+	name := utils.GetName(r)
+
+	err := ic.NetworkUpdate(r.Context(), name, networkUpdateOptions)
+	if err != nil {
+		utils.Error(w, http.StatusInternalServerError, err)
+	}
+
+	utils.WriteResponse(w, http.StatusNoContent, nil)
 }
 
 func ListNetworks(w http.ResponseWriter, r *http.Request) {

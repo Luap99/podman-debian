@@ -51,8 +51,8 @@ git config --system --add safe.directory $GOSRC
 echo -e "\n# Begin single-use VM global variables (${BASH_SOURCE[0]})" \
     > "/etc/ci_environment"
 (
-    while read -r env_var_val; do
-        echo "$env_var_val"
+    while read -r env_var; do
+        printf -- "%s=%q\n" "${env_var}" "${!env_var}"
     done <<<"$(passthrough_envars)"
 ) >> "/etc/ci_environment"
 
@@ -125,24 +125,17 @@ case "$OS_RELEASE_ID" in
             msg "Enabling container_manage_cgroup"
             setsebool container_manage_cgroup true
         fi
-
-        # For release 36 and later, netavark/aardvark is the default
-        # networking stack for podman.  All previous releases only have
-        # CNI networking available.  Upgrading from one to the other is
-        # not supported at this time.  Support execution of the upgrade
-        # tests in F36 and later, by disabling Netavark and enabling CNI.
-        #
-        # OS_RELEASE_VER is defined by automation-library
-        # shellcheck disable=SC2154
-        if [[ "$OS_RELEASE_VER" -ge 36 ]] && \
-           [[ "$TEST_FLAVOR" != "upgrade_test" ]];
-        then
-            use_netavark
-        else # Fedora < 36, or upgrade testing.
-            use_cni
-        fi
         ;;
     *) die_unknown OS_RELEASE_ID
+esac
+
+# Networking: force CNI or Netavark as requested in .cirrus.yml
+# (this variable is mandatory).
+# shellcheck disable=SC2154
+case "$CI_DESIRED_NETWORK" in
+    netavark)   use_netavark ;;
+    cni)        use_cni ;;
+    *)          die_unknown CI_DESIRED_NETWORK ;;
 esac
 
 # Required to be defined by caller: The environment where primary testing happens
@@ -196,6 +189,7 @@ esac
 # Required to be defined by caller: Are we testing as root or a regular user
 case "$PRIV_NAME" in
     root)
+        # shellcheck disable=SC2154
         if [[ "$TEST_FLAVOR" = "sys" || "$TEST_FLAVOR" = "apiv2" ]]; then
             # Used in local image-scp testing
             setup_rootless
@@ -212,6 +206,7 @@ case "$PRIV_NAME" in
     *) die_unknown PRIV_NAME
 esac
 
+# shellcheck disable=SC2154
 if [[ -n "$ROOTLESS_USER" ]]; then
     echo "ROOTLESS_USER=$ROOTLESS_USER" >> /etc/ci_environment
     echo "ROOTLESS_UID=$ROOTLESS_UID" >> /etc/ci_environment
@@ -297,6 +292,14 @@ case "$TEST_FLAVOR" in
             die "Invalid value for \$TEST_ENVIRON=$TEST_ENVIRON"
         fi
 
+        install_test_configs
+        ;;
+    minikube)
+        dnf install -y $PACKAGE_DOWNLOAD_DIR/minikube-latest*
+        remove_packaged_podman_files
+        make install.tools
+        make install PREFIX=/usr ETCDIR=/etc
+        minikube config set driver podman
         install_test_configs
         ;;
     machine)

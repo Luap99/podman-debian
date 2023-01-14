@@ -4,6 +4,7 @@
 #
 
 load helpers
+load helpers.network
 
 @test "podman network - basic tests" {
     heading="NETWORK *ID *NAME *DRIVER"
@@ -12,6 +13,9 @@ load helpers
 
     run_podman network ls --noheading
     assert "$output" !~ "$heading" "network ls --noheading shows header anyway"
+
+    run_podman network ls -n
+    assert "$output" !~ "$heading" "network ls -n shows header anyway"
 
     # check deterministic list order
     local net1=a-$(random_string 10)
@@ -205,8 +209,7 @@ load helpers
 
 # "network create" now works rootless, with the help of a special container
 @test "podman network create" {
-    # Deliberately use a fixed port, not random_open_port, because of #10806
-    myport=54322
+    myport=$(random_free_port)
 
     local mynetname=testnet-$(random_string 10)
     local mysubnet=$(random_rfc1918_subnet)
@@ -775,6 +778,21 @@ EOF
     dns_opt=dns$(random_string)
     run_podman run --rm --dns-option=${dns_opt} $IMAGE cat /etc/resolv.conf
     is "$output" ".*options ${dns_opt}" "--dns-option was added"
+}
+
+@test "podman rootless netns works when XDG_RUNTIME_DIR includes symlinks" {
+    # regression test for https://github.com/containers/podman/issues/14606
+    is_rootless || skip "only meaningful for rootless"
+
+    # Create a tmpdir symlink pointing to /run, and use it briefly
+    ln -s /run $PODMAN_TMPDIR/run
+    local tmp_run=$PODMAN_TMPDIR/run/user/$(id -u)
+    test -d $tmp_run || skip "/run/user/MYUID unavailable"
+
+    # This 'run' would previously fail with:
+    #    IPAM error: failed to open database ....
+    XDG_RUNTIME_DIR=$tmp_run run_podman run --network bridge --rm $IMAGE ip a
+    assert "$output" =~ "eth0"
 }
 
 # vim: filetype=sh

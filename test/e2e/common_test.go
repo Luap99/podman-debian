@@ -23,7 +23,7 @@ import (
 	"github.com/containers/podman/v4/pkg/rootless"
 	"github.com/containers/podman/v4/pkg/util"
 	. "github.com/containers/podman/v4/test/utils"
-	"github.com/containers/storage"
+	"github.com/containers/storage/pkg/lockfile"
 	"github.com/containers/storage/pkg/reexec"
 	"github.com/containers/storage/pkg/stringid"
 	jsoniter "github.com/json-iterator/go"
@@ -47,6 +47,7 @@ var (
 type PodmanTestIntegration struct {
 	PodmanTest
 	ConmonBinary        string
+	QuadletBinary       string
 	Root                string
 	NetworkConfigDir    string
 	OCIRuntime          string
@@ -212,6 +213,11 @@ func PodmanTestCreateUtil(tempDir string, remote bool) *PodmanTestIntegration {
 		podmanRemoteBinary = os.Getenv("PODMAN_REMOTE_BINARY")
 	}
 
+	quadletBinary := filepath.Join(cwd, "../../bin/quadlet")
+	if os.Getenv("QUADLET_BINARY") != "" {
+		quadletBinary = os.Getenv("QUADLET_BINARY")
+	}
+
 	conmonBinary := "/usr/libexec/podman/conmon"
 	altConmonBinary := "/usr/bin/conmon"
 	if _, err := os.Stat(conmonBinary); os.IsNotExist(err) {
@@ -280,6 +286,7 @@ func PodmanTestCreateUtil(tempDir string, remote bool) *PodmanTestIntegration {
 			NetworkBackend:     networkBackend,
 		},
 		ConmonBinary:        conmonBinary,
+		QuadletBinary:       quadletBinary,
 		Root:                root,
 		TmpDir:              tempDir,
 		NetworkConfigDir:    networkConfigDir,
@@ -375,7 +382,7 @@ func (p *PodmanTestIntegration) createArtifact(image string) {
 func (s *PodmanSessionIntegration) InspectImageJSON() []inspect.ImageData {
 	var i []inspect.ImageData
 	err := jsoniter.Unmarshal(s.Out.Contents(), &i)
-	Expect(err).To(BeNil())
+	Expect(err).ToNot(HaveOccurred())
 	return i
 }
 
@@ -395,9 +402,9 @@ func processTestResult(f GinkgoTestDescription) {
 	testResultsMutex.Unlock()
 }
 
-func GetPortLock(port string) storage.Locker {
+func GetPortLock(port string) *lockfile.LockFile {
 	lockFile := filepath.Join(LockTmpDir, port)
-	lock, err := storage.GetLockfile(lockFile)
+	lock, err := lockfile.GetLockFile(lockFile)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
@@ -427,7 +434,8 @@ func (p *PodmanTestIntegration) RunTopContainer(name string) *PodmanSessionInteg
 // RunTopContainerWithArgs runs a simple container in the background that
 // runs top.  If the name passed != "", it will have a name, command args can also be passed in
 func (p *PodmanTestIntegration) RunTopContainerWithArgs(name string, args []string) *PodmanSessionIntegration {
-	var podmanArgs = []string{"run"}
+	// In proxy environment, some tests need to the --http-proxy=false option (#16684)
+	var podmanArgs = []string{"run", "--http-proxy=false"}
 	if name != "" {
 		podmanArgs = append(podmanArgs, "--name", name)
 	}
@@ -467,6 +475,17 @@ func (p *PodmanTestIntegration) RunNginxWithHealthCheck(name string) (*PodmanSes
 	session := p.Podman(podmanArgs)
 	session.WaitWithDefaultTimeout()
 	return session, session.OutputToString()
+}
+
+// RunContainerWithNetworkTest runs the fedoraMinimal curl with the specified network mode.
+func (p *PodmanTestIntegration) RunContainerWithNetworkTest(mode string) *PodmanSessionIntegration {
+	var podmanArgs = []string{"run"}
+	if mode != "" {
+		podmanArgs = append(podmanArgs, "--network", mode)
+	}
+	podmanArgs = append(podmanArgs, fedoraMinimal, "curl", "-k", "-o", "/dev/null", "http://www.redhat.com:80")
+	session := p.Podman(podmanArgs)
+	return session
 }
 
 func (p *PodmanTestIntegration) RunLsContainerInPod(name, pod string) (*PodmanSessionIntegration, int, string) {
@@ -511,6 +530,19 @@ func (p *PodmanTestIntegration) PodmanPID(args []string) (*PodmanSessionIntegrat
 	}
 	podmanSession := &PodmanSession{Session: session}
 	return &PodmanSessionIntegration{podmanSession}, command.Process.Pid
+}
+
+func (p *PodmanTestIntegration) Quadlet(args []string, sourceDir string) *PodmanSessionIntegration {
+	fmt.Printf("Running: %s %s with QUADLET_UNIT_DIRS=%s\n", p.QuadletBinary, strings.Join(args, " "), sourceDir)
+
+	command := exec.Command(p.QuadletBinary, args...)
+	command.Env = []string{fmt.Sprintf("QUADLET_UNIT_DIRS=%s", sourceDir)}
+	session, err := Start(command, GinkgoWriter, GinkgoWriter)
+	if err != nil {
+		Fail("unable to run quadlet command: " + strings.Join(args, " "))
+	}
+	quadletSession := &PodmanSession{Session: session}
+	return &PodmanSessionIntegration{quadletSession}
 }
 
 // Cleanup cleans up the temporary store
@@ -562,7 +594,7 @@ func (p *PodmanTestIntegration) CleanupSecrets() {
 func (s *PodmanSessionIntegration) InspectContainerToJSON() []define.InspectContainerData {
 	var i []define.InspectContainerData
 	err := jsoniter.Unmarshal(s.Out.Contents(), &i)
-	Expect(err).To(BeNil())
+	Expect(err).ToNot(HaveOccurred())
 	return i
 }
 
@@ -578,7 +610,7 @@ func (s *PodmanSessionIntegration) InspectPodToJSON() define.InspectPodData {
 func (s *PodmanSessionIntegration) InspectPodArrToJSON() []define.InspectPodData {
 	var i []define.InspectPodData
 	err := jsoniter.Unmarshal(s.Out.Contents(), &i)
-	Expect(err).To(BeNil())
+	Expect(err).ToNot(HaveOccurred())
 	return i
 }
 
@@ -806,7 +838,7 @@ func (p *PodmanTestIntegration) RestoreArtifactToCache(image string) error {
 func populateCache(podman *PodmanTestIntegration) {
 	for _, image := range CACHE_IMAGES {
 		err := podman.RestoreArtifactToCache(image)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 	}
 	// logformatter uses this to recognize the first test
 	fmt.Printf("-----------------------------\n")
@@ -967,7 +999,7 @@ func (s *PodmanSessionIntegration) jq(jqCommand string) (string, error) {
 func (p *PodmanTestIntegration) buildImage(dockerfile, imageName string, layers string, label string) string {
 	dockerfilePath := filepath.Join(p.TempDir, "Dockerfile")
 	err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0755)
-	Expect(err).To(BeNil())
+	Expect(err).ToNot(HaveOccurred())
 	cmd := []string{"build", "--pull-never", "--layers=" + layers, "--file", dockerfilePath}
 	if label != "" {
 		cmd = append(cmd, "--label="+label)

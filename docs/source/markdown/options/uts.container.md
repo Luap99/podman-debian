@@ -1,3 +1,7 @@
+####> This option file is used in:
+####>   podman create, run
+####> If file is edited, make sure the changes
+####> are applicable to all of those.
 #### **--uts**=*mode*
 
 Set the UTS namespace mode for the container. The following values are supported:

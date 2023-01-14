@@ -1,6 +1,7 @@
 #!/usr/bin/env bats
 
 load helpers
+load helpers.network
 
 @test "podman run - basic tests" {
     rand=$(random_string 30)
@@ -173,7 +174,7 @@ echo $rand        |   0 | $rand
     run_podman 1 image exists $NONLOCAL_IMAGE
 
     # Run a container, without --rm; this should block subsequent --rmi
-    run_podman run --name keepme $NONLOCAL_IMAGE /bin/true
+    run_podman run --name /keepme $NONLOCAL_IMAGE /bin/true
     run_podman image exists $NONLOCAL_IMAGE
 
     # Now try running with --rmi : it should succeed, but not remove the image
@@ -181,7 +182,7 @@ echo $rand        |   0 | $rand
     run_podman image exists $NONLOCAL_IMAGE
 
     # Remove the stray container, and run one more time with --rmi.
-    run_podman rm keepme
+    run_podman rm /keepme
     run_podman run --rmi --rm $NONLOCAL_IMAGE /bin/true
     run_podman 1 image exists $NONLOCAL_IMAGE
 }
@@ -191,6 +192,10 @@ echo $rand        |   0 | $rand
 @test "podman run --conmon-pidfile --cidfile" {
     pidfile=${PODMAN_TMPDIR}/pidfile
     cidfile=${PODMAN_TMPDIR}/cidfile
+
+    # Write random content to the cidfile to make sure its content is truncated
+    # on write.
+    echo "$(random_string 120)" > $cidfile
 
     cname=$(random_string)
     run_podman run --name $cname \
@@ -218,12 +223,9 @@ echo $rand        |   0 | $rand
 
     # All OK. Kill container.
     run_podman rm -f $cid
-
-    # Podman must not overwrite existing cid file.
-    # (overwriting conmon-pidfile is OK, so don't test that)
-    run_podman 125 run --cidfile=$cidfile $IMAGE true
-    is "$output" "Error: container id file exists. .* delete $cidfile" \
-       "podman will not overwrite existing cidfile"
+    if [[ -e $cidfile ]]; then
+        die "cidfile $cidfile should be removed along with container"
+    fi
 }
 
 @test "podman run docker-archive" {
@@ -926,15 +928,16 @@ $IMAGE--c_ok" \
     # ('skip' would be nicer in some sense... but could hide a regression.
     # Fedora, RHEL, Debian, Ubuntu, Gentoo, all have /dev/ttyN, so if
     # this ever triggers, it means a real problem we should know about.)
-    assert "$(ls /dev/tty* | grep -vx /dev/tty)" != "" \
+    vt_tty_devices_count=$(find /dev -regex '/dev/tty[0-9].*' | wc -w)
+    assert "$vt_tty_devices_count" != "0" \
            "Expected at least one /dev/ttyN device on host"
 
     # Ok now confirm that without --systemd, podman exposes ttyNN devices
     run_podman run --rm -d --privileged $IMAGE ./pause
     cid="$output"
 
-    run_podman exec $cid sh -c 'ls /dev/tty*'
-    assert "$output" != "/dev/tty" \
+    run_podman exec $cid sh -c "find /dev -regex '/dev/tty[0-9].*' | wc -w"
+    assert "$output" = "$vt_tty_devices_count" \
            "ls /dev/tty* without systemd; should have lots of ttyN devices"
     run_podman stop -t 0 $cid
 
@@ -942,11 +945,61 @@ $IMAGE--c_ok" \
     run_podman run --rm -d --privileged --systemd=always $IMAGE ./pause
     cid="$output"
 
-    run_podman exec $cid sh -c 'ls /dev/tty*'
-    assert "$output" = "/dev/tty" \
-           "ls /dev/tty* with --systemd=always: should have no ttyN devices"
+    run_podman exec $cid sh -c "find /dev -regex '/dev/tty[0-9].*' | wc -w"
+    assert "$output" = "0" \
+           "ls /dev/tty[0-9] with --systemd=always: should have no ttyN devices"
 
     run_podman stop -t 0 $cid
+}
+
+# 16925: --privileged + --systemd = share non-virtual-terminal TTYs
+@test "podman run --privileged as root with systemd mounts non-vt /dev/tty devices" {
+    skip_if_rootless "this test only makes sense as root"
+
+    # First, confirm that we _have_ non-virtual terminal /dev/tty* devices on
+    # the host.
+    non_vt_tty_devices_count=$(find /dev -regex '/dev/tty[^0-9].*' | wc -w)
+    if [ "$non_vt_tty_devices_count" -eq 0 ]; then
+        skip "The server does not have non-vt TTY devices"
+    fi
+
+    # Verify that all the non-vt TTY devices got mounted in the container
+    run_podman run --rm -d --privileged --systemd=always $IMAGE ./pause
+    cid="$output"
+    run_podman '?' exec $cid find /dev -regex '/dev/tty[^0-9].*'
+    assert "$status" = 0 \
+           "No non-virtual-terminal TTY devices got mounted in the container"
+    assert "$(echo "$output" | wc -w)" = "$non_vt_tty_devices_count" \
+           "Some non-virtual-terminal TTY devices are missing in the container"
+    run_podman stop -t 0 $cid
+}
+
+@test "podman run read-only from containers.conf" {
+    containersconf=$PODMAN_TMPDIR/containers.conf
+    cat >$containersconf <<EOF
+[containers]
+read_only=true
+EOF
+
+    CONTAINERS_CONF="$containersconf" run_podman 1 run --rm $IMAGE touch /testro
+    CONTAINERS_CONF="$containersconf" run_podman run --rm --read-only=false $IMAGE touch /testrw
+    CONTAINERS_CONF="$containersconf" run_podman run --rm $IMAGE touch /tmp/testrw
+    CONTAINERS_CONF="$containersconf" run_podman 1 run --rm --read-only-tmpfs=false $IMAGE touch /tmp/testro
+}
+
+@test "podman run bad --name" {
+    randomname=$(random_string 30)
+    run_podman 125 create --name "$randomname/bad" $IMAGE
+    run_podman create --name "/$randomname" $IMAGE
+    run_podman ps -a --filter name="^/$randomname$" --format '{{ .Names }}'
+    is $output "$randomname" "Should be able to find container by name"
+    run_podman rm "/$randomname"
+    run_podman 125 create --name "$randomname/" $IMAGE
+}
+
+@test "podman run --net=host --cgroupns=host with read only cgroupfs" {
+    # verify that the last /sys/fs/cgroup mount is read-only
+    run_podman run --net=host --cgroupns=host --rm $IMAGE sh -c "grep ' / /sys/fs/cgroup ' /proc/self/mountinfo | tail -n 1 | grep '/sys/fs/cgroup ro'"
 }
 
 # vim: filetype=sh

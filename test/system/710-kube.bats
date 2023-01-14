@@ -5,8 +5,8 @@
 
 load helpers
 
-# standard capability drop list
-capabilities='{"drop":["CAP_MKNOD","CAP_NET_RAW","CAP_AUDIT_WRITE"]}'
+# capability drop list
+capabilities='{"drop":["CAP_FOWNER","CAP_SETFCAP"]}'
 
 # Warning that is emitted once on containers, multiple times on pods
 kubernetes_63='Truncation Annotation: .* Kubernetes only allows 63 characters'
@@ -31,7 +31,7 @@ json.dump(yaml.safe_load(sys.stdin), sys.stdout)'
 
 @test "podman kube generate - container" {
     cname=c$(random_string 15)
-    run_podman container create --name $cname $IMAGE top
+    run_podman container create --cap-drop fowner --cap-drop setfcap --name $cname $IMAGE top
     run_podman kube generate $cname
 
     # Convert yaml to json, and dump to stdout (to help in case of errors)
@@ -52,12 +52,6 @@ json.dump(yaml.safe_load(sys.stdin), sys.stdout)'
     expect="
 apiVersion | =  | v1
 kind       | =  | Pod
-
-metadata.annotations.\"io.kubernetes.cri-o.TTY/$cname\"           | =  | false
-metadata.annotations.\"io.podman.annotations.autoremove/$cname\"  | =  | FALSE
-metadata.annotations.\"io.podman.annotations.init/$cname\"        | =  | FALSE
-metadata.annotations.\"io.podman.annotations.privileged/$cname\"  | =  | FALSE
-metadata.annotations.\"io.podman.annotations.publish-all/$cname\" | =  | FALSE
 
 metadata.creationTimestamp | =~ | [0-9T:-]\\+Z
 metadata.labels.app        | =  | ${cname}-pod
@@ -95,7 +89,7 @@ status                           | =  | null
     run_podman 125 kube generate $pname
     assert "$output" =~ "Error: .* only has an infra container"
 
-    run_podman container create --name $cname1 --pod $pname $IMAGE top
+    run_podman container create --cap-drop fowner --cap-drop setfcap --name $cname1 --pod $pname $IMAGE top
     run_podman container create --name $cname2 --pod $pname $IMAGE bottom
     run_podman kube generate $pname
 
@@ -111,16 +105,6 @@ metadata.annotations.\"io.kubernetes.cri-o.ContainerType/$cname1\" | =  | contai
 metadata.annotations.\"io.kubernetes.cri-o.ContainerType/$cname2\" | =  | container
 metadata.annotations.\"io.kubernetes.cri-o.SandboxID/$cname1\"     | =~ | [0-9a-f]\\{56\\}
 metadata.annotations.\"io.kubernetes.cri-o.SandboxID/$cname2\"     | =~ | [0-9a-f]\\{56\\}
-metadata.annotations.\"io.kubernetes.cri-o.TTY/$cname1\"           | =  | false
-metadata.annotations.\"io.kubernetes.cri-o.TTY/$cname2\"           | =  | false
-metadata.annotations.\"io.podman.annotations.autoremove/$cname1\"  | =  | FALSE
-metadata.annotations.\"io.podman.annotations.autoremove/$cname2\"  | =  | FALSE
-metadata.annotations.\"io.podman.annotations.init/$cname1\"        | =  | FALSE
-metadata.annotations.\"io.podman.annotations.init/$cname2\"        | =  | FALSE
-metadata.annotations.\"io.podman.annotations.privileged/$cname1\"  | =  | FALSE
-metadata.annotations.\"io.podman.annotations.privileged/$cname2\"  | =  | FALSE
-metadata.annotations.\"io.podman.annotations.publish-all/$cname1\" | =  | FALSE
-metadata.annotations.\"io.podman.annotations.publish-all/$cname2\" | =  | FALSE
 
 metadata.creationTimestamp | =~ | [0-9T:-]\\+Z
 metadata.labels.app        | =  | ${pname}

@@ -1,7 +1,9 @@
+import io
 import multiprocessing
 import queue
 import random
 import subprocess
+import tarfile
 import threading
 import unittest
 
@@ -131,9 +133,36 @@ class ContainerTestCase(APITestCase):
             self.assertEqual(r.text, "", r.text)
 
     def test_attach(self):
-        self.skipTest("FIXME: Test timeouts")
-        r = requests.post(self.uri(self.resolve_container("/containers/{}/attach?logs=true")), timeout=5)
-        self.assertIn(r.status_code, (101, 500), r.text)
+        r = requests.post(
+            self.podman_url + "/v1.40/containers/create?name=topcontainer",
+            json={"Cmd": ["sh", "-c", "echo podman; sleep 100"], "Image": "alpine:latest"},
+        )
+        self.assertEqual(r.status_code, 201, r.text)
+        payload = r.json()
+
+        r = requests.post(
+            self.podman_url
+            + f"/v1.40/containers/{payload['Id']}/start"
+        )
+        self.assertEqual(r.status_code, 204, r.text)
+
+        r = requests.post(
+            self.podman_url
+            + f"/v1.40/containers/{payload['Id']}/attach?logs=true&stream=false"
+        )
+        self.assertIn(r.status_code, (101, 200), r.text)
+        # see the attach format docs, stdout = 1, length = 7, message = podman\n
+        self.assertEqual(r.content, b"\x01\x00\x00\x00\x00\x00\x00\x07podman\n", r.text)
+
+        r = requests.post(
+            self.podman_url
+            + f"/v1.40/containers/{payload['Id']}/stop?t=0"
+        )
+        self.assertEqual(r.status_code, 204, r.text)
+
+        requests.delete(
+            self.podman_url + f"/v1.40/containers/{payload['Id']}?force=true"
+        )
 
     def test_logs(self):
         r = requests.get(self.uri(self.resolve_container("/containers/{}/logs?stdout=true")))
@@ -358,6 +387,43 @@ class ContainerTestCase(APITestCase):
         out = r.json()
         self.assertEqual(2000, out["HostConfig"]["MemorySwap"])
         self.assertEqual(1000, out["HostConfig"]["Memory"])
+
+    def test_host_config_port_bindings(self):
+        # create a container with two ports exposed, but only one of the ports bound
+        r = requests.post(
+            self.podman_url + "/v1.40/containers/create",
+            json={
+                "Name": "memory",
+                "Cmd": ["top"],
+                "Image": "alpine:latest",
+                "HostConfig": {
+                    "PortBindings": {
+                        "8080": [{"HostPort": "87634"}]
+                    }
+                },
+                "ExposedPorts": {
+                    "8080": {},
+                    "8081": {}
+                }
+            },
+        )
+        self.assertEqual(r.status_code, 201, r.text)
+        payload = r.json()
+        container_id = payload["Id"]
+        self.assertIsNotNone(container_id)
+
+        r = requests.get(self.podman_url +
+                         f"/v1.40/containers/{container_id}/json")
+        self.assertEqual(r.status_code, 200, r.text)
+        inspect_response = r.json()
+        # both ports are in the config
+        self.assertEqual(2, len(inspect_response["Config"]["ExposedPorts"]))
+        self.assertTrue("8080/tcp" in inspect_response["Config"]["ExposedPorts"])
+        self.assertTrue("8081/tcp" in inspect_response["Config"]["ExposedPorts"])
+        # only 8080 one port is bound
+        self.assertEqual(1, len(inspect_response["HostConfig"]["PortBindings"]))
+        self.assertTrue("8080/tcp" in inspect_response["HostConfig"]["PortBindings"])
+        self.assertFalse("8081/tcp" in inspect_response["HostConfig"]["PortBindings"])
 
 def execute_process(cmd):
     return subprocess.run(

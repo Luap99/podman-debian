@@ -1,10 +1,12 @@
 package integration
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/containers/common/libimage"
 	podmanRegistry "github.com/containers/podman/v4/hack/podman-registry-go"
 	. "github.com/containers/podman/v4/test/utils"
 	"github.com/containers/storage/pkg/archive"
@@ -165,6 +167,27 @@ var _ = Describe("Podman manifest", func() {
 			))
 	})
 
+	It("add --annotation", func() {
+		session := podmanTest.Podman([]string{"manifest", "create", "foo"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		session = podmanTest.Podman([]string{"manifest", "add", "--annotation", "hoge", "foo", imageList})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(125))
+		Expect(session.ErrorToString()).To(ContainSubstring("no value given for annotation"))
+		session = podmanTest.Podman([]string{"manifest", "add", "--annotation", "hoge=fuga", "foo", imageList})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		session = podmanTest.Podman([]string{"manifest", "inspect", "foo"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		var inspect libimage.ManifestListData
+		err := json.Unmarshal(session.Out.Contents(), &inspect)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(inspect.Manifests[0].Annotations).To(Equal(map[string]string{"hoge": "fuga"}))
+	})
+
 	It("add --os", func() {
 		session := podmanTest.Podman([]string{"manifest", "create", "foo"})
 		session.WaitWithDefaultTimeout()
@@ -179,7 +202,6 @@ var _ = Describe("Podman manifest", func() {
 	})
 
 	It("annotate", func() {
-		SkipIfRemote("Not supporting annotate on remote connections")
 		session := podmanTest.Podman([]string{"manifest", "create", "foo"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
@@ -251,7 +273,7 @@ var _ = Describe("Podman manifest", func() {
 		Expect(session).Should(Exit(0))
 		dest := filepath.Join(podmanTest.TempDir, "pushed")
 		err := os.MkdirAll(dest, os.ModePerm)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		defer func() {
 			os.RemoveAll(dest)
 		}()
@@ -285,7 +307,7 @@ var _ = Describe("Podman manifest", func() {
 		Expect(session).Should(Exit(0))
 		dest := filepath.Join(podmanTest.TempDir, "pushed")
 		err := os.MkdirAll(dest, os.ModePerm)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		defer func() {
 			os.RemoveAll(dest)
 		}()
@@ -293,7 +315,7 @@ var _ = Describe("Podman manifest", func() {
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		files, err := filepath.Glob(dest + string(os.PathSeparator) + "*")
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		check := SystemExec("sha256sum", files)
 		check.WaitWithDefaultTimeout()
 		Expect(check).Should(Exit(0))
@@ -319,7 +341,7 @@ var _ = Describe("Podman manifest", func() {
 		Expect(session).Should(Exit(0))
 		dest := filepath.Join(podmanTest.TempDir, "pushed")
 		err := os.MkdirAll(dest, os.ModePerm)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		defer func() {
 			os.RemoveAll(dest)
 		}()
@@ -332,13 +354,13 @@ var _ = Describe("Podman manifest", func() {
 		blobsDir := filepath.Join(dest, "blobs", "sha256")
 
 		blobs, err := os.ReadDir(blobsDir)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		for _, f := range blobs {
 			blobPath := filepath.Join(blobsDir, f.Name())
 
 			sourceFile, err := os.ReadFile(blobPath)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			compressionType := archive.DetectCompression(sourceFile)
 			if compressionType == archive.Zstd {
@@ -358,7 +380,7 @@ var _ = Describe("Podman manifest", func() {
 
 		dest := filepath.Join(podmanTest.TempDir, "pushed")
 		err := os.MkdirAll(dest, os.ModePerm)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		defer func() {
 			os.RemoveAll(dest)
 		}()
@@ -389,10 +411,10 @@ var _ = Describe("Podman manifest", func() {
 		}
 		os.Setenv("PODMAN", podmanTest.PodmanBinary+" "+opts)
 		registry, err := podmanRegistry.StartWithOptions(registryOptions)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		defer func() {
 			err := registry.Stop()
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 			os.Unsetenv("PODMAN")
 		}()
 
@@ -457,13 +479,17 @@ var _ = Describe("Podman manifest", func() {
 		Expect(session).Should(Exit(0))
 		dest := filepath.Join(podmanTest.TempDir, "pushed")
 		err := os.MkdirAll(dest, os.ModePerm)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		defer func() {
 			os.RemoveAll(dest)
 		}()
 		session = podmanTest.Podman([]string{"manifest", "push", "--purge", "foo", "dir:" + dest})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
+		session = podmanTest.Podman([]string{"manifest", "push", "-p", "foo", "dir:" + dest})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(125))
+		Expect(session.ErrorToString()).To(ContainSubstring("retrieving local image from image name foo: foo: image not known"))
 		session = podmanTest.Podman([]string{"images", "-q", "foo"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))

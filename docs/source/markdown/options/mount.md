@@ -1,3 +1,7 @@
+####> This option file is used in:
+####>   podman create, run
+####> If file is edited, make sure the changes
+####> are applicable to all of those.
 #### **--mount**=*type=TYPE,TYPE-SPECIFIC-OPTION[,...]*
 
 Attach a filesystem mount to the container
@@ -33,6 +37,10 @@ Current supported mount TYPEs are **bind**, **volume**, **image**, **tmpfs** and
 	      . U, chown: true or false (default). Change recursively the owner and group of the source volume based on the UID and GID of the container.
 
 	      · idmap: true or false (default).  If specified, create an idmapped mount to the target user namespace in the container.
+          The idmap option supports a custom mapping that can be different than the user namespace used by the container.
+          The mapping can be specified after the idmap option like: `idmap=uids=0-1-10#10-11-10;gids=0-100-10`.  For each triplet, the first value is the
+          start of the backing file system IDs that are mapped to the second value on the host.  The length of this mapping is given in the third value.
+          Multiple ranges are separated with #.
 
        Options specific to image:
 

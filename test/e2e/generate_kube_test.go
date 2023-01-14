@@ -64,17 +64,14 @@ var _ = Describe("Podman generate kube", func() {
 
 		pod := new(v1.Pod)
 		err := yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(pod.Spec).To(HaveField("HostNetwork", false))
 		Expect(pod.Spec.SecurityContext).To(BeNil())
 		Expect(pod.Spec.DNSConfig).To(BeNil())
 		Expect(pod.Spec.Containers[0]).To(HaveField("WorkingDir", ""))
+		Expect(pod.Spec.Containers[0].SecurityContext).To(BeNil())
 		Expect(pod.Spec.Containers[0].Env).To(BeNil())
 		Expect(pod).To(HaveField("Name", "top-pod"))
-		enableServiceLinks := false
-		Expect(pod.Spec).To(HaveField("EnableServiceLinks", &enableServiceLinks))
-		automountServiceAccountToken := false
-		Expect(pod.Spec).To(HaveField("AutomountServiceAccountToken", &automountServiceAccountToken))
 
 		numContainers := 0
 		for range pod.Spec.Containers {
@@ -94,7 +91,7 @@ var _ = Describe("Podman generate kube", func() {
 
 		pod := new(v1.Pod)
 		err := yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(kube.OutputToString()).To(ContainSubstring("level: s0:c100,c200"))
 	})
 
@@ -109,7 +106,7 @@ var _ = Describe("Podman generate kube", func() {
 
 		pod := new(v1.Pod)
 		err = yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(kube.OutputToString()).To(ContainSubstring("type: spc_t"))
 
 	})
@@ -125,7 +122,7 @@ var _ = Describe("Podman generate kube", func() {
 
 		pod := new(v1.Pod)
 		err = yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(kube.OutputToString()).To(ContainSubstring("type: foo_bar_t"))
 	})
 
@@ -144,13 +141,13 @@ var _ = Describe("Podman generate kube", func() {
 
 		svc := new(v1.Service)
 		err := yaml.Unmarshal([]byte(arr[0]), svc)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(svc.Spec.Ports).To(HaveLen(1))
 		Expect(svc.Spec.Ports[0].TargetPort.IntValue()).To(Equal(3890))
 
 		pod := new(v1.Pod)
 		err = yaml.Unmarshal([]byte(arr[1]), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 	})
 
 	It("podman generate kube on pod", func() {
@@ -167,12 +164,8 @@ var _ = Describe("Podman generate kube", func() {
 
 		pod := new(v1.Pod)
 		err := yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(pod.Spec).To(HaveField("HostNetwork", false))
-		enableServiceLinks := false
-		Expect(pod.Spec).To(HaveField("EnableServiceLinks", &enableServiceLinks))
-		automountServiceAccountToken := false
-		Expect(pod.Spec).To(HaveField("AutomountServiceAccountToken", &automountServiceAccountToken))
 
 		numContainers := 0
 		for range pod.Spec.Containers {
@@ -217,7 +210,7 @@ var _ = Describe("Podman generate kube", func() {
 
 		pod := new(v1.Pod)
 		err := yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(pod.Spec).To(HaveField("HostNetwork", false))
 
 		numContainers := len(pod.Spec.Containers) + len(pod.Spec.InitContainers)
@@ -238,7 +231,7 @@ var _ = Describe("Podman generate kube", func() {
 
 		pod = new(v1.Pod)
 		err = yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(pod.Spec).To(HaveField("HostNetwork", false))
 
 		numContainers = len(pod.Spec.Containers) + len(pod.Spec.InitContainers)
@@ -263,7 +256,7 @@ var _ = Describe("Podman generate kube", func() {
 
 		pod = new(v1.Pod)
 		err = yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(pod.Spec).To(HaveField("HostNetwork", false))
 
 		numContainers = len(pod.Spec.Containers) + len(pod.Spec.InitContainers)
@@ -272,7 +265,7 @@ var _ = Describe("Podman generate kube", func() {
 
 	It("podman generate kube on pod with user namespace", func() {
 		u, err := user.Current()
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		name := u.Name
 		if name == "root" {
 			name = "containers"
@@ -298,7 +291,7 @@ var _ = Describe("Podman generate kube", func() {
 
 		pod := new(v1.Pod)
 		err = yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		expected := false
 		Expect(pod.Spec).To(HaveField("HostUsers", &expected))
 	})
@@ -318,7 +311,7 @@ var _ = Describe("Podman generate kube", func() {
 
 		pod := new(v1.Pod)
 		err := yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(pod.Spec).To(HaveField("HostNetwork", true))
 	})
 
@@ -333,7 +326,7 @@ var _ = Describe("Podman generate kube", func() {
 
 		pod := new(v1.Pod)
 		err := yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(pod.Spec).To(HaveField("HostNetwork", true))
 	})
 
@@ -363,7 +356,7 @@ var _ = Describe("Podman generate kube", func() {
 
 		pod := new(v1.Pod)
 		err := yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(pod.Spec.HostAliases).To(HaveLen(2))
 		Expect(pod.Spec.HostAliases[0]).To(HaveField("IP", testIP))
 		Expect(pod.Spec.HostAliases[1]).To(HaveField("IP", testIP))
@@ -402,7 +395,7 @@ var _ = Describe("Podman generate kube", func() {
 
 		pod := new(v1.Pod)
 		err := yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(pod.Spec.Containers).To(HaveLen(2))
 		Expect(pod.Spec.Containers[0].Ports[0].ContainerPort).To(Equal(int32(8000)))
 		Expect(pod.Spec.Containers[1].Ports[0].ContainerPort).To(Equal(int32(5000)))
@@ -445,7 +438,7 @@ var _ = Describe("Podman generate kube", func() {
 
 		pod := new(v1.Pod)
 		err := yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(pod.Spec.Containers).To(HaveLen(2))
 		Expect(pod.Spec.Hostname).To(Equal(ctr1HostName))
 
@@ -467,7 +460,7 @@ var _ = Describe("Podman generate kube", func() {
 
 		pod = new(v1.Pod)
 		err = yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(pod.Spec.Containers).To(HaveLen(1))
 		Expect(pod.Spec.Hostname).To(BeEmpty())
 	})
@@ -487,14 +480,14 @@ var _ = Describe("Podman generate kube", func() {
 
 		svc := new(v1.Service)
 		err := yaml.Unmarshal([]byte(arr[0]), svc)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(svc.Spec.Ports).To(HaveLen(1))
 		Expect(svc.Spec.Ports[0].TargetPort.IntValue()).To(Equal(4000))
 		Expect(svc.Spec.Ports[0]).To(HaveField("Protocol", v1.ProtocolUDP))
 
 		pod := new(v1.Pod)
 		err = yaml.Unmarshal([]byte(arr[1]), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 	})
 
 	It("podman generate kube on pod with restartPolicy", func() {
@@ -524,7 +517,7 @@ var _ = Describe("Podman generate kube", func() {
 
 			pod := new(v1.Pod)
 			err := yaml.Unmarshal(kube.Out.Contents(), pod)
-			Expect(err).To(BeNil())
+			Expect(err).ToNot(HaveOccurred())
 
 			Expect(string(pod.Spec.RestartPolicy)).To(Equal(v[2]))
 		}
@@ -548,7 +541,7 @@ var _ = Describe("Podman generate kube", func() {
 
 		pod := new(v1.Pod)
 		err := yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		for _, ctr := range pod.Spec.Containers {
 			memoryLimit, _ := ctr.Resources.Limits.Memory().AsInt64()
@@ -581,7 +574,7 @@ var _ = Describe("Podman generate kube", func() {
 
 		pod := new(v1.Pod)
 		err := yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		for _, ctr := range pod.Spec.Containers {
 			cpuLimit := ctr.Resources.Limits.Cpu().MilliValue()
@@ -616,7 +609,7 @@ var _ = Describe("Podman generate kube", func() {
 
 		pod := new(v1.Pod)
 		err := yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		foundPort4000 := 0
 		foundPort5000 := 0
@@ -651,7 +644,7 @@ var _ = Describe("Podman generate kube", func() {
 
 		pod = new(v1.Pod)
 		err = yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		containers := pod.Spec.Containers
 		Expect(containers).To(HaveLen(1))
@@ -736,7 +729,7 @@ var _ = Describe("Podman generate kube", func() {
 	It("podman generate kube with volume", func() {
 		vol1 := filepath.Join(podmanTest.TempDir, "vol-test1")
 		err := os.MkdirAll(vol1, 0755)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		// we need a container name because IDs don't persist after rm/play
 		ctrName := "test-ctr"
@@ -755,7 +748,7 @@ var _ = Describe("Podman generate kube", func() {
 		Expect(err).ShouldNot(HaveOccurred())
 		pod := new(v1.Pod)
 		err = yaml.Unmarshal(b, pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(pod.Annotations).To(HaveKeyWithValue(define.BindMountPrefix, vol1+":"+"z"))
 
 		rm := podmanTest.Podman([]string{"pod", "rm", "-t", "0", "-f", "test1"})
@@ -789,7 +782,7 @@ var _ = Describe("Podman generate kube", func() {
 
 		pod := new(v1.Pod)
 		err := yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		Expect(pod.Spec.Volumes).To(HaveLen(2))
 
@@ -921,11 +914,11 @@ var _ = Describe("Podman generate kube", func() {
 
 		pod := new(v1.Pod)
 		err := yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		Expect(pod.Spec.DNSConfig.Nameservers).To(ContainElement("8.8.8.8"))
 		Expect(pod.Spec.DNSConfig.Searches).To(ContainElement("foobar.com"))
-		Expect(len(pod.Spec.DNSConfig.Options)).To(BeNumerically(">", 0))
+		Expect(pod.Spec.DNSConfig.Options).ToNot(BeEmpty())
 		Expect(pod.Spec.DNSConfig.Options[0]).To(HaveField("Name", "color"))
 		s := "blue"
 		Expect(pod.Spec.DNSConfig.Options[0]).To(HaveField("Value", &s))
@@ -946,7 +939,7 @@ var _ = Describe("Podman generate kube", func() {
 
 		pod := new(v1.Pod)
 		err := yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		Expect(pod.Spec.DNSConfig.Nameservers).To(ContainElement("8.8.8.8"))
 		Expect(pod.Spec.DNSConfig.Nameservers).To(ContainElement("8.7.7.7"))
@@ -965,11 +958,11 @@ var _ = Describe("Podman generate kube", func() {
 
 		pod := new(v1.Pod)
 		err := yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		Expect(pod.Spec.DNSConfig.Nameservers).To(ContainElement("8.8.8.8"))
 		Expect(pod.Spec.DNSConfig.Searches).To(ContainElement("foobar.com"))
-		Expect(len(pod.Spec.DNSConfig.Options)).To(BeNumerically(">", 0))
+		Expect(pod.Spec.DNSConfig.Options).ToNot(BeEmpty())
 		Expect(pod.Spec.DNSConfig.Options[0]).To(HaveField("Name", "color"))
 		s := "blue"
 		Expect(pod.Spec.DNSConfig.Options[0]).To(HaveField("Value", &s))
@@ -988,7 +981,7 @@ var _ = Describe("Podman generate kube", func() {
 		// entrypoint and it's arguments to "10s".
 		pod := new(v1.Pod)
 		err := yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		containers := pod.Spec.Containers
 		Expect(containers).To(HaveLen(1))
@@ -1010,7 +1003,7 @@ var _ = Describe("Podman generate kube", func() {
 		// image command.
 		pod := new(v1.Pod)
 		err := yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		containers := pod.Spec.Containers
 		Expect(containers).To(HaveLen(1))
@@ -1029,7 +1022,7 @@ var _ = Describe("Podman generate kube", func() {
 		// command passed via the cli to podman create.
 		pod = new(v1.Pod)
 		err = yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		containers = pod.Spec.Containers
 		Expect(containers).To(HaveLen(1))
@@ -1042,10 +1035,10 @@ var _ = Describe("Podman generate kube", func() {
 ENTRYPOINT ["sleep"]`
 
 		targetPath, err := CreateTempDirInTempDir()
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		containerfilePath := filepath.Join(targetPath, "Containerfile")
 		err = os.WriteFile(containerfilePath, []byte(containerfile), 0644)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		image := "generatekube:test"
 		session := podmanTest.Podman([]string{"build", "--pull-never", "-f", containerfilePath, "-t", image})
@@ -1064,7 +1057,7 @@ ENTRYPOINT ["sleep"]`
 		// entrypoint but the arguments should be set to "10s".
 		pod := new(v1.Pod)
 		err = yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		containers := pod.Spec.Containers
 		Expect(containers).To(HaveLen(1))
@@ -1082,7 +1075,7 @@ ENTRYPOINT ["sleep"]`
 		// entrypoint defined by the --entrypoint flag and the arguments should be set to "hello".
 		pod = new(v1.Pod)
 		err = yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		containers = pod.Spec.Containers
 		Expect(containers).To(HaveLen(1))
@@ -1102,7 +1095,7 @@ ENTRYPOINT ["sleep"]`
 		// Now make sure that the capabilities aren't set.
 		pod := new(v1.Pod)
 		err := yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		containers := pod.Spec.Containers
 		Expect(containers).To(HaveLen(1))
@@ -1132,10 +1125,10 @@ RUN adduser -u 10001 -S test1
 USER test1`
 
 		targetPath, err := CreateTempDirInTempDir()
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		containerfilePath := filepath.Join(targetPath, "Containerfile")
 		err = os.WriteFile(containerfilePath, []byte(containerfile), 0644)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		image := "generatekube:test"
 		session := podmanTest.Podman([]string{"build", "--pull-never", "-f", containerfilePath, "-t", image})
@@ -1152,7 +1145,7 @@ USER test1`
 
 		pod := new(v1.Pod)
 		err = yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(pod.Spec.Containers[0].SecurityContext.RunAsUser).To(BeNil())
 	})
 
@@ -1169,7 +1162,7 @@ USER test1`
 
 		pvc := new(v1.PersistentVolumeClaim)
 		err := yaml.Unmarshal(kube.Out.Contents(), pvc)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(pvc).To(HaveField("Name", vol))
 		Expect(pvc.Spec.AccessModes[0]).To(Equal(v1.ReadWriteOnce))
 		Expect(pvc.Spec.Resources.Requests.Storage().String()).To(Equal("1Gi"))
@@ -1191,7 +1184,7 @@ USER test1`
 
 		pvc := new(v1.PersistentVolumeClaim)
 		err := yaml.Unmarshal(kube.Out.Contents(), pvc)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(pvc).To(HaveField("Name", vol))
 		Expect(pvc.Spec.AccessModes[0]).To(Equal(v1.ReadWriteOnce))
 		Expect(pvc.Spec.Resources.Requests.Storage().String()).To(Equal("1Gi"))
@@ -1219,7 +1212,7 @@ USER test1`
 
 		pod := new(v1.Pod)
 		err := yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		Expect(pod.Annotations).To(HaveKeyWithValue("io.containers.autoupdate/top", "local"))
 	})
@@ -1243,7 +1236,7 @@ USER test1`
 
 		pod := new(v1.Pod)
 		err := yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(pod.Spec.Containers[0]).To(HaveField("WorkingDir", ""))
 		Expect(pod.Spec.Containers[1]).To(HaveField("WorkingDir", "/root"))
 
@@ -1259,7 +1252,8 @@ USER test1`
 
 		ctrName := "gen-kube-env-ctr"
 		podName := "gen-kube-env"
-		session1 := podmanTest.Podman([]string{"run", "-d", "--pod", "new:" + podName, "--name", ctrName,
+		// In proxy environment, this test needs to the --http-proxy=false option (#16684)
+		session1 := podmanTest.Podman([]string{"run", "-d", "--http-proxy=false", "--pod", "new:" + podName, "--name", ctrName,
 			"-e", "FOO=bar",
 			"-e", "HELLO=WORLD",
 			"alpine", "top"})
@@ -1272,14 +1266,14 @@ USER test1`
 
 		pod := new(v1.Pod)
 		err := yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		Expect(pod.Spec.Containers[0].Env).To(HaveLen(2))
 	})
 
 	It("podman generate kube omit secret if empty", func() {
 		dir, err := os.MkdirTemp(tempdir, "podman")
-		Expect(err).Should(BeNil())
+		Expect(err).ShouldNot(HaveOccurred())
 
 		defer os.RemoveAll(dir)
 
@@ -1295,7 +1289,7 @@ USER test1`
 
 		pod := new(v1.Pod)
 		err = yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		Expect(pod.Spec.Volumes[0].Secret).To(BeNil())
 	})

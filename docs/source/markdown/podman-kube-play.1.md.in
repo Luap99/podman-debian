@@ -23,6 +23,8 @@ Currently, the supported Kubernetes kinds are:
 
 Only three volume types are supported by kube play, the *hostPath*, *emptyDir*, and *persistentVolumeClaim* volume types. For the *hostPath* volume type, only the  *default (empty)*, *DirectoryOrCreate*, *Directory*, *FileOrCreate*, *File*, *Socket*, *CharDevice* and *BlockDevice* subtypes are supported. Podman interprets the value of *hostPath* *path* as a file path when it contains at least one forward slash, otherwise Podman treats the value as the name of a named volume. When using a *persistentVolumeClaim*, the value for *claimName* is the name for the Podman named volume. When using an *emptyDir* volume, podman creates an anonymous volume that is attached the containers running inside the pod and is deleted once the pod is removed.
 
+Note: The default restart policy for containers is `always`.  You can change the default by setting the `restartPolicy` field in the spec.
+
 Note: When playing a kube YAML with init containers, the init container will be created with init type value `once`. To change the default type, use the `io.podman.annotations.init.container.type` annotation to set the type to `always`.
 
 Note: *hostPath* volume types created by kube play will be given an SELinux shared label (z), bind mounts are not relabeled (use `chcon -t container_file_t -R <directory>`).
@@ -44,6 +46,9 @@ A Kubernetes PersistentVolumeClaim represents a Podman named volume. Only the Pe
 - volume.podman.io/uid
 - volume.podman.io/gid
 - volume.podman.io/mount-options
+- volume.podman.io/import-source
+
+Use `volume.podman.io/import-source` to import the contents of the tarball (.tar, .tar.gz, .tgz, .bzip, .tar.xz, .txz) specified in the annotation's value into the created Podman volume
 
 Kube play is capable of building images on the fly given the correct directory layout and Containerfiles. This
 option is not available for remote clients, including Mac and Windows (excluding WSL2) machines, yet. Consider the following excerpt from a YAML file:
@@ -133,6 +138,10 @@ Use *path* as the build context directory for each image. Requires --build optio
 
 @@option creds
 
+#### **--force**
+
+Tear down the volumes linked to the PersistentVolumeClaims as part of --down
+
 #### **--help**, **-h**
 
 Print usage statement
@@ -140,7 +149,7 @@ Print usage statement
 #### **--ip**=*IP address*
 
 Assign a static ip address to the pod. This option can be specified several times when kube play creates more than one pod.
-Note: When joining multiple networks you should use the **--network name:ip=\<ip\>** syntax.
+Note: When joining multiple networks use the **--network name:ip=\<ip\>** syntax.
 
 #### **--log-driver**=*driver*
 
@@ -151,7 +160,7 @@ Set logging driver for all created containers.
 #### **--mac-address**=*MAC address*
 
 Assign a static mac address to the pod. This option can be specified several times when kube play creates more than one pod.
-Note: When joining multiple networks you should use the **--network name:mac=\<mac\>** syntax.
+Note: When joining multiple networks use the **--network name:mac=\<mac\>** syntax.
 
 @@option network
 
@@ -160,6 +169,13 @@ When no network option is specified and *host* network mode is not configured in
 @@option no-hosts
 
 This option conflicts with host added in the Kubernetes YAML.
+
+#### **--publish**=*[[ip:][hostPort]:]containerPort[/protocol]*
+
+Define or override a port definition in the YAML file.
+
+The lists of ports in the YAML file and the command line are merged. Matching is done by using the **containerPort** field.
+If **containerPort** exists in both the YAML file and the option, the latter takes precedence.
 
 #### **--quiet**, **-q**
 
@@ -180,6 +196,7 @@ Start the pod after creating it, set to false to only create it.
 @@option tls-verify
 
 @@option userns.container
+
 ## EXAMPLES
 
 Recreate the pod and containers as described in a file called `demo.yml`

@@ -262,12 +262,20 @@ func cliOpts(cc handlers.CreateContainerConfig, rtc *config.Config) (*entities.C
 	}
 
 	// special case for NetworkMode, the podman default is slirp4netns for
-	// rootless but for better docker compat we want bridge.
+	// rootless but for better docker compat we want bridge. Do this only if
+	// the default config in containers.conf wasn't overridden to use another
+	// value than the default "private" one.
 	netmode := string(cc.HostConfig.NetworkMode)
+	configDefaultNetNS := rtc.Containers.NetNS
 	if netmode == "" || netmode == "default" {
-		netmode = "bridge"
+		if configDefaultNetNS == "" || configDefaultNetNS == string(specgen.Default) || configDefaultNetNS == string(specgen.Private) {
+			netmode = "bridge"
+		} else {
+			netmode = configDefaultNetNS
+		}
 	}
-	nsmode, networks, netOpts, err := specgen.ParseNetworkFlag([]string{netmode})
+
+	nsmode, networks, netOpts, err := specgen.ParseNetworkFlag([]string{netmode}, false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -285,6 +293,9 @@ func cliOpts(cc handlers.CreateContainerConfig, rtc *config.Config) (*entities.C
 		NetworkOptions: netOpts,
 		NoHosts:        rtc.Containers.NoHosts,
 	}
+
+	// sigh docker-compose sets the mac address on the container config instead on the per network endpoint config
+	containerMacAddress := cc.MacAddress
 
 	// network names
 	switch {
@@ -330,6 +341,16 @@ func cliOpts(cc handlers.CreateContainerConfig, rtc *config.Config) (*entities.C
 						return nil, nil, fmt.Errorf("failed to parse the mac address %q", endpoint.MacAddress)
 					}
 					netOpts.StaticMAC = types.HardwareAddr(staticMac)
+				} else if len(containerMacAddress) > 0 {
+					// docker-compose only sets one mac address for the container on the container config
+					// If there are more than one network attached it will end up on the first one,
+					// which is not deterministic since we iterate a map. Not nice but this matches docker.
+					staticMac, err := net.ParseMAC(containerMacAddress)
+					if err != nil {
+						return nil, nil, fmt.Errorf("failed to parse the mac address %q", containerMacAddress)
+					}
+					netOpts.StaticMAC = types.HardwareAddr(staticMac)
+					containerMacAddress = ""
 				}
 			}
 
@@ -399,7 +420,7 @@ func cliOpts(cc handlers.CreateContainerConfig, rtc *config.Config) (*entities.C
 		PublishAll:        cc.HostConfig.PublishAllPorts,
 		Quiet:             false,
 		ReadOnly:          cc.HostConfig.ReadonlyRootfs,
-		ReadOnlyTmpFS:     true, // podman default
+		ReadWriteTmpFS:    true, // podman default
 		Rm:                cc.HostConfig.AutoRemove,
 		SecurityOpt:       cc.HostConfig.SecurityOpt,
 		StopSignal:        cc.Config.StopSignal,

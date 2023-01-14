@@ -4,6 +4,7 @@
 #
 
 load helpers
+load helpers.network
 
 # This is a long ugly way to clean up pods and remove the pause image
 function teardown() {
@@ -122,7 +123,25 @@ spec:
     name: test
     resources: {}
 EOF
-    run_podman play kube --service-container=true $yaml_source
+    # Run `play kube` in the background as it will wait for the service
+    # container to exit.
+    timeout --foreground -v --kill=10 60 \
+        $PODMAN play kube --service-container=true --log-driver journald $yaml_source &>/dev/null &
+
+    # Wait for the container to be running
+    container_a=test_pod-test
+    for i in $(seq 1 20); do
+        run_podman "?" container wait $container_a --condition="running"
+        if [[ $status == 0 ]]; then
+            break
+        fi
+        sleep 0.5
+        # Just for debugging
+        run_podman ps -a
+    done
+    if [[ $status != 0 ]]; then
+        die "container $container_a did not start"
+    fi
 
     # The name of the service container is predictable: the first 12 characters
     # of the hash of the YAML file followed by the "-service" suffix
@@ -150,6 +169,8 @@ EOF
 
     # Check for an error when trying to remove the service container
     run_podman 125 container rm $service_container
+    is "$output" "Error: container .* is the service container of pod(s) .* and cannot be removed without removing the pod(s)"
+    run_podman 125 container rm --force $service_container
     is "$output" "Error: container .* is the service container of pod(s) .* and cannot be removed without removing the pod(s)"
 
     # Kill the pod and make sure the service is not running
@@ -188,11 +209,70 @@ EOF
     run_podman container inspect --format "{{.HostConfig.NetworkMode}}" $infraID
     is "$output" "none" "network mode none is set for the container"
 
-    run_podman kube down - < $PODMAN_TMPDIR/test.yaml
+    run_podman kube down $PODMAN_TMPDIR/test.yaml
     run_podman 125 inspect test_pod-test
     is "$output" ".*Error: inspecting object: no such object: \"test_pod-test\""
     run_podman pod rm -a
     run_podman rm -a
+}
+
+@test "podman kube play read-only" {
+    YAML=$PODMAN_TMPDIR/test.yml
+    run_podman create --pod new:pod1 --name test1 $IMAGE touch /testrw
+    run_podman create --pod pod1 --read-only --name test2 $IMAGE touch /testro
+    run_podman create --pod pod1 --read-only --name test3 $IMAGE touch /tmp/testtmp
+    run_podman kube generate pod1 -f $YAML
+
+    run_podman kube play --replace $YAML
+    run_podman container inspect --format '{{.HostConfig.ReadonlyRootfs}}' pod1-test1 pod1-test2 pod1-test3
+    is "$output" "false.*true.*true" "Rootfs should be read/only"
+
+    run_podman inspect --format "{{.State.ExitCode}}" pod1-test1
+    is "$output" "0" "Container / should be read/write"
+    run_podman inspect --format "{{.State.ExitCode}}" pod1-test2
+    is "$output" "1" "Container / should be read/only"
+    run_podman inspect --format "{{.State.ExitCode}}" pod1-test3
+    is "$output" "0" "/tmp in a read-only container should be read/write"
+
+    run_podman kube down - < $YAML
+    run_podman 1 container exists pod1-test1
+    run_podman 1 container exists pod1-test2
+    run_podman 1 container exists pod1-test3
+}
+
+@test "podman kube play read-only from containers.conf" {
+    containersconf=$PODMAN_TMPDIR/containers.conf
+    cat >$containersconf <<EOF
+[containers]
+read_only=true
+EOF
+
+    YAML=$PODMAN_TMPDIR/test.yml
+    CONTAINERS_CONF="$containersconf" run_podman create --pod new:pod1 --read-only=false --name test1 $IMAGE touch /testrw
+    CONTAINERS_CONF="$containersconf" run_podman create --pod pod1 --name test2 $IMAGE touch /testro
+    CONTAINERS_CONF="$containersconf" run_podman create --pod pod1 --name test3 $IMAGE touch /tmp/testtmp
+    CONTAINERS_CONF="$containersconf" run_podman container inspect --format '{{.HostConfig.ReadonlyRootfs}}' test1 test2 test3
+    is "$output" "false.*true.*true" "Rootfs should be read/only"
+
+    # Now generate and run kube.yaml on a machine without the defaults set
+    CONTAINERS_CONF="$containersconf" run_podman kube generate pod1 -f $YAML
+    cat $YAML
+
+    run_podman kube play --replace $YAML
+    run_podman container inspect --format '{{.HostConfig.ReadonlyRootfs}}' pod1-test1 pod1-test2 pod1-test3
+    is "$output" "false.*true.*true" "Rootfs should be read/only"
+
+    run_podman inspect --format "{{.State.ExitCode}}" pod1-test1
+    is "$output" "0" "Container / should be read/write"
+    run_podman inspect --format "{{.State.ExitCode}}" pod1-test2
+    is "$output" "1" "Container / should be read/only"
+    run_podman inspect --format "{{.State.ExitCode}}" pod1-test3
+    is "$output" "0" "/tmp in a read-only container should be read/write"
+
+    run_podman kube down - < $YAML
+    run_podman 1 container exists pod1-test1
+    run_podman 1 container exists pod1-test2
+    run_podman 1 container exists pod1-test3
 }
 
 @test "podman play with user from image" {
@@ -393,6 +473,38 @@ status: {}
     run_podman rm -f -t0 myyaml
 }
 
+@test "podman play with init container" {
+    TESTDIR=$PODMAN_TMPDIR/testdir
+    mkdir -p $TESTDIR
+
+testUserYaml="
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod
+spec:
+  containers:
+  - command:
+    - ls
+    - /dev/shm/test1
+    image: $IMAGE
+    name: testCtr
+  initContainers:
+  - command:
+    - touch
+    - /dev/shm/test1
+    image: $IMAGE
+    name: initCtr
+"
+    echo "$testUserYaml" > $PODMAN_TMPDIR/test.yaml
+    run_podman kube play $PODMAN_TMPDIR/test.yaml
+    assert "$output" !~ "level=" "init containers should not generate logrus.Error"
+    run_podman inspect --format "{{.State.ExitCode}}" pod-testCtr
+    is "$output" "0" "init container should have created /dev/shm/test1"
+
+    run_podman kube down $PODMAN_TMPDIR/test.yaml
+}
+
 @test "podman kube play - hostport" {
     HOST_PORT=$(random_free_port)
     echo "
@@ -415,4 +527,74 @@ spec:
     run_podman pod inspect test_pod --format "{{.InfraConfig.PortBindings}}"
     assert "$output" = "map[$HOST_PORT/tcp:[{ $HOST_PORT}]]"
     run_podman kube down $PODMAN_TMPDIR/testpod.yaml
+
+    run_podman pod rm -a -f
+    run_podman rm -a -f
+}
+
+@test "podman kube play - multi-pod YAML" {
+    skip_if_remote "service containers only work locally"
+    skip_if_journald_unavailable
+
+    # Create the YAMl file
+    yaml_source="$PODMAN_TMPDIR/test.yaml"
+    cat >$yaml_source <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: pod1
+  name: pod1
+spec:
+  containers:
+  - command:
+    - top
+    image: $IMAGE
+    name: ctr1
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: pod2
+  name: pod2
+spec:
+  containers:
+  - command:
+    - top
+    image: $IMAGE
+    name: ctr2
+EOF
+    # Run `play kube` in the background as it will wait for the service
+    # container to exit.
+    timeout --foreground -v --kill=10 60 \
+        $PODMAN play kube --service-container=true --log-driver journald $yaml_source &>/dev/null &
+
+    # The name of the service container is predictable: the first 12 characters
+    # of the hash of the YAML file followed by the "-service" suffix
+    yaml_sha=$(sha256sum $yaml_source)
+    service_container="${yaml_sha:0:12}-service"
+    # Wait for the containers to be running
+    container_1=pod1-ctr1
+    container_2=pod1-ctr2
+    for i in $(seq 1 20); do
+        run_podman "?" container wait $container_1 $container_2 $service_container --condition="running"
+        if [[ $status == 0 ]]; then
+            break
+        fi
+        sleep 0.5
+        # Just for debugging
+        run_podman ps -a
+    done
+    if [[ $status != 0 ]]; then
+        die "container $container_1, $container_2 and/or $service_container did not start"
+    fi
+
+    # Stop the pods, make sure that no ugly error logs show up and that the
+    # service container will implicitly get stopped as well
+    run_podman pod stop pod1 pod2
+    assert "$output" !~ "Stopping"
+    _ensure_container_running $service_container false
+
+    run_podman kube down $yaml_source
 }

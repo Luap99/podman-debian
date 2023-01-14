@@ -1,3 +1,7 @@
+####> This option file is used in:
+####>   podman pod rm, pod stop, rm, stop
+####> If file is edited, make sure the changes
+####> are applicable to all of those.
 #### **--ignore**, **-i**
 
 Ignore errors when specified <<containers|pods>> are not in the container store.  A user

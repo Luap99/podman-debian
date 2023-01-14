@@ -1,3 +1,7 @@
+####> This option file is used in:
+####>   podman create, run
+####> If file is edited, make sure the changes
+####> are applicable to all of those.
 #### **--image-volume**=**bind** | *tmpfs* | *ignore*
 
 Tells Podman how to handle the builtin image volumes. Default is **bind**.

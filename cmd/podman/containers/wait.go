@@ -53,6 +53,8 @@ func waitFlags(cmd *cobra.Command) {
 	flags.StringVarP(&waitInterval, intervalFlagName, "i", "250ms", "Time Interval to wait before polling for completion")
 	_ = cmd.RegisterFlagCompletionFunc(intervalFlagName, completion.AutocompleteNone)
 
+	flags.BoolVarP(&waitOptions.Ignore, "ignore", "", false, "Ignore if a container does not exist")
+
 	conditionFlagName := "condition"
 	flags.StringSliceVar(&waitConditions, conditionFlagName, []string{}, "Condition to wait on")
 	_ = cmd.RegisterFlagCompletionFunc(conditionFlagName, common.AutocompleteWaitCondition)
@@ -78,6 +80,7 @@ func wait(cmd *cobra.Command, args []string) error {
 		err  error
 		errs utils.OutputErrors
 	)
+	args = utils.RemoveSlash(args)
 	if waitOptions.Interval, err = time.ParseDuration(waitInterval); err != nil {
 		var err1 error
 		if waitOptions.Interval, err1 = time.ParseDuration(waitInterval + "ms"); err1 != nil {

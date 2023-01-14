@@ -20,6 +20,8 @@ import (
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/util"
 	"github.com/containers/image/v5/types"
+	encconfig "github.com/containers/ocicrypt/config"
+	enchelpers "github.com/containers/ocicrypt/helpers"
 	"github.com/containers/podman/v4/pkg/errorhandling"
 	"github.com/containers/podman/v4/pkg/namespaces"
 	"github.com/containers/podman/v4/pkg/rootless"
@@ -366,13 +368,11 @@ func GetKeepIDMapping(opts *namespaces.KeepIDUserNsOptions) (*stypes.IDMappingOp
 		gid = int(*opts.GID)
 	}
 
-	uids, gids, err := rootless.GetConfiguredMappings()
+	uids, gids, err := rootless.GetConfiguredMappings(true)
 	if err != nil {
 		return nil, -1, -1, fmt.Errorf("cannot read mappings: %w", err)
 	}
-	if len(uids) == 0 || len(gids) == 0 {
-		return nil, -1, -1, fmt.Errorf("keep-id requires additional UIDs or GIDs defined in /etc/subuid and /etc/subgid to function correctly: %w", err)
-	}
+
 	maxUID, maxGID := 0, 0
 	for _, u := range uids {
 		maxUID += u.Size
@@ -383,13 +383,17 @@ func GetKeepIDMapping(opts *namespaces.KeepIDUserNsOptions) (*stypes.IDMappingOp
 
 	options.UIDMap, options.GIDMap = nil, nil
 
-	options.UIDMap = append(options.UIDMap, idtools.IDMap{ContainerID: 0, HostID: 1, Size: min(uid, maxUID)})
+	if len(uids) > 0 {
+		options.UIDMap = append(options.UIDMap, idtools.IDMap{ContainerID: 0, HostID: 1, Size: min(uid, maxUID)})
+	}
 	options.UIDMap = append(options.UIDMap, idtools.IDMap{ContainerID: uid, HostID: 0, Size: 1})
 	if maxUID > uid {
 		options.UIDMap = append(options.UIDMap, idtools.IDMap{ContainerID: uid + 1, HostID: uid + 1, Size: maxUID - uid})
 	}
 
-	options.GIDMap = append(options.GIDMap, idtools.IDMap{ContainerID: 0, HostID: 1, Size: min(gid, maxGID)})
+	if len(gids) > 0 {
+		options.GIDMap = append(options.GIDMap, idtools.IDMap{ContainerID: 0, HostID: 1, Size: min(gid, maxGID)})
+	}
 	options.GIDMap = append(options.GIDMap, idtools.IDMap{ContainerID: gid, HostID: 0, Size: 1})
 	if maxGID > gid {
 		options.GIDMap = append(options.GIDMap, idtools.IDMap{ContainerID: gid + 1, HostID: gid + 1, Size: maxGID - gid})
@@ -407,7 +411,7 @@ func GetNoMapMapping() (*stypes.IDMappingOptions, int, int, error) {
 		HostUIDMapping: false,
 		HostGIDMapping: false,
 	}
-	uids, gids, err := rootless.GetConfiguredMappings()
+	uids, gids, err := rootless.GetConfiguredMappings(false)
 	if err != nil {
 		return nil, -1, -1, fmt.Errorf("cannot read mappings: %w", err)
 	}
@@ -682,18 +686,15 @@ func DefaultContainerConfig() *config.Config {
 	return containerConfig
 }
 
-func CreateCidFile(cidfile string, id string) error {
-	cidFile, err := OpenExclusiveFile(cidfile)
+func CreateIDFile(path string, id string) error {
+	idFile, err := os.Create(path)
 	if err != nil {
-		if os.IsExist(err) {
-			return fmt.Errorf("container id file exists. Ensure another container is not using it or delete %s", cidfile)
-		}
-		return fmt.Errorf("opening cidfile %s", cidfile)
+		return fmt.Errorf("creating idfile: %w", err)
 	}
-	if _, err = cidFile.WriteString(id); err != nil {
-		logrus.Error(err)
+	defer idFile.Close()
+	if _, err = idFile.WriteString(id); err != nil {
+		return fmt.Errorf("writing idfile: %w", err)
 	}
-	cidFile.Close()
 	return nil
 }
 
@@ -734,7 +735,7 @@ func IDtoolsToRuntimeSpec(idMaps []idtools.IDMap) (convertedIDMap []specs.LinuxI
 }
 
 func LookupUser(name string) (*user.User, error) {
-	// Assume UID look up first, if it fails lookup by username
+	// Assume UID lookup first, if it fails look up by username
 	if u, err := user.LookupId(name); err == nil {
 		return u, nil
 	}
@@ -756,4 +757,38 @@ func SizeOfPath(path string) (uint64, error) {
 		return err
 	})
 	return size, err
+}
+
+// EncryptConfig translates encryptionKeys into a EncriptionsConfig structure
+func EncryptConfig(encryptionKeys []string, encryptLayers []int) (*encconfig.EncryptConfig, *[]int, error) {
+	var encLayers *[]int
+	var encConfig *encconfig.EncryptConfig
+
+	if len(encryptionKeys) > 0 {
+		// encryption
+		encLayers = &encryptLayers
+		ecc, err := enchelpers.CreateCryptoConfig(encryptionKeys, []string{})
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid encryption keys: %w", err)
+		}
+		cc := encconfig.CombineCryptoConfigs([]encconfig.CryptoConfig{ecc})
+		encConfig = cc.EncryptConfig
+	}
+	return encConfig, encLayers, nil
+}
+
+// DecryptConfig translates decryptionKeys into a DescriptionConfig structure
+func DecryptConfig(decryptionKeys []string) (*encconfig.DecryptConfig, error) {
+	var decryptConfig *encconfig.DecryptConfig
+	if len(decryptionKeys) > 0 {
+		// decryption
+		dcc, err := enchelpers.CreateCryptoConfig([]string{}, decryptionKeys)
+		if err != nil {
+			return nil, fmt.Errorf("invalid decryption keys: %w", err)
+		}
+		cc := encconfig.CombineCryptoConfigs([]encconfig.CryptoConfig{dcc})
+		decryptConfig = cc.DecryptConfig
+	}
+
+	return decryptConfig, nil
 }

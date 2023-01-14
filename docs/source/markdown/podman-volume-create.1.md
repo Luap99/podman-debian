@@ -15,19 +15,23 @@ driver options can be set using the **--opt** flag.
 
 ## OPTIONS
 
-#### **--driver**=*driver*
+#### **--driver**, **-d**=*driver*
 
 Specify the volume driver name (default **local**).
 There are two drivers supported by Podman itself: **local** and **image**.
 The **local** driver uses a directory on disk as the backend by default, but can also use the **mount(8)** command to mount a filesystem as the volume if **--opt** is specified.
 The **image** driver uses an image as the backing store of for the volume.
 An overlay filesystem will be created, which allows changes to the volume to be committed as a new layer on top of the image.
-Using a value other than **local or **image**, Podman will attempt to create the volume using a volume plugin with the given name.
+Using a value other than **local** or **image**, Podman will attempt to create the volume using a volume plugin with the given name.
 Such plugins must be defined in the **volume_plugins** section of the **[containers.conf(5)](https://github.com/containers/common/blob/main/docs/containers.conf.5.md)** configuration file.
 
 #### **--help**
 
 Print usage statement
+
+#### **--ignore**
+
+Don't fail if the named volume already exists, instead just print the name. Note that the new options are not applied to the existing volume.
 
 #### **--label**, **-l**=*label*
 
@@ -42,12 +46,15 @@ The `type` option sets the type of the filesystem to be mounted, and is equivale
 The `device` option sets the device to be mounted, and is equivalent to the `device` argument to **mount(8)**.
 The `copy` option enables copying files from the container image path where the mount is created to the newly created volume on the first run.  `copy` is the default.
 
-The `o` option sets options for the mount, and is equivalent to the `-o` flag to **mount(8)** with these exceptions:
+The `o` option sets options for the mount, and is equivalent to the filesystem
+options (also `-o`) passed to **mount(8)** with the following exceptions:
 
   - The `o` option supports `uid` and `gid` options to set the UID and GID of the created volume that are not normally supported by **mount(8)**.
   - The `o` option supports the `size` option to set the maximum size of the created volume, the `inodes` option to set the maximum number of inodes for the volume and `noquota` to completely disable quota support even for tracking of disk usage. Currently these flags are only supported on "xfs" file system mounted with the `prjquota` flag described in the **xfs_quota(8)** man page.
   - The `o` option supports using volume options other than the UID/GID options with the **local** driver and requires root privileges.
   - The `o` options supports the `timeout` option which allows users to set a driver specific timeout in seconds before volume creation fails. For example, **--opts=o=timeout=10** sets a driver timeout of 10 seconds.
+
+***Note*** Do not confuse the `--opts,-o` create option with the `-o` mount option.  For example, with `podman volume create`, use `-o=o=uid=1000` *not* `-o=uid=1000`.
 
 For the **image** driver, the only supported option is `image`, which specifies the image the volume is based on.
 This option is mandatory when using the **image** driver.

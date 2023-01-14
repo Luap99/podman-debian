@@ -65,7 +65,11 @@ var _ = Describe("Podman logs", func() {
 			Expect(logc).To(Exit(0))
 			cid := logc.OutputToString()
 
-			results := podmanTest.Podman([]string{"logs", cid})
+			results := podmanTest.Podman([]string{"wait", cid})
+			results.WaitWithDefaultTimeout()
+			Expect(results).To(Exit(0))
+
+			results = podmanTest.Podman([]string{"logs", cid})
 			results.WaitWithDefaultTimeout()
 			Expect(results).To(Exit(0))
 			Expect(results.OutputToStringArray()).To(HaveLen(3))
@@ -478,7 +482,7 @@ var _ = Describe("Podman logs", func() {
 
 		cmd := exec.Command("journalctl", "--no-pager", "-o", "json", "--output-fields=CONTAINER_TAG", fmt.Sprintf("CONTAINER_ID_FULL=%s", cid))
 		out, err := cmd.CombinedOutput()
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(string(out)).To(ContainSubstring("alpine"))
 	})
 
@@ -496,7 +500,7 @@ var _ = Describe("Podman logs", func() {
 
 		cmd := exec.Command("journalctl", "--no-pager", "-o", "json", "--output-fields=CONTAINER_NAME", fmt.Sprintf("CONTAINER_ID_FULL=%s", cid))
 		out, err := cmd.CombinedOutput()
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(string(out)).To(ContainSubstring(containerName))
 	})
 

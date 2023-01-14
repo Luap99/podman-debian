@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/user"
+	"path/filepath"
 	"strings"
 
 	. "github.com/containers/podman/v4/test/utils"
@@ -12,6 +13,19 @@ import (
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 )
+
+func createContainersConfFileWithCustomUserns(pTest *PodmanTestIntegration, userns string) {
+	configPath := filepath.Join(pTest.TempDir, "containers.conf")
+	containersConf := []byte(fmt.Sprintf("[containers]\nuserns = \"%s\"\n", userns))
+	err := os.WriteFile(configPath, containersConf, os.ModePerm)
+	Expect(err).ToNot(HaveOccurred())
+
+	// Set custom containers.conf file
+	os.Setenv("CONTAINERS_CONF", configPath)
+	if IsRemote() {
+		pTest.RestartRemoteService()
+	}
+}
 
 var _ = Describe("Podman UserNS support", func() {
 	var (
@@ -39,7 +53,7 @@ var _ = Describe("Podman UserNS support", func() {
 		podmanTest.Cleanup()
 		f := CurrentGinkgoTestDescription()
 		processTestResult(f)
-
+		os.Unsetenv("CONTAINERS_CONF")
 	})
 
 	// Note: Lot of tests for build with --userns=auto are already there in buildah
@@ -49,7 +63,7 @@ var _ = Describe("Podman UserNS support", func() {
 	// we don't break this feature for podman-remote.
 	It("podman build with --userns=auto", func() {
 		u, err := user.Current()
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		name := u.Name
 		if name == "root" {
 			name = "containers"
@@ -94,6 +108,16 @@ var _ = Describe("Podman UserNS support", func() {
 		Expect(session.OutputToString()).To(ContainSubstring("hello"))
 	})
 
+	It("podman uidmapping and gidmapping with an idmapped volume", func() {
+		session := podmanTest.Podman([]string{"run", "--uidmap=0:1:500", "--gidmap=0:200:5000", "-v", "my-foo-volume:/foo:Z,idmap", "alpine", "stat", "-c", "#%u:%g#", "/foo"})
+		session.WaitWithDefaultTimeout()
+		if strings.Contains(session.ErrorToString(), "Operation not permitted") {
+			Skip("not sufficiently privileged")
+		}
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToString()).To(ContainSubstring("#0:0#"))
+	})
+
 	It("podman uidmapping and gidmapping --net=host", func() {
 		session := podmanTest.Podman([]string{"run", "--net=host", "--uidmap=0:1:5000", "--gidmap=0:200:5000", "alpine", "echo", "hello"})
 		session.WaitWithDefaultTimeout()
@@ -130,7 +154,7 @@ var _ = Describe("Podman UserNS support", func() {
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		u, err := user.Current()
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(session.OutputToString()).To(ContainSubstring(u.Name))
 	})
 
@@ -174,7 +198,7 @@ var _ = Describe("Podman UserNS support", func() {
 
 	It("podman --userns=auto", func() {
 		u, err := user.Current()
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		name := u.Name
 		if name == "root" {
 			name = "containers"
@@ -201,11 +225,17 @@ var _ = Describe("Podman UserNS support", func() {
 		}
 		// check for no duplicates
 		Expect(m).To(HaveLen(5))
+
+		createContainersConfFileWithCustomUserns(podmanTest, "auto:size=1019")
+		session := podmanTest.Podman([]string{"run", "alpine", "cat", "/proc/self/uid_map"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToString()).To(ContainSubstring("1019"))
 	})
 
 	It("podman --userns=auto:size=%d", func() {
 		u, err := user.Current()
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		name := u.Name
 		if name == "root" {
@@ -243,7 +273,7 @@ var _ = Describe("Podman UserNS support", func() {
 
 	It("podman --userns=auto:uidmapping=", func() {
 		u, err := user.Current()
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		name := u.Name
 		if name == "root" {
@@ -272,7 +302,7 @@ var _ = Describe("Podman UserNS support", func() {
 
 	It("podman --userns=auto:gidmapping=", func() {
 		u, err := user.Current()
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
 		name := u.Name
 		if name == "root" {

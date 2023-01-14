@@ -91,9 +91,21 @@ EPOCH_TEST_COMMIT="$CIRRUS_BASE_SHA"
 # testing operations on all platforms and versions.  This is necessary
 # to avoid needlessly passing through global/system values across
 # contexts, such as host->container or root->rootless user
-PASSTHROUGH_ENV_RE='(^CI.*)|(^CIRRUS)|(^DISTRO_NV)|(^GOPATH)|(^GOCACHE)|(^GOSRC)|(^SCRIPT_BASE)|(CGROUP_MANAGER)|(OCI_RUNTIME)|(^TEST.*)|(^PODBIN_NAME)|(^PRIV_NAME)|(^ALT_NAME)|(^ROOTLESS_USER)|(SKIP_USERNS)|(.*_NAME)|(.*_FQIN)|(NETWORK_BACKEND)|(DEST_BRANCH)'
+#
+# List of envariables which must be EXACT matches
+PASSTHROUGH_ENV_EXACT='CGROUP_MANAGER|DEST_BRANCH|DISTRO_NV|GOCACHE|GOPATH|GOSRC|NETWORK_BACKEND|OCI_RUNTIME|ROOTLESS_USER|SCRIPT_BASE|SKIP_USERNS|EC2_INST_TYPE'
+
+# List of envariable patterns which must match AT THE BEGINNING of the name.
+PASSTHROUGH_ENV_ATSTART='CI|TEST'
+
+# List of envariable patterns which can match ANYWHERE in the name
+PASSTHROUGH_ENV_ANYWHERE='_NAME|_FQIN'
+
+# Combine into one
+PASSTHROUGH_ENV_RE="(^($PASSTHROUGH_ENV_EXACT)\$)|(^($PASSTHROUGH_ENV_ATSTART))|($PASSTHROUGH_ENV_ANYWHERE)"
+
 # Unsafe env. vars for display
-SECRET_ENV_RE='(ACCOUNT)|(GC[EP]..+)|(SSH)|(PASSWORD)|(TOKEN)'
+SECRET_ENV_RE='ACCOUNT|GC[EP]..|SSH|PASSWORD|SECRET|TOKEN'
 
 # Type of filesystem used for cgroups
 CG_FS_TYPE="$(stat -f -c %T /sys/fs/cgroup)"
@@ -107,28 +119,18 @@ set +a
 lilto() { err_retry 8 1000 "" "$@"; }  # just over 4 minutes max
 bigto() { err_retry 7 5670 "" "$@"; }  # 12 minutes max
 
-# Print shell-escaped variable=value pairs, one per line, based on
-# variable name matching a regex.  This is intended to catch
-# variables being passed down from higher layers, like Cirrus-CI.
+# Return a list of environment variables that should be passed through
+# to lower levels (tests in containers, or via ssh to rootless).
+# We return the variable names only, not their values. It is up to our
+# caller to reference values.
 passthrough_envars(){
-    local xchars
     local envname
-    local envval
-    # Avoid values containing entirely punctuation|control|whitespace
-    xchars='[:punct:][:cntrl:][:space:]'
     warn "Will pass env. vars. matching the following regex:
     $PASSTHROUGH_ENV_RE"
-    for envname in $(awk 'BEGIN{for(v in ENVIRON) print v}' | \
-                         grep -Ev "SETUP_ENVIRONMENT" | \
-                         grep -Ev "$SECRET_ENV_RE" | \
-                         grep -E "$PASSTHROUGH_ENV_RE"); do
-
-            envval="${!envname}"
-            [[ -n $(tr -d "$xchars" <<<"$envval") ]] || continue
-
-            # Properly escape values to prevent injection
-            printf -- "$envname=%q\n" "$envval"
-    done
+    compgen -A variable | \
+        grep -Ev "SETUP_ENVIRONMENT" | \
+        grep -Ev "$SECRET_ENV_RE" | \
+        grep -E  "$PASSTHROUGH_ENV_RE"
 }
 
 setup_rootless() {
@@ -207,7 +209,19 @@ use_cni() {
     echo "unset NETWORK_BACKEND" >> /etc/ci_environment
     export -n NETWORK_BACKEND
     unset NETWORK_BACKEND
+    # While it's possible a user may want both installed, for CNI CI testing
+    # purposes we only care about backward-compatibility, not forward.
+    # If both CNI & netavark are present, in some situations where --root
+    # is used it's possible for podman to pick the "wrong" networking stack.
+    msg "Force-removing netavark and aardvark-dns"
+    # Other packages depend on nv/av, but we're testing with podman
+    # binaries built from source, so it's safe to ignore these deps.
+    #
+    # FIXME FIXME FIXME: if/when we bring back Ubuntu (or use Debian),
+    #       someone will have to conditionalize these rpm/dnf commands
+    rpm -e --nodeps netavark aardvark-dns
     msg "Installing default CNI configuration"
+    dnf install -y $PACKAGE_DOWNLOAD_DIR/podman-plugins*
     cd $GOSRC || exit 1
     rm -rvf /etc/cni/net.d
     mkdir -p /etc/cni/net.d
@@ -227,6 +241,9 @@ use_netavark() {
     export NETWORK_BACKEND=netavark  # needed for install_test_configs()
     msg "Removing any/all CNI configuration"
     rm -rvf /etc/cni/net.d/*
+    # N/B: The CNI packages are still installed and available. This is
+    # on purpose, since CI needs to verify the selection mechanisms are
+    # functional when both are available.
 }
 
 # Remove all files provided by the distro version of podman.
@@ -272,4 +289,33 @@ remove_packaged_podman_files() {
 
     # Be super extra sure and careful vs performant and completely safe
     sync && echo 3 > /proc/sys/vm/drop_caches || true
+}
+
+# Execute make localbenchmarks in $CIRRUS_WORKING_DIR/data
+# for preserving as a task artifact.
+localbenchmarks() {
+    local datadir
+    req_env_vars DISTRO_NV PODBIN_NAME PRIV_NAME TEST_ENVIRON TEST_FLAVOR
+    req_env_vars VM_IMAGE_NAME EC2_INST_TYPE
+
+    datadir=$CIRRUS_WORKING_DIR/data
+    mkdir -p $datadir
+
+    (
+      echo "# Env. var basis for benchmarks benchmarks."
+      printenv | grep -Ev "$SECRET_ENV_RE" | sort
+
+      echo "# Machine details for data-comparison sake, not actual env. vars."
+      # Checked above in req_env_vars
+      # shellcheck disable=SC2154
+      echo "\
+CPUTOTAL=$(grep -ce '^processor' /proc/cpuinfo)
+INST_TYPE=$EC2_INST_TYPE  # one day may include other cloud's VM types.
+MEMTOTAL=$(awk -F: '$1 == "MemTotal" { print $2 }' </proc/meminfo | sed -e "s/^ *//")
+UNAME_RM=$(uname -r -m)
+"
+    ) > $datadir/benchmarks.env
+    make localbenchmarks | tee $datadir/benchmarks.raw
+    msg "Processing raw benchmarks output"
+    hack/parse-localbenchmarks < $datadir/benchmarks.raw | tee $datadir/benchmarks.csv
 }

@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/config"
 	cutil "github.com/containers/common/pkg/util"
 	"github.com/containers/image/v5/transports/alltransports"
@@ -21,9 +20,9 @@ import (
 	"github.com/containers/podman/v4/pkg/specgen"
 	"github.com/containers/podman/v4/pkg/specgenutil"
 	"github.com/containers/podman/v4/pkg/util"
-	"github.com/mattn/go-isatty"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var (
@@ -69,6 +68,7 @@ func createFlags(cmd *cobra.Command) {
 		initContainerFlagName, "",
 		"Make this a pod init container.",
 	)
+	_ = cmd.RegisterFlagCompletionFunc(initContainerFlagName, common.AutocompleteInitCtr)
 
 	flags.SetInterspersed(false)
 	common.DefineCreateDefaults(&cliVals)
@@ -86,8 +86,6 @@ func createFlags(cmd *cobra.Command) {
 
 		_ = flags.MarkHidden("pidfile")
 	}
-
-	_ = cmd.RegisterFlagCompletionFunc(initContainerFlagName, completion.AutocompleteDefault)
 }
 
 func init() {
@@ -105,8 +103,15 @@ func init() {
 
 func commonFlags(cmd *cobra.Command) error {
 	var err error
+
+	report, err := registry.ContainerEngine().NetworkExists(registry.Context(), "pasta")
+	if err != nil {
+		return err
+	}
+	pastaNetworkNameExists := report.Value
+
 	flags := cmd.Flags()
-	cliVals.Net, err = common.NetFlagsToNetOptions(nil, *flags)
+	cliVals.Net, err = common.NetFlagsToNetOptions(nil, *flags, pastaNetworkNameExists)
 	if err != nil {
 		return err
 	}
@@ -169,7 +174,7 @@ func create(cmd *cobra.Command, args []string) error {
 	}
 
 	if cliVals.CIDFile != "" {
-		if err := util.CreateCidFile(cliVals.CIDFile, report.Id); err != nil {
+		if err := util.CreateIDFile(cliVals.CIDFile, report.Id); err != nil {
 			return err
 		}
 	}
@@ -206,7 +211,7 @@ func CreateInit(c *cobra.Command, vals entities.ContainerCreateOptions, isInfra 
 	}
 
 	if cliVals.LogDriver == define.PassthroughLogging {
-		if isatty.IsTerminal(0) || isatty.IsTerminal(1) || isatty.IsTerminal(2) {
+		if term.IsTerminal(0) || term.IsTerminal(1) || term.IsTerminal(2) {
 			return vals, errors.New("the '--log-driver passthrough' option cannot be used on a TTY")
 		}
 		if registry.IsRemote() {
@@ -327,15 +332,21 @@ func PullImage(imageName string, cliVals *entities.ContainerCreateOptions) (stri
 		skipTLSVerify = types.NewOptionalBool(!cliVals.TLSVerify.Value())
 	}
 
+	decConfig, err := util.DecryptConfig(cliVals.DecryptionKeys)
+	if err != nil {
+		return "unable to obtain decryption config", err
+	}
+
 	pullReport, pullErr := registry.ImageEngine().Pull(registry.GetContext(), imageName, entities.ImagePullOptions{
-		Authfile:        cliVals.Authfile,
-		Quiet:           cliVals.Quiet,
-		Arch:            cliVals.Arch,
-		OS:              cliVals.OS,
-		Variant:         cliVals.Variant,
-		SignaturePolicy: cliVals.SignaturePolicy,
-		PullPolicy:      pullPolicy,
-		SkipTLSVerify:   skipTLSVerify,
+		Authfile:         cliVals.Authfile,
+		Quiet:            cliVals.Quiet,
+		Arch:             cliVals.Arch,
+		OS:               cliVals.OS,
+		Variant:          cliVals.Variant,
+		SignaturePolicy:  cliVals.SignaturePolicy,
+		PullPolicy:       pullPolicy,
+		SkipTLSVerify:    skipTLSVerify,
+		OciDecryptConfig: decConfig,
 	})
 	if pullErr != nil {
 		return "", pullErr
@@ -398,6 +409,8 @@ func createPodIfNecessary(cmd *cobra.Command, s *specgen.SpecGenerator, netOpts 
 	infraOpts := entities.NewInfraContainerCreateOptions()
 	infraOpts.Net = netOpts
 	infraOpts.Quiet = true
+	infraOpts.ReadOnly = true
+	infraOpts.ReadWriteTmpFS = false
 	infraOpts.Hostname, err = cmd.Flags().GetString("hostname")
 	if err != nil {
 		return err

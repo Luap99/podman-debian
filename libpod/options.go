@@ -6,6 +6,9 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/containers/buildah/pkg/parse"
@@ -25,6 +28,11 @@ import (
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/runtime-tools/generate"
 	"github.com/sirupsen/logrus"
+)
+
+var (
+	umaskRegex *regexp.Regexp
+	onceRegex  sync.Once
 )
 
 // WithStorageConfig uses the given configuration to set up container storage.
@@ -109,6 +117,18 @@ func WithStorageConfig(config storage.StoreOptions) RuntimeOption {
 	}
 }
 
+func WithTransientStore(transientStore bool) RuntimeOption {
+	return func(rt *Runtime) error {
+		if rt.valid {
+			return define.ErrRuntimeFinalized
+		}
+
+		rt.storageConfig.TransientStore = transientStore
+
+		return nil
+	}
+}
+
 // WithSignaturePolicy specifies the path of a file which decides how trust is
 // managed for images we've pulled.
 // If this is not specified, the system default configuration will be used
@@ -138,6 +158,17 @@ func WithOCIRuntime(runtime string) RuntimeOption {
 
 		rt.config.Engine.OCIRuntime = runtime
 
+		return nil
+	}
+}
+
+// WithCtrOCIRuntime specifies an OCI runtime in container's config.
+func WithCtrOCIRuntime(runtime string) CtrCreateOption {
+	return func(ctr *Container) error {
+		if ctr.valid {
+			return define.ErrCtrFinalized
+		}
+		ctr.config.OCIRuntime = runtime
 		return nil
 	}
 }
@@ -273,7 +304,7 @@ func WithHooksDir(hooksDirs ...string) RuntimeOption {
 	}
 }
 
-// WithCDI sets the devices to check for for CDI configuration.
+// WithCDI sets the devices to check for CDI configuration.
 func WithCDI(devices []string) CtrCreateOption {
 	return func(ctr *Container) error {
 		if ctr.valid {
@@ -284,7 +315,7 @@ func WithCDI(devices []string) CtrCreateOption {
 	}
 }
 
-// WithStorageOpts sets the devices to check for for CDI configuration.
+// WithStorageOpts sets the devices to check for CDI configuration.
 func WithStorageOpts(storageOpts map[string]string) CtrCreateOption {
 	return func(ctr *Container) error {
 		if ctr.valid {
@@ -351,8 +382,8 @@ func WithNoPivotRoot() RuntimeOption {
 	}
 }
 
-// WithCNIConfigDir sets the CNI configuration directory.
-func WithCNIConfigDir(dir string) RuntimeOption {
+// WithNetworkConfigDir sets the network configuration directory.
+func WithNetworkConfigDir(dir string) RuntimeOption {
 	return func(rt *Runtime) error {
 		if rt.valid {
 			return define.ErrRuntimeFinalized
@@ -753,6 +784,7 @@ func WithName(name string) CtrCreateOption {
 			return define.ErrCtrFinalized
 		}
 
+		name = strings.TrimPrefix(name, "/")
 		// Check the name against a regex
 		if !define.NameRegex.MatchString(name) {
 			return define.RegexError
@@ -1417,6 +1449,7 @@ func WithNamedVolumes(volumes []*ContainerNamedVolume) CtrCreateOption {
 				Dest:        vol.Dest,
 				Options:     mountOpts,
 				IsAnonymous: vol.IsAnonymous,
+				SubPath:     vol.SubPath,
 			})
 		}
 
@@ -1550,6 +1583,17 @@ func WithCreateWorkingDir() CtrCreateOption {
 }
 
 // Volume Creation Options
+
+func WithVolumeIgnoreIfExist() VolumeCreateOption {
+	return func(volume *Volume) error {
+		if volume.valid {
+			return define.ErrVolumeFinalized
+		}
+		volume.ignoreIfExists = true
+
+		return nil
+	}
+}
 
 // WithVolumeName sets the name of the volume.
 func WithVolumeName(name string) VolumeCreateOption {
@@ -1753,11 +1797,14 @@ func WithTimezone(path string) CtrCreateOption {
 
 // WithUmask sets the umask in the container
 func WithUmask(umask string) CtrCreateOption {
+	onceRegex.Do(func() {
+		umaskRegex = regexp.MustCompile(`^[0-7]{1,4}$`)
+	})
 	return func(ctr *Container) error {
 		if ctr.valid {
 			return define.ErrCtrFinalized
 		}
-		if !define.UmaskRegex.MatchString(umask) {
+		if !umaskRegex.MatchString(umask) {
 			return fmt.Errorf("invalid umask string %s: %w", umask, define.ErrInvalidArg)
 		}
 		ctr.config.Umask = umask
@@ -1820,7 +1867,7 @@ func WithHostUsers(hostUsers []string) CtrCreateOption {
 	}
 }
 
-// WithInitCtrType indicates the container is a initcontainer
+// WithInitCtrType indicates the container is an initcontainer
 func WithInitCtrType(containerType string) CtrCreateOption {
 	return func(ctr *Container) error {
 		if ctr.valid {
@@ -1871,6 +1918,21 @@ func WithInfraConfig(compatibleOptions InfraInherit) CtrCreateOption {
 		err = json.Unmarshal(compatMarshal, ctr.config)
 		if err != nil {
 			return errors.New("could not unmarshal compatible options into contrainer config")
+		}
+		return nil
+	}
+}
+
+// WithStartupHealthcheck sets a startup healthcheck for the container.
+// Requires that a healthcheck must be set.
+func WithStartupHealthcheck(startupHC *define.StartupHealthCheck) CtrCreateOption {
+	return func(ctr *Container) error {
+		if ctr.valid {
+			return define.ErrCtrFinalized
+		}
+		ctr.config.StartupHealthCheckConfig = new(define.StartupHealthCheck)
+		if err := JSONDeepCopy(startupHC, ctr.config.StartupHealthCheckConfig); err != nil {
+			return fmt.Errorf("error copying startup healthcheck into container: %w", err)
 		}
 		return nil
 	}

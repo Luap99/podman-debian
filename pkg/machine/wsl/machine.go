@@ -36,13 +36,16 @@ var (
 const (
 	ErrorSuccessRebootInitiated = 1641
 	ErrorSuccessRebootRequired  = 3010
-	currentMachineVersion       = 2
+	currentMachineVersion       = 3
 )
 
 const containersConf = `[containers]
 
 [engine]
 cgroup_manager = "cgroupfs"
+`
+
+const registriesConf = `unqualified-search-registries=["docker.io"]
 `
 
 const appendPort = `grep -q Port\ %d /etc/ssh/sshd_config || echo Port %d >> /etc/ssh/sshd_config`
@@ -264,11 +267,16 @@ func (p *Provider) NewMachine(opts machine.InitOptions) (machine.VM, error) {
 }
 
 func getConfigPath(name string) (string, error) {
+	return getConfigPathExt(name, "json")
+}
+
+func getConfigPathExt(name string, extension string) (string, error) {
 	vmConfigDir, err := machine.GetConfDir(vmtype)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(vmConfigDir, name+".json"), nil
+
+	return filepath.Join(vmConfigDir, fmt.Sprintf("%s.%s", name, extension)), nil
 }
 
 // LoadByName reads a json file that describes a known qemu vm
@@ -311,6 +319,11 @@ func (v *MachineVM) migrateMachine(configPath string) error {
 
 	// Update older machines to use lingering
 	if err := enableUserLinger(v, toDist(v.Name)); err != nil {
+		return err
+	}
+
+	// Update older machines missing unqualified search config
+	if err := configureRegistries(v, toDist(v.Name)); err != nil {
 		return err
 	}
 
@@ -416,14 +429,24 @@ func downloadDistro(v *MachineVM, opts machine.InitOptions) error {
 }
 
 func (v *MachineVM) writeConfig() error {
+	const format = "could not write machine json config: %w"
 	jsonFile := v.ConfigPath
-
-	b, err := json.MarshalIndent(v, "", " ")
+	tmpFile, err := getConfigPathExt(v.Name, "tmp")
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(jsonFile, b, 0644); err != nil {
-		return fmt.Errorf("could not write machine json config: %w", err)
+
+	b, err := json.MarshalIndent(v, "", " ")
+	if err != nil {
+		return fmt.Errorf(format, err)
+	}
+
+	if err := os.WriteFile(tmpFile, b, 0644); err != nil {
+		return fmt.Errorf(format, err)
+	}
+
+	if err := os.Rename(tmpFile, jsonFile); err != nil {
+		return fmt.Errorf(format, err)
 	}
 
 	return nil
@@ -554,6 +577,10 @@ func configureSystem(v *MachineVM, dist string) error {
 		return fmt.Errorf("could not create containers.conf for guest OS: %w", err)
 	}
 
+	if err := configureRegistries(v, dist); err != nil {
+		return err
+	}
+
 	if err := wslInvoke(dist, "sh", "-c", "echo wsl > /etc/containers/podman-machine"); err != nil {
 		return fmt.Errorf("could not create podman-machine file for guest OS: %w", err)
 	}
@@ -565,7 +592,7 @@ func configureSystem(v *MachineVM, dist string) error {
 	return nil
 }
 
-func configureProxy(dist string, useProxy bool) error {
+func configureProxy(dist string, useProxy bool, quiet bool) error {
 	if !useProxy {
 		_ = wslInvoke(dist, "sh", "-c", clearProxySettings)
 		return nil
@@ -586,8 +613,9 @@ func configureProxy(dist string, useProxy bool) error {
 		if exitErr, isExit := err.(*exec.ExitError); isExit && exitErr.ExitCode() != 42 {
 			return fmt.Errorf("%v: %w", failMessage, err)
 		}
-
-		fmt.Println("Installing proxy support")
+		if !quiet {
+			fmt.Println("Installing proxy support")
+		}
 		_ = wslPipe(proxyConfigSetup, dist, "sh", "-c",
 			"cat > /usr/local/bin/proxyinit; chmod 755 /usr/local/bin/proxyinit")
 
@@ -603,6 +631,15 @@ func enableUserLinger(v *MachineVM, dist string) error {
 	lingerCmd := "mkdir -p /var/lib/systemd/linger; touch /var/lib/systemd/linger/" + v.RemoteUsername
 	if err := wslInvoke(dist, "sh", "-c", lingerCmd); err != nil {
 		return fmt.Errorf("could not enable linger for remote user on guest OS: %w", err)
+	}
+
+	return nil
+}
+
+func configureRegistries(v *MachineVM, dist string) error {
+	cmd := "cat > /etc/containers/registries.conf.d/999-podman-machine.conf"
+	if err := wslPipe(registriesConf, dist, "sh", "-c", cmd); err != nil {
+		return fmt.Errorf("could not configure registries on guest OS: %w", err)
 	}
 
 	return nil
@@ -960,14 +997,14 @@ func (v *MachineVM) Set(_ string, opts machine.SetOptions) ([]error, error) {
 	return setErrors, v.writeConfig()
 }
 
-func (v *MachineVM) Start(name string, _ machine.StartOptions) error {
+func (v *MachineVM) Start(name string, opts machine.StartOptions) error {
 	if v.isRunning() {
 		return fmt.Errorf("%q is already running", name)
 	}
 
 	dist := toDist(name)
 	useProxy := setupWslProxyEnv()
-	if err := configureProxy(dist, useProxy); err != nil {
+	if err := configureProxy(dist, useProxy, opts.Quiet); err != nil {
 		return err
 	}
 
@@ -976,7 +1013,7 @@ func (v *MachineVM) Start(name string, _ machine.StartOptions) error {
 		return fmt.Errorf("the WSL bootstrap script failed: %w", err)
 	}
 
-	if !v.Rootful {
+	if !v.Rootful && !opts.NoInfo {
 		fmt.Printf("\nThis machine is currently configured in rootless mode. If your containers\n")
 		fmt.Printf("require root permissions (e.g. ports < 1024), or if you run into compatibility\n")
 		fmt.Printf("issues with non-podman clients, you can switch using the following command: \n")
@@ -989,22 +1026,24 @@ func (v *MachineVM) Start(name string, _ machine.StartOptions) error {
 	}
 
 	globalName, pipeName, err := launchWinProxy(v)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "API forwarding for Docker API clients is not available due to the following startup failures.")
-		fmt.Fprintf(os.Stderr, "\t%s\n", err.Error())
-		fmt.Fprintln(os.Stderr, "\nPodman clients are still able to connect.")
-	} else {
-		fmt.Printf("API forwarding listening on: %s\n", pipeName)
-		if globalName {
-			fmt.Printf("\nDocker API clients default to this address. You do not need to set DOCKER_HOST.\n")
+	if !opts.NoInfo {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "API forwarding for Docker API clients is not available due to the following startup failures.")
+			fmt.Fprintf(os.Stderr, "\t%s\n", err.Error())
+			fmt.Fprintln(os.Stderr, "\nPodman clients are still able to connect.")
 		} else {
-			fmt.Printf("\nAnother process was listening on the default Docker API pipe address.\n")
-			fmt.Printf("You can still connect Docker API clients by setting DOCKER HOST using the\n")
-			fmt.Printf("following powershell command in your terminal session:\n")
-			fmt.Printf("\n\t$Env:DOCKER_HOST = '%s'\n", pipeName)
-			fmt.Printf("\nOr in a classic CMD prompt:\n")
-			fmt.Printf("\n\tset DOCKER_HOST = '%s'\n", pipeName)
-			fmt.Printf("\nAlternatively terminate the other process and restart podman machine.\n")
+			fmt.Printf("API forwarding listening on: %s\n", pipeName)
+			if globalName {
+				fmt.Printf("\nDocker API clients default to this address. You do not need to set DOCKER_HOST.\n")
+			} else {
+				fmt.Printf("\nAnother process was listening on the default Docker API pipe address.\n")
+				fmt.Printf("You can still connect Docker API clients by setting DOCKER HOST using the\n")
+				fmt.Printf("following powershell command in your terminal session:\n")
+				fmt.Printf("\n\t$Env:DOCKER_HOST = '%s'\n", pipeName)
+				fmt.Printf("\nOr in a classic CMD prompt:\n")
+				fmt.Printf("\n\tset DOCKER_HOST = '%s'\n", pipeName)
+				fmt.Printf("\nAlternatively terminate the other process and restart podman machine.\n")
+			}
 		}
 	}
 
@@ -1339,7 +1378,7 @@ func (v *MachineVM) Remove(name string, opts machine.RemoveOptions) (string, fun
 			logrus.Error(err)
 		}
 		for _, f := range files {
-			if err := os.RemoveAll(f); err != nil {
+			if err := machine.GuardedRemoveAll(f); err != nil {
 				logrus.Error(err)
 			}
 		}
@@ -1644,7 +1683,7 @@ func (p *Provider) RemoveAndCleanMachines() error {
 		}
 		prevErr = err
 	} else {
-		err := os.RemoveAll(dataDir)
+		err := machine.GuardedRemoveAll(dataDir)
 		if err != nil {
 			if prevErr != nil {
 				logrus.Error(prevErr)
@@ -1661,7 +1700,7 @@ func (p *Provider) RemoveAndCleanMachines() error {
 		}
 		prevErr = err
 	} else {
-		err := os.RemoveAll(confDir)
+		err := machine.GuardedRemoveAll(confDir)
 		if err != nil {
 			if prevErr != nil {
 				logrus.Error(prevErr)

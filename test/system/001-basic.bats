@@ -4,6 +4,7 @@
 #
 
 load helpers
+load helpers.network
 
 # Override standard setup! We don't yet trust podman-images or podman-rm
 function setup() {
@@ -229,6 +230,19 @@ See 'podman version --help'" "podman version --remote"
 
     run_podman 1 --debug --log-level=panic info
     is "$output" "Setting --log-level and --debug is not allowed"
+}
+
+# Tests --noout for commands that do not enter the engine
+@test "podman --noout properly suppresses output" {
+run_podman --noout system connection ls
+    is "$output" "" "output should be empty"
+}
+
+@test "podman - shutdown engines" {
+    run_podman --log-level=debug run --rm $IMAGE true
+    is "$output" ".*Shutting down engines.*"
+    run_podman 125 --log-level=debug run dockah://rien.de/rien:latest
+    is "${lines[-1]}" ".*Shutting down engines"
 }
 
 # vim: filetype=sh

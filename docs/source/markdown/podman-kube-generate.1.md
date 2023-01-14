@@ -36,8 +36,7 @@ Output to the given file, instead of STDOUT. If the file already exists, `kube g
 
 #### **--service**, **-s**
 
-Generate a Kubernetes service object in addition to the Pods. Used to generate a Service specification for the corresponding Pod output. In particular, if the object has portmap bindings, the service specification will include a NodePort declaration to expose the service. A
-random port is assigned by Podman in the specification.
+Generate a Kubernetes service object in addition to the Pods. Used to generate a Service specification for the corresponding Pod output. In particular, if the object has portmap bindings, the service specification will include a NodePort declaration to expose the service. A random port is assigned by Podman in the specification.
 
 ## EXAMPLES
 
@@ -79,12 +78,6 @@ spec:
     - containerPort: 3306
       hostPort: 36533
     resources: {}
-    securityContext:
-      capabilities:
-        drop:
-        - CAP_MKNOD
-        - CAP_NET_RAW
-        - CAP_AUDIT_WRITE
     tty: true
 status: {}
 ```
@@ -110,12 +103,6 @@ spec:
     image: docker.io/library/alpine:latest
     name: test-bind-mount
     resources: {}
-    securityContext:
-      capabilities:
-        drop:
-        - CAP_MKNOD
-        - CAP_NET_RAW
-        - CAP_AUDIT_WRITE
     volumeMounts:
     - mountPath: /volume
       name: home-user-my-data-host
@@ -149,12 +136,6 @@ spec:
     image: docker.io/library/alpine:latest
     name: test-bind-mount
     resources: {}
-    securityContext:
-      capabilities:
-        drop:
-        - CAP_MKNOD
-        - CAP_NET_RAW
-        - CAP_AUDIT_WRITE
     volumeMounts:
     - mountPath: /volume
       name: priceless-data-pvc
