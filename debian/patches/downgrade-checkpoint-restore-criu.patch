@@ -1,0 +1,54 @@
+Index: libpod/libpod/container_internal_common.go
+===================================================================
+--- libpod.orig/libpod/container_internal_common.go
++++ libpod/libpod/container_internal_common.go
+@@ -19,7 +19,7 @@ import (
+ 	"time"
+ 
+ 	metadata "github.com/checkpoint-restore/checkpointctl/lib"
+-	"github.com/checkpoint-restore/go-criu/v6/stats"
++	"github.com/checkpoint-restore/go-criu/v5/stats"
+ 	cdi "github.com/container-orchestrated-devices/container-device-interface/pkg/cdi"
+ 	"github.com/containers/buildah"
+ 	"github.com/containers/buildah/pkg/chrootuser"
+Index: libpod/pkg/checkpoint/crutils/checkpoint_restore_utils.go
+===================================================================
+--- libpod.orig/pkg/checkpoint/crutils/checkpoint_restore_utils.go
++++ libpod/pkg/checkpoint/crutils/checkpoint_restore_utils.go
+@@ -10,7 +10,7 @@ import (
+ 	"path/filepath"
+ 
+ 	metadata "github.com/checkpoint-restore/checkpointctl/lib"
+-	"github.com/checkpoint-restore/go-criu/v6/stats"
++	"github.com/checkpoint-restore/go-criu/v5/stats"
+ 	"github.com/containers/storage/pkg/archive"
+ 	"github.com/opencontainers/selinux/go-selinux/label"
+ )
+Index: libpod/pkg/criu/criu_linux.go
+===================================================================
+--- libpod.orig/pkg/criu/criu_linux.go
++++ libpod/pkg/criu/criu_linux.go
+@@ -4,8 +4,8 @@
+ package criu
+ 
+ import (
+-	"github.com/checkpoint-restore/go-criu/v6"
+-	"github.com/checkpoint-restore/go-criu/v6/rpc"
++	"github.com/checkpoint-restore/go-criu/v5"
++	"github.com/checkpoint-restore/go-criu/v5/rpc"
+ 
+ 	"google.golang.org/protobuf/proto"
+ )
+Index: libpod/test/e2e/checkpoint_test.go
+===================================================================
+--- libpod.orig/test/e2e/checkpoint_test.go
++++ libpod/test/e2e/checkpoint_test.go
+@@ -10,7 +10,7 @@ import (
+ 	"strings"
+ 	"time"
+ 
+-	"github.com/checkpoint-restore/go-criu/v6/stats"
++	"github.com/checkpoint-restore/go-criu/v5/stats"
+ 	"github.com/containers/podman/v4/pkg/checkpoint/crutils"
+ 	"github.com/containers/podman/v4/pkg/criu"
+ 	"github.com/containers/podman/v4/pkg/domain/entities"
