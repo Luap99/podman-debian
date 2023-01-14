@@ -56,7 +56,7 @@ Build-Depends: debhelper-compat (= 13)
     ,golang-github-seccomp-libseccomp-golang-dev
     ,golang-github-sirupsen-logrus-dev
     ,golang-github-stretchr-testify-dev
-    ,golang-github-uber-go-atomic-dev
+    ,golang-go.uber-atomic-dev
     ,golang-github-ulikunitz-xz-dev
     ,golang-github-vbatts-tar-split-dev
     ,golang-github-vbauerster-mpb-dev (>= 6)
