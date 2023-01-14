@@ -155,7 +155,7 @@ func VolumeFromSecret(secretSource *v1.SecretVolumeSource, secretsManager *secre
 
 	// add key: value pairs to the items array
 	for key, entry := range data.Data {
-		kv.Items[key] = []byte(entry)
+		kv.Items[key] = entry
 	}
 
 	for key, entry := range data.StringData {
