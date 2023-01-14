@@ -1,3 +1,9 @@
+libpod (4.4.0~rc1+ds1-1) experimental; urgency=medium
+
+  * New upstream version
+
+ -- Reinhard Tartler <siretart@tauware.de>  Sat, 14 Jan 2023 06:06:22 -0500
+
 libpod (4.3.1+ds1-5) unstable; urgency=medium
 
   * Drop golang-github-containers-libpod-dev
