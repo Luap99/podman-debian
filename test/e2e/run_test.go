@@ -13,7 +13,6 @@ import (
 
 	"github.com/containers/common/pkg/cgroups"
 	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/rootless"
 	. "github.com/containers/podman/v4/test/utils"
 	"github.com/containers/storage/pkg/stringid"
 	. "github.com/onsi/ginkgo"
@@ -261,7 +260,7 @@ var _ = Describe("Podman run", func() {
 		if os.Getenv("container") != "" {
 			Skip("Overlay mounts not supported when running in a container")
 		}
-		if rootless.IsRootless() {
+		if isRootless() {
 			if _, err := exec.LookPath("fuse-overlayfs"); err != nil {
 				Skip("Fuse-Overlayfs required for rootless overlay mount test")
 			}
@@ -562,7 +561,7 @@ var _ = Describe("Podman run", func() {
 		Expect(session).Should(Exit(0))
 		Expect(session.OutputToString()).To(ContainSubstring("0000000000000002"))
 
-		if os.Geteuid() > 0 {
+		if isRootless() {
 			if os.Getenv("SKIP_USERNS") != "" {
 				Skip("Skip userns tests.")
 			}
@@ -1407,6 +1406,22 @@ USER mail`, BB)
 		Expect(found).To(BeTrue())
 	})
 
+	It("podman run with restart policy does not restart on manual stop", func() {
+		ctrName := "testCtr"
+		ctr := podmanTest.Podman([]string{"run", "-dt", "--restart=always", "--name", ctrName, ALPINE, "top"})
+		ctr.WaitWithDefaultTimeout()
+		Expect(ctr).Should(Exit(0))
+
+		stop := podmanTest.Podman([]string{"stop", ctrName})
+		stop.WaitWithDefaultTimeout()
+		Expect(stop).Should(Exit(0))
+
+		// This is ugly, but I don't see a better way
+		time.Sleep(10 * time.Second)
+
+		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(0))
+	})
+
 	It("podman run with cgroups=split", func() {
 		SkipIfNotSystemd(podmanTest.CgroupManager, "do not test --cgroups=split if not running on systemd")
 		SkipIfRootlessCgroupsV1("Disable cgroups not supported on cgroupv1 for rootless users")
@@ -2006,7 +2021,7 @@ WORKDIR /madethis`, BB)
 
 		podmanTest.AddImageToRWStore(ALPINE)
 
-		if rootless.IsRootless() {
+		if isRootless() {
 			err := podmanTest.RestoreArtifact(REGISTRY_IMAGE)
 			Expect(err).ToNot(HaveOccurred())
 		}

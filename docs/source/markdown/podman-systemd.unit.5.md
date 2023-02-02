@@ -47,7 +47,7 @@ For example, to start a container on boot, add something like this to the file:
 
 ```
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
 ```
 
 Currently, only the `Alias`, `WantedBy` and `RequiredBy` keys are supported.
@@ -411,6 +411,23 @@ Set one or more OCI labels on the volume. The format is a list of
 `key=value` items, similar to `Environment`.
 
 This key can be listed multiple times.
+
+#### `Device=`
+
+The path of a device which should be mounted for the volume.
+
+#### `Type=`
+
+The filesystem type of `Device` as used by the **mount(8)** commands `-t` option.
+
+#### `Options=`
+
+The mount options to use for a filesystem as used by the **mount(8)** command `-o` option.
+
+#### `Copy=` (default to `yes`)
+
+If enabled, the content of the image located at the mountpoint of the volume is copied into the
+volume on the first run.
 
 ### Network units
 
