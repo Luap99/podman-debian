@@ -1,0 +1,121 @@
+Index: libpod/cmd/podman/common/sign.go
+===================================================================
+--- libpod.orig/cmd/podman/common/sign.go
++++ libpod/cmd/podman/common/sign.go
+@@ -2,12 +2,9 @@ package common
+ 
+ import (
+ 	"fmt"
+-	"os"
+ 
+ 	"github.com/containers/common/pkg/ssh"
+ 	"github.com/containers/image/v5/pkg/cli"
+-	"github.com/containers/image/v5/pkg/cli/sigstore"
+-	"github.com/containers/image/v5/signature/signer"
+ 	"github.com/containers/podman/v4/pkg/domain/entities"
+ )
+ 
+@@ -39,28 +36,12 @@ func PrepareSigning(pushOpts *entities.I
+ 	pushOpts.SignPassphrase = passphrase
+ 	pushOpts.SignSigstorePrivateKeyPassphrase = []byte(passphrase)
+ 	cleanup := signingCleanup{}
+-	if signBySigstoreParamFile != "" {
+-		signer, err := sigstore.NewSignerFromParameterFile(signBySigstoreParamFile, &sigstore.Options{
+-			PrivateKeyPassphrasePrompt: cli.ReadPassphraseFile,
+-			Stdin:                      os.Stdin,
+-			Stdout:                     os.Stdout,
+-		})
+-		if err != nil {
+-			return nil, err
+-		}
+-		pushOpts.Signers = append(pushOpts.Signers, signer)
+-		cleanup.signers = append(cleanup.signers, signer)
+-	}
+ 	return cleanup.cleanup, nil
+ }
+ 
+ // signingCleanup carries state for cleanup after PrepareSigning
+ type signingCleanup struct {
+-	signers []*signer.Signer
+ }
+ 
+ func (c *signingCleanup) cleanup() {
+-	for _, s := range c.signers {
+-		s.Close()
+-	}
+ }
+Index: libpod/pkg/domain/infra/abi/images.go
+===================================================================
+--- libpod.orig/pkg/domain/infra/abi/images.go
++++ libpod/pkg/domain/infra/abi/images.go
+@@ -306,7 +306,7 @@ func (ir *ImageEngine) Push(ctx context.
+ 	pushOptions.RemoveSignatures = options.RemoveSignatures
+ 	pushOptions.PolicyAllowStorage = true
+ 	pushOptions.SignaturePolicyPath = options.SignaturePolicy
+-	pushOptions.Signers = options.Signers
++	// pushOptions.Signers = options.Signers
+ 	pushOptions.SignBy = options.SignBy
+ 	pushOptions.SignPassphrase = options.SignPassphrase
+ 	pushOptions.SignBySigstorePrivateKeyFile = options.SignBySigstorePrivateKeyFile
+Index: libpod/pkg/domain/infra/abi/manifest.go
+===================================================================
+--- libpod.orig/pkg/domain/infra/abi/manifest.go
++++ libpod/pkg/domain/infra/abi/manifest.go
+@@ -333,7 +333,7 @@ func (ir *ImageEngine) ManifestPush(ctx
+ 	pushOptions.ImageListSelection = cp.CopySpecificImages
+ 	pushOptions.ManifestMIMEType = manifestType
+ 	pushOptions.RemoveSignatures = opts.RemoveSignatures
+-	pushOptions.Signers = opts.Signers
++	//pushOptions.Signers = opts.Signers
+ 	pushOptions.SignBy = opts.SignBy
+ 	pushOptions.SignPassphrase = opts.SignPassphrase
+ 	pushOptions.SignBySigstorePrivateKeyFile = opts.SignBySigstorePrivateKeyFile
+Index: libpod/pkg/domain/infra/tunnel/images.go
+===================================================================
+--- libpod.orig/pkg/domain/infra/tunnel/images.go
++++ libpod/pkg/domain/infra/tunnel/images.go
+@@ -244,9 +244,6 @@ func (ir *ImageEngine) Import(ctx contex
+ }
+ 
+ func (ir *ImageEngine) Push(ctx context.Context, source string, destination string, opts entities.ImagePushOptions) error {
+-	if opts.Signers != nil {
+-		return fmt.Errorf("forwarding Signers is not supported for remote clients")
+-	}
+ 	if opts.OciEncryptConfig != nil {
+ 		return fmt.Errorf("encryption is not supported for remote clients")
+ 	}
+Index: libpod/pkg/domain/infra/tunnel/manifest.go
+===================================================================
+--- libpod.orig/pkg/domain/infra/tunnel/manifest.go
++++ libpod/pkg/domain/infra/tunnel/manifest.go
+@@ -130,9 +130,6 @@ func (ir *ImageEngine) ManifestRm(ctx co
+ 
+ // ManifestPush pushes a manifest list or image index to the destination
+ func (ir *ImageEngine) ManifestPush(ctx context.Context, name, destination string, opts entities.ImagePushOptions) (string, error) {
+-	if opts.Signers != nil {
+-		return "", fmt.Errorf("forwarding Signers is not supported for remote clients")
+-	}
+ 
+ 	options := new(images.PushOptions)
+ 	options.WithUsername(opts.Username).WithPassword(opts.Password).WithAuthfile(opts.Authfile).WithRemoveSignatures(opts.RemoveSignatures).WithAll(opts.All).WithFormat(opts.Format).WithCompressionFormat(opts.CompressionFormat).WithQuiet(opts.Quiet).WithProgressWriter(opts.Writer)
+Index: libpod/pkg/domain/entities/images.go
+===================================================================
+--- libpod.orig/pkg/domain/entities/images.go
++++ libpod/pkg/domain/entities/images.go
+@@ -7,7 +7,6 @@ import (
+ 
+ 	"github.com/containers/common/pkg/config"
+ 	"github.com/containers/image/v5/manifest"
+-	"github.com/containers/image/v5/signature/signer"
+ 	"github.com/containers/image/v5/types"
+ 	encconfig "github.com/containers/ocicrypt/config"
+ 	"github.com/containers/podman/v4/pkg/inspect"
+@@ -214,7 +213,7 @@ type ImagePushOptions struct {
+ 	// Signers, if non-empty, asks for signatures to be added during the copy
+ 	// using the provided signers.
+ 	// Rejected for remote calls.
+-	Signers []*signer.Signer
++	// Signers []*signer.Signer  // - disabled in debian
+ 	// SignBy adds a signature at the destination using the specified key.
+ 	// Ignored for remote calls.
+ 	SignBy string
