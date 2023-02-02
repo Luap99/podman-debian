@@ -287,6 +287,20 @@ expected. For example, oci-archive:/x.tar will reference /x.tar on the remote
 machine instead of on the client. When using podman remote clients it is
 best to restrict use to *containers-storage*, and *docker:// transports*.
 
+#### **--group-add**=*group* | *keep-groups*
+
+Assign additional groups to the primary user running within the container
+process.
+
+- `keep-groups` is a special value that tells Buildah to keep the supplementary
+group access.
+
+Allows container to use the user's supplementary group access. If file systems
+or devices are only accessible by the rootless user's group, this flag tells the
+OCI runtime to pass the group access into the container. Currently only
+available with the `crun` OCI runtime. Note: `keep-groups` is exclusive, other
+groups cannot be specified with this flag.
+
 #### **--help**, **-h**
 
 Print usage statement
@@ -1063,7 +1077,7 @@ When using the `useradd` command within the build script, pass the
 useradd to stop creating the lastlog file.
 
 ## SEE ALSO
-**[podman(1)](podman.1.md)**, **[buildah(1)](https://github.com/containers/buildah/blob/main/docs/buildah.1.md)**, **[containers-certs.d(5)](https://github.com/containers/image/blob/main/docs/containers-certs.d.5.md)**, **[containers-registries.conf(5)](https://github.com/containers/image/blob/main/docs/containers-registries.conf.5.md)**, **[crun(1)](https://github.com/containers/crun/blob/main/crun.1.md)**, **[runc(8)](https://github.com/opencontainers/runc/blob/master/man/runc.8.md)**, **[useradd(8)](https://www.unix.com/man-page/redhat/8/useradd)**, **[podman-ps(1)](podman-ps.1.md)**, **[podman-rm(1)](podman-rm.1.md)**, **[Containerfile(5)](https://github.com/containers/common/blob/main/docs/Containerfile.5.md)**, **[containerignore(5)](https://github.com/containers/common/blob/main/docs/containerignore.5.md)**
+**[podman(1)](podman.1.md)**, **[buildah(1)](https://github.com/containers/buildah/blob/main/docs/buildah.1.md)**, **[containers-certs.d(5)](https://github.com/containers/image/blob/main/docs/containers-certs.d.5.md)**, **[containers-registries.conf(5)](https://github.com/containers/image/blob/main/docs/containers-registries.conf.5.md)**, **[crun(1)](https://github.com/containers/crun/blob/main/crun.1.md)**, **[runc(8)](https://github.com/opencontainers/runc/blob/main/man/runc.8.md)**, **[useradd(8)](https://www.unix.com/man-page/redhat/8/useradd)**, **[podman-ps(1)](podman-ps.1.md)**, **[podman-rm(1)](podman-rm.1.md)**, **[Containerfile(5)](https://github.com/containers/common/blob/main/docs/Containerfile.5.md)**, **[containerignore(5)](https://github.com/containers/common/blob/main/docs/containerignore.5.md)**
 
 ## HISTORY
 Aug 2020, Additional options and .containerignore added by Dan Walsh `<dwalsh@redhat.com>`

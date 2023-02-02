@@ -3,11 +3,10 @@ package quadlet
 import (
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"strings"
-	"sync"
 
 	"github.com/containers/podman/v4/pkg/systemd/parser"
+	"github.com/containers/storage/pkg/regexp"
 )
 
 const (
@@ -51,6 +50,10 @@ const (
 	KeyPublishPort       = "PublishPort"
 	KeyUser              = "User"
 	KeyGroup             = "Group"
+	KeyDevice            = "Device"
+	KeyType              = "Type"
+	KeyOptions           = "Options"
+	KeyCopy              = "Copy"
 	KeyVolume            = "Volume"
 	KeyPodmanArgs        = "PodmanArgs"
 	KeyLabel             = "Label"
@@ -75,8 +78,7 @@ const (
 )
 
 var (
-	onceRegex      sync.Once
-	validPortRange *regexp.Regexp
+	validPortRange = regexp.Delayed(`\d+(-\d+)?(/udp|/tcp)?$`)
 
 	// Supported keys in "Container" group
 	supportedContainerKeys = map[string]bool{
@@ -113,9 +115,13 @@ var (
 
 	// Supported keys in "Volume" group
 	supportedVolumeKeys = map[string]bool{
-		KeyUser:  true,
-		KeyGroup: true,
-		KeyLabel: true,
+		KeyUser:    true,
+		KeyGroup:   true,
+		KeyDevice:  true,
+		KeyType:    true,
+		KeyOptions: true,
+		KeyCopy:    true,
+		KeyLabel:   true,
 	}
 
 	// Supported keys in "Volume" group
@@ -157,9 +163,6 @@ func replaceExtension(name string, extension string, extraPrefix string, extraSu
 }
 
 func isPortRange(port string) bool {
-	onceRegex.Do(func() {
-		validPortRange = regexp.MustCompile(`\d+(-\d+)?(/udp|/tcp)?$`)
-	})
 	return validPortRange.MatchString(port)
 }
 
@@ -625,6 +628,44 @@ func ConvertVolume(volume *parser.UnitFile, name string) (*parser.UnitFile, erro
 			opts.WriteString(",")
 		}
 		opts.WriteString(fmt.Sprintf("gid=%d", gid))
+	}
+
+	copy, ok := volume.LookupBoolean(VolumeGroup, KeyCopy)
+	if ok {
+		if copy {
+			podman.add("--opt", "copy")
+		} else {
+			podman.add("--opt", "nocopy")
+		}
+	}
+
+	devValid := false
+
+	dev, ok := volume.Lookup(VolumeGroup, KeyDevice)
+	if ok && len(dev) != 0 {
+		podman.add("--opt", fmt.Sprintf("device=%s", dev))
+		devValid = true
+	}
+
+	devType, ok := volume.Lookup(VolumeGroup, KeyType)
+	if ok && len(devType) != 0 {
+		if devValid {
+			podman.add("--opt", fmt.Sprintf("type=%s", devType))
+		} else {
+			return nil, fmt.Errorf("key Type can't be used without Device")
+		}
+	}
+
+	mountOpts, ok := volume.Lookup(VolumeGroup, KeyOptions)
+	if ok && len(mountOpts) != 0 {
+		if devValid {
+			if opts.Len() > 2 {
+				opts.WriteString(",")
+			}
+			opts.WriteString(mountOpts)
+		} else {
+			return nil, fmt.Errorf("key Options can't be used without Device")
+		}
 	}
 
 	if opts.Len() > 2 {

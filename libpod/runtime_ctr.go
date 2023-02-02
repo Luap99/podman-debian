@@ -608,6 +608,7 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 // be removed also if and only if the container is the sole user
 // Otherwise, RemoveContainer will return an error if the container is running
 func (r *Runtime) RemoveContainer(ctx context.Context, c *Container, force bool, removeVolume bool, timeout *uint) error {
+	// NOTE: container will be locked down the road.
 	return r.removeContainer(ctx, c, force, removeVolume, false, false, timeout)
 }
 
@@ -1115,16 +1116,17 @@ func (r *Runtime) LookupContainerID(idOrName string) (string, error) {
 	return r.state.LookupContainerID(idOrName)
 }
 
-// GetContainers retrieves all containers from the state
+// GetContainers retrieves all containers from the state.
+// If `loadState` is set, the containers' state will be loaded as well.
 // Filters can be provided which will determine what containers are included in
 // the output. Multiple filters are handled by ANDing their output, so only
 // containers matching all filters are returned
-func (r *Runtime) GetContainers(filters ...ContainerFilter) ([]*Container, error) {
+func (r *Runtime) GetContainers(loadState bool, filters ...ContainerFilter) ([]*Container, error) {
 	if !r.valid {
 		return nil, define.ErrRuntimeStopped
 	}
 
-	ctrs, err := r.GetAllContainers()
+	ctrs, err := r.state.AllContainers(loadState)
 	if err != nil {
 		return nil, err
 	}
@@ -1147,7 +1149,7 @@ func (r *Runtime) GetContainers(filters ...ContainerFilter) ([]*Container, error
 
 // GetAllContainers is a helper function for GetContainers
 func (r *Runtime) GetAllContainers() ([]*Container, error) {
-	return r.state.AllContainers()
+	return r.state.AllContainers(false)
 }
 
 // GetRunningContainers is a helper function for GetContainers
@@ -1156,7 +1158,7 @@ func (r *Runtime) GetRunningContainers() ([]*Container, error) {
 		state, _ := c.State()
 		return state == define.ContainerStateRunning
 	}
-	return r.GetContainers(running)
+	return r.GetContainers(false, running)
 }
 
 // GetContainersByList is a helper function for GetContainers
@@ -1230,7 +1232,7 @@ func (r *Runtime) PruneContainers(filterFuncs []ContainerFilter) ([]*reports.Pru
 		return false
 	}
 	filterFuncs = append(filterFuncs, containerStateFilter)
-	delContainers, err := r.GetContainers(filterFuncs...)
+	delContainers, err := r.GetContainers(false, filterFuncs...)
 	if err != nil {
 		return nil, err
 	}
