@@ -1,8 +1,12 @@
-libpod (4.4.0~rc1+ds1-1) experimental; urgency=medium
+libpod (4.4.0+ds1-1) experimental; urgency=medium
 
   * New upstream version
+  * Disable failing test, cf. https://github.com/containers/podman/issues/17366
+  * disable sigstore functionalty, will be reenabled when the packages enters
+    Debian
+  * bump dependency on containers/{image,common,buildah}
 
- -- Reinhard Tartler <siretart@tauware.de>  Sat, 14 Jan 2023 06:06:22 -0500
+ -- Reinhard Tartler <siretart@tauware.de>  Sat, 04 Feb 2023 14:31:59 -0500
 
 libpod (4.3.1+ds1-5) unstable; urgency=medium
 
