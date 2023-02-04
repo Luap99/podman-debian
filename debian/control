@@ -88,6 +88,7 @@ Build-Depends: debhelper-compat (= 13)
     ,libsubid-dev
 # sphinx docs:
 #   ,python3-recommonmark
+Build-Conflicts: golang-github-checkpoint-restore-go-criu-dev (>> 6.0)
 Homepage: https://github.com/containers/podman
 Vcs-Browser: https://salsa.debian.org/debian/libpod
 Vcs-Git: https://salsa.debian.org/debian/libpod.git
