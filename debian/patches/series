@@ -2,3 +2,4 @@ test--skip-TestPostDeleteHooks.patch
 system-goimports.patch
 downgrade-checkpoint-restore-criu.patch
 disable-sigstore.patch
+test--skip-issue-17366.patch
