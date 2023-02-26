@@ -11,7 +11,7 @@ Build-Depends: debhelper-compat (= 13)
     ,go-md2man
     ,golang-go
     ,golang-dbus-dev (>= 5.0.2~)
-    ,golang-ginkgo-dev
+    ,golang-github-onsi-ginkgo-dev
     ,golang-github-appc-cni-dev (>= 0.8)
     ,golang-github-buger-goterm-dev
     ,golang-github-checkpoint-restore-go-criu-dev (>> 5.3)
