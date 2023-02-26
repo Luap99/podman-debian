@@ -1,3 +1,17 @@
+libpod (4.3.1+ds1-6) unstable; urgency=medium
+
+  * Team upload
+
+  [ Reinhard Tartler ]
+  * Re-enable builtin tests, but mark as flaky
+
+  [ Shengjing Zhu ]
+  * Replace golang-github-uber-go-atomic-dev with golang-go.uber-atomic-dev
+  * Drop unused golang-github-{influxdata,hpcloud}-tail-dev in Build-Depends
+  * Replace golang-ginkgo-dev with golang-github-onsi-ginkgo-dev
+
+ -- Shengjing Zhu <zhsj@debian.org>  Sun, 26 Feb 2023 21:41:30 +0800
+
 libpod (4.3.1+ds1-5) unstable; urgency=medium
 
   * Drop golang-github-containers-libpod-dev
