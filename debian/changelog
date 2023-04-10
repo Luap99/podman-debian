@@ -1,3 +1,10 @@
+libpod (4.3.1+ds1-7) unstable; urgency=medium
+
+  * [upstream] volume,container: chroot to source before exporting content
+    (Closes: #1032099), Fixes: CVE-2023-0778
+
+ -- Reinhard Tartler <siretart@tauware.de>  Mon, 10 Apr 2023 18:39:24 -0400
+
 libpod (4.3.1+ds1-6) unstable; urgency=medium
 
   * Team upload
