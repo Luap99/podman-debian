@@ -1,3 +1,10 @@
+libpod (4.4.0+ds1-2) experimental; urgency=medium
+
+  [ Norbert Lange ]
+  * Build and install podman-remote, Closes: #1020540
+
+ -- Reinhard Tartler <siretart@tauware.de>  Wed, 12 Apr 2023 07:07:55 -0400
+
 libpod (4.4.0+ds1-1) experimental; urgency=medium
 
   * New upstream version
