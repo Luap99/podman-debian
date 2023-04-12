@@ -48,6 +48,8 @@ export HOME=$(CURDIR)/debian/tmp
 
 ## https://podman.io/getting-started/installation#build-tags
 BUILDTAGS := apparmor,ostree,seccomp,selinux,systemd,libsubid
+BUILDTAGS_REMOTE := remote,exclude_graphdriver_btrfs,btrfs_noversion,exclude_graphdriver_devicemapper,containers_image_openpgp
+
 # containers_image_openpgp
 
 %:
@@ -57,6 +59,11 @@ override_dh_auto_build:
 	$(MAKE) docs docker-docs
 
 #	LDFLAGS_PODMAN="-X main.gitCommit=$(GIT_COMMIT)"
+#   upstream Makefile calls `go build ... -o bin/podman-remote ./cmd/podman`
+#   dont know how I get dh_auto_build to do that.
+	dh_auto_build -v  --builddirectory=_output -- -tags "$(BUILDTAGS_REMOTE)" \
+          -ldflags "-X main.buildInfo=$(DEB_VERSION)"
+	mv _output/bin/podman _output/bin/podman-remote
 	dh_auto_build -v  --builddirectory=_output -- -tags "$(BUILDTAGS)" \
           -ldflags "-X main.buildInfo=$(DEB_VERSION)"
 
@@ -87,8 +94,6 @@ override_dh_auto_install:
 
 # Disable dh_missing
 override_dh_missing:
-	# remove unwanted files, cf. #1000521
-	find debian -name '*podman-remote*' -ls -delete
 	dh_missing --list-missing -X goecho -X testvol -X version
 
 override_dh_installsystemd:
