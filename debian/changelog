@@ -1,3 +1,11 @@
+libpod (4.3.1+ds1-8) unstable; urgency=medium
+
+  * [upstream] unbreak using docker as client
+  * debian/control: tighten dependencies against buildah (Closes: #1034871)
+  * [upstream] system reset: show graphRoot/runRoot before removal
+
+ -- Reinhard Tartler <siretart@tauware.de>  Sun, 30 Apr 2023 08:19:54 -0400
+
 libpod (4.3.1+ds1-7) unstable; urgency=medium
 
   * [upstream] volume,container: chroot to source before exporting content
