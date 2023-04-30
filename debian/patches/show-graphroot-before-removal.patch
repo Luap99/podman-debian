@@ -1,0 +1,66 @@
+From 6aaf6a28435c1308b181832a0e1184a4a614066b Mon Sep 17 00:00:00 2001
+From: Paul Holzinger <pholzing@redhat.com>
+Date: Wed, 26 Apr 2023 14:52:40 +0200
+Subject: [PATCH] system reset: show graphRoot/runRoot before removal
+
+system reset it says it will delete containers, images, networks, etc...
+However it will also delete the graphRoot and runRoot directories.
+Normally this is not an issue, however in same cases these directories
+were set to the users home directory or some other important system
+directory.
+
+As first step simply show the directories that are configured and thus
+will be deleted by reset. As future step we could implement some
+safeguard will will not delete some known important directories however
+I tried to keep it simple for now.
+
+[NO NEW TESTS NEEDED]
+
+see #18349 and #18295
+
+Signed-off-by: Paul Holzinger <pholzing@redhat.com>
+---
+ cmd/podman/system/reset.go                    | 7 +++++++
+ docs/source/markdown/podman-system-reset.1.md | 4 ++++
+ 2 files changed, 11 insertions(+)
+
+Index: libpod/cmd/podman/system/reset.go
+===================================================================
+--- libpod.orig/cmd/podman/system/reset.go
++++ libpod/cmd/podman/system/reset.go
+@@ -65,6 +65,13 @@ func reset(cmd *cobra.Command, args []st
+         - all machines
+         - all volumes`)
+ 
++		info, _ := registry.ContainerEngine().Info(registry.Context())
++		// lets not hard fail in case of an error
++		if info != nil {
++			fmt.Printf("        - the graphRoot directory: %q\n", info.Store.GraphRoot)
++			fmt.Printf("        - the runRoot directory: %q\n", info.Store.RunRoot)
++		}
++
+ 		if len(listCtn) > 0 {
+ 			fmt.Println(`WARNING! The following external containers will be purged:`)
+ 			// print first 12 characters of ID and first configured name alias
+Index: libpod/docs/source/markdown/podman-system-reset.1.md
+===================================================================
+--- libpod.orig/docs/source/markdown/podman-system-reset.1.md
++++ libpod/docs/source/markdown/podman-system-reset.1.md
+@@ -8,6 +8,8 @@ podman\-system\-reset - Reset storage ba
+ 
+ ## DESCRIPTION
+ **podman system reset** removes all pods, containers, images, networks and volumes, and machines.
++It also removes the configured graphRoot and runRoot directories. Make sure these are not set to
++some important directory.
+ 
+ This command must be run **before** changing any of the following fields in the
+ `containers.conf` or `storage.conf` files: `driver`, `static_dir`, `tmp_dir`
+@@ -38,6 +40,8 @@ WARNING! This will remove:
+         - all build cache
+         - all machines
+         - all volumes
++        - the graphRoot directory: /var/lib/containers/storage
++        - the runRoot directory: /run/containers/storage
+ Are you sure you want to continue? [y/N] y
+ ```
+ 

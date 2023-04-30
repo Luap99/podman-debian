@@ -2,3 +2,4 @@ test--skip-TestPostDeleteHooks.patch
 system-goimports.patch
 CVE-2023-0778.patch
 fix-podman-client.patch
+show-graphroot-before-removal.patch
