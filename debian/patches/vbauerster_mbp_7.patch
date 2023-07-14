@@ -1,0 +1,18 @@
+From: Reinhard Tartler <siretart@tauware.de>
+Subject: Revert to vbauerster/mbp/v7 that we have in Debian
+
+Index: libpod/pkg/machine/pull.go
+===================================================================
+--- libpod.orig/pkg/machine/pull.go
++++ libpod/pkg/machine/pull.go
+@@ -22,8 +22,8 @@ import (
+ 	"github.com/containers/storage/pkg/archive"
+ 	"github.com/sirupsen/logrus"
+ 	"github.com/ulikunitz/xz"
+-	"github.com/vbauerster/mpb/v8"
+-	"github.com/vbauerster/mpb/v8/decor"
++	"github.com/vbauerster/mpb/v7"
++	"github.com/vbauerster/mpb/v7/decor"
+ )
+ 
+ // GenericDownload is used when a user provides a URL
