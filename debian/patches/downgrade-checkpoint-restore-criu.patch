@@ -2,7 +2,7 @@ Index: libpod/libpod/container_internal_common.go
 ===================================================================
 --- libpod.orig/libpod/container_internal_common.go
 +++ libpod/libpod/container_internal_common.go
-@@ -19,7 +19,7 @@ import (
+@@ -20,7 +20,7 @@ import (
  	"time"
  
  	metadata "github.com/checkpoint-restore/checkpointctl/lib"
