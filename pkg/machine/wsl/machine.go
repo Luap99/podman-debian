@@ -22,15 +22,15 @@ import (
 	"github.com/containers/podman/v4/pkg/machine"
 	"github.com/containers/podman/v4/utils"
 	"github.com/containers/storage/pkg/homedir"
+	"github.com/containers/storage/pkg/ioutils"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
 )
 
 var (
-	wslProvider = &Provider{}
 	// vmtype refers to qemu (vs libvirt, krun, etc)
-	vmtype = "wsl"
+	vmtype = machine.WSLVirt
 )
 
 const (
@@ -204,7 +204,23 @@ const (
 	globalPipe     = "docker_engine"
 )
 
-type Provider struct{}
+type Virtualization struct {
+	artifact    machine.Artifact
+	compression machine.ImageCompression
+	format      machine.ImageFormat
+}
+
+func (p *Virtualization) Artifact() machine.Artifact {
+	return p.artifact
+}
+
+func (p *Virtualization) Compression() machine.ImageCompression {
+	return p.compression
+}
+
+func (p *Virtualization) Format() machine.ImageFormat {
+	return p.format
+}
 
 type MachineVM struct {
 	// ConfigPath is the path to the configuration file
@@ -235,12 +251,16 @@ func (e *ExitCodeError) Error() string {
 	return fmt.Sprintf("Process failed with exit code: %d", e.code)
 }
 
-func GetWSLProvider() machine.Provider {
-	return wslProvider
+func GetWSLProvider() machine.VirtProvider {
+	return &Virtualization{
+		artifact:    machine.None,
+		compression: machine.Xz,
+		format:      machine.Tar,
+	}
 }
 
 // NewMachine initializes an instance of a wsl machine
-func (p *Provider) NewMachine(opts machine.InitOptions) (machine.VM, error) {
+func (p *Virtualization) NewMachine(opts machine.InitOptions) (machine.VM, error) {
 	vm := new(MachineVM)
 	if len(opts.Name) > 0 {
 		vm.Name = opts.Name
@@ -281,7 +301,7 @@ func getConfigPathExt(name string, extension string) (string, error) {
 
 // LoadByName reads a json file that describes a known qemu vm
 // and returns a vm instance
-func (p *Provider) LoadVMByName(name string) (machine.VM, error) {
+func (p *Virtualization) LoadVMByName(name string) (machine.VM, error) {
 	configPath, err := getConfigPath(name)
 	if err != nil {
 		return nil, err
@@ -415,7 +435,7 @@ func downloadDistro(v *MachineVM, opts machine.InitOptions) error {
 
 	if _, e := strconv.Atoi(opts.ImagePath); e == nil {
 		v.ImageStream = opts.ImagePath
-		dd, err = machine.NewFedoraDownloader(vmtype, v.Name, opts.ImagePath)
+		dd, err = NewFedoraDownloader(vmtype, v.Name, opts.ImagePath)
 	} else {
 		v.ImageStream = "custom"
 		dd, err = machine.NewGenericDownloader(vmtype, v.Name, opts.ImagePath)
@@ -431,21 +451,22 @@ func downloadDistro(v *MachineVM, opts machine.InitOptions) error {
 func (v *MachineVM) writeConfig() error {
 	const format = "could not write machine json config: %w"
 	jsonFile := v.ConfigPath
-	tmpFile, err := getConfigPathExt(v.Name, "tmp")
-	if err != nil {
-		return err
-	}
 
-	b, err := json.MarshalIndent(v, "", " ")
+	opts := &ioutils.AtomicFileWriterOptions{ExplicitCommit: true}
+	w, err := ioutils.NewAtomicFileWriterWithOpts(jsonFile, 0644, opts)
 	if err != nil {
 		return fmt.Errorf(format, err)
 	}
+	defer w.Close()
 
-	if err := os.WriteFile(tmpFile, b, 0644); err != nil {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", " ")
+	if err := enc.Encode(v); err != nil {
 		return fmt.Errorf(format, err)
 	}
 
-	if err := os.Rename(tmpFile, jsonFile); err != nil {
+	// Commit the changes to disk if no error has occurred
+	if err := w.Commit(); err != nil {
 		return fmt.Errorf(format, err)
 	}
 
@@ -494,7 +515,7 @@ func provisionWSLDist(v *MachineVM) (string, error) {
 	}
 
 	// Fixes newuidmap
-	if err = wslInvoke(dist, "rpm", "-q", "--restore", "shadow-utils", "2>/dev/null"); err != nil {
+	if err = wslInvoke(dist, "rpm", "--restore", "shadow-utils"); err != nil {
 		return "", fmt.Errorf("package permissions restore of shadow-utils on guest OS failed: %w", err)
 	}
 
@@ -1041,8 +1062,8 @@ func (v *MachineVM) Start(name string, opts machine.StartOptions) error {
 				fmt.Printf("following powershell command in your terminal session:\n")
 				fmt.Printf("\n\t$Env:DOCKER_HOST = '%s'\n", pipeName)
 				fmt.Printf("\nOr in a classic CMD prompt:\n")
-				fmt.Printf("\n\tset DOCKER_HOST = '%s'\n", pipeName)
-				fmt.Printf("\nAlternatively terminate the other process and restart podman machine.\n")
+				fmt.Printf("\n\tset DOCKER_HOST=%s\n", pipeName)
+				fmt.Printf("\nAlternatively, terminate the other process and restart podman machine.\n")
 			}
 		}
 	}
@@ -1053,12 +1074,12 @@ func (v *MachineVM) Start(name string, opts machine.StartOptions) error {
 
 func launchWinProxy(v *MachineVM) (bool, string, error) {
 	machinePipe := toDist(v.Name)
-	if !pipeAvailable(machinePipe) {
+	if !machine.PipeNameAvailable(machinePipe) {
 		return false, "", fmt.Errorf("could not start api proxy since expected pipe is not available: %s", machinePipe)
 	}
 
 	globalName := false
-	if pipeAvailable(globalPipe) {
+	if machine.PipeNameAvailable(globalPipe) {
 		globalName = true
 	}
 
@@ -1099,7 +1120,7 @@ func launchWinProxy(v *MachineVM) (bool, string, error) {
 		return globalName, "", err
 	}
 
-	return globalName, pipePrefix + waitPipe, waitPipeExists(waitPipe, 80, func() error {
+	return globalName, pipePrefix + waitPipe, machine.WaitPipeExists(waitPipe, 80, func() error {
 		active, exitCode := machine.GetProcessState(cmd.Process.Pid)
 		if !active {
 			return fmt.Errorf("win-sshproxy.exe failed to start, exit code: %d (see windows event logs)", exitCode)
@@ -1120,27 +1141,6 @@ func getWinProxyStateDir(v *MachineVM) (string, error) {
 	}
 
 	return stateDir, nil
-}
-
-func pipeAvailable(pipeName string) bool {
-	_, err := os.Stat(`\\.\pipe\` + pipeName)
-	return os.IsNotExist(err)
-}
-
-func waitPipeExists(pipeName string, retries int, checkFailure func() error) error {
-	var err error
-	for i := 0; i < retries; i++ {
-		_, err = os.Stat(`\\.\pipe\` + pipeName)
-		if err == nil {
-			break
-		}
-		if fail := checkFailure(); fail != nil {
-			return fail
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-
-	return err
 }
 
 func IsWSLInstalled() bool {
@@ -1439,7 +1439,7 @@ func (v *MachineVM) SSH(name string, opts machine.SSHOptions) error {
 }
 
 // List lists all vm's that use qemu virtualization
-func (p *Provider) List(_ machine.ListOptions) ([]*machine.ListResponse, error) {
+func (p *Virtualization) List(_ machine.ListOptions) ([]*machine.ListResponse, error) {
 	return GetVMInfos()
 }
 
@@ -1568,7 +1568,7 @@ func getMem(vm *MachineVM) (uint64, error) {
 	return total - available, err
 }
 
-func (p *Provider) IsValidVMName(name string) (bool, error) {
+func (p *Virtualization) IsValidVMName(name string) (bool, error) {
 	infos, err := GetVMInfos()
 	if err != nil {
 		return false, err
@@ -1581,7 +1581,7 @@ func (p *Provider) IsValidVMName(name string) (bool, error) {
 	return false, nil
 }
 
-func (p *Provider) CheckExclusiveActiveVM() (bool, string, error) {
+func (p *Virtualization) CheckExclusiveActiveVM() (bool, string, error) {
 	return false, "", nil
 }
 
@@ -1611,11 +1611,15 @@ func (v *MachineVM) Inspect() (*machine.InspectInfo, error) {
 		return nil, err
 	}
 
-	created, lastUp, _ := v.updateTimeStamps(state == machine.Running)
+	connInfo := new(machine.ConnectionConfig)
+	machinePipe := toDist(v.Name)
+	connInfo.PodmanPipe = &machine.VMFile{Path: `\\.\pipe\` + machinePipe}
 
+	created, lastUp, _ := v.updateTimeStamps(state == machine.Running)
 	return &machine.InspectInfo{
-		ConfigPath: machine.VMFile{Path: v.ConfigPath},
-		Created:    created,
+		ConfigPath:     machine.VMFile{Path: v.ConfigPath},
+		ConnectionInfo: *connInfo,
+		Created:        created,
 		Image: machine.ImageConfig{
 			ImagePath:   machine.VMFile{Path: v.ImagePath},
 			ImageStream: v.ImageStream,
@@ -1636,7 +1640,7 @@ func (v *MachineVM) getResources() (resources machine.ResourceConfig) {
 }
 
 // RemoveAndCleanMachines removes all machine and cleans up any other files associated with podman machine
-func (p *Provider) RemoveAndCleanMachines() error {
+func (p *Virtualization) RemoveAndCleanMachines() error {
 	var (
 		vm             machine.VM
 		listResponse   []*machine.ListResponse
@@ -1711,6 +1715,6 @@ func (p *Provider) RemoveAndCleanMachines() error {
 	return prevErr
 }
 
-func (p *Provider) VMType() string {
+func (p *Virtualization) VMType() machine.VMType {
 	return vmtype
 }

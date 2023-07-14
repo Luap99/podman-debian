@@ -29,19 +29,24 @@ import (
 	"github.com/containers/podman/v4/pkg/rootless"
 	"github.com/containers/podman/v4/utils"
 	"github.com/containers/storage/pkg/homedir"
+	"github.com/containers/storage/pkg/ioutils"
 	"github.com/digitalocean/go-qemu/qmp"
 	"github.com/docker/go-units"
 	"github.com/sirupsen/logrus"
 )
 
 var (
-	qemuProvider = &Provider{}
 	// vmtype refers to qemu (vs libvirt, krun, etc).
-	vmtype = "qemu"
+	// Could this be moved into  Provider
+	vmtype = machine.QemuVirt
 )
 
-func GetVirtualizationProvider() machine.Provider {
-	return qemuProvider
+func GetVirtualizationProvider() machine.VirtProvider {
+	return &Virtualization{
+		artifact:    machine.Qemu,
+		compression: machine.Xz,
+		format:      machine.Qcow,
+	}
 }
 
 const (
@@ -64,7 +69,7 @@ const (
 
 // NewMachine initializes an instance of a virtual machine based on the qemu
 // virtualization.
-func (p *Provider) NewMachine(opts machine.InitOptions) (machine.VM, error) {
+func (p *Virtualization) NewMachine(opts machine.InitOptions) (machine.VM, error) {
 	vmConfigDir, err := machine.GetConfDir(vmtype)
 	if err != nil {
 		return nil, err
@@ -231,7 +236,7 @@ func migrateVM(configPath string, config []byte, vm *MachineVM) error {
 
 // LoadVMByName reads a json file that describes a known qemu vm
 // and returns a vm instance
-func (p *Provider) LoadVMByName(name string) (machine.VM, error) {
+func (p *Virtualization) LoadVMByName(name string) (machine.VM, error) {
 	vm := &MachineVM{Name: name}
 	vm.HostUser = machine.HostUser{UID: -1} // posix reserves -1, so use it to signify undefined
 	if err := vm.update(); err != nil {
@@ -252,10 +257,12 @@ func (v *MachineVM) Init(opts machine.InitOptions) (bool, error) {
 	v.Rootful = opts.Rootful
 
 	switch opts.ImagePath {
-	case Testing, Next, Stable, "":
+	// TODO these need to be re-typed as FCOSStreams
+	case machine.Testing.String(), machine.Next.String(), machine.Stable.String(), "":
 		// Get image as usual
 		v.ImageStream = opts.ImagePath
-		dd, err := machine.NewFcosDownloader(vmtype, v.Name, opts.ImagePath)
+		vp := GetVirtualizationProvider()
+		dd, err := machine.NewFcosDownloader(vmtype, v.Name, machine.FCOSStreamFromString(opts.ImagePath), vp)
 
 		if err != nil {
 			return false, err
@@ -301,30 +308,10 @@ func (v *MachineVM) Init(opts machine.InitOptions) (bool, error) {
 	mounts := []machine.Mount{}
 	for i, volume := range opts.Volumes {
 		tag := fmt.Sprintf("vol%d", i)
-		paths := strings.SplitN(volume, ":", 3)
-		source := paths[0]
-		target := source
-		readonly := false
-		securityModel := "none"
-		if len(paths) > 1 {
-			target = paths[1]
-		}
-		if len(paths) > 2 {
-			options := paths[2]
-			volopts := strings.Split(options, ",")
-			for _, o := range volopts {
-				switch {
-				case o == "rw":
-					readonly = false
-				case o == "ro":
-					readonly = true
-				case strings.HasPrefix(o, "security_model="):
-					securityModel = strings.Split(o, "=")[1]
-				default:
-					fmt.Printf("Unknown option: %s\n", o)
-				}
-			}
-		}
+		paths := pathsFromVolume(volume)
+		source := extractSourcePath(paths)
+		target := extractTargetPath(paths)
+		readonly, securityModel := extractMountOptions(paths)
 		if volumeType == VolumeTypeVirtfs {
 			virtfsOptions := fmt.Sprintf("local,path=%s,mount_tag=%s,security_model=%s", source, tag, securityModel)
 			if readonly {
@@ -406,7 +393,7 @@ func (v *MachineVM) Init(opts machine.InitOptions) (bool, error) {
 		UID:       v.UID,
 	}
 
-	err = machine.NewIgnitionFile(ign)
+	err = machine.NewIgnitionFile(ign, machine.QemuVirt)
 	return err == nil, err
 }
 
@@ -1117,7 +1104,7 @@ func getDiskSize(path string) (uint64, error) {
 }
 
 // List lists all vm's that use qemu virtualization
-func (p *Provider) List(_ machine.ListOptions) ([]*machine.ListResponse, error) {
+func (p *Virtualization) List(_ machine.ListOptions) ([]*machine.ListResponse, error) {
 	return getVMInfos()
 }
 
@@ -1193,7 +1180,7 @@ func getVMInfos() ([]*machine.ListResponse, error) {
 	return listed, err
 }
 
-func (p *Provider) IsValidVMName(name string) (bool, error) {
+func (p *Virtualization) IsValidVMName(name string) (bool, error) {
 	infos, err := getVMInfos()
 	if err != nil {
 		return false, err
@@ -1208,7 +1195,7 @@ func (p *Provider) IsValidVMName(name string) (bool, error) {
 
 // CheckExclusiveActiveVM checks if there is a VM already running
 // that does not allow other VMs to be running
-func (p *Provider) CheckExclusiveActiveVM() (bool, string, error) {
+func (p *Virtualization) CheckExclusiveActiveVM() (bool, string, error) {
 	vms, err := getVMInfos()
 	if err != nil {
 		return false, "", fmt.Errorf("checking VM active: %w", err)
@@ -1219,6 +1206,18 @@ func (p *Provider) CheckExclusiveActiveVM() (bool, string, error) {
 		}
 	}
 	return false, "", nil
+}
+
+func (p *Virtualization) Artifact() machine.Artifact {
+	return p.artifact
+}
+
+func (p *Virtualization) Compression() machine.ImageCompression {
+	return p.compression
+}
+
+func (p *Virtualization) Format() machine.ImageFormat {
+	return p.format
 }
 
 // startHostNetworking runs a binary on the host system that allows users
@@ -1337,7 +1336,7 @@ func (v *MachineVM) isIncompatible() bool {
 }
 
 func (v *MachineVM) userGlobalSocketLink() (string, error) {
-	path, err := machine.GetDataDir(v.Name)
+	path, err := machine.GetDataDir(machine.QemuVirt)
 	if err != nil {
 		logrus.Errorf("Resolving data dir: %s", err.Error())
 		return "", err
@@ -1348,7 +1347,7 @@ func (v *MachineVM) userGlobalSocketLink() (string, error) {
 
 func (v *MachineVM) forwardSocketPath() (*machine.VMFile, error) {
 	sockName := "podman.sock"
-	path, err := machine.GetDataDir(v.Name)
+	path, err := machine.GetDataDir(machine.QemuVirt)
 	if err != nil {
 		logrus.Errorf("Resolving data dir: %s", err.Error())
 		return nil, err
@@ -1562,14 +1561,22 @@ func (v *MachineVM) writeConfig() error {
 		return err
 	}
 	// Write the JSON file
-	b, err := json.MarshalIndent(v, "", " ")
+	opts := &ioutils.AtomicFileWriterOptions{ExplicitCommit: true}
+	w, err := ioutils.NewAtomicFileWriterWithOpts(v.ConfigPath.GetPath(), 0644, opts)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(v.ConfigPath.GetPath(), b, 0644); err != nil {
+	defer w.Close()
+
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", " ")
+
+	if err := enc.Encode(v); err != nil {
 		return err
 	}
-	return nil
+
+	// Commit the changes to disk if no errors
+	return w.Commit()
 }
 
 // getImageFile wrapper returns the path to the image used
@@ -1670,7 +1677,7 @@ func (v *MachineVM) editCmdLine(flag string, value string) {
 }
 
 // RemoveAndCleanMachines removes all machine and cleans up any other files associated with podman machine
-func (p *Provider) RemoveAndCleanMachines() error {
+func (p *Virtualization) RemoveAndCleanMachines() error {
 	var (
 		vm             machine.VM
 		listResponse   []*machine.ListResponse
@@ -1745,7 +1752,7 @@ func (p *Provider) RemoveAndCleanMachines() error {
 	return prevErr
 }
 
-func (p *Provider) VMType() string {
+func (p *Virtualization) VMType() machine.VMType {
 	return vmtype
 }
 
@@ -1755,4 +1762,30 @@ func isRootful() bool {
 	// for now will check additionally for valid os.Getuid
 
 	return !rootless.IsRootless() && os.Getuid() != -1
+}
+
+func extractSourcePath(paths []string) string {
+	return paths[0]
+}
+
+func extractMountOptions(paths []string) (bool, string) {
+	readonly := false
+	securityModel := "none"
+	if len(paths) > 2 {
+		options := paths[2]
+		volopts := strings.Split(options, ",")
+		for _, o := range volopts {
+			switch {
+			case o == "rw":
+				readonly = false
+			case o == "ro":
+				readonly = true
+			case strings.HasPrefix(o, "security_model="):
+				securityModel = strings.Split(o, "=")[1]
+			default:
+				fmt.Printf("Unknown option: %s\n", o)
+			}
+		}
+	}
+	return readonly, securityModel
 }

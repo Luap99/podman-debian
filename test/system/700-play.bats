@@ -72,7 +72,7 @@ RELABEL="system_u:object_r:container_file_t:s0"
     echo "$testYaml" | sed "s|TESTDIR|${TESTDIR}|g" > $PODMAN_TMPDIR/test.yaml
 
     run_podman kube play - < $PODMAN_TMPDIR/test.yaml
-    if [ -e /usr/sbin/selinuxenabled -a /usr/sbin/selinuxenabled ]; then
+    if selinux_enabled; then
        run ls -Zd $TESTDIR
        is "$output" "${RELABEL} $TESTDIR" "selinux relabel should have happened"
     fi
@@ -80,8 +80,7 @@ RELABEL="system_u:object_r:container_file_t:s0"
     # Make sure that the K8s pause image isn't pulled but the local podman-pause is built.
     run_podman images
     run_podman 1 image exists k8s.gcr.io/pause
-    run_podman version --format "{{.Server.Version}}-{{.Server.Built}}"
-    run_podman image exists localhost/podman-pause:$output
+    run_podman image exists $(pause_image)
 
     run_podman stop -a -t 0
     run_podman pod rm -t 0 -f test_pod
@@ -94,10 +93,16 @@ RELABEL="system_u:object_r:container_file_t:s0"
     mkdir -p $TESTDIR
     echo "$testYaml" | sed "s|TESTDIR|${TESTDIR}|g" > $PODMAN_TMPDIR/test.yaml
     run_podman play kube $PODMAN_TMPDIR/test.yaml
-    if [ -e /usr/sbin/selinuxenabled -a /usr/sbin/selinuxenabled ]; then
+    if selinux_enabled; then
        run ls -Zd $TESTDIR
        is "$output" "${RELABEL} $TESTDIR" "selinux relabel should have happened"
     fi
+
+    # Now rerun twice to make sure nothing gets removed
+    run_podman 125 play kube $PODMAN_TMPDIR/test.yaml
+    is "$output" ".* is in use: pod already exists"
+    run_podman 125 play kube $PODMAN_TMPDIR/test.yaml
+    is "$output" ".* is in use: pod already exists"
 
     run_podman stop -a -t 0
     run_podman pod rm -t 0 -f test_pod
@@ -231,9 +236,11 @@ EOF
 }
 
 @test "podman kube --network" {
+    skip_if_rootless_cgroupsv1 "Test will never be supported, see #17582."
     TESTDIR=$PODMAN_TMPDIR/testdir
     mkdir -p $TESTDIR
     echo "$testYaml" | sed "s|TESTDIR|${TESTDIR}|g" > $PODMAN_TMPDIR/test.yaml
+
     run_podman kube play --network host $PODMAN_TMPDIR/test.yaml
     is "$output" "Pod:.*" "podman kube play should work with --network host"
 
@@ -296,14 +303,14 @@ read_only=true
 EOF
 
     YAML=$PODMAN_TMPDIR/test.yml
-    CONTAINERS_CONF="$containersconf" run_podman create --pod new:pod1 --read-only=false --name test1 $IMAGE touch /testrw
-    CONTAINERS_CONF="$containersconf" run_podman create --pod pod1 --name test2 $IMAGE touch /testro
-    CONTAINERS_CONF="$containersconf" run_podman create --pod pod1 --name test3 $IMAGE touch /tmp/testtmp
-    CONTAINERS_CONF="$containersconf" run_podman container inspect --format '{{.HostConfig.ReadonlyRootfs}}' test1 test2 test3
+    CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman create --pod new:pod1 --read-only=false --name test1 $IMAGE touch /testrw
+    CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman create --pod pod1 --name test2 $IMAGE touch /testro
+    CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman create --pod pod1 --name test3 $IMAGE touch /tmp/testtmp
+    CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman container inspect --format '{{.HostConfig.ReadonlyRootfs}}' test1 test2 test3
     is "$output" "false.*true.*true" "Rootfs should be read/only"
 
     # Now generate and run kube.yaml on a machine without the defaults set
-    CONTAINERS_CONF="$containersconf" run_podman kube generate pod1 -f $YAML
+    CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman kube generate pod1 -f $YAML
     cat $YAML
 
     run_podman kube play --replace $YAML
@@ -548,4 +555,80 @@ EOF
     _ensure_container_running $service_container false
 
     run_podman kube down $yaml_source
+}
+
+@test "podman kube generate filetype" {
+    YAML=$PODMAN_TMPDIR/test.yml
+    run_podman create --pod new:pod1 --security-opt label=level:s0:c1,c2 --security-opt label=filetype:usr_t -v myvol:/myvol --name test1 $IMAGE true
+    run_podman kube generate pod1 -f $YAML
+    run cat $YAML
+    is "$output" ".*filetype: usr_t" "Generated YAML file should contain filetype usr_t"
+    run_podman pod rm --force pod1
+    run_podman volume rm myvol --force
+
+    run_podman kube play $YAML
+    if selinux_enabled; then
+        run_podman inspect pod1-test1 --format "{{ .MountLabel }}"
+        is "$output" "system_u:object_r:usr_t:s0:c1,c2" "Generated container should use filetype usr_t"
+        run_podman volume inspect myvol --format '{{ .Mountpoint }}'
+        path=${output}
+        run ls -Zd $path
+        is "$output" "system_u:object_r:usr_t:s0 $path" "volume should be labeled with usr_t type"
+    fi
+    run_podman kube down $YAML
+    run_podman volume rm myvol --force
+}
+
+# kube play --wait=true, where we clear up the created containers, pods, and volumes when a kill or sigterm is triggered
+@test "podman kube play --wait with siginterrupt" {
+    cname=c$(random_string 15)
+    fname="/tmp/play_kube_wait_$(random_string 6).yaml"
+    run_podman container create --name $cname $IMAGE top
+    run_podman kube generate -f $fname $cname
+
+    # delete the container we generated from
+    run_podman rm -f $cname
+
+    # force a timeout to happen so that the kube play command is killed
+    # and expect the timeout code 124 to happen so that we can clean up
+    local t0=$SECONDS
+    PODMAN_TIMEOUT=15 run_podman 124 kube play --wait $fname
+    local t1=$SECONDS
+    local delta_t=$((t1 - t0))
+    assert $delta_t -le 20 \
+           "podman kube play did not get killed within 10 seconds"
+
+    # there should be no containers running or created
+    run_podman ps -aq
+    is "$output" "" "There should be no containers"
+    run_podman rmi $(pause_image)
+}
+
+@test "podman kube play --wait - wait for pod to exit" {
+    fname="/tmp/play_kube_wait_$(random_string 6).yaml"
+    echo "
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: test
+  name: test_pod
+spec:
+  restartPolicy: Never
+  containers:
+    - name: server
+      image: $IMAGE
+      command:
+      - echo
+      - "hello"
+" > $fname
+
+    run_podman kube play --wait $fname
+
+    # debug to see what container is being left behind after the cleanup
+    # there should be no containers running or created
+    run_podman ps -a --noheading
+    is "$output" "" "There should be no containers"
+    run_podman pod ps
+    run_podman rmi $(pause_image)
 }

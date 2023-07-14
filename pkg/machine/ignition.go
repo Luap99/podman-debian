@@ -61,7 +61,7 @@ type DynamicIgnition struct {
 }
 
 // NewIgnitionFile
-func NewIgnitionFile(ign DynamicIgnition) error {
+func NewIgnitionFile(ign DynamicIgnition, vmType VMType) error {
 	if len(ign.Name) < 1 {
 		ign.Name = DefaultIgnitionUserName
 	}
@@ -187,7 +187,6 @@ ExecStartPost=/usr/bin/systemctl daemon-reload
 [Install]
 WantedBy=sysinit.target
 `
-	_ = ready
 	ignSystemd := Systemd{
 		Units: []Unit{
 			{
@@ -214,11 +213,6 @@ WantedBy=sysinit.target
 				Name:     "remove-moby.service",
 				Contents: &deMoby,
 			},
-			{
-				Enabled:  boolToPtr(true),
-				Name:     "envset-fwcfg.service",
-				Contents: &envset,
-			},
 		}}
 	ignConfig := Config{
 		Ignition: ignVersion,
@@ -226,6 +220,17 @@ WantedBy=sysinit.target
 		Storage:  ignStorage,
 		Systemd:  ignSystemd,
 	}
+
+	// Only qemu has the qemu firmware environment setting
+	if vmType == QemuVirt {
+		qemuUnit := Unit{
+			Enabled:  boolToPtr(true),
+			Name:     "envset-fwcfg.service",
+			Contents: &envset,
+		}
+		ignSystemd.Units = append(ignSystemd.Units, qemuUnit)
+	}
+
 	b, err := json.Marshal(ignConfig)
 	if err != nil {
 		return err
@@ -512,6 +517,34 @@ Delegate=memory pids cpu io
 			logrus.Warnf("Invalid path in SSL_CERT_DIR: %q", err)
 		}
 	}
+
+	files = append(files, File{
+		Node: Node{
+			User:  getNodeUsr("root"),
+			Group: getNodeGrp("root"),
+			Path:  "/etc/chrony.conf",
+		},
+		FileEmbedded1: FileEmbedded1{
+			Append: []Resource{{
+				Source: encodeDataURLPtr("\nconfdir /etc/chrony.d\n"),
+			}},
+		},
+	})
+
+	// Issue #11541: allow Chrony to update the system time when it has drifted
+	// far from NTP time.
+	files = append(files, File{
+		Node: Node{
+			User:  getNodeUsr("root"),
+			Group: getNodeGrp("root"),
+			Path:  "/etc/chrony.d/50-podman-makestep.conf",
+		},
+		FileEmbedded1: FileEmbedded1{
+			Contents: Resource{
+				Source: encodeDataURLPtr("makestep 1 -1\n"),
+			},
+		},
+	})
 
 	return files
 }
