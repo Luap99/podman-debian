@@ -20,6 +20,8 @@
 ### Variables & Definitions
 ###
 
+# Default shell `/bin/sh` has different meanings depending on the platform.
+SHELL := /bin/bash
 GO ?= go
 GO_LDFLAGS:= $(shell if $(GO) version|grep -q gccgo ; then echo "-gccgoflags"; else echo "-ldflags"; fi)
 GOCMD = CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO)
@@ -37,13 +39,14 @@ LIBEXECPODMAN ?= ${LIBEXECDIR}/podman
 MANDIR ?= ${PREFIX}/share/man
 SHAREDIR_CONTAINERS ?= ${PREFIX}/share/containers
 ETCDIR ?= ${PREFIX}/etc
-TMPFILESDIR ?= ${PREFIX}/lib/tmpfiles.d
+LIBDIR ?= ${PREFIX}/lib
+TMPFILESDIR ?= ${LIBDIR}/tmpfiles.d
 USERTMPFILESDIR ?= ${PREFIX}/share/user-tmpfiles.d
-MODULESLOADDIR ?= ${PREFIX}/lib/modules-load.d
-SYSTEMDDIR ?= ${PREFIX}/lib/systemd/system
-USERSYSTEMDDIR ?= ${PREFIX}/lib/systemd/user
-SYSTEMDGENERATORSDIR ?= ${PREFIX}/lib/systemd/system-generators
-USERSYSTEMDGENERATORSDIR ?= ${PREFIX}/lib/systemd/user-generators
+MODULESLOADDIR ?= ${LIBDIR}/modules-load.d
+SYSTEMDDIR ?= ${LIBDIR}/systemd/system
+USERSYSTEMDDIR ?= ${LIBDIR}/systemd/user
+SYSTEMDGENERATORSDIR ?= ${LIBDIR}/systemd/system-generators
+USERSYSTEMDGENERATORSDIR ?= ${LIBDIR}/systemd/user-generators
 REMOTETAGS ?= remote exclude_graphdriver_btrfs btrfs_noversion exclude_graphdriver_devicemapper containers_image_openpgp
 BUILDTAGS ?= \
 	$(shell hack/apparmor_tag.sh) \
@@ -275,7 +278,7 @@ test/version/version: version/version.go
 
 .PHONY: codespell
 codespell:
-	codespell -S bin,vendor,.git,go.sum,.cirrus.yml,"RELEASE_NOTES.md,*.xz,*.gz,*.ps1,*.tar,swagger.yaml,*.tgz,bin2img,*ico,*.png,*.1,*.5,copyimg,*.orig,apidoc.go" -L te,clos,ans,pullrequest,uint,iff,od,seeked,splitted,marge,erro,hist,ether,specif -w
+	codespell -S bin,vendor,.git,go.sum,.cirrus.yml,"RELEASE_NOTES.md,*.xz,*.gz,*.ps1,*.tar,swagger.yaml,*.tgz,bin2img,*ico,*.png,*.1,*.5,copyimg,*.orig,apidoc.go" -L passt,bu,hastable,te,clos,ans,pullrequest,uint,iff,od,seeked,splitted,marge,erro,hist,ether,specif -w
 
 .PHONY: validate
 validate: lint .gitvalidation validate.completions man-page-check swagger-check tests-included tests-expect-exit pr-removes-fixed-skips
@@ -396,15 +399,6 @@ bin/rootlessport: $(SOURCES) go.mod go.sum
 .PHONY: rootlessport
 rootlessport: bin/rootlessport
 
-.PHONY: podman-remote-experimental
-podman-remote-experimental: $(SRCBINDIR)/experimental/podman$(BINSFX)
-$(SRCBINDIR)/experimental/podman$(BINSFX): $(SOURCES) go.mod go.sum | $(SRCBINDIR)
-	$(GOCMD) build \
-		$(BUILDFLAGS) \
-		$(GO_LDFLAGS) '$(LDFLAGS_PODMAN)' \
-		-tags "${REMOTETAGS} experimental" \
-		-o $@ ./cmd/podman
-
 ###
 ### Secondary binary-build targets
 ###
@@ -478,6 +472,9 @@ $(MANPAGES): %: %.md .install.md2man docdir
 	       -e 's;<\(/\)\?\(a\|a\s\+[^>]*\|sup\)>;;g'    \
 	       -e 's/\\$$/  /g' $<                         |\
 	$(GOMD2MAN) -out $(subst source/markdown,build/man,$@)
+	@if grep 'included file options/' docs/build/man/*; then \
+		echo "FATAL: man pages must not contain ^^^^"; exit 1; \
+	fi
 
 .PHONY: docdir
 docdir:
@@ -490,7 +487,8 @@ docs: $(MANPAGES) ## Generate documentation
 # in addition to the target-architecture binary (if different). That's
 # what the NATIVE_GOOS make does in the first line.
 podman-remote-%-docs: podman-remote
-	$(MAKE) clean-binaries podman-remote GOOS=$(NATIVE_GOOS) GOARCH=$(NATIVE_GOARCH)
+	$(MAKE) clean-binaries
+	$(MAKE) podman-remote GOOS=$(NATIVE_GOOS) GOARCH=$(NATIVE_GOARCH)
 	$(eval GOOS := $*)
 	$(MAKE) docs $(MANPAGES)
 	rm -rf docs/build/remote
@@ -839,8 +837,11 @@ install.modules-load: # This should only be used by distros which might use ipta
 .PHONY: install.man
 install.man:
 	install ${SELINUXOPT} -d -m 755 $(DESTDIR)$(MANDIR)/man1
+	install ${SELINUXOPT} -d -m 755 $(DESTDIR)$(MANDIR)/man5
 	install ${SELINUXOPT} -m 644 $(filter %.1,$(MANPAGES_DEST)) $(DESTDIR)$(MANDIR)/man1
 	install ${SELINUXOPT} -m 644 docs/source/markdown/links/*1 $(DESTDIR)$(MANDIR)/man1
+	install ${SELINUXOPT} -m 644 $(filter %.5,$(MANPAGES_DEST)) $(DESTDIR)$(MANDIR)/man5
+	install ${SELINUXOPT} -m 644 docs/source/markdown/links/*5 $(DESTDIR)$(MANDIR)/man5
 
 .PHONY: install.completions
 install.completions:
@@ -858,7 +859,10 @@ install.completions:
 .PHONY: install.docker
 install.docker:
 	install ${SELINUXOPT} -d -m 755 $(DESTDIR)$(BINDIR)
-	install ${SELINUXOPT} -m 755 docker $(DESTDIR)$(BINDIR)/docker
+	$(eval INTERPOLATED_DOCKER_SCRIPT := $(shell mktemp))
+	env BINDIR=${BINDIR} ETCDIR=${ETCDIR} envsubst < docker.in > ${INTERPOLATED_DOCKER_SCRIPT}
+	install ${SELINUXOPT} -m 755 ${INTERPOLATED_DOCKER_SCRIPT} $(DESTDIR)$(BINDIR)/docker
+	rm ${INTERPOLATED_DOCKER_SCRIPT}
 	install ${SELINUXOPT} -m 755 -d ${DESTDIR}${SYSTEMDDIR}  ${DESTDIR}${USERSYSTEMDDIR} ${DESTDIR}${TMPFILESDIR} ${DESTDIR}${USERTMPFILESDIR}
 	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman-docker.conf -t ${DESTDIR}${TMPFILESDIR}
 	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman-docker.conf -t ${DESTDIR}${USERTMPFILESDIR}
@@ -925,7 +929,7 @@ install.tools: .install.golangci-lint ## Install needed tools
 
 .PHONY: .install.golangci-lint
 .install.golangci-lint:
-	VERSION=1.50.1 ./hack/install_golangci.sh
+	VERSION=1.51.1 ./hack/install_golangci.sh
 
 .PHONY: .install.swagger
 .install.swagger:

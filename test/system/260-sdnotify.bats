@@ -203,7 +203,9 @@ spec:
   restartPolicy: "Never"
   containers:
   - command:
-    - true
+    - /bin/sh
+    - -c
+    - 'while :; do if test -e /tearsinrain; then exit 0; fi; sleep 1; done'
     image: $IMAGE
     name: test
     resources: {}
@@ -218,8 +220,15 @@ EOF
     _start_socat
     wait_for_file $_SOCAT_LOG
 
-    # Will run until all containers have stopped.
     run_podman play kube --service-container=true --log-driver journald $yaml_source
+
+    # The service container is the main PID since no container has a custom
+    # sdnotify policy.
+    run_podman container inspect $service_container --format "{{.State.ConmonPid}}"
+    main_pid="$output"
+
+    # Tell pod to finish, then wait for all containers to stop
+    run_podman exec test_pod-test touch /tearsinrain
     run_podman container wait $service_container test_pod-test
 
     # Make sure the containers have the correct policy.
@@ -233,7 +242,7 @@ ignore"
     echo "$output"
 
     # The "with policies" test below checks the MAINPID.
-    is "$output" "MAINPID=.*
+    is "$output" "MAINPID=$main_pid
 READY=1" "sdnotify sent MAINPID and READY"
 
     _stop_socat
@@ -244,6 +253,8 @@ READY=1" "sdnotify sent MAINPID and READY"
 }
 
 @test "sdnotify : play kube - with policies" {
+    skip_if_journald_unavailable
+
     # Pull that image. Retry in case of flakes.
     run_podman pull $SYSTEMD_IMAGE || \
         run_podman pull $SYSTEMD_IMAGE || \
