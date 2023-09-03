@@ -39,7 +39,6 @@ Build-Depends: debhelper-compat (= 13)
     ,golang-github-google-uuid-dev
     ,golang-github-gorilla-schema-dev
     ,golang-github-hashicorp-go-multierror-dev
-    ,golang-github-influxdata-tail-dev (>= 1.0.0+git20180327.c434825-2~) | golang-github-hpcloud-tail-dev
     ,golang-github-json-iterator-go-dev
     ,golang-github-mattn-go-sqlite3-dev
     ,golang-github-moby-term-dev
