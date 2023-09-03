@@ -2,19 +2,37 @@ Index: libpod/cmd/podman/common/sign.go
 ===================================================================
 --- libpod.orig/cmd/podman/common/sign.go
 +++ libpod/cmd/podman/common/sign.go
-@@ -2,12 +2,9 @@ package common
+@@ -2,12 +2,8 @@ package common
  
  import (
  	"fmt"
 -	"os"
  
  	"github.com/containers/common/pkg/ssh"
- 	"github.com/containers/image/v5/pkg/cli"
+-	"github.com/containers/image/v5/pkg/cli"
 -	"github.com/containers/image/v5/pkg/cli/sigstore"
 -	"github.com/containers/image/v5/signature/signer"
  	"github.com/containers/podman/v4/pkg/domain/entities"
  )
  
+@@ -27,11 +23,12 @@ func PrepareSigning(pushOpts *entities.I
+ 
+ 	var passphrase string
+ 	if signPassphraseFile != "" {
+-		p, err := cli.ReadPassphraseFile(signPassphraseFile)
+-		if err != nil {
+-			return nil, err
+-		}
+-		passphrase = p
++		// p, err := cli.ReadPassphraseFile(signPassphraseFile)
++		// if err != nil {
++		// 	return nil, err
++		// }
++		// passphrase = p
++		return nil, fmt.Errorf("Debian: Read via PassphraseFile is disabled due to missing sigstore funcitonality")
+ 	} else if pushOpts.SignBySigstorePrivateKeyFile != "" {
+ 		p := ssh.ReadPassphrase()
+ 		passphrase = string(p)
 @@ -39,28 +36,12 @@ func PrepareSigning(pushOpts *entities.I
  	pushOpts.SignPassphrase = passphrase
  	pushOpts.SignSigstorePrivateKeyPassphrase = []byte(passphrase)
