@@ -3,6 +3,7 @@ cni/87-podman-bridge.conflist		/etc/cni/net.d/
 
 debian/etc/containers/libpod.conf	/etc/containers/
 
-usr/bin/podman
+_output/bin/podman                  /usr/bin/podman
+usr/bin/quadlet                     /usr/lib/podman/
 usr/bin/rootlessport                /usr/lib/podman/
 lib/systemd
