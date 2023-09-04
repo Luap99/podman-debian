@@ -1,1 +1,4 @@
 usr/share/man/*/podman*.*
+usr/share/man/*/docker*.*
+usr/share/man/*/quadlet*
+
