@@ -5,8 +5,6 @@ Comment:
  Upstream "github.com/uber/*" libraries depend on forked prometheus so
  using bundled/vendored ones make sense to avoid burden of non-reusable
  packages with heavier dependencies than vendored subset of those libs.
- .
- Protobuf in debian is not ready yet, cf. #961814
 Files-Excluded:
     vendor
     test/tools/vendor
@@ -19,29 +17,20 @@ Files-Included:
 
 Files: *
 Copyright:
-    2016-2019 Red Hat, Inc.
+    2016-2023 Red Hat, Inc.
 License: Apache-2.0
 
 Files: contrib/snapcraft/*
-Copyright:
-    2017 Snapcrafters
- 2017, Snapcrafters
-License: Expat
-
-Files: contrib/snapcraft/README.md
 Copyright:
     2017 Snapcrafters
 License: Expat
 
 Files: debian/*
 Copyright:
-    2018-2019 Dmitry Smirnov <onlyjob@debian.org>
+    2018-2020 Dmitry Smirnov <onlyjob@debian.org>
+    2020-2023 Reinhard Tartler <siretart@tauware.de>
+    2023 Faidon Liambotis <paravoid@debian.org>
 License: Apache-2.0
-
-Files: docs/source/markdown/podman-image-inspect.1.md
-Copyright:
-    2016-2019 Red Hat, Inc.
-License: Expat
 
 Files: pkg/k8s.io/*
 Copyright: belongs to the Kubernetes Authors and is licensed under Apache-2.0, also check the license headers in the files.
@@ -69,12 +58,7 @@ Copyright: 2015, Fatih Arslan
 License: Expat
 
 Files: vendor/github.com/container-orchestrated-devices/container-device-interface/pkg/*
-Copyright: 2021, 2022, The CDI Authors
-License: Apache-2.0
-
-Files: vendor/github.com/container-orchestrated-devices/container-device-interface/pkg/cdi/doc.go
-Copyright:
-    2016-2019 Red Hat, Inc.
+Copyright: 2021-2022, The CDI Authors
 License: Apache-2.0
 
 Files: vendor/github.com/digitalocean/go-libvirt/const.gen.go
