@@ -1,6 +1,6 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: libpod
-Source: https://github.com/containers/libpod
+Upstream-Name: podman
+Source: https://github.com/containers/podman
 Comment:
  Upstream "github.com/uber/*" libraries depend on forked prometheus so
  using bundled/vendored ones make sense to avoid burden of non-reusable
