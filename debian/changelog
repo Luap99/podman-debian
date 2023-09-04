@@ -1,6 +1,10 @@
 libpod (4.5.0+ds1-1) experimental; urgency=medium
 
   * New upstream release
+    - Prefers overlay storage driver over vfs, closes: #1050993, 1038414
+    - which makes non-standard vfs options unnecessary, closes: #1002997
+  * Install quadlet, Closes: #1034539
+  * Move fuse-overlayfs to Suggests, Closes: #1041050
 
  -- Reinhard Tartler <siretart@tauware.de>  Fri, 14 Jul 2023 15:03:07 -0400
 
