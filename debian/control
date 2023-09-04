@@ -107,12 +107,12 @@ Breaks: buildah (<< 1.10.1-6), slirp4netns (<< 0.4.1), fuse-overlayfs (<< 0.7.1)
 Recommends: ${misc:Recommends}
     ,buildah (>= 1.30)
     ,dbus-user-session
-    ,fuse-overlayfs (>= 1.0.0~)
     ,slirp4netns (>= 0.4.1~)
     ,catatonit | tini | dumb-init
     ,uidmap
 Suggests: ${misc:Suggests}
     ,containers-storage
+    ,fuse-overlayfs (>= 1.0.0~)
     ,docker-compose
     ,iptables
 Description: engine to run OCI-based containers in Pods
