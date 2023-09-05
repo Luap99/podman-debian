@@ -1,14 +1,35 @@
 libpod (4.5.0+ds2-1) experimental; urgency=medium
 
+  [ Reinhard Tartler ]
   * New upstream release
-    - Prefers overlay storage driver over vfs, closes: #1050993, 1038414
-    - which makes non-standard vfs options unnecessary, closes: #1002997
+    - Prefers overlay storage driver over vfs, Closes: #1050993, 1038414
+    - which makes non-standard vfs options unnecessary, Closes: #1002997
   * Install quadlet, Closes: #1034539
   * Move fuse-overlayfs to Suggests, Closes: #1041050
   * Unvendor some additional sources
-  * build against vbauerster/mpb8
+  * Build against vbauerster/mpb8, and drop patch vbauerster_mbp_7.
 
- -- Reinhard Tartler <siretart@tauware.de>  Fri, 14 Jul 2023 15:03:07 -0400
+  [ Faidon Liambotis ]
+  * Add myself to Uploaders.
+  * Bump Standards-Version to 4.6.2, no changes needed.
+  * Drop upstream patches:
+    - test--skip-issue-17366, as the underlying issue was fixed upstream.
+    - generate-crash, as it was unused, and a backport of a v4.0 commit.
+  * debian/copyright:
+    - Update to recent sources and remove obsolete entries and comments.
+    - Update debian/ copyright to latest authors
+    - Use "podman" in Upstream-Name and Source, to reflect an upstream change.
+  * debian/upstream/metadata:
+    - Replace invalid "Homepage" field by Repository/Repository-Browse.
+    - Add the Changelog field, pointing to the upstream release notes.
+  * Update debian/watch to point to /tags rather than /releases, as GitHub's
+    releases page now requires JavaScript.
+  * Rename the builtin_tests autopkgtest name to builtin-tests, as underscores
+    are invalid in test names (addresses illegal-runtime-test-name warning).
+  * Add a debian/gbp.conf config file, allowing to use standardized
+    git-buildpackage tools to update to newer versions.
+
+ -- Faidon Liambotis <paravoid@debian.org>  Tue, 05 Sep 2023 13:31:07 +0300
 
 libpod (4.4.0+ds1-2) experimental; urgency=medium
 
