@@ -19,6 +19,8 @@ libpod (4.5.0+ds2-1) experimental; urgency=medium
   * Call "make clean" during clean, to clean up generated documentation files
     and restore the source tree to its pristine form, Closes: #1045188
   * Install usr/share/user-tmpfiles.d/podman-docker.conf, Closes: #1034026
+  * Pass --no-source to dh_auto_build, and re-enable dh_missing
+    --fail-missing.
   * debian/copyright:
     - Update to recent sources and remove obsolete entries and comments.
     - Remove remove stanzas for now un-vendored code.
