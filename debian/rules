@@ -97,15 +97,16 @@ ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
 endif
 
 override_dh_auto_install:
-	dh_auto_install --destdir=debian/tmp --buildsystem=golang --builddirectory=_output
+	dh_auto_install \
+		--destdir=debian/tmp \
+		--buildsystem=golang \
+		--builddirectory=_output \
+		-- \
+		--no-source
 	# generate and install systemd unit files
 	make DESTDIR=debian/tmp PREFIX=/usr LIBEXECDIR=/usr/lib/ BINDIR=/usr/bin MANDIR=/usr/share/man install.systemd install.docker-full
 	# install manpages
 	make DESTDIR=debian/tmp PREFIX=/usr LIBEXECDIR=/usr/lib/ install.man
-
-# Disable dh_missing
-override_dh_missing:
-	dh_missing --list-missing -X goecho -X testvol -X version
 
 override_dh_installsystemd:
 	dh_installsystemd
