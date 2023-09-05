@@ -12,6 +12,7 @@ libpod (4.5.0+ds2-1) experimental; urgency=medium
 
   [ Faidon Liambotis ]
   * Add myself to Uploaders.
+  * Update long description using upstream's latest verbiage.
   * Bump Standards-Version to 4.6.2, no changes needed.
   * Drop upstream patches:
     - test--skip-issue-17366, as the underlying issue was fixed upstream.

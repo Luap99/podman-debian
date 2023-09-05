@@ -119,22 +119,34 @@ Suggests: ${misc:Suggests}
     ,fuse-overlayfs (>= 1.0.0~)
     ,docker-compose
     ,iptables
-Description: engine to run OCI-based containers in Pods
- Podman is an engine for running OCI-based containers in Pods.
- Podman provides a CLI interface for managing Pods, Containers, and
- Container Images.
+Description: tool to manage containers and pods
+ Podman (the POD MANager) is a tool for managing containers and images, volumes
+ mounted into those containers, and pods made from groups of containers.
  .
- At a high level, the scope of libpod and podman is the following:
-  * Support multiple image formats including the OCI and Docker image
-    formats.
-  * Support for multiple means to download images including trust & image
-    verification.
-  * Container image management (managing image layers, overlay filesystems,
-    etc).
-  * Full management of container lifecycle.
-  * Support for pods to manage groups of containers together.
+ At a high level, the scope of Podman and libpod is the following:
+  * Support for multiple container image formats, including OCI and Docker
+    images.
+  * Full management of those images, including pulling from various sources
+    (including trust and verification), creating (built via Containerfile or
+    Dockerfile or committed from a container), and pushing to registries and
+    other storage backends.
+  * Full management of container lifecycle, including creation (both from an
+    image and from an exploded root filesystem), running, checkpointing and
+    restoring (via CRIU), and removal.
+  * Full management of container networking, using Netavark.
+  * Support for pods, groups of containers that share resources and are managed
+    together.
+  * Support for running containers and pods without root or other elevated
+    privileges.
   * Resource isolation of containers and pods.
-  * Support for a Docker-compatible CLI interface through Podman.
+  * Support for a Docker-compatible CLI interface, which can both run
+    containers locally and on remote systems.
+  * No manager daemon, for improved security and lower resource utilization at
+    idle.
+  * Support for a REST API providing both a Docker-compatible interface and an
+    improved interface exposing advanced Podman functionality.
+  * Support for running on Windows and Mac via virtual machines run by podman
+    machine.
  .
  Podman is a daemon-less alternative to Docker.
 
@@ -144,48 +156,72 @@ Built-Using: ${misc:Built-Using}
 Depends: ${misc:Depends}, ${shlibs:Depends}, podman
 Conflicts: docker.io
 Recommends: docker-compose
-Description: engine to run OCI-based containers in Pods (wrapper for Docker)
- Podman is an engine for running OCI-based containers in Pods.
- Podman provides a CLI interface for managing Pods, Containers, and
- Container Images.
+Description: tool to manage containers and pods (Docker CLI)
+ Podman (the POD MANager) is a tool for managing containers and images, volumes
+ mounted into those containers, and pods made from groups of containers.
  .
- At a high level, the scope of libpod and podman is the following:
-  * Support multiple image formats including the OCI and Docker image
-    formats.
-  * Support for multiple means to download images including trust & image
-    verification.
-  * Container image management (managing image layers, overlay filesystems,
-    etc).
-  * Full management of container lifecycle.
-  * Support for pods to manage groups of containers together.
+ At a high level, the scope of Podman and libpod is the following:
+  * Support for multiple container image formats, including OCI and Docker
+    images.
+  * Full management of those images, including pulling from various sources
+    (including trust and verification), creating (built via Containerfile or
+    Dockerfile or committed from a container), and pushing to registries and
+    other storage backends.
+  * Full management of container lifecycle, including creation (both from an
+    image and from an exploded root filesystem), running, checkpointing and
+    restoring (via CRIU), and removal.
+  * Full management of container networking, using Netavark.
+  * Support for pods, groups of containers that share resources and are managed
+    together.
+  * Support for running containers and pods without root or other elevated
+    privileges.
   * Resource isolation of containers and pods.
-  * Support for a Docker-compatible CLI interface through Podman.
+  * Support for a Docker-compatible CLI interface, which can both run
+    containers locally and on remote systems.
+  * No manager daemon, for improved security and lower resource utilization at
+    idle.
+  * Support for a REST API providing both a Docker-compatible interface and an
+    improved interface exposing advanced Podman functionality.
+  * Support for running on Windows and Mac via virtual machines run by podman
+    machine.
  .
  Podman is a daemon-less alternative to Docker.
  .
- This package installs a wrapper script that acts like the original docker
- implementation
+ This package installs a Docker-compatible CLI interface, capable of running
+ containers locally and on remote systems.
 
 Package: podman-remote
 Architecture: any
 Built-Using: ${misc:Built-Using}
 Depends: ${misc:Depends}, ${shlibs:Depends}
-Description: engine to run OCI-based containers in Pods (remote CLI)
- Podman is an engine for running OCI-based containers in Pods.
- Podman provides a CLI interface for managing Pods, Containers, and
- Container Images.
+Description: tool to manage containers and pods (remote CLI)
+ Podman (the POD MANager) is a tool for managing containers and images, volumes
+ mounted into those containers, and pods made from groups of containers.
  .
- At a high level, the scope of libpod and podman is the following:
-  * Support multiple image formats including the OCI and Docker image
-    formats.
-  * Support for multiple means to download images including trust & image
-    verification.
-  * Container image management (managing image layers, overlay filesystems,
-    etc).
-  * Full management of container lifecycle.
-  * Support for pods to manage groups of containers together.
+ At a high level, the scope of Podman and libpod is the following:
+  * Support for multiple container image formats, including OCI and Docker
+    images.
+  * Full management of those images, including pulling from various sources
+    (including trust and verification), creating (built via Containerfile or
+    Dockerfile or committed from a container), and pushing to registries and
+    other storage backends.
+  * Full management of container lifecycle, including creation (both from an
+    image and from an exploded root filesystem), running, checkpointing and
+    restoring (via CRIU), and removal.
+  * Full management of container networking, using Netavark.
+  * Support for pods, groups of containers that share resources and are managed
+    together.
+  * Support for running containers and pods without root or other elevated
+    privileges.
   * Resource isolation of containers and pods.
-  * Support for a Docker-compatible CLI interface through Podman.
+  * Support for a Docker-compatible CLI interface, which can both run
+    containers locally and on remote systems.
+  * No manager daemon, for improved security and lower resource utilization at
+    idle.
+  * Support for a REST API providing both a Docker-compatible interface and an
+    improved interface exposing advanced Podman functionality.
+  * Support for running on Windows and Mac via virtual machines run by podman
+    machine.
  .
  Podman is a daemon-less alternative to Docker.
  .
