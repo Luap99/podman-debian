@@ -27,6 +27,7 @@ Build-Depends: debhelper-compat (= 13)
     ,golang-github-coreos-go-iptables-dev (>= 0.4.2~)
     ,golang-github-coreos-go-systemd-dev (>= 20~)
     ,golang-github-cyphar-filepath-securejoin-dev (>= 0.2.2~)
+    ,golang-github-digitalocean-go-libvirt-dev
     ,golang-github-digitalocean-go-qemu-dev
     ,golang-github-docker-distribution-dev (>= 2.7.1~)
     ,golang-github-docker-docker-dev (>= 20.10.0~)
