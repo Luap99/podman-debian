@@ -1,3 +1,3 @@
-_output/bin/podman-remote           /usr/bin/podman-remote
+_output/bin/podman-remote           /usr/bin
 
 completions/zsh/_podman-remote      /usr/share/zsh/vendor-completions
