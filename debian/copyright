@@ -44,10 +44,6 @@ Files: pkg/k8s.io/apimachinery/*
 Copyright: 2014-2017, 2020, The Kubernetes Authors.
 License: Apache-2.0
 
-Files: pkg/kubeutils/*
-Copyright: 2014-2017, 2020, The Kubernetes Authors.
-License: Apache-2.0
-
 Files: pkg/signal/signal_linux.go
   pkg/signal/signal_linux_mipsx.go
 Copyright: 2013-2018, Docker, Inc.
