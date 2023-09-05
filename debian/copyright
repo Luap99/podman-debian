@@ -6,30 +6,28 @@ Comment:
  using bundled/vendored ones make sense to avoid burden of non-reusable
  packages with heavier dependencies than vendored subset of those libs.
 Files-Excluded:
-    vendor
-    test/tools/vendor
+ vendor
+ test/tools/vendor
 Files-Included:
-    vendor/github.com/checkpoint-restore/checkpointctl
-    vendor/github.com/coreos/stream-metadata-go
-    vendor/github.com/docker/go-plugins-helpers
-    vendor/github.com/moby/sys
-    vendor/github.com/uber/jaeger-client-go
+ vendor/github.com/checkpoint-restore/checkpointctl
+ vendor/github.com/coreos/stream-metadata-go
+ vendor/github.com/docker/go-plugins-helpers
+ vendor/github.com/moby/sys
+ vendor/github.com/uber/jaeger-client-go
 
 Files: *
-Copyright:
-    2016-2023 Red Hat, Inc.
+Copyright: 2016-2023 Red Hat, Inc.
 License: Apache-2.0
 
 Files: contrib/snapcraft/*
-Copyright:
-    2017 Snapcrafters
+Copyright: 2017 Snapcrafters
 License: Expat
 
 Files: debian/*
 Copyright:
-    2018-2020 Dmitry Smirnov <onlyjob@debian.org>
-    2020-2023 Reinhard Tartler <siretart@tauware.de>
-    2023 Faidon Liambotis <paravoid@debian.org>
+ 2018-2020 Dmitry Smirnov <onlyjob@debian.org>
+ 2020-2023 Reinhard Tartler <siretart@tauware.de>
+ 2023 Faidon Liambotis <paravoid@debian.org>
 License: Apache-2.0
 
 Files: pkg/k8s.io/*
@@ -44,8 +42,7 @@ Files: pkg/k8s.io/apimachinery/*
 Copyright: 2014-2017, 2020, The Kubernetes Authors.
 License: Apache-2.0
 
-Files: pkg/signal/signal_linux.go
-  pkg/signal/signal_linux_mipsx.go
+Files: pkg/signal/signal_linux.go pkg/signal/signal_linux_mipsx.go
 Copyright: 2013-2018, Docker, Inc.
 License: Apache-2.0
 
