@@ -1,13 +1,11 @@
-completions/zsh/_podman             /usr/share/zsh/vendor-completions
-cni/87-podman-bridge.conflist		/etc/cni/net.d/
-
-debian/etc/containers/libpod.conf	/etc/containers/
-
-usr/bin/podman                      /usr/bin
-usr/bin/quadlet                     /usr/lib/podman/
-usr/bin/rootlessport                /usr/lib/podman/
+cni/87-podman-bridge.conflist      /etc/cni/net.d/
+completions/zsh/_podman            /usr/share/zsh/vendor-completions
+debian/etc/containers/libpod.conf  /etc/containers/
+usr/bin/podman                     /usr/bin
+usr/bin/quadlet                    /usr/lib/podman/
+usr/bin/rootlessport               /usr/lib/podman/
 
 # These were "moved from canonical to aliased", i.e. from /usr/lib to /lib,
 # during buster->bullseye (as reported by dumat). Moving them files back to
 # /usr may cause more problems, though.
-usr/lib/systemd                     /lib/
+usr/lib/systemd                    /lib/
