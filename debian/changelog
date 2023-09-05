@@ -21,6 +21,8 @@ libpod (4.5.0+ds2-1) experimental; urgency=medium
   * Install usr/share/user-tmpfiles.d/podman-docker.conf, Closes: #1034026
   * Pass --no-source to dh_auto_build, and re-enable dh_missing
     --fail-missing.
+  * Ship podman-remote's documentation, i.e. the podman-remote.1 manpage and
+    remote_client.md, in the podman-remote package.
   * debian/copyright:
     - Update to recent sources and remove obsolete entries and comments.
     - Remove remove stanzas for now un-vendored code.
