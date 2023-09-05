@@ -29,6 +29,7 @@ libpod (4.5.0+ds2-1) experimental; urgency=medium
     are invalid in test names (addresses illegal-runtime-test-name warning).
   * Add a debian/gbp.conf config file, allowing to use standardized
     git-buildpackage tools to update to newer versions.
+  * Remove unused source-includes-file-in-files-excluded lintian override.
 
  -- Faidon Liambotis <paravoid@debian.org>  Tue, 05 Sep 2023 13:31:07 +0300
 
