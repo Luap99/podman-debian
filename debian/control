@@ -144,7 +144,7 @@ Built-Using: ${misc:Built-Using}
 Depends: ${misc:Depends}, ${shlibs:Depends}, podman
 Conflicts: docker.io
 Recommends: docker-compose
-Description: engine to run OCI-based containers in Pods - wrapper for docker
+Description: engine to run OCI-based containers in Pods (wrapper for Docker)
  Podman is an engine for running OCI-based containers in Pods.
  Podman provides a CLI interface for managing Pods, Containers, and
  Container Images.
@@ -170,7 +170,7 @@ Package: podman-remote
 Architecture: any
 Built-Using: ${misc:Built-Using}
 Depends: ${misc:Depends}, ${shlibs:Depends}
-Description: engine to run OCI-based containers in Pods
+Description: engine to run OCI-based containers in Pods (remote CLI)
  Podman is an engine for running OCI-based containers in Pods.
  Podman provides a CLI interface for managing Pods, Containers, and
  Container Images.
@@ -189,5 +189,5 @@ Description: engine to run OCI-based containers in Pods
  .
  Podman is a daemon-less alternative to Docker.
  .
- This package installs a smaller executable being only a
- frontend to control a remote podman instance.
+ This package provides a smaller executable, a local client to interact with a
+ Podman backend node through a RESTful API tunneled through an SSH connection.
