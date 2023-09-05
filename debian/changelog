@@ -25,7 +25,8 @@ libpod (4.5.0+ds2-1) experimental; urgency=medium
     remote_client.md, in the podman-remote package.
   * debian/copyright:
     - Update to recent sources and remove obsolete entries and comments.
-    - Remove remove stanzas for now un-vendored code.
+    - Remove stanzas for now un-vendored code.
+    - Remove unused license stanzas: ISC and BSD-3-clause.
     - Update debian/ copyright to latest authors
     - Use "podman" in Upstream-Name and Source, to reflect an upstream change.
   * debian/upstream/metadata:
