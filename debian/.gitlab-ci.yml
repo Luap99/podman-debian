@@ -5,4 +5,6 @@ include:
   - https://salsa.debian.org/salsa-ci-team/pipeline/raw/master/pipeline-jobs.yml
 
 variables:
+  RELEASE: experimental
   SALSA_CI_DISABLE_APTLY: 1
+  
