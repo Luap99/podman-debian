@@ -53,47 +53,9 @@ Files: pkg/util/camelcase/*
 Copyright: 2015, Fatih Arslan
 License: Expat
 
-Files: vendor/github.com/container-orchestrated-devices/container-device-interface/pkg/*
-Copyright: 2021-2022, The CDI Authors
-License: Apache-2.0
-
-Files: vendor/github.com/digitalocean/go-libvirt/const.gen.go
-  vendor/github.com/digitalocean/go-libvirt/doc.go
-  vendor/github.com/digitalocean/go-libvirt/libvirt.go
-  vendor/github.com/digitalocean/go-libvirt/qemu_protocol.gen.go
-  vendor/github.com/digitalocean/go-libvirt/remote_protocol.gen.go
-  vendor/github.com/digitalocean/go-libvirt/rpc.go
-  vendor/github.com/digitalocean/go-libvirt/units.go
-Copyright: 2016, 2018, 2020, The go-libvirt Authors.
-License: Apache-2.0
-
-Files: vendor/github.com/digitalocean/go-libvirt/internal/*
-Copyright: 2016, 2018, 2020, The go-libvirt Authors.
-License: Apache-2.0
-
-Files: vendor/github.com/digitalocean/go-libvirt/internal/go-xdr/*
-Copyright: 2012-2014, Dave Collins <dave@davec.name>
-License: ISC
-
-Files: vendor/github.com/digitalocean/go-qemu/qmp/qmp.go
-  vendor/github.com/digitalocean/go-qemu/qmp/rpc.go
-  vendor/github.com/digitalocean/go-qemu/qmp/socket.go
-  vendor/github.com/digitalocean/go-qemu/qmp/socket_unix.go
-  vendor/github.com/digitalocean/go-qemu/qmp/socket_windows.go
-Copyright: 2016, The go-qemu Authors.
-License: Apache-2.0
-
 Files: vendor/github.com/docker/go-plugins-helpers/NOTICE
 Copyright: 2012-2015, Docker, Inc.
 License: Expat
-
-Files: vendor/github.com/gorilla/*
-Copyright: 2012, Rodrigo Moraes
-License: BSD-3-clause
-
-Files: vendor/github.com/gorilla/schema/*
-Copyright: 2012, Rodrigo Moraes
-License: BSD-3-clause
 
 Files: vendor/github.com/uber/*
 Copyright: 2017,2018 Uber Technologies, Inc.

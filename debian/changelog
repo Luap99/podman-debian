@@ -18,6 +18,7 @@ libpod (4.5.0+ds2-1) experimental; urgency=medium
     - generate-crash, as it was unused, and a backport of a v4.0 commit.
   * debian/copyright:
     - Update to recent sources and remove obsolete entries and comments.
+    - Remove remove stanzas for now un-vendored code.
     - Update debian/ copyright to latest authors
     - Use "podman" in Upstream-Name and Source, to reflect an upstream change.
   * debian/upstream/metadata:
