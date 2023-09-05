@@ -8,7 +8,6 @@ libpod (4.5.0+ds2-1) experimental; urgency=medium
   * Move fuse-overlayfs to Suggests, Closes: #1041050
   * Unvendor some additional sources
   * Build against vbauerster/mpb8, and drop patch vbauerster_mbp_7
-  * Installs user-tempfiles.d/podman-docker.conf, Closes: #1034026
 
   [ Faidon Liambotis ]
   * Add myself to Uploaders.
@@ -19,6 +18,7 @@ libpod (4.5.0+ds2-1) experimental; urgency=medium
     - generate-crash, as it was unused, and a backport of a v4.0 commit.
   * Call "make clean" during clean, to clean up generated documentation files
     and restore the source tree to its pristine form, Closes: #1045188
+  * Install usr/share/user-tmpfiles.d/podman-docker.conf, Closes: #1034026
   * debian/copyright:
     - Update to recent sources and remove obsolete entries and comments.
     - Remove remove stanzas for now un-vendored code.
