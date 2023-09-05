@@ -17,6 +17,8 @@ libpod (4.5.0+ds2-1) experimental; urgency=medium
   * Drop upstream patches:
     - test--skip-issue-17366, as the underlying issue was fixed upstream.
     - generate-crash, as it was unused, and a backport of a v4.0 commit.
+  * Call "make clean" during clean, to clean up generated documentation files
+    and restore the source tree to its pristine form, Closes: #1045188
   * debian/copyright:
     - Update to recent sources and remove obsolete entries and comments.
     - Remove remove stanzas for now un-vendored code.

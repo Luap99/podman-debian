@@ -59,6 +59,11 @@ BUILDTAGS_REMOTE := remote,exclude_graphdriver_btrfs,btrfs_noversion,exclude_gra
 %:
 	dh $@ --buildsystem=golang --with=golang,bash-completion --builddirectory=_output
 
+execute_after_dh_auto_clean:
+	# this is in addition to the golang cleanups, and cleans up docs among
+	# other things. Use bash, as there is a $(<.gitignore) bashism in there.
+	$(MAKE) clean SHELL=/bin/bash
+
 override_dh_auto_build:
 	$(MAKE) docs docker-docs
 
