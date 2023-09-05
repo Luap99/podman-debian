@@ -3,7 +3,10 @@ Section: admin
 Priority: optional
 Standards-Version: 4.6.0
 Maintainer: Debian Go Packaging Team <pkg-go-maintainers@lists.alioth.debian.org>
-Uploaders: Dmitry Smirnov <onlyjob@debian.org>, Reinhard Tartler <siretart@tauware.de>
+Uploaders:
+ Dmitry Smirnov <onlyjob@debian.org>,
+ Reinhard Tartler <siretart@tauware.de>,
+ Faidon Liambotis <paravoid@debian.org>,
 Build-Depends: debhelper-compat (= 13)
     ,bash-completion
     ,conmon
