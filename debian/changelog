@@ -7,7 +7,8 @@ libpod (4.5.0+ds2-1) experimental; urgency=medium
   * Install quadlet, Closes: #1034539
   * Move fuse-overlayfs to Suggests, Closes: #1041050
   * Unvendor some additional sources
-  * Build against vbauerster/mpb8, and drop patch vbauerster_mbp_7.
+  * Build against vbauerster/mpb8, and drop patch vbauerster_mbp_7
+  * Installs user-tempfiles.d/podman-docker.conf, Closes: #1034026
 
   [ Faidon Liambotis ]
   * Add myself to Uploaders.
