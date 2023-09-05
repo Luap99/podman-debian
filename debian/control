@@ -1,7 +1,7 @@
 Source: libpod
 Section: admin
 Priority: optional
-Standards-Version: 4.6.0
+Standards-Version: 4.6.2
 Maintainer: Debian Go Packaging Team <pkg-go-maintainers@lists.alioth.debian.org>
 Uploaders:
  Dmitry Smirnov <onlyjob@debian.org>,
