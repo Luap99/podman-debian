@@ -1,3 +1,5 @@
-Homepage: https://github.com/containers/libpod
+Repository: https://github.com/containers/libpod.git
+Repository-Browse: https://github.com/containers/libpod
+Changelog: https://github.com/containers/podman/blob/main/RELEASE_NOTES.md
 Bug-Database: https://github.com/containers/libpod/issues
 Bug-Submit: https://github.com/containers/libpod/issues/new
