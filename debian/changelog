@@ -23,6 +23,7 @@ libpod (4.5.0+ds2-1) experimental; urgency=medium
     --fail-missing.
   * Ship podman-remote's documentation, i.e. the podman-remote.1 manpage and
     remote_client.md, in the podman-remote package.
+  * Ship podman-remote's bash completion.
   * debian/copyright:
     - Update to recent sources and remove obsolete entries and comments.
     - Remove stanzas for now un-vendored code.
