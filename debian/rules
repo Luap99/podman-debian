@@ -28,7 +28,11 @@ export DH_GOLANG_EXCLUDES := $(LOCAL_DH_GOLANG_EXTRA_EXCLUDES) \
 	podman/pkg/machine/e2e \
 	test/e2e \
 	test/endpoint \
-	test/utils
+	test/framework \
+	test/goecho \
+	test/testvol \
+	test/utils \
+	test/version
 
 # machine/qemu only works on amd64, arm64
 ifneq (,$(filter amd64 arm64,$(DEB_HOST_ARCH)))
