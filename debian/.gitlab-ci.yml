@@ -5,6 +5,9 @@ include:
   - https://salsa.debian.org/salsa-ci-team/pipeline/raw/master/pipeline-jobs.yml
 
 variables:
-  RELEASE: experimental
   SALSA_CI_DISABLE_APTLY: 1
+  # make pipeline work for experimental, remove when all deps are in unstable
+  RELEASE: experimental
+  SALSA_CI_DISABLE_AUTOPKGTEST: 1
+  SALSA_CI_DISABLE_REPROTEST: 1
   
