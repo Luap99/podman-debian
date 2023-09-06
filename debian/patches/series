@@ -3,3 +3,4 @@ system-goimports.patch
 downgrade-checkpoint-restore-criu.patch
 disable-sigstore.patch
 revert-newer-docker.patch
+fix-fcos-i386.patch
