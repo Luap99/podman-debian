@@ -26,14 +26,6 @@ Copyright:
 License: Apache-2.0
 
 Files: pkg/k8s.io/*
-Copyright: belongs to the Kubernetes Authors and is licensed under Apache-2.0, also check the license headers in the files.
-License: Apache-2.0
-
-Files: pkg/k8s.io/api/*
-Copyright: 2014-2017, 2020, The Kubernetes Authors.
-License: Apache-2.0
-
-Files: pkg/k8s.io/apimachinery/*
 Copyright: 2014-2017, 2020, The Kubernetes Authors.
 License: Apache-2.0
 
