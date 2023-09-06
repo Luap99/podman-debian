@@ -2,6 +2,7 @@ libpod (4.5.0+ds2-2) UNRELEASED; urgency=medium
 
   * Backport an upstream patch from v4.6.0 to remove the uber/jaeger-client-go
     dependency, and unvendor the code.
+  * Add debian/copyright stanzas for the three remaining vendored libraries.
 
  -- Faidon Liambotis <paravoid@debian.org>  Wed, 06 Sep 2023 14:34:13 +0300
 
