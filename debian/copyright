@@ -1,10 +1,6 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: podman
 Source: https://github.com/containers/podman
-Comment:
- Upstream "github.com/uber/*" libraries depend on forked prometheus so
- using bundled/vendored ones make sense to avoid burden of non-reusable
- packages with heavier dependencies than vendored subset of those libs.
 Files-Excluded:
  vendor
  test/tools/vendor
@@ -13,7 +9,6 @@ Files-Included:
  vendor/github.com/coreos/stream-metadata-go
  vendor/github.com/docker/go-plugins-helpers
  vendor/github.com/moby/sys
- vendor/github.com/uber/jaeger-client-go
 
 Files: *
 Copyright: 2016-2023 Red Hat, Inc.
@@ -53,10 +48,6 @@ License: Expat
 Files: vendor/github.com/docker/go-plugins-helpers/NOTICE
 Copyright: 2012-2015, Docker, Inc.
 License: Expat
-
-Files: vendor/github.com/uber/*
-Copyright: 2017,2018 Uber Technologies, Inc.
-License: Apache-2.0
 
 License: Apache-2.0
  Licensed under the Apache License, Version 2.0 (the "License");
