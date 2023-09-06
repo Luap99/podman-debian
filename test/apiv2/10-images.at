@@ -66,6 +66,13 @@ podman untag docker.io/library/alpine:latest
 
 t POST "images/create?fromImage=quay.io/libpod/alpine&tag=sha256:fa93b01658e3a5a1686dc3ae55f170d8de487006fb53a28efcd12ab0710a2e5f" 200
 
+# create image from source with tag
+# Note the "-" is used to use an empty body and not "{}" which is the default.
+t POST "images/create?fromSrc=-&repo=myimage&tag=mytag" - 200
+t GET "images/myimage:mytag/json" 200 \
+  .Id~'^sha256:[0-9a-f]\{64\}$' \
+  .RepoTags[0]="docker.io/library/myimage:mytag"
+
 # Display the image history
 t GET libpod/images/nonesuch/history 404
 
@@ -124,7 +131,7 @@ from alpine
 RUN >file1
 EOF
 
-podman image build -t test:test --label xyz -<<EOF
+podman image build -t test:test --label xyz --label abc -<<EOF
 from alpine
 RUN >file2
 EOF
@@ -134,7 +141,7 @@ t POST images/prune?filters='{"dangling":["true"]}' 200
 t GET images/json?filters='{"dangling":["true"]}' 200 length=0
 
 #label filter check in libpod and compat
-t GET images/json?filters='{"label":["xyz"]}' 200 length=1
+t GET images/json?filters='{"label":["xyz","abc"]}' 200 length=1
 t GET libpod/images/json?filters='{"label":["xyz"]}' 200 length=1
 
 t DELETE libpod/images/test:test 200
