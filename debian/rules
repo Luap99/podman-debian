@@ -103,10 +103,10 @@ override_dh_auto_install:
 		--builddirectory=_output \
 		-- \
 		--no-source
-	# generate and install systemd unit files
-	make DESTDIR=debian/tmp PREFIX=/usr LIBEXECDIR=/usr/lib/ BINDIR=/usr/bin MANDIR=/usr/share/man install.systemd install.docker-full
-	# install manpages
-	make DESTDIR=debian/tmp PREFIX=/usr LIBEXECDIR=/usr/lib/ install.man
+	# generate and install systemd unit files, manpages, etc.
+	make DESTDIR=debian/tmp PREFIX=/usr \
+		LIBEXECDIR=/usr/lib/ \
+		install.systemd install.docker-full install.man
 
 execute_after_dh_installman:
 	# installed in the podman-remote package instead
