@@ -8,6 +8,7 @@ libpod (4.5.0+ds2-1) experimental; urgency=medium
   * Move fuse-overlayfs to Suggests, Closes: #1041050
   * Unvendor some additional sources
   * Build against vbauerster/mpb8, and drop patch vbauerster_mbp_7
+  * Disable ostree support
 
   [ Faidon Liambotis ]
   * Add myself to Uploaders.
@@ -48,7 +49,7 @@ libpod (4.5.0+ds2-1) experimental; urgency=medium
     "containerignore-symlink" e2e test, as that is harmless and clearly
     intentional.
 
- -- Faidon Liambotis <paravoid@debian.org>  Tue, 05 Sep 2023 13:31:07 +0300
+ -- Reinhard Tartler <siretart@tauware.de>  Tue, 05 Sep 2023 21:33:43 -0400
 
 libpod (4.4.0+ds1-2) experimental; urgency=medium
 

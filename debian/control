@@ -91,7 +91,6 @@ Build-Depends:
  libbtrfs-dev,
  libdevmapper-dev,
  libglib2.0-dev,
- libostree-dev,
  libsubid-dev,
 Build-Conflicts:
  golang-github-checkpoint-restore-go-criu-dev (>> 6.0),
