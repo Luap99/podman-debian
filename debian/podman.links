@@ -1,0 +1,2 @@
+usr/libexec/podman/quadlet lib/systemd/system-generators/podman-system-generator
+usr/libexec/podman/quadlet lib/systemd/user-generators/podman-user-generator
