@@ -25,6 +25,8 @@ libpod (4.5.0+ds2-1) experimental; urgency=medium
     remote_client.md, in the podman-remote package.
   * Ship podman-remote's bash completion.
   * Move rootlessport and quadlet from /usr/lib/ to /usr/libexec/.
+  * Ship an empty /etc/containers/systemd directory, where container files can
+    be written for the systemd generator (quadlet) to pick them up.
   * debian/copyright:
     - Update to recent sources and remove obsolete entries and comments.
     - Remove stanzas for now un-vendored code.
