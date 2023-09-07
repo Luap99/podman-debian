@@ -1,11 +1,15 @@
-libpod (4.5.1+ds1-1) UNRELEASED; urgency=medium
+libpod (4.5.1+ds1-1) experimental; urgency=medium
 
+  [ Faidon Liambotis ]
   * New upstream release.
   * Backport an upstream patch from v4.6.0 to remove the uber/jaeger-client-go
     dependency, and unvendor the code.
   * Add debian/copyright stanzas for the three remaining vendored libraries.
 
- -- Faidon Liambotis <paravoid@debian.org>  Wed, 06 Sep 2023 14:34:13 +0300
+  [ Reinhard Tartler ]
+  * Upload to experimental
+
+ -- Reinhard Tartler <siretart@tauware.de>  Thu, 07 Sep 2023 18:14:11 -0400
 
 libpod (4.5.0+ds2-1) experimental; urgency=medium
 
