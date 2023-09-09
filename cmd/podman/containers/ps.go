@@ -125,8 +125,8 @@ func checkFlags(c *cobra.Command) error {
 	if listOpts.Watch > 0 && listOpts.Latest {
 		return errors.New("the watch and latest flags cannot be used together")
 	}
-	cfg := registry.PodmanConfig()
-	if cfg.Engine.Namespace != "" {
+	podmanConfig := registry.PodmanConfig()
+	if podmanConfig.ContainersConf.Engine.Namespace != "" {
 		if c.Flag("storage").Changed && listOpts.External {
 			return errors.New("--namespace and --external flags can not both be set")
 		}
@@ -357,7 +357,7 @@ func (l psReporter) State() string {
 	switch l.ListContainer.State {
 	case "running":
 		t := units.HumanDuration(time.Since(time.Unix(l.StartedAt, 0)))
-		state = "Up " + t + " ago"
+		state = "Up " + t
 	case "exited", "stopped":
 		t := units.HumanDuration(time.Since(time.Unix(l.ExitedAt, 0)))
 		state = fmt.Sprintf("Exited (%d) %s ago", l.ExitCode, t)

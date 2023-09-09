@@ -76,7 +76,7 @@ registries = ['{{.Host}}:{{.Port}}']`
 		search.WaitWithDefaultTimeout()
 		Expect(search).Should(Exit(0))
 		Expect(len(search.OutputToStringArray())).To(BeNumerically(">", 1))
-		Expect(search.OutputToString()).To(ContainSubstring("docker.io/library/alpine"))
+		Expect(search.OutputToString()).To(ContainSubstring("alpine"))
 	})
 
 	It("podman search single registry flag", func() {
@@ -122,20 +122,20 @@ registries = ['{{.Host}}:{{.Port}}']`
 		contents := make([]entities.ImageSearchReport, 0)
 		err := json.Unmarshal(search.Out.Contents(), &contents)
 		Expect(err).ToNot(HaveOccurred())
-		Expect(len(contents)).To(BeNumerically(">", 0), "No results from image search")
+		Expect(contents).ToNot(BeEmpty(), "No results from image search")
 		for _, element := range contents {
 			Expect(element.Description).ToNot(HaveSuffix("..."))
 		}
 	})
 
 	It("podman search format json list tags", func() {
-		search := podmanTest.Podman([]string{"search", "--list-tags", "--format", "json", "alpine"})
+		search := podmanTest.Podman([]string{"search", "--list-tags", "--format", "json", ALPINE})
 		search.WaitWithDefaultTimeout()
 		Expect(search).Should(Exit(0))
 		Expect(search.OutputToString()).To(BeValidJSON())
-		Expect(search.OutputToString()).To(ContainSubstring("docker.io/library/alpine"))
-		Expect(search.OutputToString()).To(ContainSubstring("3.10"))
-		Expect(search.OutputToString()).To(ContainSubstring("2.7"))
+		Expect(search.OutputToString()).To(ContainSubstring("quay.io/libpod/alpine"))
+		Expect(search.OutputToString()).To(ContainSubstring("3.10.2"))
+		Expect(search.OutputToString()).To(ContainSubstring("3.2"))
 	})
 
 	// Test for https://github.com/containers/podman/issues/11894
@@ -255,7 +255,7 @@ registries = ['{{.Host}}:{{.Port}}']`
 		searchEmpty := podmanTest.Podman([]string{"search", fmt.Sprintf("%s/", ep.Address()), "--tls-verify=false"})
 		searchEmpty.WaitWithDefaultTimeout()
 		Expect(searchEmpty).Should(Exit(0))
-		Expect(len(searchEmpty.OutputToStringArray())).To(BeNumerically(">=", 1))
+		Expect(searchEmpty.OutputToStringArray()).ToNot(BeEmpty())
 		Expect(search.OutputToString()).To(ContainSubstring("my-alpine"))
 	})
 
@@ -454,7 +454,7 @@ registries = ['{{.Host}}:{{.Port}}']`
 	})
 
 	It("podman search with wildcards", func() {
-		search := podmanTest.Podman([]string{"search", "registry.redhat.io/*openshift*"})
+		search := podmanTest.Podman([]string{"search", "registry.access.redhat.com/*openshift*"})
 		search.WaitWithDefaultTimeout()
 		Expect(search).Should(Exit(0))
 		Expect(len(search.OutputToStringArray())).To(BeNumerically(">", 1))

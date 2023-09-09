@@ -105,6 +105,10 @@ func (ir *ImageEngine) Prune(ctx context.Context, opts entities.ImagePruneOption
 }
 
 func (ir *ImageEngine) Pull(ctx context.Context, rawImage string, opts entities.ImagePullOptions) (*entities.ImagePullReport, error) {
+	if opts.OciDecryptConfig != nil {
+		return nil, fmt.Errorf("decryption is not supported for remote clients")
+	}
+
 	options := new(images.PullOptions)
 	options.WithAllTags(opts.AllTags).WithAuthfile(opts.Authfile).WithArch(opts.Arch).WithOS(opts.OS)
 	options.WithVariant(opts.Variant).WithPassword(opts.Password)
@@ -240,6 +244,13 @@ func (ir *ImageEngine) Import(ctx context.Context, opts entities.ImageImportOpti
 }
 
 func (ir *ImageEngine) Push(ctx context.Context, source string, destination string, opts entities.ImagePushOptions) error {
+	if opts.Signers != nil {
+		return fmt.Errorf("forwarding Signers is not supported for remote clients")
+	}
+	if opts.OciEncryptConfig != nil {
+		return fmt.Errorf("encryption is not supported for remote clients")
+	}
+
 	options := new(images.PushOptions)
 	options.WithAll(opts.All).WithCompress(opts.Compress).WithUsername(opts.Username).WithPassword(opts.Password).WithAuthfile(opts.Authfile).WithFormat(opts.Format).WithRemoveSignatures(opts.RemoveSignatures).WithQuiet(opts.Quiet).WithCompressionFormat(opts.CompressionFormat).WithProgressWriter(opts.Writer)
 
@@ -268,10 +279,19 @@ func (ir *ImageEngine) Save(ctx context.Context, nameOrID string, tags []string,
 			defer func() { _ = os.Remove(f.Name()) }()
 		}
 	default:
-		// This code was added to allow for opening stdout replacing
-		// os.Create(opts.Output) which was attempting to open the file
-		// for read/write which fails on Darwin platforms
-		f, err = os.OpenFile(opts.Output, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+		// This is ugly but I think the best we can do for now,
+		// on windows there is no /dev/stdout but the save command defaults to /dev/stdout.
+		// The proper thing to do would be to pass an io.Writer down from the cli frontend
+		// but since the local save API does not support an io.Writer this is impossible.
+		// I reported it a while ago in https://github.com/containers/common/issues/1275
+		if opts.Output == "/dev/stdout" {
+			f = os.Stdout
+		} else {
+			// This code was added to allow for opening stdout replacing
+			// os.Create(opts.Output) which was attempting to open the file
+			// for read/write which fails on Darwin platforms
+			f, err = os.OpenFile(opts.Output, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+		}
 	}
 	if err != nil {
 		return err
@@ -329,7 +349,7 @@ func (ir *ImageEngine) Search(ctx context.Context, term string, opts entities.Im
 
 	options := new(images.SearchOptions)
 	options.WithAuthfile(opts.Authfile).WithFilters(mappedFilters).WithLimit(opts.Limit)
-	options.WithListTags(opts.ListTags)
+	options.WithListTags(opts.ListTags).WithPassword(opts.Password).WithUsername(opts.Username)
 	if s := opts.SkipTLSVerify; s != types.OptionalBoolUndefined {
 		if s == types.OptionalBoolTrue {
 			options.WithSkipTLSVerify(true)

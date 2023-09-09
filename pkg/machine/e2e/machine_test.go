@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/containers/podman/v4/pkg/machine"
+	"github.com/containers/podman/v4/pkg/machine/qemu"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
@@ -21,7 +22,7 @@ func TestMain(m *testing.M) {
 }
 
 const (
-	defaultStream string = "testing"
+	defaultStream machine.FCOSStream = machine.Testing
 )
 
 var (
@@ -43,7 +44,8 @@ func TestMachine(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
-	fcd, err := machine.GetFCOSDownload(defaultStream)
+	qemuVP := qemu.GetVirtualizationProvider()
+	fcd, err := machine.GetFCOSDownload(qemuVP, defaultStream)
 	if err != nil {
 		Fail("unable to get virtual machine image")
 	}
@@ -128,7 +130,7 @@ func teardown(origHomeDir string, testDir string, mb *machineTestBuilder) {
 			fmt.Printf("error occurred rm'ing machine: %q\n", err)
 		}
 	}
-	if err := os.RemoveAll(testDir); err != nil {
+	if err := machine.GuardedRemoveAll(testDir); err != nil {
 		Fail(fmt.Sprintf("failed to remove test dir: %q", err))
 	}
 	// this needs to be last in teardown

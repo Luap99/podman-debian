@@ -1,7 +1,7 @@
  # Powershell doesn't exit after
  function CheckExit {
     if ($LASTEXITCODE -ne 0) {
-        Exit $LASTEXITCODE
+        throw "Exit code = $LASTEXITCODE"
     }
 }
 function DownloadFile {
@@ -29,9 +29,13 @@ function DownloadFile {
     }
 }
 # Drop global envs which have unix paths, defaults are fine
-Remove-Item Env:\GOPATH
-Remove-Item Env:\GOSRC
-Remove-Item Env:\GOCACHE
+Remove-Item Env:\GOPATH -ErrorAction:Ignore
+Remove-Item Env:\GOSRC -ErrorAction:Ignore
+Remove-Item Env:\GOCACHE -ErrorAction:Ignore
+
+# Drop large known env variables (an env > 32k will break MSI/ICE validation)
+Remove-Item Env:\CIRRUS_COMMIT_MESSAGE -ErrorAction:Ignore
+Remove-Item Env:\CIRRUS_PR_BODY -ErrorAction:Ignore
 
 Set-Location contrib\win-installer
 
@@ -50,11 +54,10 @@ $ret = Start-Process -Wait -PassThru ".\podman-${ENV:WIN_INST_VER}-dev-setup.exe
 if ($ret.ExitCode -ne 0) {
     Write-Host "Install failed, dumping log"
     Get-Content inst.log
-    Exit $ret.ExitCode
+    throw "Exit code is $($ret.ExitCode)"
 }
 if (! ((Test-Path -Path "C:\Program Files\RedHat\Podman\podman.exe") -and `
        (Test-Path -Path "C:\Program Files\RedHat\Podman\win-sshproxy.exe"))) {
-    Write-Host "Expected podman.exe and win-sshproxy.exe, one or both not present after install"
-    Exit 1
+    throw "Expected podman.exe and win-sshproxy.exe, one or both not present after install"
 }
 Write-Host "Installer verification successful!"

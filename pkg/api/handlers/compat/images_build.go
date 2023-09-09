@@ -24,6 +24,7 @@ import (
 	"github.com/containers/podman/v4/pkg/auth"
 	"github.com/containers/podman/v4/pkg/channel"
 	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/containers/storage/pkg/archive"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/gorilla/schema"
@@ -99,6 +100,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		Excludes                string   `schema:"excludes"`
 		ForceRm                 bool     `schema:"forcerm"`
 		From                    string   `schema:"from"`
+		GroupAdd                []string `schema:"groupadd"`
 		HTTPProxy               bool     `schema:"httpproxy"`
 		IDMappingOptions        string   `schema:"idmappingoptions"`
 		IdentityLabel           bool     `schema:"identitylabel"`
@@ -138,6 +140,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		Timestamp               int64    `schema:"timestamp"`
 		Ulimits                 string   `schema:"ulimits"`
 		UnsetEnvs               []string `schema:"unsetenv"`
+		Volumes                 []string `schema:"volume"`
 	}{
 		Dockerfile:       "Dockerfile",
 		IdentityLabel:    true,
@@ -186,10 +189,12 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		anchorDir, err := os.MkdirTemp(parse.GetTempDir(), "libpod_builder")
 		if err != nil {
 			utils.InternalServerError(w, err)
+			return
 		}
 		tempDir, subDir, err := buildahDefine.TempDirForURL(anchorDir, "buildah", query.Remote)
 		if err != nil {
 			utils.InternalServerError(w, err)
+			return
 		}
 		if tempDir != "" {
 			// We had to download it to a temporary directory.
@@ -207,6 +212,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 			absDir, err := filepath.Abs(query.Remote)
 			if err != nil {
 				utils.BadRequest(w, "remote", query.Remote, err)
+				return
 			}
 			contextDirectory = absDir
 		}
@@ -230,6 +236,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 				containerFiles = []string{filepath.Join(contextDirectory, "Dockerfile")}
 				if _, err1 := os.Stat(containerFiles[0]); err1 != nil {
 					utils.BadRequest(w, "dockerfile", query.Dockerfile, err)
+					return
 				}
 			}
 		}
@@ -399,17 +406,27 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var cacheFrom reference.Named
+	cacheFrom := []reference.Named{}
 	if _, found := r.URL.Query()["cachefrom"]; found {
-		cacheFrom, err = parse.RepoNameToNamedReference(query.CacheFrom)
+		var cacheFromSrcList []string
+		if err := json.Unmarshal([]byte(query.CacheFrom), &cacheFromSrcList); err != nil {
+			utils.BadRequest(w, "cacheFrom", query.CacheFrom, err)
+			return
+		}
+		cacheFrom, err = parse.RepoNamesToNamedReferences(cacheFromSrcList)
 		if err != nil {
 			utils.BadRequest(w, "cacheFrom", query.CacheFrom, err)
 			return
 		}
 	}
-	var cacheTo reference.Named
+	cacheTo := []reference.Named{}
 	if _, found := r.URL.Query()["cacheto"]; found {
-		cacheTo, err = parse.RepoNameToNamedReference(query.CacheTo)
+		var cacheToDestList []string
+		if err := json.Unmarshal([]byte(query.CacheTo), &cacheToDestList); err != nil {
+			utils.BadRequest(w, "cacheTo", query.CacheTo, err)
+			return
+		}
+		cacheTo, err = parse.RepoNamesToNamedReferences(cacheToDestList)
 		if err != nil {
 			utils.BadRequest(w, "cacheto", query.CacheTo, err)
 			return
@@ -609,6 +626,12 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	reporter := channel.NewWriter(make(chan []byte))
 	defer reporter.Close()
 
+	_, ignoreFile, err := util.ParseDockerignore(containerFiles, contextDirectory)
+	if err != nil {
+		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("processing ignore file: %w", err))
+		return
+	}
+
 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	buildOptions := buildahDefine.BuildOptions{
 		AddCapabilities:         addCaps,
@@ -643,6 +666,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 			ShmSize:            strconv.Itoa(query.ShmSize),
 			Ulimit:             ulimits,
 			Secrets:            secrets,
+			Volumes:            query.Volumes,
 		},
 		Compression:                    compression,
 		ConfigureNetwork:               parseNetworkConfigurationPolicy(query.ConfigureNetwork),
@@ -653,9 +677,11 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		Err:                            auxout,
 		Excludes:                       excludes,
 		ForceRmIntermediateCtrs:        query.ForceRm,
+		GroupAdd:                       query.GroupAdd,
 		From:                           fromImage,
 		IDMappingOptions:               &idMappingOptions,
 		IgnoreUnrecognizedInstructions: query.Ignore,
+		IgnoreFile:                     ignoreFile,
 		Isolation:                      isolation,
 		Jobs:                           &jobs,
 		Labels:                         labels,
@@ -804,6 +830,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 					if err := enc.Encode(m); err != nil {
 						logrus.Warnf("failed to json encode error %v", err)
 					}
+					flush()
 					m.Aux = nil
 					m.Stream = fmt.Sprintf("Successfully built %12.12s\n", imageID)
 					if err := enc.Encode(m); err != nil {
@@ -868,7 +895,6 @@ func extractTarFile(r *http.Request) (string, error) {
 
 	// Content-Length not used as too many existing API clients didn't honor it
 	_, err = io.Copy(tarBall, r.Body)
-	r.Body.Close()
 	if err != nil {
 		return "", fmt.Errorf("failed Request: Unable to copy tar file from request body %s", r.RequestURI)
 	}

@@ -1,6 +1,7 @@
 #!/usr/bin/env bats
 
 load helpers
+load helpers.network
 
 @test "podman run - basic tests" {
     rand=$(random_string 30)
@@ -173,7 +174,7 @@ echo $rand        |   0 | $rand
     run_podman 1 image exists $NONLOCAL_IMAGE
 
     # Run a container, without --rm; this should block subsequent --rmi
-    run_podman run --name keepme $NONLOCAL_IMAGE /bin/true
+    run_podman run --name /keepme $NONLOCAL_IMAGE /bin/true
     run_podman image exists $NONLOCAL_IMAGE
 
     # Now try running with --rmi : it should succeed, but not remove the image
@@ -181,7 +182,7 @@ echo $rand        |   0 | $rand
     run_podman image exists $NONLOCAL_IMAGE
 
     # Remove the stray container, and run one more time with --rmi.
-    run_podman rm keepme
+    run_podman rm /keepme
     run_podman run --rmi --rm $NONLOCAL_IMAGE /bin/true
     run_podman 1 image exists $NONLOCAL_IMAGE
 }
@@ -191,6 +192,10 @@ echo $rand        |   0 | $rand
 @test "podman run --conmon-pidfile --cidfile" {
     pidfile=${PODMAN_TMPDIR}/pidfile
     cidfile=${PODMAN_TMPDIR}/cidfile
+
+    # Write random content to the cidfile to make sure its content is truncated
+    # on write.
+    echo "$(random_string 120)" > $cidfile
 
     cname=$(random_string)
     run_podman run --name $cname \
@@ -218,12 +223,9 @@ echo $rand        |   0 | $rand
 
     # All OK. Kill container.
     run_podman rm -f $cid
-
-    # Podman must not overwrite existing cid file.
-    # (overwriting conmon-pidfile is OK, so don't test that)
-    run_podman 125 run --cidfile=$cidfile $IMAGE true
-    is "$output" "Error: container id file exists. .* delete $cidfile" \
-       "podman will not overwrite existing cidfile"
+    if [[ -e $cidfile ]]; then
+        die "cidfile $cidfile should be removed along with container"
+    fi
 }
 
 @test "podman run docker-archive" {
@@ -637,10 +639,10 @@ json-file | f
         run_podman run --name=$randomname --rootfs $romount:O echo "Hello world"
         is "$output" "Hello world"
 
-	run_podman container inspect $randomname --format "{{.ImageDigest}}"
-	is "$output" "" "Empty image digest for --rootfs container"
+        run_podman container inspect $randomname --format "{{.ImageDigest}}"
+        is "$output" "" "Empty image digest for --rootfs container"
 
-	run_podman rm -f -t0 $randomname
+        run_podman rm -f -t0 $randomname
         run_podman image unmount $IMAGE
     fi
 }
@@ -838,6 +840,24 @@ EOF
     current_oom_score_adj=$(cat /proc/self/oom_score_adj)
     run_podman run --rm $IMAGE cat /proc/self/oom_score_adj
     is "$output" "$current_oom_score_adj" "different oom_score_adj in the container"
+
+    oomscore=$((current_oom_score_adj+1))
+    run_podman run --oom-score-adj=$oomscore --rm $IMAGE cat /proc/self/oom_score_adj
+    is "$output" "$oomscore" "one more then default oomscore"
+
+    skip_if_remote "containersconf needs to be set on server side"
+    oomscore=$((oomscore+1))
+    containersconf=$PODMAN_TMPDIR/containers.conf
+    cat >$containersconf <<EOF
+[containers]
+oom_score_adj=$oomscore
+EOF
+    CONTAINERS_CONF_OVERRIDE=$PODMAN_TMPDIR/containers.conf run_podman run --rm $IMAGE cat /proc/self/oom_score_adj
+    is "$output" "$oomscore" "two more then default oomscore"
+
+    oomscore=$((oomscore+1))
+    CONTAINERS_CONF_OVERRIDE=$PODMAN_TMPDIR/containers.conf run_podman run --oom-score-adj=$oomscore --rm $IMAGE cat /proc/self/oom_score_adj
+    is "$output" "$oomscore" "--oom-score-adj should override containers.conf"
 }
 
 # CVE-2022-1227 : podman top joins container mount NS and uses nsenter from image
@@ -926,15 +946,16 @@ $IMAGE--c_ok" \
     # ('skip' would be nicer in some sense... but could hide a regression.
     # Fedora, RHEL, Debian, Ubuntu, Gentoo, all have /dev/ttyN, so if
     # this ever triggers, it means a real problem we should know about.)
-    assert "$(ls /dev/tty* | grep -vx /dev/tty)" != "" \
+    vt_tty_devices_count=$(find /dev -regex '/dev/tty[0-9].*' | wc -w)
+    assert "$vt_tty_devices_count" != "0" \
            "Expected at least one /dev/ttyN device on host"
 
     # Ok now confirm that without --systemd, podman exposes ttyNN devices
     run_podman run --rm -d --privileged $IMAGE ./pause
     cid="$output"
 
-    run_podman exec $cid sh -c 'ls /dev/tty*'
-    assert "$output" != "/dev/tty" \
+    run_podman exec $cid sh -c "find /dev -regex '/dev/tty[0-9].*' | wc -w"
+    assert "$output" = "$vt_tty_devices_count" \
            "ls /dev/tty* without systemd; should have lots of ttyN devices"
     run_podman stop -t 0 $cid
 
@@ -942,11 +963,142 @@ $IMAGE--c_ok" \
     run_podman run --rm -d --privileged --systemd=always $IMAGE ./pause
     cid="$output"
 
-    run_podman exec $cid sh -c 'ls /dev/tty*'
-    assert "$output" = "/dev/tty" \
-           "ls /dev/tty* with --systemd=always: should have no ttyN devices"
+    run_podman exec $cid sh -c "find /dev -regex '/dev/tty[0-9].*' | wc -w"
+    assert "$output" = "0" \
+           "ls /dev/tty[0-9] with --systemd=always: should have no ttyN devices"
 
     run_podman stop -t 0 $cid
 }
+
+@test "podman run --privileged as rootless will not mount /dev/tty\d+" {
+    skip_if_not_rootless "this test as rootless"
+
+    # First, confirm that we _have_ /dev/ttyNN devices on the host.
+    # ('skip' would be nicer in some sense... but could hide a regression.
+    # Fedora, RHEL, Debian, Ubuntu, Gentoo, all have /dev/ttyN, so if
+    # this ever triggers, it means a real problem we should know about.)
+    vt_tty_devices_count=$(find /dev -regex '/dev/tty[0-9].*' | wc -w)
+    assert "$vt_tty_devices_count" != "0" \
+           "Expected at least one /dev/ttyN device on host"
+
+    run_podman run --rm -d --privileged $IMAGE ./pause
+    cid="$output"
+
+    run_podman exec $cid sh -c "find /dev -regex '/dev/tty[0-9].*' | wc -w"
+    assert "$output" = "0" \
+           "ls /dev/tty[0-9]: should have no ttyN devices"
+
+    run_podman stop -t 0 $cid
+}
+
+# 16925: --privileged + --systemd = share non-virtual-terminal TTYs (both rootful and rootless)
+@test "podman run --privileged as root with systemd mounts non-vt /dev/tty devices" {
+    # First, confirm that we _have_ non-virtual terminal /dev/tty* devices on
+    # the host.
+    non_vt_tty_devices_count=$(find /dev -regex '/dev/tty[^0-9].*' | wc -w)
+    if [ "$non_vt_tty_devices_count" -eq 0 ]; then
+        skip "The server does not have non-vt TTY devices"
+    fi
+
+    # Verify that all the non-vt TTY devices got mounted in the container
+    run_podman run --rm -d --privileged --systemd=always $IMAGE ./pause
+    cid="$output"
+    run_podman '?' exec $cid find /dev -regex '/dev/tty[^0-9].*'
+    assert "$status" = 0 \
+           "No non-virtual-terminal TTY devices got mounted in the container"
+    assert "$(echo "$output" | wc -w)" = "$non_vt_tty_devices_count" \
+           "Some non-virtual-terminal TTY devices are missing in the container"
+    run_podman stop -t 0 $cid
+}
+
+@test "podman run read-only from containers.conf" {
+    containersconf=$PODMAN_TMPDIR/containers.conf
+    cat >$containersconf <<EOF
+[containers]
+read_only=true
+EOF
+
+    CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman 1 run --rm $IMAGE touch /testro
+    CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm --read-only=false $IMAGE touch /testrw
+    CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm $IMAGE touch /tmp/testrw
+    CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman 1 run --rm --read-only-tmpfs=false $IMAGE touch /tmp/testro
+}
+
+@test "podman run ulimit from containers.conf" {
+    skip_if_remote "containers.conf has to be set on remote, only tested on E2E test"
+    containersconf=$PODMAN_TMPDIR/containers.conf
+    # Safe minimum: anything under 27 barfs w/ "crun: ... Too many open files"
+    nofile1=$((30 + RANDOM % 10000))
+    nofile2=$((30 + RANDOM % 10000))
+    cat >$containersconf <<EOF
+[containers]
+default_ulimits = [
+  "nofile=${nofile1}:${nofile1}",
+]
+EOF
+
+    CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm $IMAGE grep "Max open files" /proc/self/limits
+    assert "$output" =~ " ${nofile1}  * ${nofile1}  * files"
+    CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --ulimit nofile=${nofile2}:${nofile2} --rm $IMAGE grep "Max open files" /proc/self/limits
+    assert "$output" =~ " ${nofile2}  * ${nofile2}  * files"
+}
+
+@test "podman run bad --name" {
+    randomname=$(random_string 30)
+    run_podman 125 create --name "$randomname/bad" $IMAGE
+    run_podman create --name "/$randomname" $IMAGE
+    run_podman ps -a --filter name="^/$randomname$" --format '{{ .Names }}'
+    is $output "$randomname" "Should be able to find container by name"
+    run_podman rm "/$randomname"
+    run_podman 125 create --name "$randomname/" $IMAGE
+}
+
+@test "podman run --net=host --cgroupns=host with read only cgroupfs" {
+    skip_if_rootless_cgroupsv1
+
+    if is_cgroupsv1; then
+        # verify that the memory controller is mounted read-only
+        run_podman run --net=host --cgroupns=host --rm $IMAGE cat /proc/self/mountinfo
+        assert "$output" =~ "/sys/fs/cgroup/memory ro.* cgroup cgroup"
+    else
+        # verify that the last /sys/fs/cgroup mount is read-only
+        run_podman run --net=host --cgroupns=host --rm $IMAGE sh -c "grep ' / /sys/fs/cgroup ' /proc/self/mountinfo | tail -n 1"
+        assert "$output" =~ "/sys/fs/cgroup ro"
+    fi
+}
+
+@test "podman run - rootfs with idmapped mounts" {
+    skip_if_rootless "idmapped mounts work only with root for now"
+
+    skip_if_remote "userns=auto is set on the server"
+
+    egrep -q "^containers:" /etc/subuid || skip "no IDs allocated for user 'containers'"
+
+    # check if the underlying file system supports idmapped mounts
+    check_dir=$PODMAN_TMPDIR/idmap-check
+    mkdir $check_dir
+    run_podman '?' run --rm --uidmap=0:1000:10000 --rootfs $check_dir:idmap true
+    if [[ "$output" == *"failed to create idmapped mount: invalid argument"* ]]; then
+        skip "idmapped mounts not supported"
+    fi
+
+    run_podman image mount $IMAGE
+    src="$output"
+
+    # we cannot use idmap on top of overlay, so we need a copy
+    romount=$PODMAN_TMPDIR/rootfs
+    cp -ar "$src" "$romount"
+
+    run_podman image unmount $IMAGE
+
+    run_podman run --rm --uidmap=0:1000:10000 --rootfs $romount:idmap stat -c %u:%g /bin
+    is "$output" "0:0"
+
+    run_podman run --uidmap=0:1000:10000 --rm --rootfs "$romount:idmap=uids=0-1001-10000;gids=0-1002-10000" stat -c %u:%g /bin
+    is "$output" "1:2"
+
+    rm -rf $romount
+}
+
 
 # vim: filetype=sh

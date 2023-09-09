@@ -7,7 +7,7 @@ While "containers are Linux," Podman also runs on Mac and Windows, where it
 provides a native CLI and embeds a guest Linux system to launch your
 containers. This guest is referred to as a Podman machine and is managed with
 the `podman machine` command. On Windows, each Podman machine is backed by a
-virtualized Windows System for Linux (WSLv2) distribution. The podman command
+virtualized Windows Subsystem for Linux (WSLv2) distribution. The podman command
 can be run directly from your Windows PowerShell (or CMD) prompt, where it
 remotely communicates with the podman service running in the WSL environment.
 Alternatively, you can access Podman directly from the WSL instance if you
@@ -40,14 +40,13 @@ Installing Podman
 Installing the Windows Podman client begins by downloading the Podman Windows
 installer. The Windows installer is built with each Podman release and can be
 downloaded from the official
- [Github release page](https://github.com/containers/podman/releases). The
-Windows installer file is named podman-v.#.#.#.msi, where the # symbols
-represent the version number of Podman. Be sure to download a 4.1 or later
-release for the capabilities discussed in this guide.
+ [Github release page](https://github.com/containers/podman/releases).
+Be sure to download a 4.1 or later release for the capabilities discussed
+in this guide.
 
 ![Installing Podman 4.1.0](podman-win-install.jpg)
 
-Once downloaded, simply run the MSI file, and relaunch a new terminal. After
+Once downloaded, simply run the EXE file, and relaunch a new terminal. After
 this point, podman.exe will be present on your PATH, and you will be able to run
 the `podman machine init` command to create your first machine.
 
@@ -132,7 +131,7 @@ Port Forwarding
 
 Port forwarding also works as expected; ports will be bound against localhost
 (127.0.0.1). Note: When running as rootless (the default), you must use a port
-greater than 1023. See the Rooftull and Rootless section for more details.
+greater than 1023. See the Rootful and Rootless section for more details.
 
 To launch httpd, you can run:
 
@@ -184,7 +183,7 @@ following PowerShell command in your terminal session:
 
 Or in a classic CMD prompt:
 
-        set DOCKER_HOST = 'npipe:////./pipe/podman-machine-default'
+        set DOCKER_HOST=npipe:////./pipe/podman-machine-default
 
 Alternatively, terminate the other process and restart podman machine.
 Machine "podman-machine-default" started successfully
@@ -194,12 +193,12 @@ PS C:\Users\User>.\docker.exe version --format '{{(index .Server.Components 0).N
 Podman Engine
 ```
 
-Rootfull & Rootless
--------------------
+Rootful & Rootless
+------------------
 
 On the embedded WSL Linux distro, podman can either be run under the root user
 (rootful) or a non-privileged user (rootless). For behavioral consistency with
-Podman on Linux, rootless is the default. Note: Rootfull and Rootless
+Podman on Linux, rootless is the default. Note: Rootful and Rootless
 containers are distinct and isolated from one another. Podman commands against
 one (e.g., podman ps) will not represent results/state for the other.
 

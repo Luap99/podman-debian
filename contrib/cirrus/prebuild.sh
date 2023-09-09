@@ -9,32 +9,56 @@ set -eo pipefail
 # prevent wasting time on tests that can't succeed due to some
 # outage, failure, or missed expectation.
 
+set -a
 source /etc/automation_environment
 source $AUTOMATION_LIB_PATH/common_lib.sh
+set +a
 
 req_env_vars CI DEST_BRANCH IMAGE_SUFFIX TEST_FLAVOR TEST_ENVIRON \
              PODBIN_NAME PRIV_NAME DISTRO_NV AUTOMATION_LIB_PATH \
-             SCRIPT_BASE CIRRUS_WORKING_DIR FEDORA_NAME UBUNTU_NAME \
+             SCRIPT_BASE CIRRUS_WORKING_DIR FEDORA_NAME \
              VM_IMAGE_NAME
 
 # Defined by the CI system
 # shellcheck disable=SC2154
 cd $CIRRUS_WORKING_DIR
 
+msg "Checking Cirrus YAML"
 # Defined by CI config.
 # shellcheck disable=SC2154
 showrun $SCRIPT_BASE/cirrus_yaml_test.py
 
+msg "Checking for leading tabs in system tests"
+if grep -n ^$'\t' test/system/*; then
+    die "Found leading tabs in system tests. Use spaces to indent, not tabs."
+fi
+
 # Defined by CI config.
 # shellcheck disable=SC2154
 if [[ "${DISTRO_NV}" =~ fedora ]]; then
+    msg "Checking shell scripts"
     showrun ooe.sh dnf install -y ShellCheck  # small/quick addition
-    showrun shellcheck --color=always --format=tty \
+    showrun shellcheck --format=tty \
         --shell=bash --external-sources \
         --enable add-default-case,avoid-nullary-conditions,check-unassigned-uppercase \
         --exclude SC2046,SC2034,SC2090,SC2064 \
         --wiki-link-count=0 --severity=warning \
-        $SCRIPT_BASE/*.sh hack/get_ci_vm.sh
+        $SCRIPT_BASE/*.sh \
+        ./.github/actions/check_cirrus_cron/* \
+        hack/get_ci_vm.sh
+
+    # Tests for lib.sh
+    showrun ${SCRIPT_BASE}/lib.sh.t
+
+    # Run this during daily cron job to prevent a GraphQL API change/breakage
+    # from impacting every PR.  Down-side being if it does fail, a maintainer
+    # will need to do some archaeology to find it.
+    # Defined by CI system
+    # shellcheck disable=SC2154
+    if [[ "$CIRRUS_CRON" == "main" ]]; then
+      export PREBUILD=1
+      showrun bash ${CIRRUS_WORKING_DIR}/.github/actions/check_cirrus_cron/test.sh
+    fi
 fi
 
 msg "Checking 3rd party network service connectivity"

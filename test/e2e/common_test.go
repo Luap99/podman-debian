@@ -20,10 +20,9 @@ import (
 	"github.com/containers/common/pkg/cgroups"
 	"github.com/containers/podman/v4/libpod/define"
 	"github.com/containers/podman/v4/pkg/inspect"
-	"github.com/containers/podman/v4/pkg/rootless"
 	"github.com/containers/podman/v4/pkg/util"
 	. "github.com/containers/podman/v4/test/utils"
-	"github.com/containers/storage"
+	"github.com/containers/storage/pkg/lockfile"
 	"github.com/containers/storage/pkg/reexec"
 	"github.com/containers/storage/pkg/stringid"
 	jsoniter "github.com/json-iterator/go"
@@ -47,6 +46,7 @@ var (
 type PodmanTestIntegration struct {
 	PodmanTest
 	ConmonBinary        string
+	QuadletBinary       string
 	Root                string
 	NetworkConfigDir    string
 	OCIRuntime          string
@@ -103,7 +103,8 @@ func TestLibpod(t *testing.T) {
 
 var _ = SynchronizedBeforeSuite(func() []byte {
 	// make cache dir
-	if err := os.MkdirAll(ImageCacheDir, 0777); err != nil {
+	ImageCacheDir = filepath.Join(os.TempDir(), "imagecachedir")
+	if err := os.MkdirAll(ImageCacheDir, 0700); err != nil {
 		fmt.Printf("%q\n", err)
 		os.Exit(1)
 	}
@@ -111,7 +112,7 @@ var _ = SynchronizedBeforeSuite(func() []byte {
 	// Cache images
 	cwd, _ := os.Getwd()
 	INTEGRATION_ROOT = filepath.Join(cwd, "../../")
-	podman := PodmanTestSetup("/tmp")
+	podman := PodmanTestSetup(os.TempDir())
 
 	// Pull cirros but don't put it into the cache
 	pullImages := []string{CIRROS_IMAGE, fedoraToolbox, volumeTest}
@@ -180,6 +181,7 @@ var _ = SynchronizedAfterSuite(func() {},
 			os.Exit(1)
 		}
 		podmanTest := PodmanTestCreate(tempdir)
+		defer os.RemoveAll(tempdir)
 
 		if err := os.RemoveAll(podmanTest.Root); err != nil {
 			fmt.Printf("%q\n", err)
@@ -191,7 +193,10 @@ var _ = SynchronizedAfterSuite(func() {},
 		}
 		// for localized tests, this removes the image cache dir and for remote tests
 		// this is a no-op
-		removeCache()
+		podmanTest.removeCache(podmanTest.ImageCacheDir)
+
+		// LockTmpDir can already be removed
+		os.RemoveAll(LockTmpDir)
 	})
 
 // PodmanTestCreate creates a PodmanTestIntegration instance for the tests
@@ -212,6 +217,11 @@ func PodmanTestCreateUtil(tempDir string, remote bool) *PodmanTestIntegration {
 		podmanRemoteBinary = os.Getenv("PODMAN_REMOTE_BINARY")
 	}
 
+	quadletBinary := filepath.Join(cwd, "../../bin/quadlet")
+	if os.Getenv("QUADLET_BINARY") != "" {
+		quadletBinary = os.Getenv("QUADLET_BINARY")
+	}
+
 	conmonBinary := "/usr/libexec/podman/conmon"
 	altConmonBinary := "/usr/bin/conmon"
 	if _, err := os.Stat(conmonBinary); os.IsNotExist(err) {
@@ -226,7 +236,7 @@ func PodmanTestCreateUtil(tempDir string, remote bool) *PodmanTestIntegration {
 	}
 
 	cgroupManager := CGROUP_MANAGER
-	if rootless.IsRootless() {
+	if isRootless() {
 		cgroupManager = "cgroupfs"
 	}
 	if os.Getenv("CGROUP_MANAGER") != "" {
@@ -239,16 +249,21 @@ func PodmanTestCreateUtil(tempDir string, remote bool) *PodmanTestIntegration {
 	}
 	os.Setenv("DISABLE_HC_SYSTEMD", "true")
 
+	dbBackend := "boltdb"
+	if os.Getenv("PODMAN_DB") == "sqlite" {
+		dbBackend = "sqlite"
+	}
+
 	networkBackend := CNI
 	networkConfigDir := "/etc/cni/net.d"
-	if rootless.IsRootless() {
+	if isRootless() {
 		networkConfigDir = filepath.Join(os.Getenv("HOME"), ".config/cni/net.d")
 	}
 
 	if strings.ToLower(os.Getenv("NETWORK_BACKEND")) == "netavark" {
 		networkBackend = Netavark
 		networkConfigDir = "/etc/containers/networks"
-		if rootless.IsRootless() {
+		if isRootless() {
 			networkConfigDir = filepath.Join(root, "etc", "networks")
 		}
 	}
@@ -262,13 +277,16 @@ func PodmanTestCreateUtil(tempDir string, remote bool) *PodmanTestIntegration {
 	}
 
 	storageFs := STORAGE_FS
-	if rootless.IsRootless() {
+	if isRootless() {
 		storageFs = ROOTLESS_STORAGE_FS
 	}
 	if os.Getenv("STORAGE_FS") != "" {
 		storageFs = os.Getenv("STORAGE_FS")
 		storageOptions = "--storage-driver " + storageFs
 	}
+
+	ImageCacheDir = filepath.Join(os.TempDir(), "imagecachedir")
+
 	p := &PodmanTestIntegration{
 		PodmanTest: PodmanTest{
 			PodmanBinary:       podmanBinary,
@@ -278,8 +296,10 @@ func PodmanTestCreateUtil(tempDir string, remote bool) *PodmanTestIntegration {
 			ImageCacheFS:       storageFs,
 			ImageCacheDir:      ImageCacheDir,
 			NetworkBackend:     networkBackend,
+			DatabaseBackend:    dbBackend,
 		},
 		ConmonBinary:        conmonBinary,
+		QuadletBinary:       quadletBinary,
 		Root:                root,
 		TmpDir:              tempDir,
 		NetworkConfigDir:    networkConfigDir,
@@ -293,7 +313,7 @@ func PodmanTestCreateUtil(tempDir string, remote bool) *PodmanTestIntegration {
 
 	if remote {
 		var pathPrefix string
-		if !rootless.IsRootless() {
+		if !isRootless() {
 			pathPrefix = "/run/podman/podman"
 		} else {
 			runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
@@ -375,7 +395,7 @@ func (p *PodmanTestIntegration) createArtifact(image string) {
 func (s *PodmanSessionIntegration) InspectImageJSON() []inspect.ImageData {
 	var i []inspect.ImageData
 	err := jsoniter.Unmarshal(s.Out.Contents(), &i)
-	Expect(err).To(BeNil())
+	Expect(err).ToNot(HaveOccurred())
 	return i
 }
 
@@ -395,9 +415,9 @@ func processTestResult(f GinkgoTestDescription) {
 	testResultsMutex.Unlock()
 }
 
-func GetPortLock(port string) storage.Locker {
+func GetPortLock(port string) *lockfile.LockFile {
 	lockFile := filepath.Join(LockTmpDir, port)
-	lock, err := storage.GetLockfile(lockFile)
+	lock, err := lockfile.GetLockFile(lockFile)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
@@ -411,10 +431,10 @@ func GetPortLock(port string) storage.Locker {
 func GetRandomIPAddress() string {
 	// To avoid IP collisions of initialize random seed for random IP addresses
 	rand.Seed(time.Now().UnixNano())
-	// Add GinkgoParallelNode() on top of the IP address
+	// Add GinkgoParallelProcess() on top of the IP address
 	// in case of the same random seed
-	ip3 := strconv.Itoa(rand.Intn(230) + GinkgoParallelNode())
-	ip4 := strconv.Itoa(rand.Intn(230) + GinkgoParallelNode())
+	ip3 := strconv.Itoa(rand.Intn(230) + GinkgoParallelProcess())
+	ip4 := strconv.Itoa(rand.Intn(230) + GinkgoParallelProcess())
 	return "10.88." + ip3 + "." + ip4
 }
 
@@ -427,7 +447,8 @@ func (p *PodmanTestIntegration) RunTopContainer(name string) *PodmanSessionInteg
 // RunTopContainerWithArgs runs a simple container in the background that
 // runs top.  If the name passed != "", it will have a name, command args can also be passed in
 func (p *PodmanTestIntegration) RunTopContainerWithArgs(name string, args []string) *PodmanSessionIntegration {
-	var podmanArgs = []string{"run"}
+	// In proxy environment, some tests need to the --http-proxy=false option (#16684)
+	var podmanArgs = []string{"run", "--http-proxy=false"}
 	if name != "" {
 		podmanArgs = append(podmanArgs, "--name", name)
 	}
@@ -467,6 +488,17 @@ func (p *PodmanTestIntegration) RunNginxWithHealthCheck(name string) (*PodmanSes
 	session := p.Podman(podmanArgs)
 	session.WaitWithDefaultTimeout()
 	return session, session.OutputToString()
+}
+
+// RunContainerWithNetworkTest runs the fedoraMinimal curl with the specified network mode.
+func (p *PodmanTestIntegration) RunContainerWithNetworkTest(mode string) *PodmanSessionIntegration {
+	var podmanArgs = []string{"run"}
+	if mode != "" {
+		podmanArgs = append(podmanArgs, "--network", mode)
+	}
+	podmanArgs = append(podmanArgs, fedoraMinimal, "curl", "-k", "-o", "/dev/null", "http://www.redhat.com:80")
+	session := p.Podman(podmanArgs)
+	return session
 }
 
 func (p *PodmanTestIntegration) RunLsContainerInPod(name, pod string) (*PodmanSessionIntegration, int, string) {
@@ -513,6 +545,19 @@ func (p *PodmanTestIntegration) PodmanPID(args []string) (*PodmanSessionIntegrat
 	return &PodmanSessionIntegration{podmanSession}, command.Process.Pid
 }
 
+func (p *PodmanTestIntegration) Quadlet(args []string, sourceDir string) *PodmanSessionIntegration {
+	fmt.Printf("Running: %s %s with QUADLET_UNIT_DIRS=%s\n", p.QuadletBinary, strings.Join(args, " "), sourceDir)
+
+	command := exec.Command(p.QuadletBinary, args...)
+	command.Env = []string{fmt.Sprintf("QUADLET_UNIT_DIRS=%s", sourceDir)}
+	session, err := Start(command, GinkgoWriter, GinkgoWriter)
+	if err != nil {
+		Fail("unable to run quadlet command: " + strings.Join(args, " "))
+	}
+	quadletSession := &PodmanSession{Session: session}
+	return &PodmanSessionIntegration{quadletSession}
+}
+
 // Cleanup cleans up the temporary store
 func (p *PodmanTestIntegration) Cleanup() {
 	// Remove all pods...
@@ -525,9 +570,7 @@ func (p *PodmanTestIntegration) Cleanup() {
 
 	p.StopRemoteService()
 	// Nuke tempdir
-	if err := os.RemoveAll(p.TempDir); err != nil {
-		fmt.Printf("%q\n", err)
-	}
+	p.removeCache(p.TempDir)
 
 	// Clean up the registries configuration file ENV variable set in Create
 	resetRegistriesConfigEnv()
@@ -562,7 +605,7 @@ func (p *PodmanTestIntegration) CleanupSecrets() {
 func (s *PodmanSessionIntegration) InspectContainerToJSON() []define.InspectContainerData {
 	var i []define.InspectContainerData
 	err := jsoniter.Unmarshal(s.Out.Contents(), &i)
-	Expect(err).To(BeNil())
+	Expect(err).ToNot(HaveOccurred())
 	return i
 }
 
@@ -578,7 +621,7 @@ func (s *PodmanSessionIntegration) InspectPodToJSON() define.InspectPodData {
 func (s *PodmanSessionIntegration) InspectPodArrToJSON() []define.InspectPodData {
 	var i []define.InspectPodData
 	err := jsoniter.Unmarshal(s.Out.Contents(), &i)
-	Expect(err).To(BeNil())
+	Expect(err).ToNot(HaveOccurred())
 	return i
 }
 
@@ -642,23 +685,30 @@ func checkReason(reason string) {
 	}
 }
 
+func SkipIfRunc(p *PodmanTestIntegration, reason string) {
+	checkReason(reason)
+	if p.OCIRuntime == "runc" {
+		Skip("[runc]: " + reason)
+	}
+}
+
 func SkipIfRootlessCgroupsV1(reason string) {
 	checkReason(reason)
-	if os.Geteuid() != 0 && !CGROUPSV2 {
+	if isRootless() && !CGROUPSV2 {
 		Skip("[rootless]: " + reason)
 	}
 }
 
 func SkipIfRootless(reason string) {
 	checkReason(reason)
-	if os.Geteuid() != 0 {
+	if isRootless() {
 		Skip("[rootless]: " + reason)
 	}
 }
 
 func SkipIfNotRootless(reason string) {
 	checkReason(reason)
-	if os.Geteuid() == 0 {
+	if !isRootless() {
 		Skip("[notRootless]: " + reason)
 	}
 }
@@ -683,6 +733,13 @@ func SkipIfNotSystemd(manager, reason string) {
 	}
 }
 
+func SkipOnOSVersion(os, version string) {
+	info := GetHostDistributionInfo()
+	if info.Distribution == os && info.Version == version {
+		Skip(fmt.Sprintf("Test doesn't work on %s %s", os, version))
+	}
+}
+
 func SkipIfNotFedora() {
 	info := GetHostDistributionInfo()
 	if info.Distribution != "fedora" {
@@ -690,6 +747,8 @@ func SkipIfNotFedora() {
 	}
 }
 
+// Use isRootless() instead of rootless.IsRootless()
+// This function can detect to join the user namespace by mistake
 func isRootless() bool {
 	return os.Geteuid() != 0
 }
@@ -806,16 +865,26 @@ func (p *PodmanTestIntegration) RestoreArtifactToCache(image string) error {
 func populateCache(podman *PodmanTestIntegration) {
 	for _, image := range CACHE_IMAGES {
 		err := podman.RestoreArtifactToCache(image)
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 	}
 	// logformatter uses this to recognize the first test
 	fmt.Printf("-----------------------------\n")
 }
 
-func removeCache() {
+func (p *PodmanTestIntegration) removeCache(path string) {
 	// Remove cache dirs
-	if err := os.RemoveAll(ImageCacheDir); err != nil {
-		fmt.Printf("%q\n", err)
+	if isRootless() {
+		// If rootless, os.RemoveAll() is failed due to permission denied
+		cmd := exec.Command(p.PodmanBinary, "unshare", "rm", "-rf", path)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+		}
+	} else {
+		if err := os.RemoveAll(path); err != nil {
+			fmt.Printf("%q\n", err)
+		}
 	}
 }
 
@@ -855,8 +924,8 @@ func (p *PodmanTestIntegration) makeOptions(args []string, noEvents, noCache boo
 		eventsType = "none"
 	}
 
-	podmanOptions := strings.Split(fmt.Sprintf("%s--root %s --runroot %s --runtime %s --conmon %s --network-config-dir %s --network-backend %s --cgroup-manager %s --tmpdir %s --events-backend %s",
-		debug, p.Root, p.RunRoot, p.OCIRuntime, p.ConmonBinary, p.NetworkConfigDir, p.NetworkBackend.ToString(), p.CgroupManager, p.TmpDir, eventsType), " ")
+	podmanOptions := strings.Split(fmt.Sprintf("%s--root %s --runroot %s --runtime %s --conmon %s --network-config-dir %s --network-backend %s --cgroup-manager %s --tmpdir %s --events-backend %s --db-backend %s",
+		debug, p.Root, p.RunRoot, p.OCIRuntime, p.ConmonBinary, p.NetworkConfigDir, p.NetworkBackend.ToString(), p.CgroupManager, p.TmpDir, eventsType, p.DatabaseBackend), " ")
 
 	podmanOptions = append(podmanOptions, strings.Split(p.StorageOptions, " ")...)
 	if !noCache {
@@ -955,6 +1024,47 @@ func (p *PodmanTestIntegration) removeNetwork(name string) {
 	Expect(session.ExitCode()).To(BeNumerically("<=", 1), "Exit code must be 0 or 1")
 }
 
+// generatePolicyFile generates a signature verification policy file.
+// it returns the policy file path.
+func generatePolicyFile(tempDir string) string {
+	keyPath := filepath.Join(tempDir, "key.gpg")
+	policyPath := filepath.Join(tempDir, "policy.json")
+	conf := fmt.Sprintf(`
+{
+    "default": [
+        {
+            "type": "insecureAcceptAnything"
+        }
+    ],
+    "transports": {
+        "docker": {
+            "localhost:5000": [
+                {
+                    "type": "signedBy",
+                    "keyType": "GPGKeys",
+                    "keyPath": "%s"
+                }
+            ],
+            "localhost:5000/sigstore-signed": [
+                {
+                    "type": "sigstoreSigned",
+                    "keyPath": "testdata/sigstore-key.pub"
+                }
+            ],
+            "localhost:5000/sigstore-signed-params": [
+                {
+                    "type": "sigstoreSigned",
+                    "keyPath": "testdata/sigstore-key.pub"
+                }
+            ]
+        }
+    }
+}
+`, keyPath)
+	writeConf([]byte(conf), policyPath)
+	return policyPath
+}
+
 func (s *PodmanSessionIntegration) jq(jqCommand string) (string, error) {
 	var out bytes.Buffer
 	cmd := exec.Command("jq", jqCommand)
@@ -967,7 +1077,7 @@ func (s *PodmanSessionIntegration) jq(jqCommand string) (string, error) {
 func (p *PodmanTestIntegration) buildImage(dockerfile, imageName string, layers string, label string) string {
 	dockerfilePath := filepath.Join(p.TempDir, "Dockerfile")
 	err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0755)
-	Expect(err).To(BeNil())
+	Expect(err).ToNot(HaveOccurred())
 	cmd := []string{"build", "--pull-never", "--layers=" + layers, "--file", dockerfilePath}
 	if label != "" {
 		cmd = append(cmd, "--label="+label)
@@ -1087,4 +1197,16 @@ func WaitForService(address url.URL) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	Expect(err).ShouldNot(HaveOccurred())
+}
+
+// useCustomNetworkDir makes sure this test uses a custom network dir.
+// This needs to be called for all test they may remove networks from other tests,
+// so netwokr prune, system prune, or system reset.
+// see https://github.com/containers/podman/issues/17946
+func useCustomNetworkDir(podmanTest *PodmanTestIntegration, tempdir string) {
+	// set custom network directory to prevent flakes since the dir is shared with all tests by default
+	podmanTest.NetworkConfigDir = tempdir
+	if IsRemote() {
+		podmanTest.RestartRemoteService()
+	}
 }

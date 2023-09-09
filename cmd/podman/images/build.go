@@ -25,6 +25,7 @@ import (
 	"github.com/containers/podman/v4/cmd/podman/registry"
 	"github.com/containers/podman/v4/cmd/podman/utils"
 	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/env"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -168,16 +169,7 @@ func buildFlags(cmd *cobra.Command) {
 		logrus.Errorf("Setting up build flags: %v", err)
 		os.Exit(1)
 	}
-	// --http-proxy flag
-	// containers.conf defaults to true but we want to force false by default for remote, since settings do not apply
-	if registry.IsRemote() {
-		flag = fromAndBudFlags.Lookup("http-proxy")
-		buildOpts.HTTPProxy = false
-		if err := flag.Value.Set("false"); err != nil {
-			logrus.Errorf("Unable to set --https-proxy to %v: %v", false, err)
-		}
-		flag.DefValue = "false"
-	}
+
 	flags.AddFlagSet(&fromAndBudFlags)
 	// Add the completion functions
 	fromAndBudFlagsCompletions := buildahCLI.GetFromAndBudFlagsCompletions()
@@ -189,7 +181,6 @@ func buildFlags(cmd *cobra.Command) {
 		_ = flags.MarkHidden("signature-policy")
 		_ = flags.MarkHidden("tls-verify")
 		_ = flags.MarkHidden("compress")
-		_ = flags.MarkHidden("volume")
 		_ = flags.MarkHidden("output")
 		_ = flags.MarkHidden("logsplit")
 	}
@@ -228,7 +219,11 @@ func build(cmd *cobra.Command, args []string) error {
 	var containerFiles []string
 	for _, f := range buildOpts.File {
 		if f == "-" {
-			containerFiles = append(containerFiles, "/dev/stdin")
+			if len(args) == 0 {
+				args = append(args, "-")
+			} else {
+				containerFiles = append(containerFiles, "/dev/stdin")
+			}
 		} else {
 			containerFiles = append(containerFiles, f)
 		}
@@ -406,6 +401,17 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 	}
 
 	args := make(map[string]string)
+	if c.Flag("build-arg-file").Changed {
+		for _, argfile := range flags.BuildArgFile {
+			fargs, err := env.ParseFile(argfile)
+			if err != nil {
+				return nil, err
+			}
+			for name, val := range fargs {
+				args[name] = val
+			}
+		}
+	}
 	if c.Flag("build-arg").Changed {
 		for _, arg := range flags.BuildArg {
 			av := strings.SplitN(arg, "=", 2)
@@ -504,11 +510,11 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 		runtimeFlags = append(runtimeFlags, "--"+arg)
 	}
 
-	containerConfig := registry.PodmanConfig()
-	for _, arg := range containerConfig.RuntimeFlags {
+	podmanConfig := registry.PodmanConfig()
+	for _, arg := range podmanConfig.RuntimeFlags {
 		runtimeFlags = append(runtimeFlags, "--"+arg)
 	}
-	if containerConfig.Engine.CgroupManager == config.SystemdCgroupsManager {
+	if podmanConfig.ContainersConf.Engine.CgroupManager == config.SystemdCgroupsManager {
 		runtimeFlags = append(runtimeFlags, "--systemd-cgroup")
 	}
 
@@ -537,16 +543,16 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 			}
 		}
 	}
-	var cacheTo reference.Named
-	var cacheFrom reference.Named
+	var cacheTo []reference.Named
+	var cacheFrom []reference.Named
 	if c.Flag("cache-to").Changed {
-		cacheTo, err = parse.RepoNameToNamedReference(flags.CacheTo)
+		cacheTo, err = parse.RepoNamesToNamedReferences(flags.CacheTo)
 		if err != nil {
 			return nil, fmt.Errorf("unable to parse value provided `%s` to --cache-to: %w", flags.CacheTo, err)
 		}
 	}
 	if c.Flag("cache-from").Changed {
-		cacheFrom, err = parse.RepoNameToNamedReference(flags.CacheFrom)
+		cacheFrom, err = parse.RepoNamesToNamedReferences(flags.CacheFrom)
 		if err != nil {
 			return nil, fmt.Errorf("unable to parse value provided `%s` to --cache-from: %w", flags.CacheTo, err)
 		}
@@ -576,13 +582,14 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 		ConfigureNetwork:        networkPolicy,
 		ContextDirectory:        contextDir,
 		CPPFlags:                flags.CPPFlags,
-		DefaultMountsFilePath:   containerConfig.Containers.DefaultMountsFile,
+		DefaultMountsFilePath:   podmanConfig.ContainersConfDefaultsRO.Containers.DefaultMountsFile,
 		Devices:                 flags.Devices,
 		DropCapabilities:        flags.CapDrop,
-		Envs:                    flags.Envs,
+		Envs:                    buildahCLI.LookupEnvVarReferences(flags.Envs, os.Environ()),
 		Err:                     stderr,
 		ForceRmIntermediateCtrs: flags.ForceRm,
 		From:                    flags.From,
+		GroupAdd:                flags.GroupAdd,
 		IDMappingOptions:        idmappingOptions,
 		In:                      stdin,
 		Isolation:               isolation,
@@ -608,7 +615,7 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *buil
 		Quiet:                   flags.Quiet,
 		RemoveIntermediateCtrs:  flags.Rm,
 		ReportWriter:            reporter,
-		Runtime:                 containerConfig.RuntimePath,
+		Runtime:                 podmanConfig.RuntimePath,
 		RuntimeArgs:             runtimeFlags,
 		RusageLogFile:           flags.RusageLogFile,
 		SignBy:                  flags.SignBy,

@@ -110,6 +110,9 @@ func rm(cmd *cobra.Command, args []string) error {
 	for _, cidFile := range rmCidFiles {
 		content, err := os.ReadFile(cidFile)
 		if err != nil {
+			if rmOptions.Ignore && errors.Is(err, os.ErrNotExist) {
+				continue
+			}
 			return fmt.Errorf("reading CIDFile: %w", err)
 		}
 		id := strings.Split(string(content), "\n")[0]
@@ -129,7 +132,7 @@ func rm(cmd *cobra.Command, args []string) error {
 		rmOptions.Depend = true
 	}
 
-	return removeContainers(args, rmOptions, true)
+	return removeContainers(utils.RemoveSlash(args), rmOptions, true)
 }
 
 // removeContainers will remove the specified containers (names or IDs).

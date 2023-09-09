@@ -1,3 +1,7 @@
+####> This option file is used in:
+####>   podman create, run
+####> If file is edited, make sure the changes
+####> are applicable to all of those.
 #### **--health-timeout**=*timeout*
 
 The maximum time allowed to complete the healthcheck before an interval is considered failed. Like start-period, the

@@ -1,6 +1,7 @@
 #!/usr/bin/env bats
 
 load helpers
+load helpers.network
 
 LOOPDEVICE=
 
@@ -20,8 +21,8 @@ function teardown() {
     run_podman pod list --noheading
     is "$output" "" "baseline: empty results from list --noheading"
 
-    run_podman pod ls --noheading
-    is "$output" "" "baseline: empty results from ls --noheading"
+    run_podman pod ls -n
+    is "$output" "" "baseline: empty results from ls -n"
 
     run_podman pod ps --noheading
     is "$output" "" "baseline: empty results from ps --noheading"
@@ -61,7 +62,7 @@ function teardown() {
 
 
 @test "podman pod create - custom infra image" {
-    skip_if_remote "CONTAINERS_CONF only affects server side"
+    skip_if_remote "CONTAINERS_CONF_OVERRIDE only affects server side"
     image="i.do/not/exist:image"
     tmpdir=$PODMAN_TMPDIR/pod-test
     mkdir -p $tmpdir
@@ -74,10 +75,10 @@ EOF
     run_podman 125 pod create --infra-image $image
     is "$output" ".*initializing source docker://$image:.*"
 
-    CONTAINERS_CONF=$containersconf run_podman 125 pod create
+    CONTAINERS_CONF_OVERRIDE=$containersconf run_podman 125 pod create
     is "$output" ".*initializing source docker://$image:.*"
 
-    CONTAINERS_CONF=$containersconf run_podman 125 create --pod new:test $IMAGE
+    CONTAINERS_CONF_OVERRIDE=$containersconf run_podman 125 create --pod new:test $IMAGE
     is "$output" ".*initializing source docker://$image:.*"
 }
 
@@ -303,6 +304,7 @@ EOF
     echo "$teststring" | nc 127.0.0.1 $port_out
 
     # Confirm that the container log output is the string we sent it.
+    run_podman wait $cid
     run_podman logs $cid
     is "$output" "$teststring" "test string received on container"
 
@@ -314,13 +316,16 @@ EOF
 
     # Clean up
     run_podman rm $cid
-    run_podman pod rm -t 0 -f mypod
+    run_podman pod rm -t 0 -f --pod-id-file $pod_id_file
+    if [[ -e $pod_id_file ]]; then
+        die "pod-id-file $pod_id_file should be removed along with pod"
+    fi
     run_podman rmi $infra_image
 }
 
 @test "podman pod create should fail when infra-name is already in use" {
     local infra_name="infra_container_$(random_string 10 | tr A-Z a-z)"
-    local infra_image="k8s.gcr.io/pause:3.5"
+    local infra_image="registry.k8s.io/pause:3.5"
     local pod_name="$(random_string 10 | tr A-Z a-z)"
 
     run_podman --noout pod create --name $pod_name --infra-name "$infra_name" --infra-image "$infra_image"
@@ -547,6 +552,19 @@ io.max          | $lomajmin rbps=1048576 wbps=1048576 riops=max wiops=max
     is "$output" "Error: .*bogus.*: no such pod" "Should print error"
     run_podman pod rm --force bogus
     is "$output" "" "Should print no output"
+}
+
+@test "podman pod create on failure" {
+    podname=pod$(random_string)
+    nwname=pod$(random_string)
+
+    run_podman 125 pod create --network $nwname --name $podname
+    # FIXME: podman and podman-remote do not return the same error message
+    # but consistency would be nice
+    is "$output" "Error: .*unable to find network with name or ID $nwname: network not found"
+
+    # Make sure the pod doesn't get created on failure
+    run_podman 1 pod exists $podname
 }
 
 # vim: filetype=sh

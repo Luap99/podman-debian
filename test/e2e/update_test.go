@@ -17,7 +17,7 @@ var _ = Describe("Podman update", func() {
 
 	BeforeEach(func() {
 		tempdir, err = CreateTempDirInTempDir()
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		podmanTest = PodmanTestCreate(tempdir)
 		podmanTest.Setup()
 	})
@@ -47,7 +47,8 @@ var _ = Describe("Podman update", func() {
 			"--memory", "1G",
 			"--memory-swap", "2G",
 			"--memory-reservation", "2G",
-			"--memory-swappiness", "50", ctrID}
+			"--memory-swappiness", "50",
+			"--pids-limit", "123", ctrID}
 
 		session = podmanTest.Podman(commonArgs)
 		session.WaitWithDefaultTimeout()
@@ -89,6 +90,39 @@ var _ = Describe("Podman update", func() {
 		Expect(session).Should(Exit(0))
 		Expect(session.OutputToString()).Should(ContainSubstring("123"))
 
+		// checking pids-limit
+		session = podmanTest.Podman([]string{"exec", "-it", ctrID, "cat", "/sys/fs/cgroup/pids/pids.max"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToString()).Should(ContainSubstring("123"))
+
+	})
+
+	It("podman update container unspecified pid limit", func() {
+		SkipIfCgroupV1("testing flags that only work in cgroup v2")
+		SkipIfRootless("many of these handlers are not enabled while rootless in CI")
+		session := podmanTest.Podman([]string{"run", "-dt", "--pids-limit", "-1", ALPINE})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		ctrID := session.OutputToString()
+
+		commonArgs := []string{
+			"update",
+			"--cpus", "5",
+			ctrID}
+
+		session = podmanTest.Podman(commonArgs)
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		ctrID = session.OutputToString()
+
+		// checking pids-limit was not changed after update when not specified as an option
+		session = podmanTest.Podman([]string{"exec", "-it", ctrID, "cat", "/sys/fs/cgroup/pids.max"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToString()).Should(ContainSubstring("max"))
 	})
 
 	It("podman update container all options v2", func() {
@@ -114,6 +148,7 @@ var _ = Describe("Podman update", func() {
 			"--device-write-bps", "/dev/zero:10mb",
 			"--device-read-iops", "/dev/zero:1000",
 			"--device-write-iops", "/dev/zero:1000",
+			"--pids-limit", "123",
 			ctrID}
 
 		session = podmanTest.Podman(commonArgs)
@@ -169,6 +204,12 @@ var _ = Describe("Podman update", func() {
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(session.OutputToString()).Should(ContainSubstring("5"))
+
+		// checking pids-limit
+		session = podmanTest.Podman([]string{"exec", "-it", ctrID, "cat", "/sys/fs/cgroup/pids.max"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToString()).Should(ContainSubstring("123"))
 	})
 
 	It("podman update keep original resources if not overridden", func() {

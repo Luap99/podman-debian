@@ -1,3 +1,7 @@
+####> This option file is used in:
+####>   podman logs, pod logs
+####> If file is edited, make sure the changes
+####> are applicable to all of those.
 #### **--since**=*TIMESTAMP*
 
 Show logs since TIMESTAMP. The --since option can be Unix timestamps, date formatted timestamps, or Go duration

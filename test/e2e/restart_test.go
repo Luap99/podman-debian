@@ -62,7 +62,7 @@ var _ = Describe("Podman restart", func() {
 		startTime := podmanTest.Podman([]string{"inspect", "--format='{{.State.StartedAt}}'", cid})
 		startTime.WaitWithDefaultTimeout()
 
-		startSession := podmanTest.Podman([]string{"start", cid})
+		startSession := podmanTest.Podman([]string{"start", "--attach", cid})
 		startSession.WaitWithDefaultTimeout()
 		Expect(startSession).Should(Exit(0))
 
@@ -251,7 +251,7 @@ var _ = Describe("Podman restart", func() {
 
 	It("podman restart --cidfile", func() {
 		tmpDir, err := os.MkdirTemp("", "")
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		tmpFile := tmpDir + "cid"
 
 		defer os.RemoveAll(tmpDir)
@@ -274,7 +274,7 @@ var _ = Describe("Podman restart", func() {
 
 	It("podman restart multiple --cidfile", func() {
 		tmpDir, err := os.MkdirTemp("", "")
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		tmpFile1 := tmpDir + "cid-1"
 		tmpFile2 := tmpDir + "cid-2"
 

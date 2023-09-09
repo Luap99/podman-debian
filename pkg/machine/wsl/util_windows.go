@@ -1,3 +1,6 @@
+//go:build windows
+// +build windows
+
 package wsl
 
 import (
@@ -12,11 +15,10 @@ import (
 	"unicode/utf16"
 	"unsafe"
 
+	"github.com/containers/storage/pkg/homedir"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
-
-	"github.com/containers/storage/pkg/homedir"
 )
 
 // nolint
@@ -216,7 +218,7 @@ func reboot() error {
 	if _, err := os.Lstat(filepath.Join(os.Getenv(localAppData), wtLocation)); err == nil {
 		wtCommand := wtPrefix + command
 		// RunOnce is limited to 260 chars (supposedly no longer in Builds >= 19489)
-		// For now fallbacak in cases of long usernames (>89 chars)
+		// For now fallback in cases of long usernames (>89 chars)
 		if len(wtCommand) < 260 {
 			command = wtCommand
 		}

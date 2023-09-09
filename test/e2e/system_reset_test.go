@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/containers/podman/v4/pkg/rootless"
 	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -37,10 +36,7 @@ var _ = Describe("podman system reset", func() {
 	It("podman system reset", func() {
 		SkipIfRemote("system reset not supported on podman --remote")
 		// system reset will not remove additional store images, so need to grab length
-
-		// change the network dir so that we do not conflict with other tests
-		// that would use the same network dir and cause unnecessary flakes
-		podmanTest.NetworkConfigDir = tempdir
+		useCustomNetworkDir(podmanTest, tempdir)
 
 		session := podmanTest.Podman([]string{"rmi", "--force", "--all"})
 		session.WaitWithDefaultTimeout()
@@ -69,6 +65,7 @@ var _ = Describe("podman system reset", func() {
 		Expect(session).Should(Exit(0))
 
 		Expect(session.ErrorToString()).To(Not(ContainSubstring("Failed to add pause process")))
+		Expect(session.ErrorToString()).To(Not(ContainSubstring("/usr/share/containers/storage.conf")))
 
 		session = podmanTest.Podman([]string{"images", "-n"})
 		session.WaitWithDefaultTimeout()
@@ -94,7 +91,7 @@ var _ = Describe("podman system reset", func() {
 		// TODO: machine tests currently don't run outside of the machine test pkg
 		// no machines are created here to cleanup
 		// machine commands are rootless only
-		if rootless.IsRootless() {
+		if isRootless() {
 			session = podmanTest.Podman([]string{"machine", "list", "-q"})
 			session.WaitWithDefaultTimeout()
 			Expect(session).Should(Exit(0))

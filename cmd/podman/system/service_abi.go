@@ -11,10 +11,12 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/containers/common/pkg/cgroups"
 	"github.com/containers/podman/v4/cmd/podman/registry"
 	api "github.com/containers/podman/v4/pkg/api/server"
 	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/containers/podman/v4/pkg/domain/infra"
+	"github.com/containers/podman/v4/pkg/rootless"
 	"github.com/containers/podman/v4/pkg/servicereaper"
 	"github.com/containers/podman/v4/utils"
 	"github.com/coreos/go-systemd/v22/activation"
@@ -94,14 +96,21 @@ func restService(flags *pflag.FlagSet, cfg *entities.PodmanConfig, opts entities
 		libpodRuntime.SetRemoteURI(uri.String())
 	}
 
-	// Close stdin, so shortnames will not prompt
+	// Set stdin to /dev/null, so shortnames will not prompt
 	devNullfile, err := os.Open(os.DevNull)
 	if err != nil {
 		return err
 	}
-	defer devNullfile.Close()
 	if err := unix.Dup2(int(devNullfile.Fd()), int(os.Stdin.Fd())); err != nil {
+		devNullfile.Close()
 		return err
+	}
+	// Close the fd right away to not leak it during the entire time of the service.
+	devNullfile.Close()
+
+	cgroupv2, _ := cgroups.IsCgroup2UnifiedMode()
+	if rootless.IsRootless() && !cgroupv2 {
+		logrus.Warnf("Running 'system service' in rootless mode without cgroup v2, containers won't survive a 'system service' restart")
 	}
 
 	if err := utils.MaybeMoveToSubCgroup(); err != nil {

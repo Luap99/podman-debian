@@ -1,11 +1,17 @@
+####> This option file is used in:
+####>   podman create, run
+####> If file is edited, make sure the changes
+####> are applicable to all of those.
 #### **--systemd**=*true* | *false* | *always*
 
 Run container in systemd mode. The default is **true**.
 
-The value *always* enforces the systemd mode is enforced without
-looking at the executable name. Otherwise, if set to true and the
-command you are running inside the container is **systemd**, **/usr/sbin/init**,
-**/sbin/init** or **/usr/local/sbin/init**.
+- **true** enables systemd mode only when the command executed inside the container is *systemd*, */usr/sbin/init*,
+*/sbin/init* or */usr/local/sbin/init*.
+
+- **false** disables systemd mode.
+
+- **always** enforces the systemd mode to be enabled.
 
 Running the container in systemd mode causes the following changes:
 
@@ -17,7 +23,8 @@ Running the container in systemd mode causes the following changes:
   * _/var/lib/journal_
 * Podman sets the default stop signal to **SIGRTMIN+3**.
 * Podman sets **container_uuid** environment variable in the container to the
-first 32 characters of the container id.
+first 32 characters of the container ID.
+* Podman will not mount virtual consoles (_/dev/tty\d+_) when running with **--privileged**.
 
 This allows systemd to run in a confined container without any modifications.
 

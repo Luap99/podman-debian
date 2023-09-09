@@ -3,6 +3,7 @@ package integration
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
@@ -13,8 +14,8 @@ import (
 var pruneImage = fmt.Sprintf(`
 FROM  %s
 LABEL RUN podman --version
-RUN apk update
-RUN apk add bash`, ALPINE)
+RUN echo hello > /hello
+RUN echo hello2 > /hello2`, ALPINE)
 
 var emptyPruneImage = `
 FROM scratch
@@ -190,7 +191,7 @@ var _ = Describe("Podman prune", func() {
 		hasNoneAfter, result := after.GrepString("<none>")
 		Expect(hasNoneAfter).To(BeTrue())
 		Expect(len(after.OutputToStringArray())).To(BeNumerically(">", 1))
-		Expect(len(result)).To(BeNumerically(">", 0))
+		Expect(result).ToNot(BeEmpty())
 	})
 
 	It("podman image prune unused images", func() {
@@ -213,6 +214,7 @@ var _ = Describe("Podman prune", func() {
 	})
 
 	It("podman system image prune unused images", func() {
+		useCustomNetworkDir(podmanTest, tempdir)
 		podmanTest.AddImageToRWStore(ALPINE)
 		podmanTest.BuildImage(pruneImage, "alpine_bash:latest", "true")
 		prune := podmanTest.Podman([]string{"system", "prune", "-a", "--force"})
@@ -259,12 +261,7 @@ var _ = Describe("Podman prune", func() {
 	})
 
 	It("podman system prune networks", func() {
-		// set custom network directory to prevent flakes since the dir is shared with all tests by default
-		podmanTest.NetworkConfigDir = tempdir
-		if IsRemote() {
-			podmanTest.RestartRemoteService()
-		}
-
+		useCustomNetworkDir(podmanTest, tempdir)
 		// Create new network.
 		session := podmanTest.Podman([]string{"network", "create", "test"})
 		session.WaitWithDefaultTimeout()
@@ -307,6 +304,7 @@ var _ = Describe("Podman prune", func() {
 	})
 
 	It("podman system prune - pod,container stopped", func() {
+		useCustomNetworkDir(podmanTest, tempdir)
 		session := podmanTest.Podman([]string{"pod", "create"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
@@ -339,6 +337,7 @@ var _ = Describe("Podman prune", func() {
 	})
 
 	It("podman system prune with running, exited pod and volume prune set true", func() {
+		useCustomNetworkDir(podmanTest, tempdir)
 		// Start and stop a pod to get it in exited state.
 		session := podmanTest.Podman([]string{"pod", "create"})
 		session.WaitWithDefaultTimeout()
@@ -416,6 +415,7 @@ var _ = Describe("Podman prune", func() {
 	})
 
 	It("podman system prune - with dangling images true", func() {
+		useCustomNetworkDir(podmanTest, tempdir)
 		session := podmanTest.Podman([]string{"pod", "create"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
@@ -464,6 +464,7 @@ var _ = Describe("Podman prune", func() {
 	})
 
 	It("podman system prune --volumes --filter", func() {
+		useCustomNetworkDir(podmanTest, tempdir)
 		session := podmanTest.Podman([]string{"volume", "create", "--label", "label1=value1", "myvol1"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
@@ -521,5 +522,96 @@ var _ = Describe("Podman prune", func() {
 		Expect(session.OutputToStringArray()).To(HaveLen(3))
 
 		podmanTest.Cleanup()
+	})
+
+	It("podman system prune --all --external fails", func() {
+		prune := podmanTest.Podman([]string{"system", "prune", "--all", "--enternal"})
+		prune.WaitWithDefaultTimeout()
+		Expect(prune).Should(Exit(125))
+	})
+
+	It("podman system prune --external leaves referenced containers", func() {
+		useCustomNetworkDir(podmanTest, tempdir)
+		containerStorageDir := filepath.Join(podmanTest.Root, podmanTest.ImageCacheFS+"-containers")
+
+		create := podmanTest.Podman([]string{"create", "--name", "test", BB})
+		create.WaitWithDefaultTimeout()
+		Expect(create).Should(Exit(0))
+
+		// Container should exist
+		Expect(podmanTest.NumberOfContainers()).To(Equal(1))
+
+		// have: containers.json, containers.lock and container dir
+		dirents, err := os.ReadDir(containerStorageDir)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(dirents).To(HaveLen(3))
+
+		prune := podmanTest.Podman([]string{"system", "prune", "--external", "-f"})
+		prune.WaitWithDefaultTimeout()
+		Expect(prune).Should(Exit(0))
+
+		// Container should still exist
+		Expect(podmanTest.NumberOfContainers()).To(Equal(1))
+
+		// still have: containers.json, containers.lock and container dir
+		dirents, err = os.ReadDir(containerStorageDir)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(dirents).To(HaveLen(3))
+
+	})
+
+	It("podman system prune --external removes unreferenced containers", func() {
+		SkipIfRemote("Can't drop database while daemon running")
+		useCustomNetworkDir(podmanTest, tempdir)
+
+		containerStorageDir := filepath.Join(podmanTest.Root, podmanTest.ImageCacheFS+"-containers")
+
+		// Create container 1
+		create := podmanTest.Podman([]string{"create", "--name", "test", BB})
+		create.WaitWithDefaultTimeout()
+		Expect(create).Should(Exit(0))
+
+		Expect(podmanTest.NumberOfContainers()).To(Equal(1))
+
+		// containers.json, containers.lock and container 1 dir
+		dirents, err := os.ReadDir(containerStorageDir)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(dirents).To(HaveLen(3))
+
+		// Drop podman database and storage, losing track of container 1 (but directory remains)
+		err = os.Remove(filepath.Join(containerStorageDir, "containers.json"))
+		Expect(err).ToNot(HaveOccurred())
+
+		if podmanTest.DatabaseBackend == "sqlite" {
+			err = os.Remove(filepath.Join(podmanTest.Root, "db.sql"))
+			Expect(err).ToNot(HaveOccurred())
+		} else {
+			dbDir := filepath.Join(podmanTest.Root, "libpod")
+			err = os.RemoveAll(dbDir)
+			Expect(err).ToNot(HaveOccurred())
+		}
+
+		Expect(podmanTest.NumberOfContainers()).To(Equal(0))
+
+		// Create container 2
+		create = podmanTest.Podman([]string{"create", "--name", "test", BB})
+		create.WaitWithDefaultTimeout()
+		Expect(create).Should(Exit(0))
+
+		Expect(podmanTest.NumberOfContainers()).To(Equal(1))
+
+		// containers.json, containers.lock and container 1&2 dir
+		dirents, err = os.ReadDir(containerStorageDir)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(dirents).To(HaveLen(4))
+
+		prune := podmanTest.Podman([]string{"system", "prune", "--external", "-f"})
+		prune.WaitWithDefaultTimeout()
+		Expect(prune).Should(Exit(0))
+
+		// container 1 dir should be gone now
+		dirents, err = os.ReadDir(containerStorageDir)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(dirents).To(HaveLen(3))
 	})
 })

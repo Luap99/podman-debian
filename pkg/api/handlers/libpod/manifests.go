@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/containers/common/libimage"
 	"github.com/containers/image/v5/docker/reference"
-	"github.com/containers/image/v5/manifest"
 	"github.com/containers/image/v5/types"
 	"github.com/containers/podman/v4/libpod"
 	"github.com/containers/podman/v4/pkg/api/handlers"
@@ -22,6 +22,7 @@ import (
 	"github.com/containers/podman/v4/pkg/channel"
 	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/containers/podman/v4/pkg/domain/infra/abi"
+	envLib "github.com/containers/podman/v4/pkg/env"
 	"github.com/containers/podman/v4/pkg/errorhandling"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/schema"
@@ -139,16 +140,32 @@ func ManifestExists(w http.ResponseWriter, r *http.Request) {
 
 func ManifestInspect(w http.ResponseWriter, r *http.Request) {
 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
+	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	name := utils.GetName(r)
+	// Wrapper to support 3.x with 4.x libpod
+	query := struct {
+		TLSVerify bool `schema:"tlsVerify"`
+	}{}
+
+	if err := decoder.Decode(&query, r.URL.Query()); err != nil {
+		utils.Error(w, http.StatusBadRequest,
+			fmt.Errorf("failed to parse parameters for %s: %w", r.URL.String(), err))
+		return
+	}
 
 	imageEngine := abi.ImageEngine{Libpod: runtime}
-	rawManifest, err := imageEngine.ManifestInspect(r.Context(), name)
+	opts := entities.ManifestInspectOptions{}
+	if _, found := r.URL.Query()["tlsVerify"]; found {
+		opts.SkipTLSVerify = types.NewOptionalBool(!query.TLSVerify)
+	}
+
+	rawManifest, err := imageEngine.ManifestInspect(r.Context(), name, opts)
 	if err != nil {
 		utils.Error(w, http.StatusNotFound, err)
 		return
 	}
 
-	var schema2List manifest.Schema2List
+	var schema2List libimage.ManifestListData
 	if err := json.Unmarshal(rawManifest, &schema2List); err != nil {
 		utils.Error(w, http.StatusInternalServerError, err)
 		return
@@ -444,6 +461,24 @@ func ManifestModify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(body.ManifestAddOptions.Annotation) != 0 {
+		if len(body.ManifestAddOptions.Annotations) != 0 {
+			utils.Error(w, http.StatusBadRequest, fmt.Errorf("can not set both Annotation and Annotations"))
+			return
+		}
+		annotations := make(map[string]string)
+		for _, annotationSpec := range body.ManifestAddOptions.Annotation {
+			spec := strings.SplitN(annotationSpec, "=", 2)
+			if len(spec) != 2 {
+				utils.Error(w, http.StatusBadRequest, fmt.Errorf("no value given for annotation %q", spec[0]))
+				return
+			}
+			annotations[spec[0]] = spec[1]
+		}
+		body.ManifestAddOptions.Annotations = envLib.Join(body.ManifestAddOptions.Annotations, annotations)
+		body.ManifestAddOptions.Annotation = nil
+	}
+
 	if tlsVerify, ok := r.URL.Query()["tlsVerify"]; ok {
 		tls, err := strconv.ParseBool(tlsVerify[len(tlsVerify)-1])
 		if err != nil {
@@ -495,13 +530,13 @@ func ManifestModify(w http.ResponseWriter, r *http.Request) {
 		}
 	case strings.EqualFold("annotate", body.Operation):
 		options := entities.ManifestAnnotateOptions{
-			Annotation: body.Annotation,
-			Arch:       body.Arch,
-			Features:   body.Features,
-			OS:         body.OS,
-			OSFeatures: body.OSFeatures,
-			OSVersion:  body.OSVersion,
-			Variant:    body.Variant,
+			Annotations: body.Annotations,
+			Arch:        body.Arch,
+			Features:    body.Features,
+			OS:          body.OS,
+			OSFeatures:  body.OSFeatures,
+			OSVersion:   body.OSVersion,
+			Variant:     body.Variant,
 		}
 		for _, image := range body.Images {
 			id, err := imageEngine.ManifestAnnotate(r.Context(), name, image, options)

@@ -1,6 +1,7 @@
 package system
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/report"
+	"github.com/containers/podman/v4/cmd/podman/common"
 	"github.com/containers/podman/v4/cmd/podman/registry"
 	"github.com/containers/podman/v4/cmd/podman/validate"
 	"github.com/containers/podman/v4/pkg/domain/entities"
@@ -46,13 +48,17 @@ func init() {
 
 	formatFlagName := "format"
 	flags.StringVar(&dfOptions.Format, formatFlagName, "", "Pretty-print images using a Go template")
-	_ = dfSystemCommand.RegisterFlagCompletionFunc(formatFlagName, completion.AutocompleteNone)
+	_ = dfSystemCommand.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteFormat(&dfSummary{}))
 }
 
 func df(cmd *cobra.Command, args []string) error {
 	reports, err := registry.ContainerEngine().SystemDf(registry.Context(), dfOptions)
 	if err != nil {
 		return err
+	}
+
+	if dfOptions.Format != "" && dfOptions.Verbose {
+		return errors.New("cannot combine --format and --verbose flags")
 	}
 
 	if dfOptions.Verbose {
@@ -63,26 +69,29 @@ func df(cmd *cobra.Command, args []string) error {
 
 func printSummary(cmd *cobra.Command, reports *entities.SystemDfReport) error {
 	var (
-		dfSummaries       []*dfSummary
-		active            int
-		size, reclaimable int64
+		dfSummaries []*dfSummary
+		active      int
+		used        int64
 	)
 
+	visitedImages := make(map[string]bool)
 	for _, i := range reports.Images {
+		if _, ok := visitedImages[i.ImageID]; ok {
+			continue
+		}
+		visitedImages[i.ImageID] = true
 		if i.Containers > 0 {
 			active++
-		}
-		size += i.Size
-		if i.Containers < 1 {
-			reclaimable += i.Size
+			used += i.UniqueSize
 		}
 	}
+
 	imageSummary := dfSummary{
 		Type:           "Images",
 		Total:          len(reports.Images),
 		Active:         active,
-		RawSize:        size,
-		RawReclaimable: reclaimable,
+		RawSize:        reports.ImagesSize,        // The "raw" size is the sum of all layer sizes
+		RawReclaimable: reports.ImagesSize - used, // We can reclaim the date of "unused" images (i.e., the ones without containers)
 	}
 	dfSummaries = append(dfSummaries, &imageSummary)
 
@@ -139,6 +148,9 @@ func printSummary(cmd *cobra.Command, reports *entities.SystemDfReport) error {
 
 	var err error
 	if cmd.Flags().Changed("format") {
+		if report.IsJSON(dfOptions.Format) {
+			return printJSON(dfSummaries)
+		}
 		rpt, err = rpt.Parse(report.OriginUser, dfOptions.Format)
 	} else {
 		row := "{{range . }}{{.Type}}\t{{.Total}}\t{{.Active}}\t{{.Size}}\t{{.Reclaimable}}\n{{end -}}"
@@ -148,6 +160,16 @@ func printSummary(cmd *cobra.Command, reports *entities.SystemDfReport) error {
 		return err
 	}
 	return writeTemplate(rpt, hdrs, dfSummaries)
+}
+
+func printJSON(data []*dfSummary) error {
+	bytes, err := json.MarshalIndent(data, "", "    ")
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(string(bytes))
+	return nil
 }
 
 func printVerbose(cmd *cobra.Command, reports *entities.SystemDfReport) error { //nolint:interfacer
@@ -280,8 +302,8 @@ type dfSummary struct {
 	Type           string
 	Total          int
 	Active         int
-	RawSize        int64 `json:"Size"`
-	RawReclaimable int64 `json:"Reclaimable"`
+	RawSize        int64
+	RawReclaimable int64
 }
 
 func (d *dfSummary) Size() string {
@@ -295,4 +317,17 @@ func (d *dfSummary) Reclaimable() string {
 		percent = int(math.Round(float64(d.RawReclaimable) / float64(d.RawSize) * float64(100)))
 	}
 	return fmt.Sprintf("%s (%d%%)", units.HumanSize(float64(d.RawReclaimable)), percent)
+}
+
+func (d dfSummary) MarshalJSON() ([]byte, error) {
+	// need to create a new type here to prevent infinite recursion in MarshalJSON() call
+	type rawDf dfSummary
+
+	return json.Marshal(struct {
+		rawDf
+		// fields for docker compat https://github.com/containers/podman/issues/16902
+		TotalCount  int
+		Size        string
+		Reclaimable string
+	}{rawDf(d), d.Total, d.Size(), d.Reclaimable()})
 }

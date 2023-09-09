@@ -18,8 +18,8 @@ either 'Containerfile' or 'Dockerfile'.
 The build context directory can be specified as the http(s) URL of an archive,
 git repository or Containerfile.
 
-If no context directory is specified, then Podman will assume the current
-working directory as the build context, which should contain the Containerfile.
+When invoked with `-f` and a path to a Containerfile, with no explicit CONTEXT
+directory, Podman will use the Containerfile's parent directory as its build context.
 
 Containerfiles ending with a ".in" suffix will be preprocessed via CPP(1).  This
 can be useful to decompose Containerfiles into several reusable parts that can
@@ -78,6 +78,25 @@ instructions read from the Containerfiles in the same way that environment
 variables are, but which will not be added to environment variable list in the
 resulting image's configuration.
 
+#### **--build-arg-file**=*path*
+
+Specifies a file containing lines of build arguments of the form `arg=value`.
+The suggested file name is `argfile.conf`.
+
+Comment lines beginning with `#` are ignored, along with blank lines.
+All others should be of the `arg=value` format passed to `--build-arg`.
+
+If several arguments are provided via the `--build-arg-file`
+and `--build-arg` options, the build arguments will be merged across all
+of the provided files and command line arguments.
+
+Any file provided in a `--build-arg-file` option will be read before
+the arguments supplied via the `--build-arg` option.
+
+When a given argument name is specified several times, the last instance
+is the one that is passed to the resulting builds. This means `--build-arg`
+values always override those in a `--build-arg-file`.
+
 #### **--build-context**=*name=value*
 
 Specify an additional build context using its short name and its location.
@@ -90,7 +109,7 @@ Valid values could be:
 * HTTP URL to a tarball – e.g. --build-context src=https://example.org/releases/src.tar
 * Container image – specified with a container-image:// prefix, e.g. --build-context alpine=container-image://alpine:3.15, (also accepts docker://, docker-image://)
 
-On the Containerfile side, you can reference the build context on all
+On the Containerfile side, reference the build context on all
 commands that accept the “from” parameter. Here’s how that might look:
 
 ```dockerfile
@@ -162,7 +181,7 @@ When executing RUN instructions, run the command specified in the instruction
 with the specified capability removed from its capability set.
 The CAP\_CHOWN, CAP\_DAC\_OVERRIDE, CAP\_FOWNER,
 CAP\_FSETID, CAP\_KILL, CAP\_NET\_BIND\_SERVICE, CAP\_SETFCAP,
-CAP\_SETGID, CAP\_SETPCAP, CAP\_SETUID, and CAP\_SYS\_CHROOT capabilities are
+CAP\_SETGID, CAP\_SETPCAP, and CAP\_SETUID capabilities are
 granted by default; this option can be used to remove them.
 
 If a capability is specified to both the **--cap-add** and **--cap-drop**
@@ -255,13 +274,13 @@ option.
 Specifies a Containerfile which contains instructions for building the image,
 either a local file or an **http** or **https** URL.  If more than one
 Containerfile is specified, *FROM* instructions will only be accepted from the
-first specified file.
+last specified file.
 
 If a build context is not specified, and at least one Containerfile is a
 local file, the directory in which it resides will be used as the build
 context.
 
-If you specify `-f -`, the Containerfile contents will be read from stdin.
+Specifying the option `-f -` causes the Containerfile contents to be read from stdin.
 
 #### **--force-rm**
 
@@ -284,9 +303,22 @@ FROM instructions in a Containerfile, only the first is changed.
 
 With the remote podman client, not all container transports will work as
 expected. For example, oci-archive:/x.tar will reference /x.tar on the remote
-machine instead of on the client. If you need to support remote podman clients,
-it is best to restrict yourself to containers-storage: and docker://
-transports.
+machine instead of on the client. When using podman remote clients it is
+best to restrict use to *containers-storage*, and *docker:// transports*.
+
+#### **--group-add**=*group* | *keep-groups*
+
+Assign additional groups to the primary user running within the container
+process.
+
+- `keep-groups` is a special value that tells Buildah to keep the supplementary
+group access.
+
+Allows container to use the user's supplementary group access. If file systems
+or devices are only accessible by the rootless user's group, this flag tells the
+OCI runtime to pass the group access into the container. Currently only
+available with the `crun` OCI runtime. Note: `keep-groups` is exclusive, other
+groups cannot be specified with this flag.
 
 #### **--help**, **-h**
 
@@ -304,9 +336,7 @@ For the bind-mount conditions, only mounts explicitly requested by the caller vi
 
 If --hooks-dir is unset for root callers, Buildah will currently default to /usr/share/containers/oci/hooks.d and /etc/containers/oci/hooks.d in order of increasing precedence. Using these defaults is deprecated, and callers should migrate to explicitly setting --hooks-dir.
 
-#### **--http-proxy**
-
-Pass through HTTP Proxy environment variables.
+@@option http-proxy
 
 #### **--identity-label**
 
@@ -483,7 +513,7 @@ process.
 
 #### **--platform**=*os/arch[/variant][,...]*
 
-Set the *os/arch* of the built image (and its base image, if your build uses one)
+Set the *os/arch* of the built image (and its base image, when using one)
 to the provided value instead of using the current operating system and
 architecture of the host (for example `linux/arm`).  Unless overridden,
 subsequent lookups of the same image in the local storage will match this
@@ -565,7 +595,7 @@ To later use the secret, use the --mount option in a `RUN` instruction within a 
 Security Options
 
 - `apparmor=unconfined` : Turn off apparmor confinement for the container
-- `apparmor=your-profile` : Set the apparmor confinement profile for the
+- `apparmor=alternate-profile` : Set the apparmor confinement profile for the
 container
 
 - `label=user:USER`     : Set the label user for the container processes
@@ -766,10 +796,9 @@ using the architecture variant of the build host.
 
 #### **--volume**, **-v**=*[HOST-DIR:CONTAINER-DIR[:OPTIONS]]*
 
-Create a bind mount. If you specify `-v /HOST-DIR:/CONTAINER-DIR`, Podman
-bind mounts `/HOST-DIR` in the host to `/CONTAINER-DIR` in the Podman
-container. (This option is not available with the remote Podman client,
-including Mac and Windows (excluding WSL2) machines)
+Create a bind mount. Specifying the `-v /HOST-DIR:/CONTAINER-DIR` option, Podman
+bind mounts `/HOST-DIR` from the host to `/CONTAINER-DIR` in the Podman
+container.
 
 The `OPTIONS` are a comma-separated list and can be: <sup>[[1]](#Footnote1)</sup>
 
@@ -780,7 +809,7 @@ The `OPTIONS` are a comma-separated list and can be: <sup>[[1]](#Footnote1)</sup
 
 The `CONTAINER-DIR` must be an absolute path such as `/src/docs`. The `HOST-DIR`
 must be an absolute path as well. Podman bind-mounts the `HOST-DIR` to the
-path you specify. For example, if you supply `/foo` as the host path,
+specified path. For example, when specifying the host path `/foo`,
 Podman copies the contents of `/foo` to the container filesystem on the host
 and bind mounts that into the container.
 
@@ -810,7 +839,7 @@ content mounted into a container. Without a label, the security system might
 prevent the processes running inside the container from using the content. By
 default, Podman does not change the labels set by the OS.
 
-To change a label in the container context, you can add either of two suffixes
+To change a label in the container context, add one of these two suffixes
 `:z` or `:Z` to the volume mount. These suffixes tell Podman to relabel file
 objects on the shared volumes. The `z` option tells Podman that two containers
 share the volume content. As a result, Podman labels the content with a shared
@@ -819,7 +848,7 @@ The `Z` option tells Podman to label the content with a private unshared label.
 Only the current container can use a private volume.
 
 Note: Do not relabel system files and directories. Relabeling system content
-might cause other confined services on your machine to fail.  For these types
+might cause other confined services on the host machine to fail.  For these types
 of containers, disabling SELinux separation is recommended.  The option
 `--security-opt label=disable` disables SELinux separation for the container.
 For example, if a user wanted to volume mount their entire home directory into the build containers, they need to disable SELinux separation.
@@ -851,8 +880,8 @@ Content mounted into the container is labeled with the private label.
 by the container label. If not, SELinux container separation must be disabled
 for the container to work.
      - Modification of the directory volume mounted into the container with an
-overlay mount can cause unexpected failures.  It is recommended that you do not
-modify the directory until the container finishes running.
+overlay mount can cause unexpected failures. Do not modify the directory until
+the container finishes running.
 
 By default bind mounted volumes are `private`. That means any mounts done
 inside containers will not be visible on the host and vice versa. This behavior
@@ -981,8 +1010,8 @@ $ podman build https://github.com/scollier/purpletest
 
   Podman will fetch the archive file, decompress it, and use its contents as the
 build context. The Containerfile at the root of the archive and the rest of the
-archive will get used as the context of the build. If you pass
-`-f PATH/Containerfile` option as well, the system will look for that file
+archive will get used as the context of the build. Passing the
+`-f PATH/Containerfile` option as well tells the system to look for that file
 inside the contents of the archive.
 
 ```
@@ -1057,17 +1086,17 @@ a registry or domain portion.
 
 ### lastlog sparse file
 
-If you are using a useradd command within a Containerfile with a large UID/GID,
-it will create a large sparse file `/var/log/lastlog`.  This can cause the
+Using a useradd command within a Containerfile with a large UID/GID will create
+a large sparse file `/var/log/lastlog`.  This can cause the
 build to hang forever.  Go language does not support sparse files correctly,
-which can lead to some huge files being created in your container image.
+which can lead to some huge files being created in the container image.
 
-If you are using `useradd` within your build script, you should pass the
+When using the `useradd` command within the build script, pass the
 `--no-log-init or -l` option to the `useradd` command.  This option tells
 useradd to stop creating the lastlog file.
 
 ## SEE ALSO
-**[podman(1)](podman.1.md)**, **[buildah(1)](https://github.com/containers/buildah/blob/main/docs/buildah.1.md)**, **[containers-certs.d(5)](https://github.com/containers/image/blob/main/docs/containers-certs.d.5.md)**, **[containers-registries.conf(5)](https://github.com/containers/image/blob/main/docs/containers-registries.conf.5.md)**, **[crun(1)](https://github.com/containers/crun/blob/main/crun.1.md)**, **[runc(8)](https://github.com/opencontainers/runc/blob/master/man/runc.8.md)**, **[useradd(8)](https://www.unix.com/man-page/redhat/8/useradd)**, **[podman-ps(1)](podman-ps.1.md)**, **[podman-rm(1)](podman-rm.1.md)**, **[Containerfile(5)](https://github.com/containers/common/blob/main/docs/Containerfile.5.md)**, **[containerignore(5)](https://github.com/containers/common/blob/main/docs/containerignore.5.md)**
+**[podman(1)](podman.1.md)**, **[buildah(1)](https://github.com/containers/buildah/blob/main/docs/buildah.1.md)**, **[containers-certs.d(5)](https://github.com/containers/image/blob/main/docs/containers-certs.d.5.md)**, **[containers-registries.conf(5)](https://github.com/containers/image/blob/main/docs/containers-registries.conf.5.md)**, **[crun(1)](https://github.com/containers/crun/blob/main/crun.1.md)**, **[runc(8)](https://github.com/opencontainers/runc/blob/main/man/runc.8.md)**, **[useradd(8)](https://www.unix.com/man-page/redhat/8/useradd)**, **[podman-ps(1)](podman-ps.1.md)**, **[podman-rm(1)](podman-rm.1.md)**, **[Containerfile(5)](https://github.com/containers/common/blob/main/docs/Containerfile.5.md)**, **[containerignore(5)](https://github.com/containers/common/blob/main/docs/containerignore.5.md)**
 
 ## HISTORY
 Aug 2020, Additional options and .containerignore added by Dan Walsh `<dwalsh@redhat.com>`

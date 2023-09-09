@@ -8,5 +8,5 @@ repack,compression=xz,\
 dirversionmangle=s/-rc/~rc/,\
 uversionmangle=s/-rc/~rc/,\
 dversionmangle=s{[+~]ds\d*}{},\
-" https://github.com/containers/podman/releases \
-  .*/archive/refs/tags/v?(\d[-\w\d\.]+)\.tar\.gz
+" https://github.com/containers/podman/tags \
+  .*/v?@ANY_VERSION@@ARCHIVE_EXT@

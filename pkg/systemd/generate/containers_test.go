@@ -282,8 +282,6 @@ RequiresMountsFor=/var/run/containers/storage
 Environment=PODMAN_SYSTEMD_UNIT=%n
 Restart=on-failure
 TimeoutStopSec=70
-ExecStartPre=/bin/rm \
-	-f %t/%n.ctr-id
 ExecStart=/usr/bin/podman container run \
 	--cidfile=%t/%n.ctr-id \
 	--cgroups=no-conmon \
@@ -321,8 +319,6 @@ RequiresMountsFor=/var/run/containers/storage
 Environment=PODMAN_SYSTEMD_UNIT=%n
 Restart=on-failure
 TimeoutStopSec=70
-ExecStartPre=/bin/rm \
-	-f %t/%n.ctr-id
 ExecStart=/usr/bin/podman container run \
 	--cidfile=%t/%n.ctr-id \
 	--cgroups=no-conmon \
@@ -360,8 +356,6 @@ RequiresMountsFor=/var/run/containers/storage
 Environment=PODMAN_SYSTEMD_UNIT=%n
 Restart=on-failure
 TimeoutStopSec=70
-ExecStartPre=/bin/rm \
-	-f %t/%n.ctr-id
 ExecStart=/usr/bin/podman container run \
 	--cidfile=%t/%n.ctr-id \
 	--cgroups=no-conmon \
@@ -399,8 +393,6 @@ RequiresMountsFor=/var/run/containers/storage
 Environment=PODMAN_SYSTEMD_UNIT=%n
 Restart=on-failure
 TimeoutStopSec=70
-ExecStartPre=/bin/rm \
-	-f %t/%n.ctr-id
 ExecStart=/usr/bin/podman run \
 	--cidfile=%t/%n.ctr-id \
 	--cgroups=no-conmon \
@@ -438,8 +430,6 @@ RequiresMountsFor=/var/run/containers/storage
 Environment=PODMAN_SYSTEMD_UNIT=%n
 Restart=on-failure
 TimeoutStopSec=70
-ExecStartPre=/bin/rm \
-	-f %t/%n.ctr-id
 ExecStart=/usr/bin/podman run \
 	--cidfile=%t/%n.ctr-id \
 	--cgroups=no-conmon \
@@ -478,8 +468,6 @@ RequiresMountsFor=/var/run/containers/storage
 Environment=PODMAN_SYSTEMD_UNIT=%n
 Restart=on-failure
 TimeoutStopSec=70
-ExecStartPre=/bin/rm \
-	-f %t/%n.ctr-id
 ExecStart=/usr/bin/podman run \
 	--cidfile=%t/%n.ctr-id \
 	--cgroups=no-conmon \
@@ -517,8 +505,6 @@ RequiresMountsFor=/var/run/containers/storage
 Environment=PODMAN_SYSTEMD_UNIT=%n
 Restart=on-failure
 TimeoutStopSec=70
-ExecStartPre=/bin/rm \
-	-f %t/%n.ctr-id
 ExecStart=/usr/bin/podman run \
 	--cidfile=%t/%n.ctr-id \
 	--cgroups=no-conmon \
@@ -554,8 +540,6 @@ RequiresMountsFor=/var/run/containers/storage
 Environment=PODMAN_SYSTEMD_UNIT=%n
 Restart=on-failure
 TimeoutStopSec=102
-ExecStartPre=/bin/rm \
-	-f %t/%n.ctr-id
 ExecStart=/usr/bin/podman run \
 	--cidfile=%t/%n.ctr-id \
 	--cgroups=no-conmon \
@@ -594,8 +578,6 @@ RequiresMountsFor=/var/run/containers/storage
 Environment=PODMAN_SYSTEMD_UNIT=%n
 Restart=on-failure
 TimeoutStopSec=102
-ExecStartPre=/bin/rm \
-	-f %t/%n.ctr-id
 ExecStart=/usr/bin/podman run \
 	--cidfile=%t/%n.ctr-id \
 	--cgroups=no-conmon \
@@ -634,8 +616,6 @@ RequiresMountsFor=/var/run/containers/storage
 Environment=PODMAN_SYSTEMD_UNIT=%n
 Restart=on-failure
 TimeoutStopSec=102
-ExecStartPre=/bin/rm \
-	-f %t/%n.ctr-id
 ExecStart=/usr/bin/podman \
 	--events-backend none \
 	--runroot /root run \
@@ -672,8 +652,6 @@ RequiresMountsFor=/var/run/containers/storage
 Environment=PODMAN_SYSTEMD_UNIT=%n
 Restart=on-failure
 TimeoutStopSec=70
-ExecStartPre=/bin/rm \
-	-f %t/%n.ctr-id
 ExecStart=/usr/bin/podman container run \
 	--cidfile=%t/%n.ctr-id \
 	--cgroups=no-conmon \
@@ -708,8 +686,6 @@ RequiresMountsFor=/var/run/containers/storage
 Environment=PODMAN_SYSTEMD_UNIT=%n
 Restart=on-failure
 TimeoutStopSec=70
-ExecStartPre=/bin/rm \
-	-f %t/%n.ctr-id
 ExecStart=/usr/bin/podman run \
 	--cidfile=%t/%n.ctr-id \
 	--cgroups=no-conmon \
@@ -748,8 +724,6 @@ RequiresMountsFor=/var/run/containers/storage
 Environment=PODMAN_SYSTEMD_UNIT=%n
 Restart=on-failure
 TimeoutStopSec=70
-ExecStartPre=/bin/rm \
-	-f %t/%n.ctr-id
 ExecStart=/usr/bin/podman run \
 	--cidfile=%t/%n.ctr-id \
 	--cgroups=no-conmon \
@@ -787,8 +761,6 @@ RequiresMountsFor=/var/run/containers/storage
 Environment=PODMAN_SYSTEMD_UNIT=%n
 Restart=on-failure
 TimeoutStopSec=70
-ExecStartPre=/bin/rm \
-	-f %t/%n.ctr-id
 ExecStart=/usr/bin/podman run \
 	--cidfile=%t/%n.ctr-id \
 	--cgroups=no-conmon \
@@ -827,8 +799,6 @@ RequiresMountsFor=/var/run/containers/storage
 Environment=PODMAN_SYSTEMD_UNIT=%n
 Restart=on-failure
 TimeoutStopSec=70
-ExecStartPre=/bin/rm \
-	-f %t/%n.ctr-id
 ExecStart=/usr/bin/podman run \
 	--cidfile=%t/%n.ctr-id \
 	--cgroups=no-conmon \
@@ -870,8 +840,6 @@ Environment=PODMAN_SYSTEMD_UNIT=%n
 Environment=FOO=abc "BAR=my test" USER=%%a
 Restart=on-failure
 TimeoutStopSec=70
-ExecStartPre=/bin/rm \
-	-f %t/%n.ctr-id
 ExecStart=/usr/bin/podman run \
 	--cidfile=%t/%n.ctr-id \
 	--cgroups=no-conmon \
@@ -940,8 +908,6 @@ Environment=PODMAN_SYSTEMD_UNIT=%n
 Restart=on-failure
 StartLimitBurst=42
 TimeoutStopSec=70
-ExecStartPre=/bin/rm \
-	-f %t/%n.ctr-id
 ExecStart=/usr/bin/podman run \
 	--cidfile=%t/%n.ctr-id \
 	--cgroups=no-conmon \
@@ -976,8 +942,6 @@ RequiresMountsFor=/var/run/containers/storage
 Environment=PODMAN_SYSTEMD_UNIT=%n
 Restart=on-failure
 TimeoutStopSec=70
-ExecStartPre=/bin/rm \
-	-f %t/%n.ctr-id
 ExecStart=/usr/bin/podman run \
 	--cidfile=%t/%n.ctr-id \
 	--cgroups=no-conmon \
@@ -1014,8 +978,6 @@ Environment=PODMAN_SYSTEMD_UNIT=%n-%i
 Restart=on-failure
 StartLimitBurst=42
 TimeoutStopSec=70
-ExecStartPre=/bin/rm \
-	-f %t/%n.ctr-id
 ExecStart=/usr/bin/podman run \
 	--name=container-foo-%i \
 	--cidfile=%t/%n.ctr-id \
@@ -1032,6 +994,32 @@ ExecStopPost=/usr/bin/podman rm \
 	--cidfile=%t/%n.ctr-id
 Type=notify
 NotifyAccess=all
+
+[Install]
+WantedBy=default.target
+`
+	goodRestartSec := `# container-foobar.service
+# autogenerated by Podman CI
+
+[Unit]
+Description=Podman container-foobar.service
+Documentation=man:podman-generate-systemd(1)
+Wants=network-online.target
+After=network-online.target
+RequiresMountsFor=/var/run/containers/storage
+
+[Service]
+Environment=PODMAN_SYSTEMD_UNIT=%n
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=70
+ExecStart=/usr/bin/podman start foobar
+ExecStop=/usr/bin/podman stop  \
+	-t 10 foobar
+ExecStopPost=/usr/bin/podman stop  \
+	-t 10 foobar
+PIDFile=/run/containers/storage/overlay-containers/639c53578af4d84b8800b4635fa4e680ee80fd67e0e6a2d4eea48d1e3230f401/userdata/conmon.pid
+Type=forking
 
 [Install]
 WantedBy=default.target
@@ -1691,6 +1679,25 @@ WantedBy=default.target
 				RunRoot:           "/var/run/containers/storage",
 			},
 			goodNameEmptyContainerPrefix,
+			false,
+			false,
+			false,
+			false,
+		},
+		{"good with RestartSec",
+			containerInfo{
+				Executable:        "/usr/bin/podman",
+				ServiceName:       "container-foobar",
+				ContainerNameOrID: "foobar",
+				PIDFile:           "/run/containers/storage/overlay-containers/639c53578af4d84b8800b4635fa4e680ee80fd67e0e6a2d4eea48d1e3230f401/userdata/conmon.pid",
+				StopTimeout:       10,
+				PodmanVersion:     "CI",
+				EnvVariable:       define.EnvVariable,
+				GraphRoot:         "/var/lib/containers/storage",
+				RunRoot:           "/var/run/containers/storage",
+				RestartSec:        15,
+			},
+			goodRestartSec,
 			false,
 			false,
 			false,

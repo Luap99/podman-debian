@@ -16,10 +16,12 @@ import (
 
 	"github.com/containers/common/libimage"
 	"github.com/containers/common/libnetwork/types"
+	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/parse"
 	"github.com/containers/common/pkg/secrets"
 	cutil "github.com/containers/common/pkg/util"
 	"github.com/containers/image/v5/manifest"
+	itypes "github.com/containers/image/v5/types"
 	"github.com/containers/podman/v4/libpod/define"
 	ann "github.com/containers/podman/v4/pkg/annotations"
 	"github.com/containers/podman/v4/pkg/domain/entities"
@@ -33,6 +35,7 @@ import (
 	"github.com/docker/go-units"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
+	"sigs.k8s.io/yaml"
 )
 
 func ToPodOpt(ctx context.Context, podName string, p entities.PodCreateOptions, podYAML *v1.PodTemplateSpec) (entities.PodCreateOptions, error) {
@@ -48,6 +51,12 @@ func ToPodOpt(ctx context.Context, podName string, p entities.PodCreateOptions, 
 	// which is not currently possible with pod create
 	if podYAML.Spec.ShareProcessNamespace != nil && *podYAML.Spec.ShareProcessNamespace {
 		p.Share = append(p.Share, "pid")
+	}
+	if podYAML.Spec.HostPID {
+		p.Pid = "host"
+	}
+	if podYAML.Spec.HostIPC {
+		p.Ipc = "host"
 	}
 	p.Hostname = podYAML.Spec.Hostname
 	if p.Hostname == "" {
@@ -97,6 +106,17 @@ func ToPodOpt(ctx context.Context, podName string, p entities.PodCreateOptions, 
 			p.Net.DNSOptions = dnsOptions
 		}
 	}
+
+	if pscConfig := podYAML.Spec.SecurityContext; pscConfig != nil {
+		// Extract sysctl list from pod security context
+		if options := pscConfig.Sysctls; len(options) > 0 {
+			sysctlOptions := make([]string, 0, len(options))
+			for _, opts := range options {
+				sysctlOptions = append(sysctlOptions, opts.Name+"="+opts.Value)
+			}
+			p.Sysctl = sysctlOptions
+		}
+	}
 	return p, nil
 }
 
@@ -107,6 +127,8 @@ type CtrSpecGenOptions struct {
 	Container v1.Container
 	// Image available to use (pulled or found local)
 	Image *libimage.Image
+	// IPCNSIsHost tells the container to use the host ipcns
+	IpcNSIsHost bool
 	// Volumes for all containers
 	Volumes map[string]*KubeVolume
 	// PodID of the parent pod
@@ -119,12 +141,16 @@ type CtrSpecGenOptions struct {
 	ConfigMaps []v1.ConfigMap
 	// SeccompPaths for finding the seccomp profile path
 	SeccompPaths *KubeSeccompPaths
+	// ReadOnly make all containers root file system readonly
+	ReadOnly itypes.OptionalBool
 	// RestartPolicy defines the restart policy of the container
 	RestartPolicy string
 	// NetNSIsHost tells the container to use the host netns
 	NetNSIsHost bool
 	// UserNSIsHost tells the container to use the host userns
 	UserNSIsHost bool
+	// PidNSIsHost tells the container to use the host pidns
+	PidNSIsHost bool
 	// SecretManager to access the secrets
 	SecretsManager *secrets.SecretsManager
 	// LogDriver which should be used for the container
@@ -144,6 +170,21 @@ type CtrSpecGenOptions struct {
 
 func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGenerator, error) {
 	s := specgen.NewSpecGenerator(opts.Container.Image, false)
+
+	rtc, err := config.Default()
+	if err != nil {
+		return nil, err
+	}
+
+	if s.CgroupsMode == "" {
+		s.CgroupsMode = rtc.Cgroups()
+	}
+	if len(s.ImageVolumeMode) == 0 {
+		s.ImageVolumeMode = rtc.Engine.ImageVolumeMode
+	}
+	if s.ImageVolumeMode == "bind" {
+		s.ImageVolumeMode = "anonymous"
+	}
 
 	// pod name should be non-empty for Deployment objects to be able to create
 	// multiple pods having containers with unique names
@@ -196,9 +237,13 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 	s.InitContainerType = opts.InitContainerType
 
 	setupSecurityContext(s, opts.Container.SecurityContext, opts.PodSecurityContext)
-	err := setupLivenessProbe(s, opts.Container, opts.RestartPolicy)
+	err = setupLivenessProbe(s, opts.Container, opts.RestartPolicy)
 	if err != nil {
 		return nil, fmt.Errorf("failed to configure livenessProbe: %w", err)
+	}
+	err = setupStartupProbe(s, opts.Container, opts.RestartPolicy)
+	if err != nil {
+		return nil, fmt.Errorf("failed to configure startupProbe: %w", err)
 	}
 
 	// Since we prefix the container name with pod name to work-around the uniqueness requirement,
@@ -236,6 +281,18 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 
 	if memoryRes > 0 {
 		s.ResourceLimits.Memory.Reservation = &memoryRes
+	}
+
+	ulimitVal, ok := opts.Annotations[define.UlimitAnnotation]
+	if ok {
+		ulimits := strings.Split(ulimitVal, ",")
+		for _, ul := range ulimits {
+			parsed, err := units.ParseUlimit(ul)
+			if err != nil {
+				return nil, err
+			}
+			s.Rlimits = append(s.Rlimits, spec.POSIXRlimit{Type: parsed.Name, Soft: uint64(parsed.Soft), Hard: uint64(parsed.Hard)})
+		}
 	}
 
 	// TODO: We don't understand why specgen does not take of this, but
@@ -299,7 +356,6 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 	}
 	if opts.PodInfraID != "" {
 		annotations[ann.SandboxID] = opts.PodInfraID
-		annotations[ann.ContainerType] = ann.ContainerTypeContainer
 	}
 	s.Annotations = annotations
 
@@ -369,12 +425,16 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 				Type:        "bind",
 				Options:     options,
 			}
+			if len(volume.SubPath) > 0 {
+				mount.Options = append(mount.Options, fmt.Sprintf("subpath=%s", volume.SubPath))
+			}
 			s.Mounts = append(s.Mounts, mount)
 		case KubeVolumeTypeNamed:
 			namedVolume := specgen.NamedVolume{
 				Dest:    volume.MountPath,
 				Name:    volumeSource.Source,
 				Options: options,
+				SubPath: volume.SubPath,
 			}
 			s.Volumes = append(s.Volumes, &namedVolume)
 		case KubeVolumeTypeConfigMap:
@@ -382,6 +442,7 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 				Dest:    volume.MountPath,
 				Name:    volumeSource.Source,
 				Options: options,
+				SubPath: volume.SubPath,
 			}
 			s.Volumes = append(s.Volumes, &cmVolume)
 		case KubeVolumeTypeCharDevice:
@@ -407,6 +468,7 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 				Dest:    volume.MountPath,
 				Name:    volumeSource.Source,
 				Options: options,
+				SubPath: volume.SubPath,
 			}
 			s.Volumes = append(s.Volumes, &secretVolume)
 		case KubeVolumeTypeEmptyDir:
@@ -415,6 +477,7 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 				Name:        volumeSource.Source,
 				Options:     options,
 				IsAnonymous: true,
+				SubPath:     volume.SubPath,
 			}
 			s.Volumes = append(s.Volumes, &emptyDirVolume)
 		default:
@@ -430,6 +493,12 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 	if opts.UserNSIsHost {
 		s.UserNS.NSMode = specgen.Host
 	}
+	if opts.PidNSIsHost {
+		s.PidNS.NSMode = specgen.Host
+	}
+	if opts.IpcNSIsHost {
+		s.IpcNS.NSMode = specgen.Host
+	}
 
 	// Add labels that come from kube
 	if len(s.Labels) == 0 {
@@ -443,6 +512,12 @@ func ToSpecGen(ctx context.Context, opts *CtrSpecGenOptions) (*specgen.SpecGener
 			s.Labels[k] = v
 		}
 	}
+
+	if ro := opts.ReadOnly; ro != itypes.OptionalBoolUndefined {
+		s.ReadOnlyFilesystem = (ro == itypes.OptionalBoolTrue)
+	}
+	// This should default to true for kubernetes yaml
+	s.ReadWriteTmpfs = true
 
 	// Make sure the container runs in a systemd unit which is
 	// stored as a label at container creation.
@@ -488,6 +563,41 @@ func parseMountPath(mountPath string, readOnly bool, propagationMode *v1.MountPr
 	return dest, opts, nil
 }
 
+func probeToHealthConfig(probe *v1.Probe) (*manifest.Schema2HealthConfig, error) {
+	var commandString string
+	failureCmd := "exit 1"
+	probeHandler := probe.Handler
+
+	// configure healthcheck on the basis of Handler Actions.
+	switch {
+	case probeHandler.Exec != nil:
+		// `makeHealthCheck` function can accept a json array as the command.
+		cmd, err := json.Marshal(probeHandler.Exec.Command)
+		if err != nil {
+			return nil, err
+		}
+		commandString = string(cmd)
+	case probeHandler.HTTPGet != nil:
+		// set defaults as in https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/#http-probes
+		uriScheme := v1.URISchemeHTTP
+		if probeHandler.HTTPGet.Scheme != "" {
+			uriScheme = probeHandler.HTTPGet.Scheme
+		}
+		host := "localhost" // Kubernetes default is host IP, but with Podman there is only one node
+		if probeHandler.HTTPGet.Host != "" {
+			host = probeHandler.HTTPGet.Host
+		}
+		path := "/"
+		if probeHandler.HTTPGet.Path != "" {
+			path = probeHandler.HTTPGet.Path
+		}
+		commandString = fmt.Sprintf("curl -f %s://%s:%d%s || %s", uriScheme, host, probeHandler.HTTPGet.Port.IntValue(), path, failureCmd)
+	case probeHandler.TCPSocket != nil:
+		commandString = fmt.Sprintf("nc -z -v %s %d || %s", probeHandler.TCPSocket.Host, probeHandler.TCPSocket.Port.IntValue(), failureCmd)
+	}
+	return makeHealthCheck(commandString, probe.PeriodSeconds, probe.FailureThreshold, probe.TimeoutSeconds, probe.InitialDelaySeconds)
+}
+
 func setupLivenessProbe(s *specgen.SpecGenerator, containerYAML v1.Container, restartPolicy string) error {
 	var err error
 	if containerYAML.LivenessProbe == nil {
@@ -495,37 +605,41 @@ func setupLivenessProbe(s *specgen.SpecGenerator, containerYAML v1.Container, re
 	}
 	emptyHandler := v1.Handler{}
 	if containerYAML.LivenessProbe.Handler != emptyHandler {
-		var commandString string
-		failureCmd := "exit 1"
-		probe := containerYAML.LivenessProbe
-		probeHandler := probe.Handler
-
-		// configure healthcheck on the basis of Handler Actions.
-		switch {
-		case probeHandler.Exec != nil:
-			execString := strings.Join(probeHandler.Exec.Command, " ")
-			commandString = fmt.Sprintf("%s || %s", execString, failureCmd)
-		case probeHandler.HTTPGet != nil:
-			// set defaults as in https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/#http-probes
-			uriScheme := v1.URISchemeHTTP
-			if probeHandler.HTTPGet.Scheme != "" {
-				uriScheme = probeHandler.HTTPGet.Scheme
-			}
-			host := "localhost" // Kubernetes default is host IP, but with Podman there is only one node
-			if probeHandler.HTTPGet.Host != "" {
-				host = probeHandler.HTTPGet.Host
-			}
-			path := "/"
-			if probeHandler.HTTPGet.Path != "" {
-				path = probeHandler.HTTPGet.Path
-			}
-			commandString = fmt.Sprintf("curl -f %s://%s:%d%s || %s", uriScheme, host, probeHandler.HTTPGet.Port.IntValue(), path, failureCmd)
-		case probeHandler.TCPSocket != nil:
-			commandString = fmt.Sprintf("nc -z -v %s %d || %s", probeHandler.TCPSocket.Host, probeHandler.TCPSocket.Port.IntValue(), failureCmd)
-		}
-		s.HealthConfig, err = makeHealthCheck(commandString, probe.PeriodSeconds, probe.FailureThreshold, probe.TimeoutSeconds, probe.InitialDelaySeconds)
+		s.HealthConfig, err = probeToHealthConfig(containerYAML.LivenessProbe)
 		if err != nil {
 			return err
+		}
+		// if restart policy is in place, ensure the health check enforces it
+		if restartPolicy == "always" || restartPolicy == "onfailure" {
+			s.HealthCheckOnFailureAction = define.HealthCheckOnFailureActionRestart
+		}
+		return nil
+	}
+	return nil
+}
+
+func setupStartupProbe(s *specgen.SpecGenerator, containerYAML v1.Container, restartPolicy string) error {
+	if containerYAML.StartupProbe == nil {
+		return nil
+	}
+	emptyHandler := v1.Handler{}
+	if containerYAML.StartupProbe.Handler != emptyHandler {
+		healthConfig, err := probeToHealthConfig(containerYAML.StartupProbe)
+		if err != nil {
+			return err
+		}
+
+		// currently, StartupProbe still an optional feature, and it requires HealthConfig.
+		if s.HealthConfig == nil {
+			probe := containerYAML.StartupProbe
+			s.HealthConfig, err = makeHealthCheck("exit 0", probe.PeriodSeconds, probe.FailureThreshold, probe.TimeoutSeconds, probe.InitialDelaySeconds)
+			if err != nil {
+				return err
+			}
+		}
+		s.StartupHealthConfig = &define.StartupHealthCheck{
+			Schema2HealthConfig: *healthConfig,
+			Successes:           int(containerYAML.StartupProbe.SuccessThreshold),
 		}
 		// if restart policy is in place, ensure the health check enforces it
 		if restartPolicy == "always" || restartPolicy == "onfailure" {
@@ -553,6 +667,8 @@ func makeHealthCheck(inCmd string, interval int32, retries int32, timeout int32,
 			// ...otherwise pass it to "/bin/sh -c" inside the container
 			cmd = []string{define.HealthConfigTestCmdShell}
 			cmd = append(cmd, strings.Split(inCmd, " ")...)
+		} else {
+			cmd = append([]string{define.HealthConfigTestCmd}, cmd...)
 		}
 	}
 	hc := manifest.Schema2HealthConfig{
@@ -624,6 +740,9 @@ func setupSecurityContext(s *specgen.SpecGenerator, securityContext *v1.Security
 		if seopt.Level != "" {
 			s.SelinuxOpts = append(s.SelinuxOpts, fmt.Sprintf("level:%s", seopt.Level))
 		}
+		if seopt.FileType != "" {
+			s.SelinuxOpts = append(s.SelinuxOpts, fmt.Sprintf("filetype:%s", seopt.FileType))
+		}
 	}
 	if caps := securityContext.Capabilities; caps != nil {
 		for _, capability := range caps.Add {
@@ -668,17 +787,31 @@ func quantityToInt64(quantity *resource.Quantity) (int64, error) {
 	return 0, fmt.Errorf("quantity cannot be represented as int64: %v", quantity)
 }
 
-// read a k8s secret in JSON format from the secret manager
+// read a k8s secret in JSON/YAML format from the secret manager
+// k8s secret is stored as YAML, we have to read data as JSON for backward compatibility
 func k8sSecretFromSecretManager(name string, secretsManager *secrets.SecretsManager) (map[string][]byte, error) {
-	_, jsonSecret, err := secretsManager.LookupSecretData(name)
+	_, inputSecret, err := secretsManager.LookupSecretData(name)
 	if err != nil {
 		return nil, err
 	}
 
 	var secrets map[string][]byte
-	if err := json.Unmarshal(jsonSecret, &secrets); err != nil {
-		return nil, fmt.Errorf("secret %v is not valid JSON: %v", name, err)
+	if err := json.Unmarshal(inputSecret, &secrets); err != nil {
+		secrets = make(map[string][]byte)
+		var secret v1.Secret
+		if err := yaml.Unmarshal(inputSecret, &secret); err != nil {
+			return nil, fmt.Errorf("secret %v is not valid JSON/YAML: %v", name, err)
+		}
+
+		for key, val := range secret.Data {
+			secrets[key] = val
+		}
+
+		for key, val := range secret.StringData {
+			secrets[key] = []byte(val)
+		}
 	}
+
 	return secrets, nil
 }
 

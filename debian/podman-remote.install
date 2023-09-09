@@ -1,0 +1,2 @@
+usr/bin/podman-remote               /usr/bin
+completions/zsh/_podman-remote      /usr/share/zsh/vendor-completions

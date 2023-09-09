@@ -30,6 +30,11 @@ EOF
 }
 
 @test "podman buildx - basic test" {
+    run_podman info --format "{{.Store.GraphDriverName}}"
+    if [[ "$output" == "vfs" ]]; then
+        skip "Test not supported with VFS podman storage driver (#17520)"
+    fi
+
     rand_filename=$(random_string 20)
     rand_content=$(random_string 50)
 
@@ -42,6 +47,12 @@ RUN echo $rand_content > /$rand_filename
 VOLUME /a/b/c
 VOLUME ['/etc/foo', '/etc/bar']
 EOF
+
+    run_podman info --format '{{ .Host.BuildahVersion}}'
+    BUILDAH_VERSION=$output
+
+    run_podman buildx version
+    is "$output" "buildah ${BUILDAH_VERSION}" "buildx version contains Buildah version"
 
     run_podman buildx build --load -t build_test --format=docker $tmpdir
     is "$output" ".*COMMIT" "COMMIT seen in log"
@@ -95,6 +106,12 @@ EOF
     is "$output"   "$rand_content"   "reading generated file in image"
 
     run_podman rmi -f build_test
+
+    # Now try without specifying a context dir
+    run_podman build -t build_test -f - < $containerfile
+    is "$output" ".*COMMIT" "COMMIT seen in log"
+
+    run_podman rmi -f build_test
 }
 
 @test "podman build - global runtime flags test" {
@@ -136,7 +153,12 @@ runtime="idonotexist"
 EOF
 
     CONTAINERS_CONF="$containersconf" run_podman 125 build -t build_test $tmpdir
-    is "$output" ".*\"idonotexist\" not found.*" "failed when passing invalid OCI runtime via containers.conf"
+    is "$output" ".*\"idonotexist\" not found.*" \
+       "failed when passing invalid OCI runtime via \$CONTAINERS_CONF"
+
+    CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman 125 build -t build_test $tmpdir
+    is "$output" ".*\"idonotexist\" not found.*" \
+       "failed when passing invalid OCI runtime via \$CONTAINERS_CONF_OVERRIDE"
 }
 
 # Regression from v1.5.0. This test passes fine in v1.5.0, fails in 1.6
@@ -385,7 +407,7 @@ EOF
     if is_remote; then
         ENVHOST=""
     else
-	ENVHOST="--env-host"
+        ENVHOST="--env-host"
     fi
 
     # Run without args - should run the above script. Verify its output.
@@ -572,7 +594,7 @@ EOF
 
         # Build an image. For .dockerignore
         local -a ignoreflag
-	unset ignoreflag
+        unset ignoreflag
         if [[ $ignorefile != ".dockerignore" ]]; then
             ignoreflag="--ignorefile $tmpdir/$ignorefile"
         fi
@@ -712,7 +734,7 @@ STEP 1/2: FROM $IMAGE
 STEP 2/2: RUN echo x${random2}y
 x${random2}y${remote_extra}
 COMMIT build_test${remote_extra}
---> [0-9a-f]\{11\}
+--> [0-9a-f]\{12\}
 Successfully tagged localhost/build_test:latest
 [0-9a-f]\{64\}
 a${random3}z"
@@ -1017,14 +1039,14 @@ EOF
 
     touch $tmpdir/empty-file.txt
     if is_remote && ! is_rootless ; then
-	# TODO: set this file's owner to a UID:GID that will not be mapped
-	# in the context where the remote server is running, which generally
-	# requires us to be root (or running with more mapped IDs) on the
-	# client, but not root (or running with fewer mapped IDs) on the
-	# remote server
-	# 4294967292:4294967292 (0xfffffffc:0xfffffffc) isn't that, but
-	# it will catch errors where a remote server doesn't apply the right
-	# default as it copies content into the container
+        # TODO: set this file's owner to a UID:GID that will not be mapped
+        # in the context where the remote server is running, which generally
+        # requires us to be root (or running with more mapped IDs) on the
+        # client, but not root (or running with fewer mapped IDs) on the
+        # remote server
+        # 4294967292:4294967292 (0xfffffffc:0xfffffffc) isn't that, but
+        # it will catch errors where a remote server doesn't apply the right
+        # default as it copies content into the container
         chown 4294967292:4294967292 $tmpdir/empty-file.txt
     fi
     cat >$tmpdir/Dockerfile <<EOF

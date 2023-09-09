@@ -92,8 +92,11 @@ function _run_bud() {
 }
 
 function _run_bindings() {
+    # install ginkgo
+    make .install.ginkgo
+
     # shellcheck disable=SC2155
-    export PATH=$PATH:$GOSRC/hack
+    export PATH=$PATH:$GOSRC/hack:$GOSRC/test/tools/build
 
     # if logformatter sees this, it can link directly to failing source lines
     local gitcommit_magic=
@@ -101,11 +104,8 @@ function _run_bindings() {
         gitcommit_magic="/define.gitCommit=${GIT_COMMIT}"
     fi
 
-    # Subshell needed so logformatter will write output in cwd; if it runs in
-    # the subdir, .cirrus.yml will not find the html'ized log
-    (cd pkg/bindings/test && \
-         echo "$gitcommit_magic" && \
-         ginkgo -progress -trace -noColor -debug -timeout 30m -r -v) |& logformatter
+    (echo "$gitcommit_magic" && \
+        make testbindings) |& logformatter
 }
 
 function _run_docker-py() {
@@ -116,6 +116,12 @@ function _run_docker-py() {
 function _run_endpoint() {
     make test-binaries
     make endpoint
+}
+
+function _run_minikube() {
+    _bail_if_test_can_be_skipped test/minikube
+    msg "Testing  minikube."
+    bats test/minikube |& logformatter
 }
 
 exec_container() {
@@ -130,17 +136,17 @@ exec_container() {
 
     # Line-separated arguments which include shell-escaped special characters
     declare -a envargs
-    while read -r var_val; do
+    while read -r var; do
         # Pass "-e VAR" on the command line, not "-e VAR=value". Podman can
         # do a much better job of transmitting the value than we can,
         # especially when value includes spaces.
-        envargs+=("-e" "$(awk -F= '{print $1}' <<<$var_val)")
+        envargs+=("-e" "$var")
     done <<<"$(passthrough_envars)"
 
     # VM Images and Container images are built using (nearly) identical operations.
     set -x
     # shellcheck disable=SC2154
-    exec podman run --rm --privileged --net=host --cgroupns=host \
+    exec bin/podman run --rm --privileged --net=host --cgroupns=host \
         -v `mktemp -d -p /var/tmp`:/tmp:Z \
         -v /dev/fuse:/dev/fuse \
         -v "$GOPATH:$GOPATH:Z" \
@@ -181,7 +187,7 @@ function _run_swagger() {
 
     # Swagger validation takes a significant amount of time
     msg "Pulling \$CTR_FQIN '$CTR_FQIN' (background process)"
-    podman pull --quiet $CTR_FQIN &
+    bin/podman pull --quiet $CTR_FQIN &
 
     cd $GOSRC
     make swagger
@@ -203,7 +209,7 @@ eof
 
     msg "Waiting for backgrounded podman pull to complete..."
     wait %%
-    podman run -it --rm --security-opt label=disable \
+    bin/podman run -it --rm --security-opt label=disable \
         --env-file=$envvarsfile \
         -v $GOSRC:$GOSRC:ro \
         --workdir $GOSRC \
@@ -230,14 +236,16 @@ function _run_build() {
 }
 
 function _run_altbuild() {
-    # We can skip all these steps for test-only PRs, but not doc-only ones
-    _bail_if_test_can_be_skipped docs
+    # Subsequent windows-based tasks require a build.  Var. defined in .cirrus.yml
+    # shellcheck disable=SC2154
+    if [[ ! "$ALT_NAME" =~ Windows ]]; then
+        # We can skip all these steps for test-only PRs, but not doc-only ones
+        _bail_if_test_can_be_skipped docs
+    fi
 
     local -a arches
     local arch
     req_env_vars ALT_NAME
-    # Defined in .cirrus.yml
-    # shellcheck disable=SC2154
     msg "Performing alternate build: $ALT_NAME"
     msg "************************************************************"
     set -x
@@ -273,6 +281,9 @@ function _run_altbuild() {
             ;;
         *RPM*)
             make package
+            ;;
+        FreeBSD*Cross)
+            make bin/podman.cross.freebsd.amd64
             ;;
         Alt*Cross)
             arches=(\
@@ -334,15 +345,25 @@ function _run_gitlab() {
     return $ret
 }
 
-logformatter() {
+# Name pattern for logformatter output file, derived from environment
+function output_name() {
+    # .cirrus.yml defines this as a short readable string for web UI
+    std_name_fmt=$(sed -ne 's/^.*std_name_fmt \"\(.*\)\"/\1/p' <.cirrus.yml)
+    test -n "$std_name_fmt" || die "Could not grep 'std_name_fmt' from .cirrus.yml"
+
+    # Interpolate envariables. 'set -u' throws fatal if any are undefined
+    (
+        set -u
+        eval echo "$std_name_fmt" | tr ' ' '-'
+    )
+}
+
+function logformatter() {
     if [[ "$CI" == "true" ]]; then
-        # Use similar format as human-friendly task name from .cirrus.yml
-        # shellcheck disable=SC2154
-        output_name="$TEST_FLAVOR-$PODBIN_NAME-$DISTRO_NV-$PRIV_NAME-$TEST_ENVIRON"
         # Requires stdin and stderr combined!
         cat - \
             |& awk --file "${CIRRUS_WORKING_DIR}/${SCRIPT_BASE}/timestamp.awk" \
-            |& "${CIRRUS_WORKING_DIR}/${SCRIPT_BASE}/logformatter" "$output_name"
+            |& "${CIRRUS_WORKING_DIR}/${SCRIPT_BASE}/logformatter" "$(output_name)"
     else
         # Assume script is run by a human, they want output immediately
         cat -
@@ -369,11 +390,22 @@ dotest() {
         podman)  localremote="local" ;;
     esac
 
+    # We've had some oopsies where tests invoke 'podman' instead of
+    # /path/to/built/podman. Let's catch those.
+    sudo rm -f /usr/bin/podman /usr/bin/podman-remote
+    fallback_podman=$(type -p podman || true)
+    if [[ -n "$fallback_podman" ]]; then
+        die "Found fallback podman '$fallback_podman' in \$PATH; tests require none, as a guarantee that we're testing the right binary."
+    fi
+
     make ${localremote}${testsuite} PODMAN_SERVER_LOG=$PODMAN_SERVER_LOG \
         |& logformatter
 }
 
 _run_machine() {
+    # This environment is convenient for executing some benchmarking
+    localbenchmarks
+
     # N/B: Can't use _bail_if_test_can_be_skipped here b/c content isn't under test/
     make localmachine |& logformatter
 }
@@ -479,6 +511,12 @@ if [[ "$PRIV_NAME" == "rootless" ]] && [[ "$UID" -eq 0 ]]; then
     # Does not return!
 fi
 # else: not running rootless, do nothing special
+
+# Dump important package versions. Before 2022-11-16 this took place as
+# a separate .cirrus.yml step, but it really belongs here.
+$(dirname $0)/logcollector.sh packages
+msg "************************************************************"
+
 
 cd "${GOSRC}/"
 

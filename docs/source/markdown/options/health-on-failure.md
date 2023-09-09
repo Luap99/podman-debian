@@ -1,3 +1,7 @@
+####> This option file is used in:
+####>   podman create, run
+####> If file is edited, make sure the changes
+####> are applicable to all of those.
 #### **--health-on-failure**=*action*
 
 Action to take once the container transitions to an unhealthy state.  The default is **none**.

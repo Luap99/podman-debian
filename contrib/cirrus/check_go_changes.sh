@@ -47,7 +47,7 @@ fi
 # Defined by/in Cirrus-CI config.
 # shellcheck disable=SC2154
 base=$(git merge-base $DEST_BRANCH $CIRRUS_CHANGE_IN_REPO)
-diffs=$(git diff $base $CIRRUS_CHANGE_IN_REPO -- '*.go' ':^vendor/')
+diffs=$(git diff $base $CIRRUS_CHANGE_IN_REPO -- '*.go' ':^vendor/' ':^test/tools/vendor/')
 
 if [[ -z "$diffs" ]]; then
     check_msg "There are no golang diffs to check between $base...$CIRRUS_CHANGE_IN_REPO"
@@ -59,5 +59,5 @@ check_diffs \
     "^(\\+[^#]+io/ioutil)|(\\+.+ioutil\\..+)"
 
 check_diffs \
-    "use of os.IsNotExists(err) vs recommended errors.Is(err, os.ErrNotExist)" \
-    "^\\+[^#]*os\\.IsNotExists\\("
+    "use of os.IsNotExist(err) vs recommended errors.Is(err, fs.ErrNotExist)" \
+    "^\\+[^#]*os\\.IsNotExist\\("

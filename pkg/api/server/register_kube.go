@@ -37,6 +37,11 @@ func (s *APIServer) registerKubeHandlers(r *mux.Router) error {
 	//    default: true
 	//    description: Start the pod after creating it.
 	//  - in: query
+	//    name: serviceContainer
+	//    type: boolean
+	//    default: false
+	//    description: Starts a service container before all pods.
+	//  - in: query
 	//    name: staticIPs
 	//    type: array
 	//    description: Static IPs used for the pods.
@@ -48,6 +53,11 @@ func (s *APIServer) registerKubeHandlers(r *mux.Router) error {
 	//    description: Static MACs used for the pods.
 	//    items:
 	//      type: string
+	//  - in: query
+	//    name: wait
+	//    type: boolean
+	//    default: false
+	//    description: Clean up all objects created when a SIGTERM is received or pods exit.
 	//  - in: body
 	//    name: request
 	//    description: Kubernetes YAML file.
@@ -69,6 +79,12 @@ func (s *APIServer) registerKubeHandlers(r *mux.Router) error {
 	//  - pods
 	// summary: Remove pods from kube play
 	// description: Tears down pods defined in a YAML file
+	// parameters:
+	//  - in: query
+	//    name: force
+	//    type: boolean
+	//    default: false
+	//    description: Remove volumes.
 	// produces:
 	// - application/json
 	// responses:
@@ -98,6 +114,17 @@ func (s *APIServer) registerKubeHandlers(r *mux.Router) error {
 	//    type: boolean
 	//    default: false
 	//    description: Generate YAML for a Kubernetes service object.
+	//  - in: query
+	//    name: type
+	//    type: string
+	//    default: pod
+	//    description: Generate YAML for the given Kubernetes kind.
+	//  - in: query
+	//    name: replicas
+	//    type: integer
+	//    format: int32
+	//    default: 0
+	//    description: Set the replica number for Deployment kind.
 	// produces:
 	// - text/vnd.yaml
 	// - application/json
@@ -111,5 +138,49 @@ func (s *APIServer) registerKubeHandlers(r *mux.Router) error {
 	//     $ref: "#/responses/internalError"
 	r.HandleFunc(VersionedPath("/libpod/generate/kube"), s.APIHandler(libpod.GenerateKube)).Methods(http.MethodGet)
 	r.HandleFunc(VersionedPath("/libpod/kube/generate"), s.APIHandler(libpod.KubeGenerate)).Methods(http.MethodGet)
+	// swagger:operation POST /libpod/kube/apply libpod KubeApplyLibpod
+	// ---
+	// tags:
+	//  - containers
+	//  - pods
+	// summary: Apply a podman workload or Kubernetes YAML file.
+	// description: Deploy a podman container, pod, volume, or Kubernetes yaml to a Kubernetes cluster.
+	// parameters:
+	//  - in: query
+	//    name: caCertFile
+	//    type: string
+	//    description: Path to the CA cert file for the Kubernetes cluster.
+	//  - in: query
+	//    name: kubeConfig
+	//    type: string
+	//    description: Path to the kubeconfig file for the Kubernetes cluster.
+	//  - in: query
+	//    name: namespace
+	//    type: string
+	//    description: The namespace to deploy the workload to on the Kubernetes cluster.
+	//  - in: query
+	//    name: service
+	//    type: boolean
+	//    description: Create a service object for the container being deployed.
+	//  - in: query
+	//    name: file
+	//    type: string
+	//    description: Path to the Kubernetes yaml file to deploy.
+	//  - in: body
+	//    name: request
+	//    description: Kubernetes YAML file.
+	//    schema:
+	//      type: string
+	// produces:
+	// - application/json
+	// responses:
+	//   200:
+	//     description: Kubernetes YAML file successfully deployed to cluster
+	//     schema:
+	//      type: string
+	//      format: binary
+	//   500:
+	//     $ref: "#/responses/internalError"
+	r.HandleFunc(VersionedPath("/libpod/kube/apply"), s.APIHandler(libpod.KubeApply)).Methods(http.MethodPost)
 	return nil
 }

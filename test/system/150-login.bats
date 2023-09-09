@@ -4,6 +4,7 @@
 #
 
 load helpers
+load helpers.network
 
 ###############################################################################
 # BEGIN one-time envariable setup
@@ -69,8 +70,13 @@ function setup() {
         openssl req -newkey rsa:4096 -nodes -sha256 \
                 -keyout $AUTHDIR/domain.key -x509 -days 2 \
                 -out $AUTHDIR/domain.crt \
-                -subj "/C=US/ST=Foo/L=Bar/O=Red Hat, Inc./CN=localhost"
+                -subj "/C=US/ST=Foo/L=Bar/O=Red Hat, Inc./CN=localhost" \
+                -addext "subjectAltName=DNS:localhost"
     fi
+
+    # Copy a cert to another directory for --cert-dir option tests
+    mkdir -p ${PODMAN_LOGIN_WORKDIR}/trusted-registry-cert-dir
+    cp $CERT ${PODMAN_LOGIN_WORKDIR}/trusted-registry-cert-dir
 
     # Store credentials where container will see them
     if [ ! -e $AUTHDIR/htpasswd ]; then
@@ -180,24 +186,46 @@ EOF
     run_podman 125 push --authfile=$authfile \
         --tls-verify=false $IMAGE \
         localhost:${PODMAN_LOGIN_REGISTRY_PORT}/badpush:1
-    is "$output" ".*: unauthorized: authentication required" \
+    is "$output" ".* checking whether a blob .* exists in localhost:${PODMAN_LOGIN_REGISTRY_PORT}/badpush: authentication required" \
        "auth error on push"
 }
 
-@test "podman push ok" {
+function _push_search_test() {
     # Preserve image ID for later comparison against push/pulled image
     run_podman inspect --format '{{.Id}}' $IMAGE
     iid=$output
 
     destname=ok-$(random_string 10 | tr A-Z a-z)-ok
     # Use command-line credentials
-    run_podman push --tls-verify=false \
+    run_podman push --tls-verify=$1 \
                --format docker \
+               --cert-dir ${PODMAN_LOGIN_WORKDIR}/trusted-registry-cert-dir \
                --creds ${PODMAN_LOGIN_USER}:${PODMAN_LOGIN_PASS} \
                $IMAGE localhost:${PODMAN_LOGIN_REGISTRY_PORT}/$destname
 
+    # Search a pushed image without --cert-dir should fail if --tls-verify=true
+    run_podman $2 search --tls-verify=$1 \
+               --format "table {{.Name}}" \
+               --creds ${PODMAN_LOGIN_USER}:${PODMAN_LOGIN_PASS} \
+               localhost:${PODMAN_LOGIN_REGISTRY_PORT}/$destname
+
+    # Search a pushed image without --creds should fail
+    run_podman 125 search --tls-verify=$1 \
+               --format "table {{.Name}}" \
+               --cert-dir ${PODMAN_LOGIN_WORKDIR}/trusted-registry-cert-dir \
+               localhost:${PODMAN_LOGIN_REGISTRY_PORT}/$destname
+
+    # Search a pushed image should succeed
+    run_podman search --tls-verify=$1 \
+               --format "table {{.Name}}" \
+               --cert-dir ${PODMAN_LOGIN_WORKDIR}/trusted-registry-cert-dir \
+               --creds ${PODMAN_LOGIN_USER}:${PODMAN_LOGIN_PASS} \
+               localhost:${PODMAN_LOGIN_REGISTRY_PORT}/$destname
+    is "${lines[1]}" "localhost:${PODMAN_LOGIN_REGISTRY_PORT}/$destname" "search output is destname"
+
     # Yay! Pull it back
-    run_podman pull --tls-verify=false \
+    run_podman pull --tls-verify=$1 \
+               --cert-dir ${PODMAN_LOGIN_WORKDIR}/trusted-registry-cert-dir \
                --creds ${PODMAN_LOGIN_USER}:${PODMAN_LOGIN_PASS} \
                localhost:${PODMAN_LOGIN_REGISTRY_PORT}/$destname
 
@@ -206,6 +234,14 @@ EOF
     is "$output" "$iid" "Image ID of pulled image == original IID"
 
     run_podman rmi $destname
+}
+
+@test "podman push and search ok with --tls-verify=false" {
+    _push_search_test false 0
+}
+
+@test "podman push and search ok with --tls-verify=true" {
+    _push_search_test true 125
 }
 
 # END   primary podman login/push/pull tests
@@ -253,7 +289,7 @@ function _test_skopeo_credential_sharing() {
     run skopeo inspect "$@" --tls-verify=false docker://$registry/$destname
     echo "$output"
     is "$status" "1" "skopeo inspect - exit status"
-    is "$output" ".*: unauthorized: authentication required" \
+    is "$output" ".*: authentication required" \
        "auth error on skopeo inspect"
 }
 
@@ -290,6 +326,35 @@ function _test_skopeo_credential_sharing() {
     rm -f $authfile
 }
 
+@test "podman manifest --tls-verify - basic test" {
+    run_podman login --tls-verify=false \
+               --username ${PODMAN_LOGIN_USER} \
+               --password-stdin \
+               localhost:${PODMAN_LOGIN_REGISTRY_PORT} <<<"${PODMAN_LOGIN_PASS}"
+    is "$output" "Login Succeeded!" "output from podman login"
+
+    manifest1="localhost:${PODMAN_LOGIN_REGISTRY_PORT}/test:1.0"
+    run_podman manifest create $manifest1
+    mid=$output
+    run_podman manifest push --authfile=$authfile \
+        --tls-verify=false $mid \
+        $manifest1
+    run_podman manifest rm $manifest1
+    run_podman manifest inspect --insecure $manifest1
+    is "$output" ".*\"mediaType\": \"application/vnd.docker.distribution.manifest.list.v2+json\"" "Verify --insecure works against an insecure registry"
+    run_podman 125 manifest inspect --insecure=false $manifest1
+    is "$output" ".*Error: reading image \"docker://$manifest1\": pinging container registry localhost:${PODMAN_LOGIN_REGISTRY_PORT}:" "Verify --insecure=false fails"
+    run_podman manifest inspect --tls-verify=false $manifest1
+    is "$output" ".*\"mediaType\": \"application/vnd.docker.distribution.manifest.list.v2+json\"" "Verify --tls-verify=false works against an insecure registry"
+    run_podman 125 manifest inspect --tls-verify=true $manifest1
+    is "$output" ".*Error: reading image \"docker://$manifest1\": pinging container registry localhost:${PODMAN_LOGIN_REGISTRY_PORT}:" "Verify --tls-verify=true fails"
+
+    # Now log out
+    run_podman logout localhost:${PODMAN_LOGIN_REGISTRY_PORT}
+    is "$output" "Removed login credentials for localhost:${PODMAN_LOGIN_REGISTRY_PORT}" \
+       "output from podman logout"
+}
+
 # END   cooperation with skopeo
 # END   actual tests
 ###############################################################################
@@ -314,7 +379,7 @@ function _test_skopeo_credential_sharing() {
     fi
 
     # Make sure socket is closed
-    if ! port_is_free $PODMAN_LOGIN_REGISTRY_PORT; then
+    if tcp_port_probe $PODMAN_LOGIN_REGISTRY_PORT; then
         die "Socket still seems open"
     fi
 }

@@ -5,6 +5,7 @@ package machine
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"os"
@@ -46,14 +47,17 @@ const (
 	DefaultMachineName string = "podman-machine-default"
 )
 
-type Provider interface {
-	NewMachine(opts InitOptions) (VM, error)
-	LoadVMByName(name string) (VM, error)
-	List(opts ListOptions) ([]*ListResponse, error)
-	IsValidVMName(name string) (bool, error)
+type VirtProvider interface {
+	Artifact() Artifact
 	CheckExclusiveActiveVM() (bool, string, error)
+	Compression() ImageCompression
+	Format() ImageFormat
+	IsValidVMName(name string) (bool, error)
+	List(opts ListOptions) ([]*ListResponse, error)
+	LoadVMByName(name string) (VM, error)
+	NewMachine(opts InitOptions) (VM, error)
 	RemoveAndCleanMachines() error
-	VMType() string
+	VMType() VMType
 }
 
 type RemoteConnectionType string
@@ -71,10 +75,10 @@ var (
 
 type Download struct {
 	Arch                  string
-	Artifact              string
+	Artifact              Artifact
 	CompressionType       string
 	CacheDir              string
-	Format                string
+	Format                ImageFormat
 	ImageName             string
 	LocalPath             string
 	LocalUncompressedFile string
@@ -113,7 +117,11 @@ type SSHOptions struct {
 	Username string
 	Args     []string
 }
-type StartOptions struct{}
+
+type StartOptions struct {
+	NoInfo bool
+	Quiet  bool
+}
 
 type StopOptions struct{}
 
@@ -175,7 +183,7 @@ func (rc RemoteConnectionType) MakeSSHURL(host, path, port, userName string) url
 }
 
 // GetCacheDir returns the dir where VM images are downloaded into when pulled
-func GetCacheDir(vmType string) (string, error) {
+func GetCacheDir(vmType VMType) (string, error) {
 	dataDir, err := GetDataDir(vmType)
 	if err != nil {
 		return "", err
@@ -189,12 +197,12 @@ func GetCacheDir(vmType string) (string, error) {
 
 // GetDataDir returns the filepath where vm images should
 // live for podman-machine.
-func GetDataDir(vmType string) (string, error) {
+func GetDataDir(vmType VMType) (string, error) {
 	dataDirPrefix, err := DataDirPrefix()
 	if err != nil {
 		return "", err
 	}
-	dataDir := filepath.Join(dataDirPrefix, vmType)
+	dataDir := filepath.Join(dataDirPrefix, vmType.String())
 	if _, err := os.Stat(dataDir); !errors.Is(err, os.ErrNotExist) {
 		return dataDir, nil
 	}
@@ -214,12 +222,12 @@ func DataDirPrefix() (string, error) {
 
 // GetConfigDir returns the filepath to where configuration
 // files for podman-machine should live
-func GetConfDir(vmType string) (string, error) {
+func GetConfDir(vmType VMType) (string, error) {
 	confDirPrefix, err := ConfDirPrefix()
 	if err != nil {
 		return "", err
 	}
-	confDir := filepath.Join(confDirPrefix, vmType)
+	confDir := filepath.Join(confDirPrefix, vmType.String())
 	if _, err := os.Stat(confDir); !errors.Is(err, os.ErrNotExist) {
 		return confDir, nil
 	}
@@ -235,6 +243,15 @@ func ConfDirPrefix() (string, error) {
 	}
 	confDir := filepath.Join(conf, "containers", "podman", "machine")
 	return confDir, nil
+}
+
+// GuardedRemoveAll functions much like os.RemoveAll but
+// will not delete certain catastrophic paths.
+func GuardedRemoveAll(path string) error {
+	if path == "" || path == "/" {
+		return fmt.Errorf("refusing to recursively delete `%s`", path)
+	}
+	return os.RemoveAll(path)
 }
 
 // ResourceConfig describes physical attributes of the machine
@@ -359,4 +376,27 @@ type SSHConfig struct {
 type ConnectionConfig struct {
 	// PodmanSocket is the exported podman service socket
 	PodmanSocket *VMFile `json:"PodmanSocket"`
+	// PodmanPipe is the exported podman service named pipe (Windows hosts only)
+	PodmanPipe *VMFile `json:"PodmanPipe"`
+}
+
+type VMType int64
+
+const (
+	QemuVirt VMType = iota
+	WSLVirt
+	AppleHvVirt
+	HyperVVirt
+)
+
+func (v VMType) String() string {
+	switch v {
+	case WSLVirt:
+		return "wsl"
+	case AppleHvVirt:
+		return "applehv"
+	case HyperVVirt:
+		return "hyperv"
+	}
+	return "qemu"
 }

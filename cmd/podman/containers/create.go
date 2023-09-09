@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/config"
 	cutil "github.com/containers/common/pkg/util"
 	"github.com/containers/image/v5/transports/alltransports"
@@ -21,9 +20,9 @@ import (
 	"github.com/containers/podman/v4/pkg/specgen"
 	"github.com/containers/podman/v4/pkg/specgenutil"
 	"github.com/containers/podman/v4/pkg/util"
-	"github.com/mattn/go-isatty"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var (
@@ -69,6 +68,7 @@ func createFlags(cmd *cobra.Command) {
 		initContainerFlagName, "",
 		"Make this a pod init container.",
 	)
+	_ = cmd.RegisterFlagCompletionFunc(initContainerFlagName, common.AutocompleteInitCtr)
 
 	flags.SetInterspersed(false)
 	common.DefineCreateDefaults(&cliVals)
@@ -86,8 +86,6 @@ func createFlags(cmd *cobra.Command) {
 
 		_ = flags.MarkHidden("pidfile")
 	}
-
-	_ = cmd.RegisterFlagCompletionFunc(initContainerFlagName, completion.AutocompleteDefault)
 }
 
 func init() {
@@ -105,8 +103,15 @@ func init() {
 
 func commonFlags(cmd *cobra.Command) error {
 	var err error
+
+	report, err := registry.ContainerEngine().NetworkExists(registry.Context(), "pasta")
+	if err != nil {
+		return err
+	}
+	pastaNetworkNameExists := report.Value
+
 	flags := cmd.Flags()
-	cliVals.Net, err = common.NetFlagsToNetOptions(nil, *flags)
+	cliVals.Net, err = common.NetFlagsToNetOptions(nil, *flags, pastaNetworkNameExists)
 	if err != nil {
 		return err
 	}
@@ -169,7 +174,7 @@ func create(cmd *cobra.Command, args []string) error {
 	}
 
 	if cliVals.CIDFile != "" {
-		if err := util.CreateCidFile(cliVals.CIDFile, report.Id); err != nil {
+		if err := util.CreateIDFile(cliVals.CIDFile, report.Id); err != nil {
 			return err
 		}
 	}
@@ -191,6 +196,23 @@ func replaceContainer(name string) error {
 	return removeContainers([]string{name}, rmOptions, false)
 }
 
+func createOrUpdateFlags(cmd *cobra.Command, vals *entities.ContainerCreateOptions) error {
+	if cmd.Flags().Changed("pids-limit") {
+		val := cmd.Flag("pids-limit").Value.String()
+		// Convert -1 to 0, so that -1 maps to unlimited pids limit
+		if val == "-1" {
+			val = "0"
+		}
+		pidsLimit, err := strconv.ParseInt(val, 10, 32)
+		if err != nil {
+			return err
+		}
+		vals.PIDsLimit = &pidsLimit
+	}
+
+	return nil
+}
+
 func CreateInit(c *cobra.Command, vals entities.ContainerCreateOptions, isInfra bool) (entities.ContainerCreateOptions, error) {
 	if len(vals.UIDMap) > 0 || len(vals.GIDMap) > 0 || vals.SubUIDName != "" || vals.SubGIDName != "" {
 		if c.Flag("userns").Changed {
@@ -206,7 +228,7 @@ func CreateInit(c *cobra.Command, vals entities.ContainerCreateOptions, isInfra 
 	}
 
 	if cliVals.LogDriver == define.PassthroughLogging {
-		if isatty.IsTerminal(0) || isatty.IsTerminal(1) || isatty.IsTerminal(2) {
+		if term.IsTerminal(0) || term.IsTerminal(1) || term.IsTerminal(2) {
 			return vals, errors.New("the '--log-driver passthrough' option cannot be used on a TTY")
 		}
 		if registry.IsRemote() {
@@ -235,7 +257,7 @@ func CreateInit(c *cobra.Command, vals entities.ContainerCreateOptions, isInfra 
 					if registry.IsRemote() {
 						return vals, errors.New("the '--group-add keep-groups' option is not supported in remote mode")
 					}
-					vals.Annotation = append(vals.Annotation, "run.oci.keep_original_groups=1")
+					vals.Annotation = append(vals.Annotation, fmt.Sprintf("%s=1", define.RunOCIKeepOriginalGroups))
 				} else {
 					groups = append(groups, g)
 				}
@@ -250,18 +272,11 @@ func CreateInit(c *cobra.Command, vals entities.ContainerCreateOptions, isInfra 
 			}
 			vals.OOMScoreAdj = &val
 		}
-		if c.Flags().Changed("pids-limit") {
-			val := c.Flag("pids-limit").Value.String()
-			// Convert -1 to 0, so that -1 maps to unlimited pids limit
-			if val == "-1" {
-				val = "0"
-			}
-			pidsLimit, err := strconv.ParseInt(val, 10, 32)
-			if err != nil {
-				return vals, err
-			}
-			vals.PIDsLimit = &pidsLimit
+
+		if err := createOrUpdateFlags(c, &vals); err != nil {
+			return vals, err
 		}
+
 		if c.Flags().Changed("env") {
 			env, err := c.Flags().GetStringArray("env")
 			if err != nil {
@@ -279,6 +294,9 @@ func CreateInit(c *cobra.Command, vals entities.ContainerCreateOptions, isInfra 
 	}
 	if c.Flag("shm-size").Changed {
 		vals.ShmSize = c.Flag("shm-size").Value.String()
+	}
+	if c.Flag("shm-size-systemd").Changed {
+		vals.ShmSizeSystemd = c.Flag("shm-size-systemd").Value.String()
 	}
 	if (c.Flag("dns").Changed || c.Flag("dns-option").Changed || c.Flag("dns-search").Changed) && vals.Net != nil && (vals.Net.Network.NSMode == specgen.NoNetwork || vals.Net.Network.IsContainer()) {
 		return vals, fmt.Errorf("conflicting options: dns and the network mode: " + string(vals.Net.Network.NSMode))
@@ -327,15 +345,21 @@ func PullImage(imageName string, cliVals *entities.ContainerCreateOptions) (stri
 		skipTLSVerify = types.NewOptionalBool(!cliVals.TLSVerify.Value())
 	}
 
+	decConfig, err := util.DecryptConfig(cliVals.DecryptionKeys)
+	if err != nil {
+		return "unable to obtain decryption config", err
+	}
+
 	pullReport, pullErr := registry.ImageEngine().Pull(registry.GetContext(), imageName, entities.ImagePullOptions{
-		Authfile:        cliVals.Authfile,
-		Quiet:           cliVals.Quiet,
-		Arch:            cliVals.Arch,
-		OS:              cliVals.OS,
-		Variant:         cliVals.Variant,
-		SignaturePolicy: cliVals.SignaturePolicy,
-		PullPolicy:      pullPolicy,
-		SkipTLSVerify:   skipTLSVerify,
+		Authfile:         cliVals.Authfile,
+		Quiet:            cliVals.Quiet,
+		Arch:             cliVals.Arch,
+		OS:               cliVals.OS,
+		Variant:          cliVals.Variant,
+		SignaturePolicy:  cliVals.SignaturePolicy,
+		PullPolicy:       pullPolicy,
+		SkipTLSVerify:    skipTLSVerify,
+		OciDecryptConfig: decConfig,
 	})
 	if pullErr != nil {
 		return "", pullErr
@@ -398,6 +422,8 @@ func createPodIfNecessary(cmd *cobra.Command, s *specgen.SpecGenerator, netOpts 
 	infraOpts := entities.NewInfraContainerCreateOptions()
 	infraOpts.Net = netOpts
 	infraOpts.Quiet = true
+	infraOpts.ReadOnly = true
+	infraOpts.ReadWriteTmpFS = false
 	infraOpts.Hostname, err = cmd.Flags().GetString("hostname")
 	if err != nil {
 		return err

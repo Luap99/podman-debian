@@ -95,6 +95,8 @@ not ok 3 fail
 #  from function `expect_output' in file ./helpers.bash, line 370,
 #  in test file ./run.bats, line 786)
 # $ /path/to/podman foo -bar
+# time="2023-01-05T15:15:20Z" level=debug msg="this is debug"
+# time="2023-01-05T15:15:20Z" level=warning msg="this is warning"
 # #| FAIL: exit code is 123; expected 321
 ok 4 blah
 >>>
@@ -106,7 +108,9 @@ ok 4 blah
 <span class='bats-log'>#  from function `expect_output&#39; in file ./<a class="codelink" href="https://github.com/containers/podman/blob/ceci-nest-pas-une-sha/test/system/helpers.bash#L370">helpers.bash, line 370</a>,</span>
 <span class='bats-log'>#  in test file ./<a class="codelink" href="https://github.com/containers/podman/blob/ceci-nest-pas-une-sha/test/system/run.bats#L786">run.bats, line 786</a>)</span>
 <span class='bats-log'># $ <b><span title="/path/to/podman">podman</span> foo -bar</b></span>
-<span class='bats-log-esm'># #| FAIL: exit code is 123; expected 321</span>
+<span class='bats-log'># time=<span class='log-debug'>&quot;2023-01-05T15:15:20Z&quot;</span> level=<span class='log-debug'>debug</span> msg=<span class='log-debug'>&quot;this is debug&quot;</span></span>
+<span class='bats-log'># time=<span class='log-warning'>&quot;2023-01-05T15:15:20Z&quot;</span> level=<span class='log-warning'>warning</span> msg=<span class='log-warning'>&quot;this is warning&quot;</span></span>
+<span class='bats-log-failblock'># #| FAIL: exit code is 123; expected 321</span>
 <span class='bats-passed'><a name='t--00004'>ok 4 blah</a></span>
 <hr/><span class='bats-summary'>Summary: <span class='bats-passed'>2 Passed</span>, <span class='bats-failed'>1 Failed</span>, <span class='bats-skipped'>1 Skipped</span>. Total tests: 4</span>
 
@@ -131,6 +135,8 @@ $SCRIPT_BASE/integration_test.sh |& ${TIMESTAMP}
 [+0103s]   /var/tmp/go/src/github.com/containers/podman/test/e2e/pod_restart_test.go:18
 [+0103s] [It] podman pod restart single empty pod
 [+0103s]   /var/tmp/go/src/github.com/containers/podman/test/e2e/pod_restart_test.go:41
+[+0103s] Running: /var/tmp/go/src/github.com/containers/podman/bin/quadlet -no-kmsg-log /tmp/podman_test620310100/generated with QUADLET_UNIT_DIRS=/tmp/podman_test620310100/quadlet
+[+0103s] quadlet-generator[98757]: Error converting 'range.less-subnet.network', ignoring: cannot set more ranges than subnets
 [+0103s] Running: /var/tmp/go/src/github.com/containers/podman/bin/podman --network-backend netavark --storage-opt vfs.imagestore=/tmp/podman/imagecachedir --root /tmp/podman_test553496330/crio --runroot /tmp/podman_test553496330/crio-run --runtime /usr/bin/runc --conmon /usr/bin/conmon --network-config-dir /etc/cni/net.d --cgroup-manager systemd --tmpdir /tmp/podman_test553496330 --events-backend file --storage-driver vfs pod create --infra=false --share
 [+0103s] 4810be0cfbd42241e349dbe7d50fbc54405cd320a6637c65fd5323f34d64af89
 [+0103s] output: 4810be0cfbd42241e349dbe7d50fbc54405cd320a6637c65fd5323f34d64af89
@@ -187,6 +193,8 @@ $SCRIPT_BASE/integration_test.sh |&amp; ${TIMESTAMP}
 <span class="timestamp">         </span>  /var/tmp/go/src/github.com<a class="codelink" href='https://github.com/containers/podman/blob/40f5d8b1becd381c4e8283ed3940d09193e4fe06/test/e2e/pod_restart_test.go#L18'>/containers/podman/test/e2e/pod_restart_test.go:18</a>
 <span class="timestamp">         </span><span class="testname">[It] podman pod restart single empty pod</span>
 <span class="timestamp">         </span>  /var/tmp/go/src/github.com<a class="codelink" href='https://github.com/containers/podman/blob/40f5d8b1becd381c4e8283ed3940d09193e4fe06/test/e2e/pod_restart_test.go#L41'>/containers/podman/test/e2e/pod_restart_test.go:41</a>
+<span class="timestamp">         </span><span class="boring">#</span> <span title="/var/tmp/go/src/github.com/containers/podman/bin/quadlet"><b>quadlet -no-kmsg-log /tmp/podman_test620310100/generated</b></span><span class="boring"> with QUADLET_UNIT_DIRS=</span><b>/tmp/podman_test620310100/quadlet</b>
+<span class="timestamp">         </span>quadlet-generator[98757]: Error converting &#39;range.less-subnet.network&#39;, ignoring: cannot set more ranges than subnets
 <span class="timestamp">         </span><span class="boring">#</span> <span title="/var/tmp/go/src/github.com/containers/podman/bin/podman"><b>podman</b></span> <span class="boring" title="--network-backend netavark
 --storage-opt vfs.imagestore=/tmp/podman/imagecachedir
 --root /tmp/podman_test553496330/crio
@@ -209,7 +217,7 @@ $SCRIPT_BASE/integration_test.sh |&amp; ${TIMESTAMP}
 --tmpdir /tmp/podman_test553496330
 --events-backend file
 --storage-driver vfs">[options]</span><b> pod restart 4810be0cfbd42241e349dbe7d50fbc54405cd320a6637c65fd5323f34d64af89</b>
-<span class="timestamp">         </span><span class='log-warn'>Error: no containers in pod 4810be0cfbd42241e349dbe7d50fbc54405cd320a6637c65fd5323f34d64af89 have no dependencies, cannot start pod: no such container</span>
+<span class="timestamp">         </span><span class='log-warning'>Error: no containers in pod 4810be0cfbd42241e349dbe7d50fbc54405cd320a6637c65fd5323f34d64af89 have no dependencies, cannot start pod: no such container</span>
 <span class="timestamp">         </span>output:
 <span class="timestamp">         </span>[AfterEach] Podman pod restart
 <span class="timestamp">         </span>  /var/tmp/go/src/github.com<a class="codelink" href='https://github.com/containers/podman/blob/40f5d8b1becd381c4e8283ed3940d09193e4fe06/test/e2e/pod_restart_test.go#L28'>/containers/podman/test/e2e/pod_restart_test.go:28</a>
@@ -293,7 +301,7 @@ $SCRIPT_BASE/integration_test.sh |&amp; ${TIMESTAMP}
 [+0248s] test_list_container (compat.test_containers.TestContainers) ... ok
 [+0252s] test_mount_preexisting_dir (compat.test_containers.TestContainers) ... ok
 [+0253s] test_mount_rw_by_default (compat.test_containers.TestContainers) ... ok
-[+0257s] test_non_existant_workdir (compat.test_containers.TestContainers) ... ok
+[+0257s] test_non_existent_workdir (compat.test_containers.TestContainers) ... ok
 [+0258s] test_pause_container (compat.test_containers.TestContainers) ... ok
 [+0260s] test_pause_stopped_container (compat.test_containers.TestContainers) ... ok
 [+0261s] test_remove_container (compat.test_containers.TestContainers) ... ok
@@ -362,7 +370,7 @@ $SCRIPT_BASE/integration_test.sh |&amp; ${TIMESTAMP}
 <span class="timestamp">[+0248s] </span><span class='bats-passed'>test_list_container (compat.test_containers.TestContainers) ... ok</span>
 <span class="timestamp">[+0252s] </span><span class='bats-passed'>test_mount_preexisting_dir (compat.test_containers.TestContainers) ... ok</span>
 <span class="timestamp">[+0253s] </span><span class='bats-passed'>test_mount_rw_by_default (compat.test_containers.TestContainers) ... ok</span>
-<span class="timestamp">[+0257s] </span><span class='bats-passed'>test_non_existant_workdir (compat.test_containers.TestContainers) ... ok</span>
+<span class="timestamp">[+0257s] </span><span class='bats-passed'>test_non_existent_workdir (compat.test_containers.TestContainers) ... ok</span>
 <span class="timestamp">[+0258s] </span><span class='bats-passed'>test_pause_container (compat.test_containers.TestContainers) ... ok</span>
 <span class="timestamp">[+0260s] </span><span class='bats-passed'>test_pause_stopped_container (compat.test_containers.TestContainers) ... ok</span>
 <span class="timestamp">[+0261s] </span><span class='bats-passed'>test_remove_container (compat.test_containers.TestContainers) ... ok</span>

@@ -11,7 +11,6 @@ import (
 	"github.com/containers/common/pkg/apparmor"
 	"github.com/containers/common/pkg/seccomp"
 	"github.com/containers/common/pkg/sysinfo"
-	"github.com/containers/podman/v4/pkg/rootless"
 	"github.com/containers/podman/v4/pkg/util"
 	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo"
@@ -75,20 +74,6 @@ var _ = Describe("Podman pod create", func() {
 		check := podmanTest.Podman([]string{"pod", "ps", "-q"})
 		check.WaitWithDefaultTimeout()
 		Expect(check.OutputToStringArray()).To(HaveLen(1))
-	})
-
-	It("podman create pod with same name as ctr", func() {
-		name := "test"
-		session := podmanTest.Podman([]string{"create", "--name", name, ALPINE, "ls"})
-		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
-
-		_, ec, _ := podmanTest.CreatePod(map[string][]string{"--name": {name}})
-		Expect(ec).To(Not(Equal(0)))
-
-		check := podmanTest.Podman([]string{"pod", "ps", "-q"})
-		check.WaitWithDefaultTimeout()
-		Expect(check.OutputToStringArray()).To(BeEmpty())
 	})
 
 	It("podman create pod without network portbindings", func() {
@@ -252,7 +237,7 @@ var _ = Describe("Podman pod create", func() {
 		podCreate := podmanTest.Podman([]string{"pod", "create", "--ip", ip, "--name", name})
 		podCreate.WaitWithDefaultTimeout()
 		// Rootless should error without network
-		if rootless.IsRootless() {
+		if isRootless() {
 			Expect(podCreate).Should(Exit(125))
 		} else {
 			Expect(podCreate).Should(Exit(0))
@@ -295,7 +280,7 @@ var _ = Describe("Podman pod create", func() {
 		podCreate := podmanTest.Podman([]string{"pod", "create", "--mac-address", mac, "--name", name})
 		podCreate.WaitWithDefaultTimeout()
 		// Rootless should error
-		if rootless.IsRootless() {
+		if isRootless() {
 			Expect(podCreate).Should(Exit(125))
 		} else {
 			Expect(podCreate).Should(Exit(0))
@@ -317,8 +302,8 @@ var _ = Describe("Podman pod create", func() {
 	It("podman create pod and print id to external file", func() {
 		// Switch to temp dir and restore it afterwards
 		cwd, err := os.Getwd()
-		Expect(err).To(BeNil())
-		Expect(os.Chdir(os.TempDir())).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
+		Expect(os.Chdir(os.TempDir())).To(Succeed())
 		targetPath, err := CreateTempDirInTempDir()
 		if err != nil {
 			os.Exit(1)
@@ -500,11 +485,42 @@ entrypoint ["/fromimage"]
 		podCreate.WaitWithDefaultTimeout()
 		Expect(podCreate).Should(Exit(125))
 		Expect(podCreate.ErrorToString()).To(ContainSubstring("pods presently do not support network mode container"))
+	})
 
-		podCreate = podmanTest.Podman([]string{"pod", "create", "--network", "ns:/does/not/matter"})
+	It("podman pod create with namespace path networking", func() {
+		SkipIfRootless("ip netns is not supported for rootless users")
+		SkipIfContainerized("ip netns cannot be run within a container.")
+
+		podName := "netnspod"
+		netNsName := "test1"
+		networkMode := fmt.Sprintf("ns:/var/run/netns/%s", netNsName)
+
+		addNetns := SystemExec("ip", []string{"netns", "add", netNsName})
+		Expect(addNetns).Should(Exit(0))
+		defer func() {
+			delNetns := SystemExec("ip", []string{"netns", "delete", netNsName})
+			Expect(delNetns).Should(Exit(0))
+		}()
+
+		podCreate := podmanTest.Podman([]string{"pod", "create", "--name", podName, "--network", networkMode})
 		podCreate.WaitWithDefaultTimeout()
-		Expect(podCreate).Should(Exit(125))
-		Expect(podCreate.ErrorToString()).To(ContainSubstring("pods presently do not support network mode path"))
+		Expect(podCreate).Should(Exit(0))
+
+		podStart := podmanTest.Podman([]string{"pod", "start", podName})
+		podStart.WaitWithDefaultTimeout()
+		Expect(podStart).Should(Exit(0))
+
+		inspectPod := podmanTest.Podman([]string{"pod", "inspect", podName})
+		inspectPod.WaitWithDefaultTimeout()
+		Expect(inspectPod).Should(Exit(0))
+		inspectPodJSON := inspectPod.InspectPodToJSON()
+
+		inspectInfraContainer := podmanTest.Podman([]string{"inspect", inspectPodJSON.InfraContainerID})
+		inspectInfraContainer.WaitWithDefaultTimeout()
+		Expect(inspectInfraContainer).Should(Exit(0))
+		inspectInfraContainerJSON := inspectInfraContainer.InspectContainerToJSON()
+
+		Expect(inspectInfraContainerJSON[0].HostConfig.NetworkMode).To(Equal(networkMode))
 	})
 
 	It("podman pod create with --net=none", func() {
@@ -631,7 +647,7 @@ ENTRYPOINT ["sleep","99999"]
 	})
 
 	It("podman pod create with --userns=keep-id", func() {
-		if os.Geteuid() == 0 {
+		if !isRootless() {
 			Skip("Test only runs without root")
 		}
 
@@ -651,8 +667,8 @@ ENTRYPOINT ["sleep","99999"]
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		u, err := user.Current()
-		Expect(err).To(BeNil())
-		Expect(session.OutputToString()).To(ContainSubstring(u.Name))
+		Expect(err).ToNot(HaveOccurred())
+		Expect(session.OutputToString()).To(Equal(u.Username))
 
 		// root owns /usr
 		session = podmanTest.Podman([]string{"run", "--pod", podName, ALPINE, "stat", "-c%u", "/usr"})
@@ -667,7 +683,7 @@ ENTRYPOINT ["sleep","99999"]
 	})
 
 	It("podman pod create with --userns=keep-id can add users", func() {
-		if os.Geteuid() == 0 {
+		if !isRootless() {
 			Skip("Test only runs without root")
 		}
 
@@ -681,12 +697,14 @@ ENTRYPOINT ["sleep","99999"]
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
-		// container inside pod inherits user form infra container if --user is not set
-		// etc/passwd entry will look like 1000:*:1000:1000:container user:/:/bin/sh
-		exec1 := podmanTest.Podman([]string{"exec", ctrName, "cat", "/etc/passwd"})
+		u, err := user.Current()
+		Expect(err).ToNot(HaveOccurred())
+		// container inside pod inherits user from infra container if --user is not set
+		// etc/passwd entry will look like USERNAME:*:1000:1000:Full User Name:/:/bin/sh
+		exec1 := podmanTest.Podman([]string{"exec", ctrName, "id", "-un"})
 		exec1.WaitWithDefaultTimeout()
 		Expect(exec1).Should(Exit(0))
-		Expect(exec1.OutputToString()).To(ContainSubstring("container"))
+		Expect(exec1.OutputToString()).To(Equal(u.Username))
 
 		exec2 := podmanTest.Podman([]string{"exec", ctrName, "useradd", "testuser"})
 		exec2.WaitWithDefaultTimeout()
@@ -700,8 +718,8 @@ ENTRYPOINT ["sleep","99999"]
 
 	It("podman pod create with --userns=auto", func() {
 		u, err := user.Current()
-		Expect(err).To(BeNil())
-		name := u.Name
+		Expect(err).ToNot(HaveOccurred())
+		name := u.Username
 		if name == "root" {
 			name = "containers"
 		}
@@ -734,9 +752,9 @@ ENTRYPOINT ["sleep","99999"]
 
 	It("podman pod create --userns=auto:size=%d", func() {
 		u, err := user.Current()
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
-		name := u.Name
+		name := u.Username
 		if name == "root" {
 			name = "containers"
 		}
@@ -770,9 +788,9 @@ ENTRYPOINT ["sleep","99999"]
 
 	It("podman pod create --userns=auto:uidmapping=", func() {
 		u, err := user.Current()
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
-		name := u.Name
+		name := u.Username
 		if name == "root" {
 			name = "containers"
 		}
@@ -807,9 +825,9 @@ ENTRYPOINT ["sleep","99999"]
 
 	It("podman pod create --userns=auto:gidmapping=", func() {
 		u, err := user.Current()
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 
-		name := u.Name
+		name := u.Username
 		if name == "root" {
 			name = "containers"
 		}
@@ -881,7 +899,7 @@ ENTRYPOINT ["sleep","99999"]
 
 	It("podman pod create --device", func() {
 		SkipIfRootless("Cannot create devices in /dev in rootless mode")
-		Expect(os.MkdirAll("/dev/foodevdir", os.ModePerm)).To(BeNil())
+		Expect(os.MkdirAll("/dev/foodevdir", os.ModePerm)).To(Succeed())
 		defer os.RemoveAll("/dev/foodevdir")
 
 		mknod := SystemExec("mknod", []string{"/dev/foodevdir/null", "c", "1", "3"})
@@ -1066,7 +1084,7 @@ ENTRYPOINT ["sleep","99999"]
 
 		inspect := podmanTest.InspectContainer(ctrCreate.OutputToString())
 		Expect(data.CgroupPath).To(HaveLen(0))
-		if podmanTest.CgroupManager == "cgroupfs" || !rootless.IsRootless() {
+		if podmanTest.CgroupManager == "cgroupfs" || !isRootless() {
 			Expect(inspect[0].HostConfig.CgroupParent).To(HaveLen(0))
 		} else if podmanTest.CgroupManager == "systemd" {
 			Expect(inspect[0].HostConfig).To(HaveField("CgroupParent", "user.slice"))
@@ -1160,5 +1178,41 @@ ENTRYPOINT ["sleep","99999"]
 		Expect(podInspect).Should(Exit(0))
 		podJSON := podInspect.InspectPodToJSON()
 		Expect(podJSON.InfraConfig).To(HaveField("UtsNS", ns))
+	})
+
+	It("podman pod create --shm-size-systemd", func() {
+		podName := "testShmSizeSystemd"
+		session := podmanTest.Podman([]string{"pod", "create", "--name", podName, "--shm-size-systemd", "10mb"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		// add container to pod
+		ctrRun := podmanTest.Podman([]string{"run", "-d", "--pod", podName, SYSTEMD_IMAGE, "/sbin/init"})
+		ctrRun.WaitWithDefaultTimeout()
+		Expect(ctrRun).Should(Exit(0))
+
+		run := podmanTest.Podman([]string{"exec", ctrRun.OutputToString(), "mount"})
+		run.WaitWithDefaultTimeout()
+		Expect(run).Should(Exit(0))
+		t, strings := run.GrepString("tmpfs on /run/lock")
+		Expect(t).To(BeTrue())
+		Expect(strings[0]).Should(ContainSubstring("size=10240k"))
+	})
+
+	It("create pod with name subset of existing ID", func() {
+		create1 := podmanTest.Podman([]string{"pod", "create"})
+		create1.WaitWithDefaultTimeout()
+		Expect(create1).Should(Exit(0))
+		pod1ID := create1.OutputToString()
+
+		pod2Name := pod1ID[:5]
+		create2 := podmanTest.Podman([]string{"pod", "create", pod2Name})
+		create2.WaitWithDefaultTimeout()
+		Expect(create2).Should(Exit(0))
+
+		inspect := podmanTest.Podman([]string{"pod", "inspect", "--format", "{{.Name}}", pod2Name})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect).Should(Exit(0))
+		Expect(inspect.OutputToString()).Should(Equal(pod2Name))
 	})
 })

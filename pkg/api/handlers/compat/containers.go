@@ -146,7 +146,7 @@ func ListContainers(w http.ResponseWriter, r *http.Request) {
 		filterFuncs = append(filterFuncs, runningOnly)
 	}
 
-	containers, err := runtime.GetContainers(filterFuncs...)
+	containers, err := runtime.GetContainers(false, filterFuncs...)
 	if err != nil {
 		utils.InternalServerError(w, err)
 		return
@@ -519,7 +519,7 @@ func LibpodToContainerJSON(l *libpod.Container, sz bool) (*types.ContainerJSON, 
 	stopTimeout := int(l.StopTimeout())
 
 	exposedPorts := make(nat.PortSet)
-	for ep := range inspect.HostConfig.PortBindings {
+	for ep := range inspect.NetworkSettings.Ports {
 		splitp := strings.SplitN(ep, "/", 2)
 		if len(splitp) != 2 {
 			return nil, fmt.Errorf("PORT/PROTOCOL Format required for %q", ep)

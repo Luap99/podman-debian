@@ -28,7 +28,11 @@ export DH_GOLANG_EXCLUDES := $(LOCAL_DH_GOLANG_EXTRA_EXCLUDES) \
 	podman/pkg/machine/e2e \
 	test/e2e \
 	test/endpoint \
-	test/utils
+	test/framework \
+	test/goecho \
+	test/testvol \
+	test/utils \
+	test/version
 
 # machine/qemu only works on amd64, arm64
 ifneq (,$(filter amd64 arm64,$(DEB_HOST_ARCH)))
@@ -47,16 +51,28 @@ export DH_GOLANG_TEST_EXCLUDES := $(DH_GOLANG_EXCLUDES) \
 export HOME=$(CURDIR)/debian/tmp
 
 ## https://podman.io/getting-started/installation#build-tags
-BUILDTAGS := apparmor,ostree,seccomp,selinux,systemd,libsubid
+BUILDTAGS := apparmor,seccomp,selinux,systemd,libsubid
+BUILDTAGS_REMOTE := remote,exclude_graphdriver_btrfs,btrfs_noversion,exclude_graphdriver_devicemapper,containers_image_openpgp
+
 # containers_image_openpgp
 
 %:
 	dh $@ --buildsystem=golang --with=golang,bash-completion --builddirectory=_output
 
+execute_after_dh_auto_clean:
+	# this is in addition to the golang cleanups, and cleans up docs among
+	# other things. Use bash, as there is a $(<.gitignore) bashism in there.
+	$(MAKE) clean SHELL=/bin/bash
+
 override_dh_auto_build:
 	$(MAKE) docs docker-docs
 
 #	LDFLAGS_PODMAN="-X main.gitCommit=$(GIT_COMMIT)"
+#   upstream Makefile calls `go build ... -o bin/podman-remote ./cmd/podman`
+#   dont know how I get dh_auto_build to do that.
+	dh_auto_build -v  --builddirectory=_output -- -tags "$(BUILDTAGS_REMOTE)" \
+          -ldflags "-X main.buildInfo=$(DEB_VERSION)"
+	mv _output/bin/podman _output/bin/podman-remote
 	dh_auto_build -v  --builddirectory=_output -- -tags "$(BUILDTAGS)" \
           -ldflags "-X main.buildInfo=$(DEB_VERSION)"
 
@@ -81,15 +97,19 @@ ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
 endif
 
 override_dh_auto_install:
-	dh_auto_install --destdir=debian/tmp --buildsystem=golang --builddirectory=_output
-	# generate and install systemd unit files
-	make DESTDIR=debian/tmp PREFIX=/ LIBEXECDIR=/usr/lib/ BINDIR=/usr/bin install.systemd
+	dh_auto_install \
+		--destdir=debian/tmp \
+		--buildsystem=golang \
+		--builddirectory=_output \
+		-- \
+		--no-source
+	# generate and install systemd unit files, manpages, etc.
+	make DESTDIR=debian/tmp PREFIX=/usr \
+		install.systemd install.docker-full install.man
 
-# Disable dh_missing
-override_dh_missing:
-	# remove unwanted files, cf. #1000521
-	find debian -name '*podman-remote*' -ls -delete
-	dh_missing --list-missing -X goecho -X testvol -X version
+execute_after_dh_installman:
+	# installed in the podman-remote package instead
+	rm -f --verbose $(CURDIR)/debian/podman/usr/share/man/man1/podman-remote.1*
 
 override_dh_installsystemd:
 	dh_installsystemd

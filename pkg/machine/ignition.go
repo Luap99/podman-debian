@@ -24,6 +24,10 @@ import (
 	https://github.com/openshift/machine-config-operator/blob/master/pkg/server/server.go
 */
 
+const (
+	UserCertsTargetPath = "/etc/containers/certs.d"
+)
+
 // Convenience function to convert int to ptr
 func intToPtr(i int) *int {
 	return &i
@@ -57,7 +61,7 @@ type DynamicIgnition struct {
 }
 
 // NewIgnitionFile
-func NewIgnitionFile(ign DynamicIgnition) error {
+func NewIgnitionFile(ign DynamicIgnition, vmType VMType) error {
 	if len(ign.Name) < 1 {
 		ign.Name = DefaultIgnitionUserName
 	}
@@ -183,7 +187,6 @@ ExecStartPost=/usr/bin/systemctl daemon-reload
 [Install]
 WantedBy=sysinit.target
 `
-	_ = ready
 	ignSystemd := Systemd{
 		Units: []Unit{
 			{
@@ -210,11 +213,6 @@ WantedBy=sysinit.target
 				Name:     "remove-moby.service",
 				Contents: &deMoby,
 			},
-			{
-				Enabled:  boolToPtr(true),
-				Name:     "envset-fwcfg.service",
-				Contents: &envset,
-			},
 		}}
 	ignConfig := Config{
 		Ignition: ignVersion,
@@ -222,6 +220,17 @@ WantedBy=sysinit.target
 		Storage:  ignStorage,
 		Systemd:  ignSystemd,
 	}
+
+	// Only qemu has the qemu firmware environment setting
+	if vmType == QemuVirt {
+		qemuUnit := Unit{
+			Enabled:  boolToPtr(true),
+			Name:     "envset-fwcfg.service",
+			Contents: &envset,
+		}
+		ignSystemd.Units = append(ignSystemd.Units, qemuUnit)
+	}
+
 	b, err := json.Marshal(ignConfig)
 	if err != nil {
 		return err
@@ -330,7 +339,7 @@ Delegate=memory pids cpu io
 		},
 	})
 
-	// Set containers.conf up for core user to use cni networks
+	// Set containers.conf up for core user to use networks
 	// by default
 	files = append(files, File{
 		Node: Node{
@@ -495,26 +504,47 @@ Delegate=memory pids cpu io
 		if _, err := os.Stat(sslCertFile); err == nil {
 			certFiles = getCerts(sslCertFile, false)
 			files = append(files, certFiles...)
-
-			if len(certFiles) > 0 {
-				setSSLCertFile := fmt.Sprintf("export %s=%s", "SSL_CERT_FILE", filepath.Join("/etc/containers/certs.d", filepath.Base(sslCertFile)))
-				files = append(files, File{
-					Node: Node{
-						Group: getNodeGrp("root"),
-						Path:  "/etc/profile.d/ssl_cert_file.sh",
-						User:  getNodeUsr("root"),
-					},
-					FileEmbedded1: FileEmbedded1{
-						Append: nil,
-						Contents: Resource{
-							Source: encodeDataURLPtr(setSSLCertFile),
-						},
-						Mode: intToPtr(0644),
-					},
-				})
-			}
+		} else {
+			logrus.Warnf("Invalid path in SSL_CERT_FILE: %q", err)
 		}
 	}
+
+	if sslCertDir, ok := os.LookupEnv("SSL_CERT_DIR"); ok {
+		if _, err := os.Stat(sslCertDir); err == nil {
+			certFiles = getCerts(sslCertDir, true)
+			files = append(files, certFiles...)
+		} else {
+			logrus.Warnf("Invalid path in SSL_CERT_DIR: %q", err)
+		}
+	}
+
+	files = append(files, File{
+		Node: Node{
+			User:  getNodeUsr("root"),
+			Group: getNodeGrp("root"),
+			Path:  "/etc/chrony.conf",
+		},
+		FileEmbedded1: FileEmbedded1{
+			Append: []Resource{{
+				Source: encodeDataURLPtr("\nconfdir /etc/chrony.d\n"),
+			}},
+		},
+	})
+
+	// Issue #11541: allow Chrony to update the system time when it has drifted
+	// far from NTP time.
+	files = append(files, File{
+		Node: Node{
+			User:  getNodeUsr("root"),
+			Group: getNodeGrp("root"),
+			Path:  "/etc/chrony.d/50-podman-makestep.conf",
+		},
+		FileEmbedded1: FileEmbedded1{
+			Contents: Resource{
+				Source: encodeDataURLPtr("makestep 1 -1\n"),
+			},
+		},
+	})
 
 	return files
 }
@@ -564,7 +594,7 @@ func prepareCertFile(path string, name string) (File, error) {
 		return File{}, err
 	}
 
-	targetPath := filepath.Join("/etc/containers/certs.d", name)
+	targetPath := filepath.Join(UserCertsTargetPath, name)
 
 	logrus.Debugf("Copying cert file from '%s' to '%s'.", path, targetPath)
 

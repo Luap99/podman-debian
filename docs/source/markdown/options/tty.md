@@ -1,3 +1,7 @@
+####> This option file is used in:
+####>   podman create, exec, run
+####> If file is edited, make sure the changes
+####> are applicable to all of those.
 #### **--tty**, **-t**
 
 Allocate a pseudo-TTY. The default is **false**.

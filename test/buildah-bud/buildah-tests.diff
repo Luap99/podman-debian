@@ -1,18 +1,18 @@
-From d22e44c8fb1c87afb90391188733f7ce8fea005d Mon Sep 17 00:00:00 2001
+From d94ba4638cb37e5f1eef97d6de9faf2161696c71 Mon Sep 17 00:00:00 2001
 From: Ed Santiago <santiago@redhat.com>
-Date: Tue, 9 Feb 2021 17:28:05 -0700
+Date: Thu, 6 Oct 2022 17:32:59 -0600
 Subject: [PATCH] tweaks for running buildah tests under podman
 
 Signed-off-by: Ed Santiago <santiago@redhat.com>
 ---
- tests/helpers.bash | 70 ++++++++++++++++++++++++++++++++++++++++++++--
- 1 file changed, 67 insertions(+), 3 deletions(-)
+ tests/helpers.bash | 98 ++++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 94 insertions(+), 4 deletions(-)
 
 diff --git a/tests/helpers.bash b/tests/helpers.bash
-index 8cb93c3a..72c1c797 100644
+index 349145f29..742b41629 100644
 --- a/tests/helpers.bash
 +++ b/tests/helpers.bash
-@@ -52,6 +52,23 @@ EOF
+@@ -70,6 +70,37 @@ EOF
      ROOTDIR_OPTS="--root ${TEST_SCRATCH_DIR}/root --runroot ${TEST_SCRATCH_DIR}/runroot --storage-driver ${STORAGE_DRIVER}"
      BUILDAH_REGISTRY_OPTS="--registries-conf ${TEST_SOURCES}/registries.conf --registries-conf-dir ${TEST_SCRATCH_DIR}/registries.d --short-name-alias-conf ${TEST_SCRATCH_DIR}/cache/shortnames.conf"
      PODMAN_REGISTRY_OPTS="--registries-conf ${TEST_SOURCES}/registries.conf"
@@ -21,46 +21,63 @@ index 8cb93c3a..72c1c797 100644
 +    PODMAN_NATIVE="${PODMAN_BINARY} ${ROOTDIR_OPTS} ${PODMAN_REGISTRY_OPTS}"
 +    if [[ -n "$REMOTE" ]]; then
 +        PODMAN_NATIVE="${PODMAN_BINARY%%-remote} ${ROOTDIR_OPTS} ${PODMAN_REGISTRY_OPTS}"
++        if [[ -n "$PODMAN_SERVER_LOG" ]]; then
++            (
++                echo "---------------------------------"
++                echo "- bats test ${BATS_TEST_NUMBER} : ${BATS_TEST_NAME}"
++            ) >> $PODMAN_SERVER_LOG
++        fi
++
++        # Path to podman socket file
++        local sockdir=/run
++        if is_rootless; then
++            sockdir=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
++        fi
++        PODMAN_SOCK_FILE=$sockdir/podman/podman.sock
 +        # static CONTAINERS_CONF needed for capabilities test. As of 2021-07-01
 +        # no tests in bud.bats override this; if at some point any test does
 +        # so, it will probably need to be skip_if_remote()d.
-+        env CONTAINERS_CONF=${CONTAINERS_CONF:-$(dirname ${BASH_SOURCE})/containers.conf} $PODMAN_NATIVE system service --timeout=0  &
++        env CONTAINERS_CONF=${CONTAINERS_CONF:-$(dirname ${BASH_SOURCE})/containers.conf} $PODMAN_NATIVE system service --log-level=info --timeout=0 &>>${PODMAN_SERVER_LOG:-/dev/stderr} &
 +        PODMAN_SERVER_PID=$!
 +        local timeout=10
 +        while ((timeout > 0)); do
-+            test -S /run/podman/podman.sock && return
++            test -S $PODMAN_SOCK_FILE && return
 +            sleep 0.2
++            timeout=$((timeout - 1))
 +        done
 +        die "podman server never came up"
 +    fi
  }
  
  function starthttpd() {
-@@ -95,6 +112,12 @@ function teardown_tests() {
+@@ -113,6 +144,12 @@ function teardown_tests() {
      stop_git_daemon
      stop_registry
  
 +    if [[ -n "$PODMAN_SERVER_PID" ]]; then
 +        kill $PODMAN_SERVER_PID
 +        wait $PODMAN_SERVER_PID
-+        rm -f /run/podman/podman.sock
++        rm -f $PODMAN_SOCK_FILE
 +    fi
 +
      # Workaround for #1991 - buildah + overlayfs leaks mount points.
      # Many tests leave behind /var/tmp/.../root/overlay and sub-mounts;
      # let's find those and clean them up, otherwise 'rm -rf' fails.
-@@ -187,6 +210,10 @@ function podman() {
-     command ${PODMAN_BINARY:-podman} ${PODMAN_REGISTRY_OPTS} ${ROOTDIR_OPTS} "$@"
+@@ -202,7 +239,12 @@ function copy() {
  }
  
-+function podman-remote() {
-+    command ${PODMAN_BINARY:-podman-remote} ${ROOTDIR_OPTS} "$@"
-+}
-+
+ function podman() {
+-    command ${PODMAN_BINARY:-podman} ${PODMAN_REGISTRY_OPTS} ${ROOTDIR_OPTS} "$@"
++    local cmd=${PODMAN_BINARY:-podman}
++    local opts="${PODMAN_REGISTRY_OPTS} ${ROOTDIR_OPTS}"
++    if [[ $cmd =~ remote ]]; then
++        opts=
++    fi
++    command $cmd $opts "$@"
+ }
+ 
  # There are various scenarios where we would like to execute `tests` as rootless user, however certain commands like `buildah mount`
- # do not work in rootless session since a normal user cannot mount a filesystem unless they're in a user namespace along with its
- # own mount namespace. In order to run such specific commands from a rootless session we must perform `buildah unshare`.
-@@ -248,8 +275,36 @@ function run_buildah() {
+@@ -266,8 +308,36 @@ function run_buildah() {
          --retry)         retry=3;        shift;;  # retry network flakes
      esac
  
@@ -98,18 +115,18 @@ index 8cb93c3a..72c1c797 100644
  
      # If session is rootless and `buildah mount` is invoked, perform unshare,
      # since normal user cannot mount a filesystem unless they're in a user namespace along with its own mount namespace.
-@@ -263,8 +318,8 @@ function run_buildah() {
+@@ -281,8 +351,8 @@ function run_buildah() {
          retry=$(( retry - 1 ))
  
          # stdout is only emitted upon error; this echo is to help a debugger
--        echo "\$ $BUILDAH_BINARY $*"
+-        echo "${_LOG_PROMPT} $BUILDAH_BINARY $*"
 -        run env CONTAINERS_CONF=${CONTAINERS_CONF:-$(dirname ${BASH_SOURCE})/containers.conf} timeout --foreground --kill=10 $BUILDAH_TIMEOUT ${BUILDAH_BINARY} ${BUILDAH_REGISTRY_OPTS} ${ROOTDIR_OPTS} "$@"
-+        echo "\$ $cmd_basename $*"
++        echo "${_LOG_PROMPT} $cmd_basename $*"
 +        run env CONTAINERS_CONF=${CONTAINERS_CONF:-$(dirname ${BASH_SOURCE})/containers.conf} timeout --foreground --kill=10 $BUILDAH_TIMEOUT ${podman_or_buildah} ${_opts} "$@"
          # without "quotes", multiple lines are glommed together into one
          if [ -n "$output" ]; then
              echo "$output"
-@@ -596,6 +651,15 @@ function skip_if_no_docker() {
+@@ -621,6 +691,26 @@ function skip_if_no_docker() {
    fi
  }
  
@@ -122,9 +139,20 @@ index 8cb93c3a..72c1c797 100644
 +    fi
 +}
 +
++#############################
++#  skip_if_rootless_remote  #  (only applicable for podman)
++#############################
++function skip_if_rootless_remote() {
++    if [[ -n "$REMOTE" ]]; then
++        if is_rootless; then
++            skip "${1:-test does not work with rootless podman-remote}"
++        fi
++    fi
++}
++
  function start_git_daemon() {
    daemondir=${TEST_SCRATCH_DIR}/git-daemon
    mkdir -p ${daemondir}/repo
 -- 
-2.36.1
+2.39.2
 

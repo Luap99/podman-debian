@@ -275,7 +275,7 @@ load helpers
         run_podman exec $destcontainer cat "/$dest_fullname"
         is "$output" "${randomcontent[$id]}" "$description (cp ctr:$src to /$dest)"
 
-	# To CREATED container
+        # To CREATED container
         run_podman create $IMAGE sleep infinity
         destcontainer="$output"
         destcontainers+=($destcontainer)
@@ -303,7 +303,7 @@ load helpers
         run_podman cp cpcontainer:$src $destcontainer:"/$dest"
         run_podman exec $destcontainer cat "/$dest_fullname"
         is "$output" "${randomcontent[$id]}" "$description (cp ctr:$src to /$dest)"
-	# To CREATED container
+        # To CREATED container
         run_podman create $IMAGE sleep infinity
         destcontainer="$output"
         destcontainers+=($destcontainer)
@@ -518,7 +518,7 @@ load helpers
         is "$output" "${randomcontent[0]}
 ${randomcontent[1]}" "$description"
 
-	# To CREATED container
+        # To CREATED container
         run_podman create $IMAGE sleep infinity
         destcontainer="$output"
         destcontainers+=($destcontainer)
@@ -545,7 +545,7 @@ ${randomcontent[1]}" "$description"
             unset dest_fullname
         fi
 
-	# To RUNNING container
+        # To RUNNING container
         run_podman run -d $IMAGE sleep infinity
         destcontainer="$output"
         destcontainers+=($destcontainer)
@@ -554,7 +554,7 @@ ${randomcontent[1]}" "$description"
         is "$output" "${randomcontent[0]}
 ${randomcontent[1]}" "$description"
 
-	# To CREATED container
+        # To CREATED container
         run_podman create $IMAGE sleep infinity
         destcontainer="$output"
         destcontainers+=($destcontainer)
@@ -1045,6 +1045,44 @@ ${randomcontent[1]}" "$description"
     is "$output" "$rand_content_dir"
 
     run_podman rm -t 0 -f ctr-file ctr-dir
+}
+
+@test "podman cp - dot notation - host to container" {
+    srcdir=$PODMAN_TMPDIR/src
+    mkdir -p $srcdir
+    mkdir -p $srcdir/test1. $srcdir/test2
+    touch $srcdir/test1./file1 $srcdir/test2/file2
+
+    run_podman run -d --name=test-ctr --rm $IMAGE sleep infinity
+    run_podman cp $srcdir/test1. test-ctr:/tmp/foo
+    run_podman exec test-ctr stat /tmp/foo/file1
+
+    run_podman rm -f -t0 test-ctr
+}
+
+@test "podman cp - dot notation - container to host" {
+    dstdir=$PODMAN_TMPDIR/dst
+    mkdir -p $dstdir
+
+    run_podman run -d --name=test-ctr --rm $IMAGE sh -c "mkdir -p /foo/test1. /foo/test2; touch /foo/test1./file1 /foo/test2/file2; sleep infinity"
+    run_podman cp test-ctr:/foo/test1. $dstdir/foo
+    run stat $dstdir/foo/test1.
+    if [[ -e $dstdir/foo/test2 ]]; then
+        die "the test2 directory should not have been copied over"
+    fi
+
+    run_podman rm -f -t0 test-ctr
+}
+
+@test "podman cp - dot notation - container to container" {
+    run_podman run -d --name=src-ctr --rm $IMAGE sh -c "mkdir -p /foo/test1. /foo/test2; touch /foo/test1./file1 /foo/test2/file2; sleep infinity"
+    run_podman run -d --name=dest-ctr --rm $IMAGE sleep infinity
+    run_podman cp src-ctr:/foo/test1. dest-ctr:/foo
+
+    run_podman exec dest-ctr find /foo
+    run_podman exec dest-ctr stat /foo/file1
+
+    run_podman rm -f -t0 src-ctr dest-ctr
 }
 
 function teardown() {

@@ -1,0 +1,149 @@
+This patch reverts commit e308ba0215baa95be5e177533adc1e15029e0869
+Author: Miloslav Trmač <mitr@redhat.com>
+Date:   Wed Jan 25 19:22:41 2023 +0100
+
+    Vendor c/image after https://github.com/containers/image/pull/1816
+    
+    Also includes unreleased https://github.com/openshift/imagebuilder/pull/246 to work
+    with the updated docker/docker dependency.
+    
+    And updates some references to newly deprecated docker/docker symbols.
+    
+    [NO NEW TESTS NEEDED]
+    
+    Signed-off-by: Miloslav Trmač <mitr@redhat.com>
+
+diff --git a/pkg/api/handlers/compat/system.go b/pkg/api/handlers/compat/system.go
+index 23f116d16..64f184643 100644
+--- b/pkg/api/handlers/compat/system.go
++++ a/pkg/api/handlers/compat/system.go
+@@ -11,7 +11,6 @@
+ 	"github.com/containers/podman/v4/pkg/domain/entities"
+ 	"github.com/containers/podman/v4/pkg/domain/infra/abi"
+ 	docker "github.com/docker/docker/api/types"
+-	"github.com/docker/docker/api/types/volume"
+ )
+ 
+ func GetDiskUsage(w http.ResponseWriter, r *http.Request) {
+@@ -65,9 +64,9 @@
+ 		ctnrs[i] = &t
+ 	}
+ 
+-	vols := make([]*volume.Volume, len(df.Volumes))
++	vols := make([]*docker.Volume, len(df.Volumes))
+ 	for i, o := range df.Volumes {
+-		t := volume.Volume{
++		t := docker.Volume{
+ 			CreatedAt:  "",
+ 			Driver:     "",
+ 			Labels:     map[string]string{},
+@@ -76,7 +75,7 @@
+ 			Options:    nil,
+ 			Scope:      "local",
+ 			Status:     nil,
+-			UsageData: &volume.UsageData{
++			UsageData: &docker.VolumeUsageData{
+ 				RefCount: int64(o.Links),
+ 				Size:     o.Size,
+ 			},
+diff --git a/pkg/api/handlers/compat/volumes.go b/pkg/api/handlers/compat/volumes.go
+index fe6ae36aa..b31a1bb75 100644
+--- b/pkg/api/handlers/compat/volumes.go
++++ a/pkg/api/handlers/compat/volumes.go
+@@ -52,14 +52,14 @@
+ 		utils.InternalServerError(w, err)
+ 		return
+ 	}
+-	volumeConfigs := make([]*docker_api_types_volume.Volume, 0, len(vols))
++	volumeConfigs := make([]*docker_api_types.Volume, 0, len(vols))
+ 	for _, v := range vols {
+ 		mp, err := v.MountPoint()
+ 		if err != nil {
+ 			utils.InternalServerError(w, err)
+ 			return
+ 		}
+-		config := docker_api_types_volume.Volume{
++		config := docker_api_types.Volume{
+ 			Name:       v.Name(),
+ 			Driver:     v.Driver(),
+ 			Mountpoint: mp,
+@@ -70,7 +70,7 @@
+ 		}
+ 		volumeConfigs = append(volumeConfigs, &config)
+ 	}
+-	response := docker_api_types_volume.ListResponse{
++	response := docker_api_types_volume.VolumeListOKBody{
+ 		Volumes:  volumeConfigs,
+ 		Warnings: []string{},
+ 	}
+@@ -91,7 +91,7 @@
+ 		return
+ 	}
+ 	// decode params from body
+-	input := docker_api_types_volume.CreateOptions{}
++	input := docker_api_types_volume.VolumeCreateBody{}
+ 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+ 		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("Decode(): %w", err))
+ 		return
+@@ -118,7 +118,7 @@
+ 			utils.InternalServerError(w, err)
+ 			return
+ 		}
+-		response := docker_api_types_volume.Volume{
++		response := docker_api_types.Volume{
+ 			CreatedAt:  existingVolume.CreatedTime().Format(time.RFC3339),
+ 			Driver:     existingVolume.Driver(),
+ 			Labels:     existingVolume.Labels(),
+@@ -163,7 +163,7 @@
+ 		utils.InternalServerError(w, err)
+ 		return
+ 	}
+-	volResponse := docker_api_types_volume.Volume{
++	volResponse := docker_api_types.Volume{
+ 		Name:       config.Name,
+ 		Driver:     config.Driver,
+ 		Mountpoint: mp,
+@@ -193,7 +193,7 @@
+ 		utils.InternalServerError(w, err)
+ 		return
+ 	}
+-	volResponse := docker_api_types_volume.Volume{
++	volResponse := docker_api_types.Volume{
+ 		Name:       vol.Name(),
+ 		Driver:     vol.Driver(),
+ 		Mountpoint: mp,
+diff --git a/pkg/api/handlers/swagger/responses.go b/pkg/api/handlers/swagger/responses.go
+index d97bde6dd..a1175fec9 100644
+--- b/pkg/api/handlers/swagger/responses.go
++++ a/pkg/api/handlers/swagger/responses.go
+@@ -240,7 +240,7 @@
+ // swagger:response
+ type volumeInspect struct {
+ 	// in:body
+-	Body dockerVolume.Volume
++	Body dockerAPI.Volume
+ }
+ 
+ // Volume prune
+@@ -254,7 +254,7 @@
+ // swagger:response
+ type volumeList struct {
+ 	// in:body
+-	Body dockerVolume.ListResponse
++	Body dockerVolume.VolumeListOKBody
+ }
+ 
+ // Volume list
+diff --git a/test/apiv2/45-system.at b/test/apiv2/45-system.at
+index 04e743537..42a2f146f 100644
+--- b/test/apiv2/45-system.at
++++ a/test/apiv2/45-system.at
+@@ -7,7 +7,7 @@
+ t POST 'libpod/system/prune?volumes=true&all=true' params='' 200
+ 
+ ## podman system df
+-t GET system/df 200 '{"LayersSize":0,"Images":[],"Containers":[],"Volumes":[],"BuildCache":[]}'
++t GET system/df 200 '{"LayersSize":0,"Images":[],"Containers":[],"Volumes":[],"BuildCache":[],"BuilderSize":0}'
+ t GET libpod/system/df 200 '{"ImagesSize":0,"Images":[],"Containers":[],"Volumes":[]}'
+ 
+ # Create volume. We expect df to report this volume next invocation of system/df

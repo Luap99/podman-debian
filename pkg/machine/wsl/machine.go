@@ -22,27 +22,30 @@ import (
 	"github.com/containers/podman/v4/pkg/machine"
 	"github.com/containers/podman/v4/utils"
 	"github.com/containers/storage/pkg/homedir"
+	"github.com/containers/storage/pkg/ioutils"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
 )
 
 var (
-	wslProvider = &Provider{}
 	// vmtype refers to qemu (vs libvirt, krun, etc)
-	vmtype = "wsl"
+	vmtype = machine.WSLVirt
 )
 
 const (
 	ErrorSuccessRebootInitiated = 1641
 	ErrorSuccessRebootRequired  = 3010
-	currentMachineVersion       = 2
+	currentMachineVersion       = 3
 )
 
 const containersConf = `[containers]
 
 [engine]
 cgroup_manager = "cgroupfs"
+`
+
+const registriesConf = `unqualified-search-registries=["docker.io"]
 `
 
 const appendPort = `grep -q Port\ %d /etc/ssh/sshd_config || echo Port %d >> /etc/ssh/sshd_config`
@@ -201,7 +204,23 @@ const (
 	globalPipe     = "docker_engine"
 )
 
-type Provider struct{}
+type Virtualization struct {
+	artifact    machine.Artifact
+	compression machine.ImageCompression
+	format      machine.ImageFormat
+}
+
+func (p *Virtualization) Artifact() machine.Artifact {
+	return p.artifact
+}
+
+func (p *Virtualization) Compression() machine.ImageCompression {
+	return p.compression
+}
+
+func (p *Virtualization) Format() machine.ImageFormat {
+	return p.format
+}
 
 type MachineVM struct {
 	// ConfigPath is the path to the configuration file
@@ -232,12 +251,16 @@ func (e *ExitCodeError) Error() string {
 	return fmt.Sprintf("Process failed with exit code: %d", e.code)
 }
 
-func GetWSLProvider() machine.Provider {
-	return wslProvider
+func GetWSLProvider() machine.VirtProvider {
+	return &Virtualization{
+		artifact:    machine.None,
+		compression: machine.Xz,
+		format:      machine.Tar,
+	}
 }
 
 // NewMachine initializes an instance of a wsl machine
-func (p *Provider) NewMachine(opts machine.InitOptions) (machine.VM, error) {
+func (p *Virtualization) NewMachine(opts machine.InitOptions) (machine.VM, error) {
 	vm := new(MachineVM)
 	if len(opts.Name) > 0 {
 		vm.Name = opts.Name
@@ -264,16 +287,21 @@ func (p *Provider) NewMachine(opts machine.InitOptions) (machine.VM, error) {
 }
 
 func getConfigPath(name string) (string, error) {
+	return getConfigPathExt(name, "json")
+}
+
+func getConfigPathExt(name string, extension string) (string, error) {
 	vmConfigDir, err := machine.GetConfDir(vmtype)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(vmConfigDir, name+".json"), nil
+
+	return filepath.Join(vmConfigDir, fmt.Sprintf("%s.%s", name, extension)), nil
 }
 
 // LoadByName reads a json file that describes a known qemu vm
 // and returns a vm instance
-func (p *Provider) LoadVMByName(name string) (machine.VM, error) {
+func (p *Virtualization) LoadVMByName(name string) (machine.VM, error) {
 	configPath, err := getConfigPath(name)
 	if err != nil {
 		return nil, err
@@ -311,6 +339,11 @@ func (v *MachineVM) migrateMachine(configPath string) error {
 
 	// Update older machines to use lingering
 	if err := enableUserLinger(v, toDist(v.Name)); err != nil {
+		return err
+	}
+
+	// Update older machines missing unqualified search config
+	if err := configureRegistries(v, toDist(v.Name)); err != nil {
 		return err
 	}
 
@@ -402,7 +435,7 @@ func downloadDistro(v *MachineVM, opts machine.InitOptions) error {
 
 	if _, e := strconv.Atoi(opts.ImagePath); e == nil {
 		v.ImageStream = opts.ImagePath
-		dd, err = machine.NewFedoraDownloader(vmtype, v.Name, opts.ImagePath)
+		dd, err = NewFedoraDownloader(vmtype, v.Name, opts.ImagePath)
 	} else {
 		v.ImageStream = "custom"
 		dd, err = machine.NewGenericDownloader(vmtype, v.Name, opts.ImagePath)
@@ -416,22 +449,33 @@ func downloadDistro(v *MachineVM, opts machine.InitOptions) error {
 }
 
 func (v *MachineVM) writeConfig() error {
+	const format = "could not write machine json config: %w"
 	jsonFile := v.ConfigPath
 
-	b, err := json.MarshalIndent(v, "", " ")
+	opts := &ioutils.AtomicFileWriterOptions{ExplicitCommit: true}
+	w, err := ioutils.NewAtomicFileWriterWithOpts(jsonFile, 0644, opts)
 	if err != nil {
-		return err
+		return fmt.Errorf(format, err)
 	}
-	if err := os.WriteFile(jsonFile, b, 0644); err != nil {
-		return fmt.Errorf("could not write machine json config: %w", err)
+	defer w.Close()
+
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", " ")
+	if err := enc.Encode(v); err != nil {
+		return fmt.Errorf(format, err)
+	}
+
+	// Commit the changes to disk if no error has occurred
+	if err := w.Commit(); err != nil {
+		return fmt.Errorf(format, err)
 	}
 
 	return nil
 }
 
 func setupConnections(v *MachineVM, opts machine.InitOptions, sshDir string) error {
-	uri := machine.SSHRemoteConnection.MakeSSHURL("localhost", "/run/user/1000/podman/podman.sock", strconv.Itoa(v.Port), v.RemoteUsername)
-	uriRoot := machine.SSHRemoteConnection.MakeSSHURL("localhost", "/run/podman/podman.sock", strconv.Itoa(v.Port), "root")
+	uri := machine.SSHRemoteConnection.MakeSSHURL(machine.LocalhostIP, "/run/user/1000/podman/podman.sock", strconv.Itoa(v.Port), v.RemoteUsername)
+	uriRoot := machine.SSHRemoteConnection.MakeSSHURL(machine.LocalhostIP, "/run/podman/podman.sock", strconv.Itoa(v.Port), "root")
 	identity := filepath.Join(sshDir, v.Name)
 
 	uris := []url.URL{uri, uriRoot}
@@ -471,7 +515,7 @@ func provisionWSLDist(v *MachineVM) (string, error) {
 	}
 
 	// Fixes newuidmap
-	if err = wslInvoke(dist, "rpm", "-q", "--restore", "shadow-utils", "2>/dev/null"); err != nil {
+	if err = wslInvoke(dist, "rpm", "--restore", "shadow-utils"); err != nil {
 		return "", fmt.Errorf("package permissions restore of shadow-utils on guest OS failed: %w", err)
 	}
 
@@ -554,6 +598,10 @@ func configureSystem(v *MachineVM, dist string) error {
 		return fmt.Errorf("could not create containers.conf for guest OS: %w", err)
 	}
 
+	if err := configureRegistries(v, dist); err != nil {
+		return err
+	}
+
 	if err := wslInvoke(dist, "sh", "-c", "echo wsl > /etc/containers/podman-machine"); err != nil {
 		return fmt.Errorf("could not create podman-machine file for guest OS: %w", err)
 	}
@@ -565,7 +613,7 @@ func configureSystem(v *MachineVM, dist string) error {
 	return nil
 }
 
-func configureProxy(dist string, useProxy bool) error {
+func configureProxy(dist string, useProxy bool, quiet bool) error {
 	if !useProxy {
 		_ = wslInvoke(dist, "sh", "-c", clearProxySettings)
 		return nil
@@ -586,8 +634,9 @@ func configureProxy(dist string, useProxy bool) error {
 		if exitErr, isExit := err.(*exec.ExitError); isExit && exitErr.ExitCode() != 42 {
 			return fmt.Errorf("%v: %w", failMessage, err)
 		}
-
-		fmt.Println("Installing proxy support")
+		if !quiet {
+			fmt.Println("Installing proxy support")
+		}
 		_ = wslPipe(proxyConfigSetup, dist, "sh", "-c",
 			"cat > /usr/local/bin/proxyinit; chmod 755 /usr/local/bin/proxyinit")
 
@@ -603,6 +652,15 @@ func enableUserLinger(v *MachineVM, dist string) error {
 	lingerCmd := "mkdir -p /var/lib/systemd/linger; touch /var/lib/systemd/linger/" + v.RemoteUsername
 	if err := wslInvoke(dist, "sh", "-c", lingerCmd); err != nil {
 		return fmt.Errorf("could not enable linger for remote user on guest OS: %w", err)
+	}
+
+	return nil
+}
+
+func configureRegistries(v *MachineVM, dist string) error {
+	cmd := "cat > /etc/containers/registries.conf.d/999-podman-machine.conf"
+	if err := wslPipe(registriesConf, dist, "sh", "-c", cmd); err != nil {
+		return fmt.Errorf("could not configure registries on guest OS: %w", err)
 	}
 
 	return nil
@@ -960,14 +1018,14 @@ func (v *MachineVM) Set(_ string, opts machine.SetOptions) ([]error, error) {
 	return setErrors, v.writeConfig()
 }
 
-func (v *MachineVM) Start(name string, _ machine.StartOptions) error {
+func (v *MachineVM) Start(name string, opts machine.StartOptions) error {
 	if v.isRunning() {
 		return fmt.Errorf("%q is already running", name)
 	}
 
 	dist := toDist(name)
 	useProxy := setupWslProxyEnv()
-	if err := configureProxy(dist, useProxy); err != nil {
+	if err := configureProxy(dist, useProxy, opts.Quiet); err != nil {
 		return err
 	}
 
@@ -976,7 +1034,7 @@ func (v *MachineVM) Start(name string, _ machine.StartOptions) error {
 		return fmt.Errorf("the WSL bootstrap script failed: %w", err)
 	}
 
-	if !v.Rootful {
+	if !v.Rootful && !opts.NoInfo {
 		fmt.Printf("\nThis machine is currently configured in rootless mode. If your containers\n")
 		fmt.Printf("require root permissions (e.g. ports < 1024), or if you run into compatibility\n")
 		fmt.Printf("issues with non-podman clients, you can switch using the following command: \n")
@@ -989,22 +1047,24 @@ func (v *MachineVM) Start(name string, _ machine.StartOptions) error {
 	}
 
 	globalName, pipeName, err := launchWinProxy(v)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "API forwarding for Docker API clients is not available due to the following startup failures.")
-		fmt.Fprintf(os.Stderr, "\t%s\n", err.Error())
-		fmt.Fprintln(os.Stderr, "\nPodman clients are still able to connect.")
-	} else {
-		fmt.Printf("API forwarding listening on: %s\n", pipeName)
-		if globalName {
-			fmt.Printf("\nDocker API clients default to this address. You do not need to set DOCKER_HOST.\n")
+	if !opts.NoInfo {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "API forwarding for Docker API clients is not available due to the following startup failures.")
+			fmt.Fprintf(os.Stderr, "\t%s\n", err.Error())
+			fmt.Fprintln(os.Stderr, "\nPodman clients are still able to connect.")
 		} else {
-			fmt.Printf("\nAnother process was listening on the default Docker API pipe address.\n")
-			fmt.Printf("You can still connect Docker API clients by setting DOCKER HOST using the\n")
-			fmt.Printf("following powershell command in your terminal session:\n")
-			fmt.Printf("\n\t$Env:DOCKER_HOST = '%s'\n", pipeName)
-			fmt.Printf("\nOr in a classic CMD prompt:\n")
-			fmt.Printf("\n\tset DOCKER_HOST = '%s'\n", pipeName)
-			fmt.Printf("\nAlternatively terminate the other process and restart podman machine.\n")
+			fmt.Printf("API forwarding listening on: %s\n", pipeName)
+			if globalName {
+				fmt.Printf("\nDocker API clients default to this address. You do not need to set DOCKER_HOST.\n")
+			} else {
+				fmt.Printf("\nAnother process was listening on the default Docker API pipe address.\n")
+				fmt.Printf("You can still connect Docker API clients by setting DOCKER HOST using the\n")
+				fmt.Printf("following powershell command in your terminal session:\n")
+				fmt.Printf("\n\t$Env:DOCKER_HOST = '%s'\n", pipeName)
+				fmt.Printf("\nOr in a classic CMD prompt:\n")
+				fmt.Printf("\n\tset DOCKER_HOST=%s\n", pipeName)
+				fmt.Printf("\nAlternatively, terminate the other process and restart podman machine.\n")
+			}
 		}
 	}
 
@@ -1014,12 +1074,12 @@ func (v *MachineVM) Start(name string, _ machine.StartOptions) error {
 
 func launchWinProxy(v *MachineVM) (bool, string, error) {
 	machinePipe := toDist(v.Name)
-	if !pipeAvailable(machinePipe) {
+	if !machine.PipeNameAvailable(machinePipe) {
 		return false, "", fmt.Errorf("could not start api proxy since expected pipe is not available: %s", machinePipe)
 	}
 
 	globalName := false
-	if pipeAvailable(globalPipe) {
+	if machine.PipeNameAvailable(globalPipe) {
 		globalName = true
 	}
 
@@ -1060,7 +1120,7 @@ func launchWinProxy(v *MachineVM) (bool, string, error) {
 		return globalName, "", err
 	}
 
-	return globalName, pipePrefix + waitPipe, waitPipeExists(waitPipe, 80, func() error {
+	return globalName, pipePrefix + waitPipe, machine.WaitPipeExists(waitPipe, 80, func() error {
 		active, exitCode := machine.GetProcessState(cmd.Process.Pid)
 		if !active {
 			return fmt.Errorf("win-sshproxy.exe failed to start, exit code: %d (see windows event logs)", exitCode)
@@ -1081,27 +1141,6 @@ func getWinProxyStateDir(v *MachineVM) (string, error) {
 	}
 
 	return stateDir, nil
-}
-
-func pipeAvailable(pipeName string) bool {
-	_, err := os.Stat(`\\.\pipe\` + pipeName)
-	return os.IsNotExist(err)
-}
-
-func waitPipeExists(pipeName string, retries int, checkFailure func() error) error {
-	var err error
-	for i := 0; i < retries; i++ {
-		_, err = os.Stat(`\\.\pipe\` + pipeName)
-		if err == nil {
-			break
-		}
-		if fail := checkFailure(); fail != nil {
-			return fail
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-
-	return err
 }
 
 func IsWSLInstalled() bool {
@@ -1136,7 +1175,7 @@ func IsWSLFeatureEnabled() bool {
 }
 
 func isWSLRunning(dist string) (bool, error) {
-	cmd := exec.Command("wsl", "-l", "--running")
+	cmd := exec.Command("wsl", "-l", "--running", "--quiet")
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		return false, err
@@ -1339,7 +1378,7 @@ func (v *MachineVM) Remove(name string, opts machine.RemoveOptions) (string, fun
 			logrus.Error(err)
 		}
 		for _, f := range files {
-			if err := os.RemoveAll(f); err != nil {
+			if err := machine.GuardedRemoveAll(f); err != nil {
 				logrus.Error(err)
 			}
 		}
@@ -1400,7 +1439,7 @@ func (v *MachineVM) SSH(name string, opts machine.SSHOptions) error {
 }
 
 // List lists all vm's that use qemu virtualization
-func (p *Provider) List(_ machine.ListOptions) ([]*machine.ListResponse, error) {
+func (p *Virtualization) List(_ machine.ListOptions) ([]*machine.ListResponse, error) {
 	return GetVMInfos()
 }
 
@@ -1529,7 +1568,7 @@ func getMem(vm *MachineVM) (uint64, error) {
 	return total - available, err
 }
 
-func (p *Provider) IsValidVMName(name string) (bool, error) {
+func (p *Virtualization) IsValidVMName(name string) (bool, error) {
 	infos, err := GetVMInfos()
 	if err != nil {
 		return false, err
@@ -1542,7 +1581,7 @@ func (p *Provider) IsValidVMName(name string) (bool, error) {
 	return false, nil
 }
 
-func (p *Provider) CheckExclusiveActiveVM() (bool, string, error) {
+func (p *Virtualization) CheckExclusiveActiveVM() (bool, string, error) {
 	return false, "", nil
 }
 
@@ -1572,11 +1611,15 @@ func (v *MachineVM) Inspect() (*machine.InspectInfo, error) {
 		return nil, err
 	}
 
-	created, lastUp, _ := v.updateTimeStamps(state == machine.Running)
+	connInfo := new(machine.ConnectionConfig)
+	machinePipe := toDist(v.Name)
+	connInfo.PodmanPipe = &machine.VMFile{Path: `\\.\pipe\` + machinePipe}
 
+	created, lastUp, _ := v.updateTimeStamps(state == machine.Running)
 	return &machine.InspectInfo{
-		ConfigPath: machine.VMFile{Path: v.ConfigPath},
-		Created:    created,
+		ConfigPath:     machine.VMFile{Path: v.ConfigPath},
+		ConnectionInfo: *connInfo,
+		Created:        created,
 		Image: machine.ImageConfig{
 			ImagePath:   machine.VMFile{Path: v.ImagePath},
 			ImageStream: v.ImageStream,
@@ -1597,7 +1640,7 @@ func (v *MachineVM) getResources() (resources machine.ResourceConfig) {
 }
 
 // RemoveAndCleanMachines removes all machine and cleans up any other files associated with podman machine
-func (p *Provider) RemoveAndCleanMachines() error {
+func (p *Virtualization) RemoveAndCleanMachines() error {
 	var (
 		vm             machine.VM
 		listResponse   []*machine.ListResponse
@@ -1644,7 +1687,7 @@ func (p *Provider) RemoveAndCleanMachines() error {
 		}
 		prevErr = err
 	} else {
-		err := os.RemoveAll(dataDir)
+		err := machine.GuardedRemoveAll(dataDir)
 		if err != nil {
 			if prevErr != nil {
 				logrus.Error(prevErr)
@@ -1661,7 +1704,7 @@ func (p *Provider) RemoveAndCleanMachines() error {
 		}
 		prevErr = err
 	} else {
-		err := os.RemoveAll(confDir)
+		err := machine.GuardedRemoveAll(confDir)
 		if err != nil {
 			if prevErr != nil {
 				logrus.Error(prevErr)
@@ -1672,6 +1715,6 @@ func (p *Provider) RemoveAndCleanMachines() error {
 	return prevErr
 }
 
-func (p *Provider) VMType() string {
+func (p *Virtualization) VMType() machine.VMType {
 	return vmtype
 }

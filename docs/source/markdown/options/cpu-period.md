@@ -1,3 +1,7 @@
+####> This option file is used in:
+####>   podman build, container clone, create, run, update
+####> If file is edited, make sure the changes
+####> are applicable to all of those.
 #### **--cpu-period**=*limit*
 
 Set the CPU period for the Completely Fair Scheduler (CFS), which is a

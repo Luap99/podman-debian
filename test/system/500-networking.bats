@@ -4,6 +4,7 @@
 #
 
 load helpers
+load helpers.network
 
 @test "podman network - basic tests" {
     heading="NETWORK *ID *NAME *DRIVER"
@@ -12,6 +13,9 @@ load helpers
 
     run_podman network ls --noheading
     assert "$output" !~ "$heading" "network ls --noheading shows header anyway"
+
+    run_podman network ls -n
+    assert "$output" !~ "$heading" "network ls -n shows header anyway"
 
     # check deterministic list order
     local net1=a-$(random_string 10)
@@ -192,8 +196,18 @@ load helpers
 @test "podman run with slirp4ns adds correct dns address to resolv.conf" {
     CIDR="$(random_rfc1918_subnet)"
     run_podman run --rm --network slirp4netns:cidr="${CIDR}.0/24" \
-                $IMAGE grep "${CIDR}" /etc/resolv.conf
-    is "$output"   "nameserver ${CIDR}.3"   "resolv.conf should have slirp4netns cidr+3 as a nameserver"
+                $IMAGE cat /etc/resolv.conf
+    assert "$output" =~ "nameserver ${CIDR}.3" "resolv.conf should have slirp4netns cidr+3 as first nameserver"
+    no_userns_out="$output"
+
+    if is_rootless; then
+    # check the slirp ip also works correct with userns
+        run_podman run --rm --userns keep-id --network slirp4netns:cidr="${CIDR}.0/24" \
+                $IMAGE cat /etc/resolv.conf
+        assert "$output" =~ "nameserver ${CIDR}.3" "resolv.conf should have slirp4netns cidr+3 as first nameserver with userns"
+        assert "$output" == "$no_userns_out" "resolv.conf should look the same for userns"
+    fi
+
 }
 
 @test "podman run with slirp4ns assigns correct ip address container" {
@@ -205,8 +219,7 @@ load helpers
 
 # "network create" now works rootless, with the help of a special container
 @test "podman network create" {
-    # Deliberately use a fixed port, not random_open_port, because of #10806
-    myport=54322
+    myport=$(random_free_port)
 
     local mynetname=testnet-$(random_string 10)
     local mysubnet=$(random_rfc1918_subnet)
@@ -223,7 +236,7 @@ load helpers
        "sdfsdf"
 
     run_podman run -d --network $mynetname -p 127.0.0.1:$myport:$myport \
-	       $IMAGE nc -l -n -v -p $myport
+               $IMAGE nc -l -n -v -p $myport
     cid="$output"
 
     # FIXME: debugging for #11871
@@ -627,8 +640,8 @@ load helpers
     run_podman network rm -t 0 -f $netname
 }
 
-@test "podman run CONTAINERS_CONF dns options" {
-    skip_if_remote "CONTAINERS_CONF redirect does not work on remote"
+@test "podman run CONTAINERS_CONF_OVERRIDE dns options" {
+    skip_if_remote "CONTAINERS_CONF_OVERRIDE redirect does not work on remote"
     # Test on the CLI and via containers.conf
     containersconf=$PODMAN_TMPDIR/containers.conf
 
@@ -647,8 +660,8 @@ EOF
     local nl="
 "
 
-    CONTAINERS_CONF=$containersconf run_podman run --rm $IMAGE cat /etc/resolv.conf
-    is "$output" "search example.com$nl.*" "correct search domain"
+    CONTAINERS_CONF_OVERRIDE=$containersconf run_podman run --rm $IMAGE cat /etc/resolv.conf
+    is "$output" "search example.com.*" "correct search domain"
     is "$output" ".*nameserver 1.1.1.1${nl}nameserver $searchIP${nl}nameserver 1.0.0.1${nl}nameserver 8.8.8.8" "nameserver order is correct"
 
     # create network with dns
@@ -656,23 +669,34 @@ EOF
     local subnet=$(random_rfc1918_subnet)
     run_podman network create --subnet "$subnet.0/24"  $netname
     # custom server overwrites the network dns server
-    CONTAINERS_CONF=$containersconf run_podman run --network $netname --rm $IMAGE cat /etc/resolv.conf
-    is "$output" "search example.com$nl.*" "correct search domain"
-    is "$output" ".*nameserver 1.1.1.1${nl}nameserver $searchIP${nl}nameserver 1.0.0.1${nl}nameserver 8.8.8.8" "nameserver order is correct"
-
+    CONTAINERS_CONF_OVERRIDE=$containersconf run_podman run --network $netname --rm $IMAGE cat /etc/resolv.conf
+    is "$output" "search example.com.*" "correct search domain"
+    local store=$output
+    if is_netavark; then
+        assert "$store" == "search example.com${nl}nameserver $subnet.1" "only integrated dns nameserver is set"
+    else
+        assert "$store" == "search example.com
+nameserver 1.1.1.1
+nameserver $searchIP
+nameserver 1.0.0.1
+nameserver 8.8.8.8" "nameserver order is correct"
+    fi
     # we should use the integrated dns server
     run_podman run --network $netname --rm $IMAGE cat /etc/resolv.conf
-    is "$output" "search dns.podman.*" "correct search domain"
-    is "$output" ".*nameserver $subnet.1.*" "integrated dns nameserver is set"
+    assert "$output" =~ "search dns.podman.*" "correct search domain"
+    assert "$output" =~ ".*nameserver $subnet.1.*" \
+           "integrated dns nameserver is set"
 
     # host network should keep localhost nameservers
     if grep 127.0.0. /etc/resolv.conf >/dev/null; then
         run_podman run --network host --rm $IMAGE cat /etc/resolv.conf
-        is "$output" ".*nameserver 127\.0\.0.*" "resolv.conf contains localhost nameserver"
+        assert "$output" =~ ".*nameserver 127\.0\.0.*" \
+               "resolv.conf contains localhost nameserver"
     fi
     # host net + dns still works
     run_podman run --network host --dns 1.1.1.1 --rm $IMAGE cat /etc/resolv.conf
-    is "$output" ".*nameserver 1\.1\.1\.1.*" "resolv.conf contains 1.1.1.1 nameserver"
+    assert "$output" =~ ".*nameserver 1\.1\.1\.1.*" \
+           "resolv.conf contains 1.1.1.1 nameserver"
 }
 
 @test "podman run port forward range" {
@@ -700,8 +724,8 @@ EOF
     done
 }
 
-@test "podman run CONTAINERS_CONF /etc/hosts options" {
-    skip_if_remote "CONTAINERS_CONF redirect does not work on remote"
+@test "podman run CONTAINERS_CONF_OVERRIDE /etc/hosts options" {
+    skip_if_remote "CONTAINERS_CONF_OVERRIDE redirect does not work on remote"
 
     containersconf=$PODMAN_TMPDIR/containers.conf
     basehost=$PODMAN_TMPDIR/host
@@ -726,7 +750,7 @@ EOF
     ip3="$(random_rfc1918_subnet).$((RANDOM % 256))"
     name3=host3$(random_string)
 
-    CONTAINERS_CONF=$containersconf run_podman run --rm --add-host $name3:$ip3 $IMAGE cat /etc/hosts
+    CONTAINERS_CONF_OVERRIDE=$containersconf run_podman run --rm --add-host $name3:$ip3 $IMAGE cat /etc/hosts
     is "$output" ".*$ip3[[:blank:]]$name3.*" "--add-host entry in /etc/host"
     is "$output" ".*$ip1[[:blank:]]$name1.*" "first base entry in /etc/host"
     is "$output" ".*$ip2[[:blank:]]$name2.*" "second base entry in /etc/host"
@@ -737,7 +761,7 @@ EOF
 
     # now try again with container name and hostname == host entry name
     # in this case podman should not add its own entry thus we only have 5 entries (-1 for the removed --add-host)
-    CONTAINERS_CONF=$containersconf run_podman run --rm --name $name1 --hostname $name1 $IMAGE cat /etc/hosts
+    CONTAINERS_CONF_OVERRIDE=$containersconf run_podman run --rm --name $name1 --hostname $name1 $IMAGE cat /etc/hosts
     is "$output" ".*$ip1[[:blank:]]$name1.*" "first base entry in /etc/host"
     is "$output" ".*$ip2[[:blank:]]$name2.*" "second base entry in /etc/host"
     is "$output" ".*$containersinternal_ip[[:blank:]]host\.containers\.internal.*" "host.containers.internal ip from config in /etc/host"
@@ -775,6 +799,52 @@ EOF
     dns_opt=dns$(random_string)
     run_podman run --rm --dns-option=${dns_opt} $IMAGE cat /etc/resolv.conf
     is "$output" ".*options ${dns_opt}" "--dns-option was added"
+}
+
+@test "podman rootless netns works when XDG_RUNTIME_DIR includes symlinks" {
+    # regression test for https://github.com/containers/podman/issues/14606
+    is_rootless || skip "only meaningful for rootless"
+
+    # Create a tmpdir symlink pointing to /run, and use it briefly
+    ln -s /run $PODMAN_TMPDIR/run
+    local tmp_run=$PODMAN_TMPDIR/run/user/$(id -u)
+    test -d $tmp_run || skip "/run/user/MYUID unavailable"
+
+    # This 'run' would previously fail with:
+    #    IPAM error: failed to open database ....
+    XDG_RUNTIME_DIR=$tmp_run run_podman run --network bridge --rm $IMAGE ip a
+    assert "$output" =~ "eth0"
+}
+
+@test "podman inspect list networks " {
+    run_podman create $IMAGE
+    cid=${output}
+    run_podman inspect --format '{{ .NetworkSettings.Networks }}' $cid
+    if is_rootless; then
+        is "$output" "map\[slirp4netns:.*" "NeworkSettings should contain one network named slirp4netns"
+    else
+        is "$output" "map\[podman:.*" "NeworkSettings should contain one network named podman"
+    fi
+    run_podman rm $cid
+
+    for network in "host" "none"; do
+        run_podman create --network=$network $IMAGE
+        cid=${output}
+        run_podman inspect --format '{{ .NetworkSettings.Networks }}' $cid
+        is "$output" "map\[$network:.*" "NeworkSettincs should contain one network named $network"
+        run_podman rm $cid
+    done
+
+    # Check with ns:/PATH
+    if ! is_rootless; then
+        netns=netns$(random_string)
+        ip netns add $netns
+        run_podman create --network=ns:/var/run/netns/$netns $IMAGE
+        cid=${output}
+        run_podman inspect --format '{{ .NetworkSettings.Networks }}' $cid
+        is "$output" 'map[]' "NeworkSettings should be empty"
+        run_podman rm $cid
+     fi
 }
 
 # vim: filetype=sh

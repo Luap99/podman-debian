@@ -143,7 +143,7 @@ var _ = Describe("Podman images", func() {
 		result := podmanTest.Podman([]string{"images", "-q", "-f", "reference=quay.io/libpod/*"})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
-		Expect(result.OutputToStringArray()).To(HaveLen(7))
+		Expect(result.OutputToStringArray()).To(HaveLen(8))
 
 		retalpine := podmanTest.Podman([]string{"images", "-f", "reference=*lpine*"})
 		retalpine.WaitWithDefaultTimeout()
@@ -165,13 +165,13 @@ var _ = Describe("Podman images", func() {
 
 	It("podman images filter before image", func() {
 		dockerfile := `FROM quay.io/libpod/alpine:latest
-RUN apk update && apk add strace
+RUN echo hello > /hello
 `
 		podmanTest.BuildImage(dockerfile, "foobar.com/before:latest", "false")
 		result := podmanTest.Podman([]string{"images", "-q", "-f", "before=foobar.com/before:latest"})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
-		Expect(len(result.OutputToStringArray())).To(BeNumerically(">=", 1))
+		Expect(result.OutputToStringArray()).ToNot(BeEmpty())
 	})
 
 	It("podman images workingdir from  image", func() {
@@ -217,7 +217,8 @@ WORKDIR /test
 	})
 
 	It("podman pull by digest and list --all", func() {
-		// Prevent regressing on issue #7651.
+		// Prevent regressing on issue #7651: error parsing name that includes a digest
+		// component as if were a name that includes tag component.
 		digestPullAndList := func(noneTag bool) {
 			session := podmanTest.Podman([]string{"pull", ALPINEAMD64DIGEST})
 			session.WaitWithDefaultTimeout()
@@ -233,14 +234,18 @@ WORKDIR /test
 				Expect(result.OutputToString()).To(Not(ContainSubstring("<none>")))
 			}
 		}
-		// No "<none>" tag as tagged alpine instances should be present.
+		// No "<none>" in the tag column as image tagged as "ALPINE" should be present in
+		// the additional image store we're using.  Pull the same image by another name to
+		// copy an entry for the image into read-write storage so that the name can be
+		// attached to it.
 		session := podmanTest.Podman([]string{"pull", ALPINELISTTAG})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		digestPullAndList(false)
 
-		// Now remove all images, re-pull by digest and check for the "<none>" tag.
-		session = podmanTest.Podman([]string{"rmi", "-af"})
+		// Now remove all names from the read-write image record, re-pull by digest and
+		// check for the "<none>" in its listing.
+		session = podmanTest.Podman([]string{"untag", ALPINELISTTAG})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
@@ -431,7 +436,7 @@ RUN > file2
 `
 		podmanTest.BuildImageWithLabel(dockerfile, "foobar.com/workdir:latest", "false", "abc")
 		podmanTest.BuildImageWithLabel(dockerfile2, "foobar.com/workdir:latest", "false", "xyz")
-		// --force used to to avoid y/n question
+		// --force used to avoid y/n question
 		result := podmanTest.Podman([]string{"image", "prune", "--filter", "label=abc", "--force"})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))

@@ -47,6 +47,13 @@ var _ = Describe("Podman logs", func() {
 
 	})
 
+	It("podman logs on not existent container", func() {
+		results := podmanTest.Podman([]string{"logs", "notexist"})
+		results.WaitWithDefaultTimeout()
+		Expect(results).To(Exit(125))
+		Expect(results.ErrorToString()).To(Equal(`Error: no container with name or ID "notexist" found: no such container`))
+	})
+
 	for _, log := range []string{"k8s-file", "journald", "json-file"} {
 		// This is important to move the 'log' var to the correct scope under Ginkgo flow.
 		log := log
@@ -65,7 +72,11 @@ var _ = Describe("Podman logs", func() {
 			Expect(logc).To(Exit(0))
 			cid := logc.OutputToString()
 
-			results := podmanTest.Podman([]string{"logs", cid})
+			results := podmanTest.Podman([]string{"wait", cid})
+			results.WaitWithDefaultTimeout()
+			Expect(results).To(Exit(0))
+
+			results = podmanTest.Podman([]string{"logs", cid})
 			results.WaitWithDefaultTimeout()
 			Expect(results).To(Exit(0))
 			Expect(results.OutputToStringArray()).To(HaveLen(3))
@@ -79,6 +90,10 @@ var _ = Describe("Podman logs", func() {
 			logc.WaitWithDefaultTimeout()
 			Expect(logc).To(Exit(0))
 			cid := logc.OutputToString()
+
+			wait := podmanTest.Podman([]string{"wait", cid})
+			wait.WaitWithDefaultTimeout()
+			Expect(wait).To(Exit(0))
 
 			results := podmanTest.Podman([]string{"logs", "--tail", "2", cid})
 			results.WaitWithDefaultTimeout()
@@ -94,6 +109,10 @@ var _ = Describe("Podman logs", func() {
 			Expect(logc).To(Exit(0))
 			cid := logc.OutputToString()
 
+			wait := podmanTest.Podman([]string{"wait", cid})
+			wait.WaitWithDefaultTimeout()
+			Expect(wait).To(Exit(0))
+
 			results := podmanTest.Podman([]string{"logs", "--tail", "0", cid})
 			results.WaitWithDefaultTimeout()
 			Expect(results).To(Exit(0))
@@ -107,6 +126,10 @@ var _ = Describe("Podman logs", func() {
 			logc := podmanTest.Podman([]string{"run", "--name", name, "--log-driver", log, ALPINE, "sh", "-c", "echo podman; echo podman; echo podman"})
 			logc.WaitWithDefaultTimeout()
 			Expect(logc).To(Exit(0))
+
+			wait := podmanTest.Podman([]string{"wait", name})
+			wait.WaitWithDefaultTimeout()
+			Expect(wait).To(Exit(0))
 
 			results := podmanTest.Podman([]string{"logs", "--tail", "99", name})
 			results.WaitWithDefaultTimeout()
@@ -142,6 +165,10 @@ var _ = Describe("Podman logs", func() {
 			Expect(logc).To(Exit(0))
 			cid := logc.OutputToString()
 
+			wait := podmanTest.Podman([]string{"wait", cid})
+			wait.WaitWithDefaultTimeout()
+			Expect(wait).To(Exit(0))
+
 			results := podmanTest.Podman([]string{"logs", "--tail", "2", "-t", cid})
 			results.WaitWithDefaultTimeout()
 			Expect(results).To(Exit(0))
@@ -155,6 +182,10 @@ var _ = Describe("Podman logs", func() {
 			logc.WaitWithDefaultTimeout()
 			Expect(logc).To(Exit(0))
 			cid := logc.OutputToString()
+
+			wait := podmanTest.Podman([]string{"wait", cid})
+			wait.WaitWithDefaultTimeout()
+			Expect(wait).To(Exit(0))
 
 			results := podmanTest.Podman([]string{"logs", "--since", "2017-08-07T10:10:09.056611202-04:00", cid})
 			results.WaitWithDefaultTimeout()
@@ -170,6 +201,10 @@ var _ = Describe("Podman logs", func() {
 			Expect(logc).To(Exit(0))
 			cid := logc.OutputToString()
 
+			wait := podmanTest.Podman([]string{"wait", cid})
+			wait.WaitWithDefaultTimeout()
+			Expect(wait).To(Exit(0))
+
 			results := podmanTest.Podman([]string{"logs", "--since", "10m", cid})
 			results.WaitWithDefaultTimeout()
 			Expect(results).To(Exit(0))
@@ -184,6 +219,10 @@ var _ = Describe("Podman logs", func() {
 			Expect(logc).To(Exit(0))
 			cid := logc.OutputToString()
 
+			wait := podmanTest.Podman([]string{"wait", cid})
+			wait.WaitWithDefaultTimeout()
+			Expect(wait).To(Exit(0))
+
 			results := podmanTest.Podman([]string{"logs", "--until", "10m", cid})
 			results.WaitWithDefaultTimeout()
 			Expect(results).To(Exit(0))
@@ -197,6 +236,10 @@ var _ = Describe("Podman logs", func() {
 			logc.WaitWithDefaultTimeout()
 			Expect(logc).To(Exit(0))
 			cid := logc.OutputToString()
+
+			wait := podmanTest.Podman([]string{"wait", cid})
+			wait.WaitWithDefaultTimeout()
+			Expect(wait).To(Exit(0))
 
 			now := time.Now()
 			now = now.Add(time.Minute * 1)
@@ -228,6 +271,10 @@ var _ = Describe("Podman logs", func() {
 			log2.WaitWithDefaultTimeout()
 			Expect(log2).Should(Exit(0))
 			cid2 := log2.OutputToString()
+
+			wait := podmanTest.Podman([]string{"wait", cid1, cid2})
+			wait.WaitWithDefaultTimeout()
+			Expect(wait).To(Exit(0))
 
 			results := podmanTest.Podman([]string{"logs", cid1, cid2})
 			results.WaitWithDefaultTimeout()
@@ -478,7 +525,7 @@ var _ = Describe("Podman logs", func() {
 
 		cmd := exec.Command("journalctl", "--no-pager", "-o", "json", "--output-fields=CONTAINER_TAG", fmt.Sprintf("CONTAINER_ID_FULL=%s", cid))
 		out, err := cmd.CombinedOutput()
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(string(out)).To(ContainSubstring("alpine"))
 	})
 
@@ -496,7 +543,7 @@ var _ = Describe("Podman logs", func() {
 
 		cmd := exec.Command("journalctl", "--no-pager", "-o", "json", "--output-fields=CONTAINER_NAME", fmt.Sprintf("CONTAINER_ID_FULL=%s", cid))
 		out, err := cmd.CombinedOutput()
-		Expect(err).To(BeNil())
+		Expect(err).ToNot(HaveOccurred())
 		Expect(string(out)).To(ContainSubstring(containerName))
 	})
 

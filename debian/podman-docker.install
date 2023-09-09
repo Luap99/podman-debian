@@ -1,1 +1,3 @@
-docker      /usr/bin
+usr/bin/docker
+usr/lib/tmpfiles.d/podman-docker.conf
+usr/share/user-tmpfiles.d/podman-docker.conf
