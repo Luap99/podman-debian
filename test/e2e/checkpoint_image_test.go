@@ -1,34 +1,23 @@
 package integration
 
 import (
-	"os"
+	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
 
 	"github.com/containers/podman/v4/pkg/criu"
 	. "github.com/containers/podman/v4/test/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 )
 
 var _ = Describe("Podman checkpoint", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
 
 	BeforeEach(func() {
 		SkipIfContainerized("FIXME: #15015. All checkpoint tests hang when containerized.")
 		SkipIfRootless("checkpoint not supported in rootless mode")
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
 		// Check if the runtime implements checkpointing. Currently only
 		// runc's checkpoint/restore implementation is supported.
 		cmd := exec.Command(podmanTest.OCIRuntime, "checkpoint", "--help")
@@ -39,15 +28,9 @@ var _ = Describe("Podman checkpoint", func() {
 			Skip("OCI runtime does not support checkpoint/restore")
 		}
 
-		if !criu.CheckForCriu(criu.MinCriuVersion) {
-			Skip("CRIU is missing or too old.")
+		if err := criu.CheckForCriu(criu.MinCriuVersion); err != nil {
+			Skip(fmt.Sprintf("check CRIU version error: %v", err))
 		}
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
 	})
 
 	It("podman checkpoint --create-image with bogus container", func() {
@@ -65,9 +48,8 @@ var _ = Describe("Podman checkpoint", func() {
 
 		localRunString := []string{
 			"run",
-			"-it",
 			"-d",
-			"--ip", GetRandomIPAddress(),
+			"--ip", GetSafeIPAddress(),
 			"--name", containerName,
 			ALPINE,
 			"top",

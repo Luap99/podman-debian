@@ -243,6 +243,11 @@ func KillContainer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(report) > 0 && report[0].Err != nil {
+		if errors.Is(report[0].Err, define.ErrCtrStateInvalid) ||
+			errors.Is(report[0].Err, define.ErrCtrStopped) {
+			utils.Error(w, http.StatusConflict, report[0].Err)
+			return
+		}
 		utils.InternalServerError(w, report[0].Err)
 		return
 	}
@@ -256,8 +261,8 @@ func KillContainer(w http.ResponseWriter, r *http.Request) {
 		}
 		if sig == 0 || sig == syscall.SIGKILL {
 			opts := entities.WaitOptions{
-				Condition: []define.ContainerStatus{define.ContainerStateExited, define.ContainerStateStopped},
-				Interval:  time.Millisecond * 250,
+				Conditions: []string{define.ContainerStateExited.String(), define.ContainerStateStopped.String()},
+				Interval:   time.Millisecond * 250,
 			}
 			if _, err := containerEngine.ContainerWait(r.Context(), []string{name}, opts); err != nil {
 				utils.Error(w, http.StatusInternalServerError, err)

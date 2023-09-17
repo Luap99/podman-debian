@@ -10,21 +10,16 @@ import (
 	podmanRegistry "github.com/containers/podman/v4/hack/podman-registry-go"
 	. "github.com/containers/podman/v4/test/utils"
 	"github.com/containers/storage/pkg/archive"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 )
 
 var _ = Describe("Podman manifest", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
 
 	const (
-		imageList                      = "docker://k8s.gcr.io/pause:3.1"
-		imageListInstance              = "docker://k8s.gcr.io/pause@sha256:f365626a556e58189fc21d099fc64603db0f440bff07f77c740989515c544a39"
+		imageList                      = "docker://registry.k8s.io/pause:3.1"
+		imageListInstance              = "docker://registry.k8s.io/pause@sha256:f365626a556e58189fc21d099fc64603db0f440bff07f77c740989515c544a39"
 		imageListARM64InstanceDigest   = "sha256:f365626a556e58189fc21d099fc64603db0f440bff07f77c740989515c544a39"
 		imageListAMD64InstanceDigest   = "sha256:59eec8837a4d942cc19a52b8c09ea75121acc38114a2c68b98983ce9356b8610"
 		imageListARMInstanceDigest     = "sha256:c84b0a3a07b628bc4d62e5047d0f8dff80f7c00979e1e28a821a033ecda8fe53"
@@ -32,21 +27,7 @@ var _ = Describe("Podman manifest", func() {
 		imageListS390XInstanceDigest   = "sha256:882a20ee0df7399a445285361d38b711c299ca093af978217112c73803546d5e"
 	)
 
-	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-	})
-	It("create w/o image", func() {
+	It("create w/o image and attempt push w/o dest", func() {
 		for _, amend := range []string{"--amend", "-a"} {
 			session := podmanTest.Podman([]string{"manifest", "create", "foo"})
 			session.WaitWithDefaultTimeout()
@@ -55,6 +36,13 @@ var _ = Describe("Podman manifest", func() {
 			session = podmanTest.Podman([]string{"manifest", "create", "foo"})
 			session.WaitWithDefaultTimeout()
 			Expect(session).To(ExitWithError())
+
+			session = podmanTest.Podman([]string{"manifest", "push", "--all", "foo"})
+			session.WaitWithDefaultTimeout()
+			Expect(session).To(ExitWithError())
+			// Push should actually fail since its not valid registry
+			Expect(session.ErrorToString()).To(ContainSubstring("requested access to the resource is denied"))
+			Expect(session.OutputToString()).To(Not(ContainSubstring("accepts 2 arg(s), received 1")))
 
 			session = podmanTest.Podman([]string{"manifest", "create", amend, "foo"})
 			session.WaitWithDefaultTimeout()
@@ -147,7 +135,7 @@ var _ = Describe("Podman manifest", func() {
 		Expect(session2.OutputToString()).To(Equal(session.OutputToString()))
 	})
 
-	It(" add --all", func() {
+	It("add --all", func() {
 		session := podmanTest.Podman([]string{"manifest", "create", "foo"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
@@ -331,14 +319,33 @@ var _ = Describe("Podman manifest", func() {
 			))
 	})
 
-	It("push with compression-format", func() {
+	It("push with compression-format and compression-level", func() {
 		SkipIfRemote("manifest push to dir not supported in remote mode")
-		session := podmanTest.Podman([]string{"manifest", "create", "foo"})
+		session := podmanTest.Podman([]string{"pull", ALPINE})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		session = podmanTest.Podman([]string{"manifest", "add", "--all", "foo", imageList})
+
+		dockerfile := `FROM quay.io/libpod/alpine:latest
+RUN touch /file
+`
+		podmanTest.BuildImage(dockerfile, "localhost/test", "false")
+
+		session = podmanTest.Podman([]string{"manifest", "create", "foo"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
+
+		session = podmanTest.Podman([]string{"manifest", "add", "foo", "containers-storage:localhost/test"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		// Invalid compression format specified, it must fail
+		tmpDir := filepath.Join(podmanTest.TempDir, "wrong-compression")
+		session = podmanTest.Podman([]string{"manifest", "push", "--compression-format", "gzip", "--compression-level", "50", "foo", "oci:" + tmpDir})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(125))
+		output := session.ErrorToString()
+		Expect(output).To(ContainSubstring("invalid compression level"))
+
 		dest := filepath.Join(podmanTest.TempDir, "pushed")
 		err := os.MkdirAll(dest, os.ModePerm)
 		Expect(err).ToNot(HaveOccurred())
@@ -368,7 +375,7 @@ var _ = Describe("Podman manifest", func() {
 				break
 			}
 		}
-		Expect(foundZstdFile).To(BeTrue())
+		Expect(foundZstdFile).To(BeTrue(), "found zstd file")
 	})
 
 	It("push progress", func() {
@@ -400,22 +407,21 @@ var _ = Describe("Podman manifest", func() {
 
 	It("authenticated push", func() {
 		registryOptions := &podmanRegistry.Options{
-			Image: "docker-archive:" + imageTarPath(REGISTRY_IMAGE),
+			PodmanPath: podmanTest.PodmanBinary,
+			PodmanArgs: podmanTest.MakeOptions(nil, false, false),
+			Image:      "docker-archive:" + imageTarPath(REGISTRY_IMAGE),
 		}
 
-		// registry script invokes $PODMAN; make sure we define that
-		// so it can use our same networking options.
-		opts := strings.Join(podmanTest.MakeOptions(nil, false, false), " ")
+		// Special case for remote: invoke local podman, with all
+		// network/storage/other args
 		if IsRemote() {
-			opts = strings.Join(getRemoteOptions(podmanTest, nil), " ")
+			registryOptions.PodmanArgs = getRemoteOptions(podmanTest, nil)
 		}
-		os.Setenv("PODMAN", podmanTest.PodmanBinary+" "+opts)
 		registry, err := podmanRegistry.StartWithOptions(registryOptions)
 		Expect(err).ToNot(HaveOccurred())
 		defer func() {
 			err := registry.Stop()
 			Expect(err).ToNot(HaveOccurred())
-			os.Unsetenv("PODMAN")
 		}()
 
 		session := podmanTest.Podman([]string{"manifest", "create", "foo"})
@@ -445,11 +451,11 @@ var _ = Describe("Podman manifest", func() {
 		Expect(output).To(ContainSubstring("Copying blob "))
 		Expect(output).To(ContainSubstring("Copying config "))
 		Expect(output).To(ContainSubstring("Writing manifest to image destination"))
-		Expect(output).To(ContainSubstring("Storing signatures"))
 
-		push = podmanTest.Podman([]string{"manifest", "push", "--tls-verify=false", "--creds=podmantest:wrongpasswd", "foo", "localhost:" + registry.Port + "/credstest"})
+		push = podmanTest.Podman([]string{"manifest", "push", "--compression-format=gzip", "--compression-level=2", "--tls-verify=false", "--creds=podmantest:wrongpasswd", "foo", "localhost:" + registry.Port + "/credstest"})
 		push.WaitWithDefaultTimeout()
 		Expect(push).To(ExitWithError())
+		Expect(push.ErrorToString()).To(ContainSubstring(": authentication required"))
 
 		// push --rm after pull image (#15033)
 		push = podmanTest.Podman([]string{"manifest", "push", "--rm", "--tls-verify=false", "--creds=" + registry.User + ":" + registry.Password, "foo", "localhost:" + registry.Port + "/rmtest"})

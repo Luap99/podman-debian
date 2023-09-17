@@ -10,16 +10,16 @@ podman\-events - Monitor Podman events
 
 ## DESCRIPTION
 
-Monitor and print events that occur in Podman. Each event will include a timestamp,
+Monitor and print events that occur in Podman. Each event includes a timestamp,
 a type, a status, name (if applicable), and image (if applicable).  The default logging
 mechanism is *journald*. This can be changed in containers.conf by changing the `events_logger`
 value to `file`.  Only `file` and `journald` are accepted. A `none` logger is also
-available but this logging mechanism completely disables events; nothing will be reported by
+available, but this logging mechanism completely disables events; nothing is reported by
 `podman events`.
 
 By default, streaming mode is used, printing new events as they occur.  Previous events can be listed via `--since` and `--until`.
 
-The *container* event type will report the follow statuses:
+The *container* event type reports the follow statuses:
  * attach
  * checkpoint
  * cleanup
@@ -48,7 +48,7 @@ The *container* event type will report the follow statuses:
  * unmount
  * unpause
 
-The *pod* event type will report the follow statuses:
+The *pod* event type reports the follow statuses:
  * create
  * kill
  * pause
@@ -57,7 +57,7 @@ The *pod* event type will report the follow statuses:
  * stop
  * unpause
 
-The *image* event type will report the following statuses:
+The *image* event type reports the following statuses:
  * loadFromArchive,
  * mount
  * pull
@@ -68,11 +68,11 @@ The *image* event type will report the following statuses:
  * unmount
  * untag
 
-The *system* type will report the following statuses:
+The *system* type reports the following statuses:
  * refresh
  * renumber
 
-The *volume* type will report the following statuses:
+The *volume* type reports the following statuses:
  * create
  * prune
  * remove
@@ -137,7 +137,7 @@ Stream events and do not exit after reading the last known event (default *true*
 Show all events created until the given timestamp
 
 The *since* and *until* values can be RFC3339Nano time stamps or a Go duration string such as 10m, 5h. If no
-*since* or *until* values are provided, only new events will be shown.
+*since* or *until* values are provided, only new events are shown.
 
 ## JOURNALD IDENTIFIERS
 
@@ -174,7 +174,7 @@ Show only Podman create events
 ```
 $ podman events -f event=create
 2019-03-02 10:36:01.375685062 -0600 CST container create 20dc581f6fbf (image=docker.io/library/alpine:latest, name=sharp_morse)
-2019-03-02 10:36:08.561188337 -0600 CST container create 58e7e002344c (image=k8s.gcr.io/pause:3.1, name=3e701f270d54-infra)
+2019-03-02 10:36:08.561188337 -0600 CST container create 58e7e002344c (image=registry.k8s.io/pause:3.1, name=3e701f270d54-infra)
 2019-03-02 10:36:13.146899437 -0600 CST volume create cad6dc50e087 (image=, name=cad6dc50e0879568e7d656bd004bd343d6035e7fc4024e1711506fe2fd459e6f)
 2019-03-02 10:36:29.978806894 -0600 CST container create d81e30f1310f (image=docker.io/library/busybox:latest, name=musing_newton)
 ```
@@ -190,9 +190,9 @@ $ podman events --filter event=create --filter type=pod
 Show only Podman events created in the last five minutes:
 ```
 $ sudo podman events --since 5m
-2019-03-02 10:44:29.598835409 -0600 CST container create b629d10d3831 (image=k8s.gcr.io/pause:3.1, name=1df5ebca7b44-infra)
+2019-03-02 10:44:29.598835409 -0600 CST container create b629d10d3831 (image=registry.k8s.io/pause:3.1, name=1df5ebca7b44-infra)
 2019-03-02 10:44:29.601746633 -0600 CST pod create 1df5ebca7b44 (image=, name=confident_hawking)
-2019-03-02 10:44:42.371100253 -0600 CST container create 170a0f457d00 (image=k8s.gcr.io/pause:3.1, name=ca731231718e-infra)
+2019-03-02 10:44:42.371100253 -0600 CST container create 170a0f457d00 (image=registry.k8s.io/pause:3.1, name=ca731231718e-infra)
 2019-03-02 10:44:42.374637304 -0600 CST pod create ca731231718e (image=, name=webapp)
 ```
 

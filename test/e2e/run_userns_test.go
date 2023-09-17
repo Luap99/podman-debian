@@ -7,9 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	. "github.com/containers/podman/v4/test/utils"
 	"github.com/containers/storage"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 )
@@ -28,12 +27,6 @@ func createContainersConfFileWithCustomUserns(pTest *PodmanTestIntegration, user
 }
 
 var _ = Describe("Podman UserNS support", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
-
 	BeforeEach(func() {
 		if os.Getenv("SKIP_USERNS") != "" {
 			Skip("Skip userns tests.")
@@ -41,19 +34,6 @@ var _ = Describe("Podman UserNS support", func() {
 		if _, err := os.Stat("/proc/self/uid_map"); err != nil {
 			Skip("User namespaces not supported.")
 		}
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-		os.Unsetenv("CONTAINERS_CONF")
 	})
 
 	// Note: Lot of tests for build with --userns=auto are already there in buildah
@@ -95,7 +75,7 @@ var _ = Describe("Podman UserNS support", func() {
 	//     https://github.com/containers/podman/pull/1066#issuecomment-403562116
 	// To avoid a potential future regression, use this as a test.
 	It("podman uidmapping and gidmapping with short-opts", func() {
-		session := podmanTest.Podman([]string{"run", "--uidmap=0:1:5000", "--gidmap=0:200:5000", "-it", "alpine", "echo", "hello"})
+		session := podmanTest.Podman([]string{"run", "--uidmap=0:1:5000", "--gidmap=0:200:5000", "alpine", "echo", "hello"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(session.OutputToString()).To(ContainSubstring("hello"))
@@ -179,12 +159,12 @@ var _ = Describe("Podman UserNS support", func() {
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
-		exec1 := podmanTest.Podman([]string{"exec", "-t", "-i", ctrName, "cat", "/etc/passwd"})
+		exec1 := podmanTest.Podman([]string{"exec", ctrName, "cat", "/etc/passwd"})
 		exec1.WaitWithDefaultTimeout()
 		Expect(exec1).Should(Exit(0))
 		Expect(exec1.OutputToString()).To(ContainSubstring(userName))
 
-		exec2 := podmanTest.Podman([]string{"exec", "-t", "-i", ctrName, "useradd", "testuser"})
+		exec2 := podmanTest.Podman([]string{"exec", ctrName, "useradd", "testuser"})
 		exec2.WaitWithDefaultTimeout()
 		Expect(exec2).Should(Exit(0))
 	})
@@ -414,6 +394,11 @@ var _ = Describe("Podman UserNS support", func() {
 		inspect := podmanTest.Podman([]string{"inspect", "--format", "{{ .HostConfig.IDMappings }}", result.OutputToString()})
 		inspect.WaitWithDefaultTimeout()
 		Expect(inspect.OutputToString()).To(Not(Equal("<nil>")))
+
+		// --pod should work.
+		result = podmanTest.Podman([]string{"create", "--pod=new:new-pod", ALPINE, "true"})
+		result.WaitWithDefaultTimeout()
+		Expect(result).Should(Exit(0))
 
 		if IsRemote() {
 			podmanTest.RestartRemoteService()

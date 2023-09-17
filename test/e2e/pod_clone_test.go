@@ -3,35 +3,17 @@ package integration
 import (
 	"os"
 
-	. "github.com/containers/podman/v4/test/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 )
 
 var _ = Describe("Podman pod clone", func() {
-	var (
-		tempdir     string
-		err         error
-		podmanTest  *PodmanTestIntegration
-		hostname, _ = os.Hostname()
-	)
+
+	hostname, _ := os.Hostname()
 
 	BeforeEach(func() {
 		SkipIfRemote("podman pod clone is not supported in remote")
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-
 	})
 
 	It("podman pod clone basic test", func() {
@@ -148,11 +130,11 @@ var _ = Describe("Podman pod clone", func() {
 		podClone.WaitWithDefaultTimeout()
 		Expect(podClone).Should(Exit(0))
 
-		run := podmanTest.Podman([]string{"run", "-it", "--pod", podClone.OutputToString(), ALPINE, "mount"})
+		run := podmanTest.Podman([]string{"run", "--pod", podClone.OutputToString(), ALPINE, "mount"})
 		run.WaitWithDefaultTimeout()
 		Expect(run).Should(Exit(0))
 		t, strings := run.GrepString("shm on /dev/shm type tmpfs")
-		Expect(t).To(BeTrue())
+		Expect(t).To(BeTrue(), "found /dev/shm")
 		Expect(strings[0]).Should(ContainSubstring("size=10240k"))
 	})
 
@@ -167,7 +149,7 @@ var _ = Describe("Podman pod clone", func() {
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
-		session = podmanTest.Podman([]string{"run", "-it", "--pod", session.OutputToString(), ALPINE, "printenv", "HOSTNAME"})
+		session = podmanTest.Podman([]string{"run", "--pod", session.OutputToString(), ALPINE, "printenv", "HOSTNAME"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(session.OutputToString()).To(ContainSubstring(hostname))

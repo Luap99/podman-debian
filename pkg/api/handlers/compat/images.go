@@ -21,7 +21,9 @@ import (
 	"github.com/containers/podman/v4/pkg/auth"
 	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/containers/podman/v4/pkg/domain/infra/abi"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/containers/storage"
+	"github.com/docker/distribution/registry/api/errcode"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/gorilla/schema"
 	"github.com/opencontainers/go-digest"
@@ -180,7 +182,8 @@ func CreateImageFromSrc(w http.ResponseWriter, r *http.Request) {
 		FromSrc  string   `schema:"fromSrc"`
 		Message  string   `schema:"message"`
 		Platform string   `schema:"platform"`
-		Repo     string   `shchema:"repo"`
+		Repo     string   `schema:"repo"`
+		Tag      string   `schema:"tag"`
 	}{
 		// This is where you can override the golang default value for one of fields
 	}
@@ -207,7 +210,7 @@ func CreateImageFromSrc(w http.ResponseWriter, r *http.Request) {
 
 	reference := query.Repo
 	if query.Repo != "" {
-		possiblyNormalizedName, err := utils.NormalizeToDockerHub(r, reference)
+		possiblyNormalizedName, err := utils.NormalizeToDockerHub(r, mergeNameAndTagOrDigest(reference, query.Tag))
 		if err != nil {
 			utils.Error(w, http.StatusInternalServerError, fmt.Errorf("normalizing image: %w", err))
 			return
@@ -311,18 +314,24 @@ func CreateImageFromImage(w http.ResponseWriter, r *http.Request) {
 		pullResChan <- pullResult{images: pulledImages, err: err}
 	}()
 
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(true)
+
 	flush := func() {
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()
 		}
 	}
 
-	w.WriteHeader(http.StatusOK)
-	w.Header().Set("Content-Type", "application/json")
-	flush()
-
-	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(true)
+	statusWritten := false
+	writeStatusCode := func(code int) {
+		if !statusWritten {
+			w.WriteHeader(code)
+			w.Header().Set("Content-Type", "application/json")
+			flush()
+			statusWritten = true
+		}
+	}
 
 loop: // break out of for/select infinite loop
 	for {
@@ -330,6 +339,7 @@ loop: // break out of for/select infinite loop
 		report.Progress = &jsonmessage.JSONProgress{}
 		select {
 		case e := <-progress:
+			writeStatusCode(http.StatusOK)
 			switch e.Event {
 			case types.ProgressEventNewArtifact:
 				report.Status = "Pulling fs layer"
@@ -350,14 +360,20 @@ loop: // break out of for/select infinite loop
 			flush()
 		case pullRes := <-pullResChan:
 			err := pullRes.err
-			pulledImages := pullRes.images
 			if err != nil {
+				var errcd errcode.ErrorCoder
+				if errors.As(err, &errcd) {
+					writeStatusCode(errcd.ErrorCode().Descriptor().HTTPStatusCode)
+				} else {
+					writeStatusCode(http.StatusInternalServerError)
+				}
 				msg := err.Error()
 				report.Error = &jsonmessage.JSONError{
 					Message: msg,
 				}
 				report.ErrorMessage = msg
 			} else {
+				pulledImages := pullRes.images
 				if len(pulledImages) > 0 {
 					img := pulledImages[0].ID()
 					if utils.IsLibpodRequest(r) {
@@ -372,6 +388,7 @@ loop: // break out of for/select infinite loop
 						Message: msg,
 					}
 					report.ErrorMessage = msg
+					writeStatusCode(http.StatusInternalServerError)
 				}
 			}
 			if err := enc.Encode(report); err != nil {
@@ -431,12 +448,22 @@ func GetImages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filterList, err := filters.FiltersFromRequest(r)
-	if err != nil {
-		utils.Error(w, http.StatusInternalServerError, err)
-		return
-	}
-	if !utils.IsLibpodRequest(r) {
+	var filterList []string
+	var err error
+	if utils.IsLibpodRequest(r) {
+		// Podman clients split the filter map as `"{"label":["version","1.0"]}`
+		filterList, err = filters.FiltersFromRequest(r)
+		if err != nil {
+			utils.Error(w, http.StatusInternalServerError, err)
+			return
+		}
+	} else {
+		// Docker clients split the filter map as `"{"label":["version=1.0"]}`
+		filterList, err = util.FiltersFromRequest(r)
+		if err != nil {
+			utils.Error(w, http.StatusInternalServerError, err)
+			return
+		}
 		if len(query.Filter) > 0 { // Docker 1.24 compatibility
 			filterList = append(filterList, "reference="+query.Filter)
 		}

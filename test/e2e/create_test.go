@@ -9,31 +9,12 @@ import (
 
 	. "github.com/containers/podman/v4/test/utils"
 	"github.com/containers/storage/pkg/stringid"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 )
 
 var _ = Describe("Podman create", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
-
-	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		Expect(err).ToNot(HaveOccurred())
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-
-	})
 
 	It("podman create container based on a local image", func() {
 		session := podmanTest.Podman([]string{"create", "--name", "local_image_test", ALPINE, "ls"})
@@ -332,9 +313,10 @@ var _ = Describe("Podman create", func() {
 	})
 
 	It("podman create --authfile with nonexistent authfile", func() {
+		// FIXME (#18938): this test should fail but does not!
 		session := podmanTest.Podman([]string{"create", "--authfile", "/tmp/nonexistent", "--name=foo", ALPINE})
 		session.WaitWithDefaultTimeout()
-		Expect(session).To(Not(Equal(0)))
+		Expect(session).Should(Exit(0))
 	})
 
 	It("podman create --signature-policy", func() {
@@ -480,11 +462,15 @@ var _ = Describe("Podman create", func() {
 	It("podman create --tz", func() {
 		session := podmanTest.Podman([]string{"create", "--tz", "foo", "--name", "bad", ALPINE, "date"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).To(ExitWithError())
+		Expect(session).To(Exit(125))
+		Expect(session.ErrorToString()).To(
+			Equal("Error: running container create option: finding timezone: unknown time zone foo"))
 
 		session = podmanTest.Podman([]string{"create", "--tz", "America", "--name", "dir", ALPINE, "date"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).To(ExitWithError())
+		Expect(session).To(Exit(125))
+		Expect(session.ErrorToString()).To(
+			Equal("Error: running container create option: finding timezone: is a directory"))
 
 		session = podmanTest.Podman([]string{"create", "--tz", "Pacific/Honolulu", "--name", "zone", ALPINE, "date"})
 		session.WaitWithDefaultTimeout()

@@ -7,33 +7,12 @@ import (
 	"strings"
 
 	. "github.com/containers/podman/v4/test/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 )
 
 var _ = Describe("Podman exec", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
-
-	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-
-	})
 
 	It("podman exec into bogus container", func() {
 		session := podmanTest.Podman([]string{"exec", "foobar", "ls"})
@@ -329,7 +308,8 @@ var _ = Describe("Podman exec", func() {
 		Expect(session.OutputToString()).To(ContainSubstring("0000000000000000"))
 	})
 
-	It("podman exec terminal doesn't hang", func() {
+	// #10927 ("no logs from conmon"), one of our nastiest flakes
+	It("podman exec terminal doesn't hang", FlakeAttempts(3), func() {
 		setup := podmanTest.Podman([]string{"run", "-dti", "--name", "test1", fedoraMinimal, "sleep", "+Inf"})
 		setup.WaitWithDefaultTimeout()
 		Expect(setup).Should(Exit(0))
@@ -467,7 +447,7 @@ var _ = Describe("Podman exec", func() {
 		groupName := "group1"
 		gid := "4444"
 		ctrName1 := "ctr1"
-		ctr1 := podmanTest.Podman([]string{"run", "-ti", "--name", ctrName1, fedoraMinimal, "groupadd", "-g", gid, groupName})
+		ctr1 := podmanTest.Podman([]string{"run", "--name", ctrName1, fedoraMinimal, "groupadd", "-g", gid, groupName})
 		ctr1.WaitWithDefaultTimeout()
 		Expect(ctr1).Should(Exit(0))
 
@@ -481,7 +461,7 @@ var _ = Describe("Podman exec", func() {
 		ctr2.WaitWithDefaultTimeout()
 		Expect(ctr2).Should(Exit(0))
 
-		exec := podmanTest.Podman([]string{"exec", "-ti", ctrName2, "id"})
+		exec := podmanTest.Podman([]string{"exec", ctrName2, "id"})
 		exec.WaitWithDefaultTimeout()
 		Expect(exec).Should(Exit(0))
 		Expect(exec.OutputToString()).To(ContainSubstring(fmt.Sprintf("%s(%s)", gid, groupName)))
@@ -496,11 +476,11 @@ RUN useradd -u 1000 auser`, fedoraMinimal)
 		podmanTest.BuildImage(dockerfile, imgName, "false")
 
 		ctrName := "testctr"
-		ctr := podmanTest.Podman([]string{"run", "-t", "-i", "-d", "--name", ctrName, "--user", "auser:first", "--group-add", "second", imgName, "sleep", "300"})
+		ctr := podmanTest.Podman([]string{"run", "-d", "--name", ctrName, "--user", "auser:first", "--group-add", "second", imgName, "sleep", "300"})
 		ctr.WaitWithDefaultTimeout()
 		Expect(ctr).Should(Exit(0))
 
-		exec := podmanTest.Podman([]string{"exec", "-t", ctrName, "id"})
+		exec := podmanTest.Podman([]string{"exec", ctrName, "id"})
 		exec.WaitWithDefaultTimeout()
 		Expect(exec).Should(Exit(0))
 		output := exec.OutputToString()
@@ -516,11 +496,11 @@ RUN useradd -u 1000 auser`, fedoraMinimal)
 
 	It("podman exec --detach", func() {
 		ctrName := "testctr"
-		ctr := podmanTest.Podman([]string{"run", "-t", "-i", "-d", "--name", ctrName, ALPINE, "top"})
+		ctr := podmanTest.Podman([]string{"run", "-d", "--name", ctrName, ALPINE, "top"})
 		ctr.WaitWithDefaultTimeout()
 		Expect(ctr).Should(Exit(0))
 
-		exec1 := podmanTest.Podman([]string{"exec", "-t", "-i", "-d", ctrName, "top"})
+		exec1 := podmanTest.Podman([]string{"exec", "-d", ctrName, "top"})
 		exec1.WaitWithDefaultTimeout()
 		Expect(ctr).Should(Exit(0))
 
@@ -529,7 +509,7 @@ RUN useradd -u 1000 auser`, fedoraMinimal)
 		Expect(data[0].ExecIDs).To(HaveLen(1))
 		Expect(exec1.OutputToString()).To(ContainSubstring(data[0].ExecIDs[0]))
 
-		exec2 := podmanTest.Podman([]string{"exec", "-t", "-i", ctrName, "ps", "-a"})
+		exec2 := podmanTest.Podman([]string{"exec", ctrName, "ps", "-a"})
 		exec2.WaitWithDefaultTimeout()
 		Expect(ctr).Should(Exit(0))
 		Expect(strings.Count(exec2.OutputToString(), "top")).To(Equal(2))
@@ -551,7 +531,7 @@ RUN useradd -u 1000 auser`, fedoraMinimal)
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
-		session = podmanTest.Podman([]string{"run", "-t", "-i", "-d", "--secret", "source=mysecret,type=env", "--name", "secr", ALPINE, "top"})
+		session = podmanTest.Podman([]string{"run", "-d", "--secret", "source=mysecret,type=env", "--name", "secr", ALPINE, "top"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
@@ -567,5 +547,29 @@ RUN useradd -u 1000 auser`, fedoraMinimal)
 		session = podmanTest.Podman([]string{"run", "foobar.com/test1-image:latest", "printenv", "mysecret"})
 		session.WaitWithDefaultTimeout()
 		Expect(session.OutputToString()).To(Not(ContainSubstring(secretsString)))
+	})
+
+	It("podman exec --wait 2 seconds on bogus container", func() {
+		SkipIfRemote("not supported for --wait")
+		session := podmanTest.Podman([]string{"exec", "--wait", "2", "1234"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(125))
+		Expect(session.ErrorToString()).To(Equal("Error: timed out waiting for container: 1234"))
+	})
+
+	It("podman exec --wait 5 seconds for started container", func() {
+		SkipIfRemote("not supported for --wait")
+		ctrName := "waitCtr"
+
+		session := podmanTest.Podman([]string{"exec", "--wait", "5", ctrName, "whoami"})
+
+		session2 := podmanTest.Podman([]string{"run", "-d", "--name", ctrName, ALPINE, "top"})
+		session2.WaitWithDefaultTimeout()
+
+		session.Wait(6)
+
+		Expect(session2).Should(Exit(0))
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToString()).To(Equal("root"))
 	})
 })

@@ -135,10 +135,16 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 		if err != nil {
 			return nil, fmt.Errorf("unable to process variables for --env-merge %s: %w", e, err)
 		}
-		splitWord := strings.Split(processedWord, "=")
-		if _, ok := defaultEnvs[splitWord[0]]; ok {
-			defaultEnvs[splitWord[0]] = splitWord[1]
+
+		key, val, found := strings.Cut(processedWord, "=")
+		if !found {
+			return nil, fmt.Errorf("missing `=` for --env-merge substitution %s", e)
 		}
+
+		// the env var passed via --env-merge
+		// need not be defined in the image
+		// continue with an empty string
+		defaultEnvs[key] = val
 	}
 
 	for _, e := range s.UnsetEnv {
@@ -166,7 +172,6 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 	s.Env = envLib.Join(defaultEnvs, s.Env)
 
 	// Labels and Annotations
-	annotations := make(map[string]string)
 	if newImage != nil {
 		labels, err := newImage.Labels(ctx)
 		if err != nil {
@@ -183,12 +188,8 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 			}
 		}
 
-		// Add annotations from the image
-		for k, v := range inspectData.Annotations {
-			if !define.IsReservedAnnotation(k) {
-				annotations[k] = v
-			}
-		}
+		// Do NOT include image annotations - these can have security
+		// implications, we don't want untrusted images setting them.
 	}
 
 	// in the event this container is in a pod, and the pod has an infra container
@@ -199,6 +200,7 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 	//   VM, which is the default behavior
 	// - "container" denotes the container should join the VM of the SandboxID
 	//   (the infra container)
+	annotations := make(map[string]string)
 	if len(s.Pod) > 0 {
 		p, err := r.LookupPod(s.Pod)
 		if err != nil {

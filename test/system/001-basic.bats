@@ -13,6 +13,7 @@ function setup() {
 
 #### DO NOT ADD ANY TESTS HERE! ADD NEW TESTS AT BOTTOM!
 
+# bats test_tags=distro-integration
 @test "podman version emits reasonable output" {
     run_podman version
 
@@ -38,6 +39,7 @@ function setup() {
     is "$output" ".*The --config flag is ignored by Podman. Exists for Docker compatibility\+"		  "verify warning for --config option"
 }
 
+# bats test_tags=distro-integration
 @test "podman info" {
     # These will be displayed on the test output stream, offering an
     # at-a-glance overview of important system configuration details
@@ -71,8 +73,11 @@ function setup() {
        "--context=swarm should fail"
 }
 
+# bats test_tags=distro-integration
 @test "podman can pull an image" {
-    run_podman rmi -a
+    run_podman rmi -a -f
+
+    # This is a risk point: it will fail if the registry or network are flaky
     run_podman pull $IMAGE
 
     # Regression test for https://github.com/containers/image/pull/1615
@@ -237,6 +242,36 @@ See 'podman version --help'" "podman version --remote"
 @test "podman --noout properly suppresses output" {
 run_podman --noout system connection ls
     is "$output" "" "output should be empty"
+}
+
+# Tests --noout to ensure that the output fd can be written to.
+@test "podman --noout is actually writing to /dev/null" {
+    skip_if_remote "unshare only works locally"
+    skip_if_not_rootless "unshare requires rootless"
+    run_podman --noout unshare ls
+    is "$output" "" "output should be empty"
+}
+
+@test "podman version --out writes matching version to a json" {
+    run_podman version
+
+    # copypasta from version check. we're doing this to extract the version.
+    if expr "${lines[0]}" : "Client: *" >/dev/null; then
+        lines=("${lines[@]:1}")
+    fi
+
+    # get the version number so that we have something to compare with.
+    IFS=: read version_key version_number <<<"${lines[0]}"
+    is "$version_key" "Version" "Version line"
+
+    # now we can output everything as some json. we can't use PODMAN_TMPDIR since basic_setup
+    # isn't being used in setup() due to being unable to trust podman-images or podman-rm.
+    outfile=$(mktemp -p ${BATS_TEST_TMPDIR} veroutXXXXXXXX)
+    run_podman --out $outfile version -f json
+
+    # extract the version from the file.
+    run jq -r --arg field "$version_key" '.Client | .[$field]' $outfile
+    is "$output" ${version_number} "Version matches"
 }
 
 @test "podman - shutdown engines" {

@@ -2,37 +2,15 @@ package integration
 
 import (
 	"fmt"
-	"os"
 	"sync"
 
 	. "github.com/containers/podman/v4/test/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 )
 
 var _ = Describe("Podman rmi", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
-
-	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-
-	})
 
 	It("podman rmi bogus image", func() {
 		session := podmanTest.Podman([]string{"rmi", "debian:6.0.10"})
@@ -288,22 +266,33 @@ RUN find $LOCAL
 		podmanTest.AddImageToRWStore(CIRROS_IMAGE)
 		var wg sync.WaitGroup
 
-		buildAndRemove := func(i int) {
-			defer GinkgoRecover()
-			defer wg.Done()
-			imageName := fmt.Sprintf("rmtest:%d", i)
-			containerfile := fmt.Sprintf(`FROM %s
-RUN touch %s`, CIRROS_IMAGE, imageName)
-
-			podmanTest.BuildImage(containerfile, imageName, "false")
-			session := podmanTest.Podman([]string{"rmi", "-f", imageName})
-			session.WaitWithDefaultTimeout()
-			Expect(session).Should(Exit(0))
-		}
-
+		// Prepare images
 		wg.Add(10)
 		for i := 0; i < 10; i++ {
-			go buildAndRemove(i)
+			go func(i int) {
+				defer GinkgoRecover()
+				defer wg.Done()
+				imageName := fmt.Sprintf("rmtest:%d", i)
+				containerfile := fmt.Sprintf(`FROM %s
+	RUN touch %s`, CIRROS_IMAGE, imageName)
+
+				podmanTest.BuildImage(containerfile, imageName, "false")
+			}(i)
+		}
+		wg.Wait()
+
+		// A herd of concurrent removals
+		wg.Add(10)
+		for i := 0; i < 10; i++ {
+			go func(i int) {
+				defer GinkgoRecover()
+				defer wg.Done()
+
+				imageName := fmt.Sprintf("rmtest:%d", i)
+				session := podmanTest.Podman([]string{"rmi", "-f", imageName})
+				session.WaitWithDefaultTimeout()
+				Expect(session).Should(Exit(0))
+			}(i)
 		}
 		wg.Wait()
 	})

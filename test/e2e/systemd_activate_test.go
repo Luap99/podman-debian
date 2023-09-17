@@ -2,9 +2,9 @@ package integration
 
 import (
 	"errors"
-	"fmt"
 	"io/fs"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,28 +14,15 @@ import (
 
 	testUtils "github.com/containers/podman/v4/test/utils"
 	podmanUtils "github.com/containers/podman/v4/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
-	"github.com/opencontainers/selinux/go-selinux"
 )
 
 var _ = Describe("Systemd activate", func() {
-	var tempDir string
-	var err error
-	var podmanTest *PodmanTestIntegration
 	var activate string
 
 	BeforeEach(func() {
-		tempDir, err = testUtils.CreateTempDirInTempDir()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "%v\n", err)
-			os.Exit(1)
-		}
-
-		podmanTest = PodmanTestCreate(tempDir)
-		podmanTest.Setup()
-
 		SkipIfRemote("Testing stopped service requires both podman and podman-remote binaries")
 
 		activate, err = exec.LookPath("systemd-socket-activate")
@@ -53,11 +40,6 @@ var _ = Describe("Systemd activate", func() {
 		}
 	})
 
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		processTestResult(CurrentGinkgoTestDescription())
-	})
-
 	It("stop podman.service", func() {
 		// systemd-socket-activate does not support DNS lookups
 		host := "127.0.0.1"
@@ -65,60 +47,43 @@ var _ = Describe("Systemd activate", func() {
 		Expect(err).ToNot(HaveOccurred())
 		addr := net.JoinHostPort(host, strconv.Itoa(port))
 
-		// Make a temporary root directory
-		tmpRootDir := filepath.Join(tempDir, "server_root")
-		err = os.Mkdir(tmpRootDir, 0755)
-		Expect(err).ToNot(HaveOccurred())
-		defer os.RemoveAll(tmpRootDir)
+		podmanOptions := podmanTest.makeOptions(nil, false, false)
 
-		// When SELinux is enabled, a storage root directory should be
-		// labeled with a specific value
-		if selinux.GetEnabled() {
-			rootDir := "/var/lib/containers"
-			label := "container_var_lib_t"
-			if isRootless() {
-				rootDir = filepath.Join(os.Getenv("HOME"), ".local/share/containers")
-				label = "data_home_t"
-			}
-
-			args := []string{"--reference", rootDir, tmpRootDir}
-			// If rootDir doesn't exist, use "chcon -t" to label tmpRootDir
-			// instead of "chcon --reference"
-			if _, err := os.Stat(rootDir); err != nil {
-				args = []string{"-t", label, tmpRootDir}
-			}
-
-			chcon := testUtils.SystemExec("chcon", args)
-			Expect(chcon).Should(Exit(0))
-		}
-
-		activateSession := testUtils.StartSystemExec(activate, []string{
+		systemdArgs := []string{
 			"-E", "http_proxy", "-E", "https_proxy", "-E", "no_proxy",
 			"-E", "HTTP_PROXY", "-E", "HTTPS_PROXY", "-E", "NO_PROXY",
+			"-E", "XDG_RUNTIME_DIR",
 			"--listen", addr,
-			podmanTest.PodmanBinary,
-			"--root", tmpRootDir,
-			"system", "service",
-			"--time=0",
-		})
+			podmanTest.PodmanBinary}
+		systemdArgs = append(systemdArgs, podmanOptions...)
+		systemdArgs = append(systemdArgs, "system", "service", "--time=0")
+
+		activateSession := testUtils.StartSystemExec(activate, systemdArgs)
 		Expect(activateSession.Exited).ShouldNot(Receive(), "Failed to start podman service")
+		WaitForService(url.URL{Scheme: "tcp", Host: addr})
 		defer activateSession.Signal(syscall.SIGTERM)
 
-		// Curried functions for specialized podman calls
+		// Create custom functions for running podman and
+		// podman-remote.  This test is a rare exception where both
+		// binaries need to be run in parallel.  Usually, the remote
+		// and non-remote details are hidden.  Yet we use the
+		// `podmanOptions` above to make sure all settings (root,
+		// runroot, events, tmpdir, etc.) are used as in other e2e
+		// tests.
 		podmanRemote := func(args ...string) *testUtils.PodmanSession {
 			args = append([]string{"--url", "tcp://" + addr}, args...)
 			return testUtils.SystemExec(podmanTest.RemotePodmanBinary, args)
 		}
 
 		podman := func(args ...string) *testUtils.PodmanSession {
-			args = append([]string{"--root", tmpRootDir}, args...)
+			args = append(podmanOptions, args...)
 			return testUtils.SystemExec(podmanTest.PodmanBinary, args)
 		}
 
 		containerName := "top_" + testUtils.RandomString(8)
 		apiSession := podmanRemote(
 			"create", "--tty", "--name", containerName, "--entrypoint", "top",
-			"quay.io/libpod/alpine_labels:latest",
+			ALPINE,
 		)
 		Expect(apiSession).Should(Exit(0))
 		defer podman("rm", "-f", containerName)
@@ -151,7 +116,7 @@ var _ = Describe("Systemd activate", func() {
 		activateSession := testUtils.StartSystemExec(activate, []string{
 			"--datagram", "--listen", addr,
 			podmanTest.PodmanBinary,
-			"--root=" + filepath.Join(tempDir, "server_root"),
+			"--root=" + filepath.Join(tempdir, "server_root"),
 			"system", "service",
 			"--time=0",
 		})

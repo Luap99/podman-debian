@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	. "github.com/containers/podman/v4/test/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 	"github.com/syndtr/gocapability/capability"
@@ -36,27 +36,6 @@ func containerCapMatchesHost(ctrCap string, hostCap string) {
 }
 
 var _ = Describe("Podman privileged container tests", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
-
-	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-
-	})
 
 	It("podman privileged make sure sys is mounted rw", func() {
 		session := podmanTest.Podman([]string{"run", "--privileged", BB, "mount"})
@@ -134,19 +113,22 @@ var _ = Describe("Podman privileged container tests", func() {
 	It("podman privileged should restart after host devices change", func() {
 		containerName := "privileged-restart-test"
 		SkipIfRootless("Cannot create devices in /dev in rootless mode")
-		Expect(os.MkdirAll("/dev/foodevdir", os.ModePerm)).To(Succeed())
+		// path must be unique to this test, not used anywhere else
+		devdir := "/dev/devdirprivrestart"
+		Expect(os.MkdirAll(devdir, os.ModePerm)).To(Succeed())
+		defer os.RemoveAll(devdir)
 
-		mknod := SystemExec("mknod", []string{"/dev/foodevdir/null", "c", "1", "3"})
+		mknod := SystemExec("mknod", []string{devdir + "/null", "c", "1", "3"})
 		mknod.WaitWithDefaultTimeout()
 		Expect(mknod).Should(Exit(0))
 
-		session := podmanTest.Podman([]string{"run", "--name=" + containerName, "--privileged", "-it", fedoraMinimal, "ls", "/dev"})
+		session := podmanTest.Podman([]string{"run", "--name=" + containerName, "--privileged", fedoraMinimal, "ls", "/dev"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
 		deviceFiles := session.OutputToStringArray()
 
-		os.RemoveAll("/dev/foodevdir")
+		os.RemoveAll(devdir)
 		session = podmanTest.Podman([]string{"start", "--attach", containerName})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))

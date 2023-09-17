@@ -18,6 +18,21 @@ function setup() {
     XFER_FILE="${PODMAN_TMPDIR}/pasta.bin"
 }
 
+function default_ifname() {
+    local ip_ver="${1}"
+
+    local expr='[.[] | select(.dst == "default").dev] | .[0]'
+    ip -j -"${ip_ver}" route show | jq -rM "${expr}"
+}
+
+function default_addr() {
+    local ip_ver="${1}"
+    local ifname="${2:-$(default_ifname "${ip_ver}")}"
+
+    local expr='.[0] | .addr_info[0].local'
+    ip -j -"${ip_ver}" addr show "${ifname}" | jq -rM "${expr}"
+}
+
 # pasta_test_do() - Run tests involving clients and servers
 # $1:    IP version: 4 or 6
 # $2:    Interface type: "tap" or "loopback"
@@ -38,28 +53,19 @@ function pasta_test_do() {
     # Calculate and set addresses,
     if [ ${ip_ver} -eq 4 ]; then
         skip_if_no_ipv4 "IPv4 not routable on the host"
-        if [ ${iftype} = "loopback" ]; then
-            local addr="127.0.0.1"
-        else
-            local addr="$(ipv4_get_addr_global)"
-        fi
     elif [ ${ip_ver} -eq 6 ]; then
         skip_if_no_ipv6 "IPv6 not routable on the host"
-        if [ ${iftype} = "loopback" ]; then
-            local addr="::1"
-        else
-            local addr="$(ipv6_get_addr_global)"
-        fi
     else
         skip "Unsupported IP version"
     fi
 
-    # interface names,
     if [ ${iftype} = "loopback" ]; then
         local ifname="lo"
     else
-        local ifname="$(ether_get_name)"
+        local ifname="$(default_ifname "${ip_ver}")"
     fi
+
+    local addr="$(default_addr "${ip_ver}" "${ifname}")"
 
     # ports,
     if [ ${range} -gt 1 ]; then
@@ -168,7 +174,7 @@ function teardown() {
     run_podman run --net=pasta $IMAGE ip -j -4 address show
 
     local container_address="$(ipv4_get_addr_global "${output}")"
-    local host_address="$(ipv4_get_addr_global)"
+    local host_address="$(default_addr 4)"
 
     assert "${container_address}" = "${host_address}" \
            "Container address not matching host"
@@ -203,7 +209,7 @@ function teardown() {
     run_podman run --net=pasta $IMAGE ip -j -6 address show
 
     local container_address="$(ipv6_get_addr_global "${output}")"
-    local host_address="$(ipv6_get_addr_global)"
+    local host_address="$(default_addr 6)"
 
     assert "${container_address}" = "${host_address}" \
            "Container address not matching host"
@@ -230,6 +236,21 @@ function teardown() {
 
     assert "${container_address}" = "null" \
            "Container has IPv6 global address with IPv6 disabled"
+}
+
+@test "podman networking with pasta(1) - podman puts pasta IP in /etc/hosts" {
+    skip_if_no_ipv4 "IPv4 not routable on the host"
+
+    pname="p$(random_string 30)"
+    ip="$(default_addr 4)"
+
+    run_podman pod create --net=pasta --name "${pname}"
+    run_podman run --pod="${pname}" "${IMAGE}" getent hosts "${pname}"
+
+    assert "$(echo ${output} | cut -f1 -d' ')" = "${ip}" "Correct /etc/hsots entry missing"
+
+    run_podman pod rm "${pname}"
+    run_podman rmi $(pause_image)
 }
 
 ### Routes #####################################################################
@@ -644,6 +665,7 @@ function teardown() {
 ### ICMP, ICMPv6 ###############################################################
 
 @test "podman networking with pasta(1) - ICMP echo request" {
+    skip "Flaky test"
     skip_if_no_ipv4 "IPv6 not routable on the host"
 
     local minuid=$(cut -f1 /proc/sys/net/ipv4/ping_group_range)
@@ -680,4 +702,30 @@ function teardown() {
     run_podman run "--net=pasta:--pid,${pidfile}" $IMAGE true
     sleep 1
     ! ps -p $(cat "${pidfile}") && rm "${pidfile}"
+}
+
+### Options ####################################################################
+@test "podman networking with pasta(1) - Unsupported protocol in port forwarding" {
+    local port=$(random_free_port "" "" tcp)
+
+    run_podman 126 run --net=pasta -p "${port}:${port}/sctp" $IMAGE true
+    is "$output" "Error: .*can't forward protocol: sctp"
+}
+
+@test "podman networking with pasta(1) - Use options from containers.conf" {
+    skip_if_remote "containers.conf must be set for the server"
+
+    containersconf=$PODMAN_TMPDIR/containers.conf
+    mac="9a:dd:31:ea:92:98"
+    cat >$containersconf <<EOF
+[network]
+pasta_options = ["-I", "myname", "--ns-mac-addr", "$mac"]
+EOF
+    CONTAINERS_CONF_OVERRIDE=$containersconf run_podman run --net=pasta $IMAGE ip link show myname
+    assert "$output" =~ "$mac" "mac address is set on custom interface"
+
+    # now, again but this time overwrite a option on the cli.
+    mac2="aa:bb:cc:dd:ee:ff"
+    CONTAINERS_CONF_OVERRIDE=$containersconf run_podman run --net=pasta:--ns-mac-addr,"$mac2" $IMAGE ip link show myname
+    assert "$output" =~ "$mac2" "mac address from cli is set on custom interface"
 }

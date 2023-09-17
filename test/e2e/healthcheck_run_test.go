@@ -8,34 +8,12 @@ import (
 
 	define "github.com/containers/podman/v4/libpod/define"
 	. "github.com/containers/podman/v4/test/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 )
 
 var _ = Describe("Podman healthcheck run", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
-
-	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		timedResult := fmt.Sprintf("Test: %s completed in %f seconds", f.TestText, f.Duration.Seconds())
-		_, _ = GinkgoWriter.Write([]byte(timedResult))
-
-	})
 
 	It("podman healthcheck run bogus container", func() {
 		session := podmanTest.Podman([]string{"healthcheck", "run", "foobar"})
@@ -297,20 +275,17 @@ var _ = Describe("Podman healthcheck run", func() {
 
 		podmanTest.AddImageToRWStore(ALPINE)
 		// Write target and fake files
-		targetPath, err := CreateTempDirInTempDir()
-		Expect(err).ToNot(HaveOccurred())
 		containerfile := fmt.Sprintf(`FROM %s
 HEALTHCHECK CMD ls -l / 2>&1`, ALPINE)
-		containerfilePath := filepath.Join(targetPath, "Containerfile")
+		containerfilePath := filepath.Join(podmanTest.TempDir, "Containerfile")
 		err = os.WriteFile(containerfilePath, []byte(containerfile), 0644)
 		Expect(err).ToNot(HaveOccurred())
 		defer func() {
 			Expect(os.Chdir(cwd)).To(Succeed())
-			Expect(os.RemoveAll(targetPath)).To(Succeed())
 		}()
 
 		// make cwd as context root path
-		Expect(os.Chdir(targetPath)).To(Succeed())
+		Expect(os.Chdir(podmanTest.TempDir)).To(Succeed())
 
 		session := podmanTest.Podman([]string{"build", "--format", "docker", "-t", "test", "."})
 		session.WaitWithDefaultTimeout()

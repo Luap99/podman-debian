@@ -13,7 +13,7 @@ import (
 	"github.com/containers/podman/v4/pkg/errorhandling"
 	"github.com/containers/podman/v4/pkg/specgen"
 	"github.com/containers/podman/v4/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
 )
@@ -49,7 +49,7 @@ var _ = Describe("Podman pods", func() {
 		code, _ := bindings.CheckResponseCode(err)
 		Expect(code).To(BeNumerically("==", http.StatusNotFound))
 
-		// Inspect an valid pod name
+		// Inspect a valid pod name
 		response, err := pods.Inspect(bt.conn, newpod, nil)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(response.Name).To(Equal(newpod))

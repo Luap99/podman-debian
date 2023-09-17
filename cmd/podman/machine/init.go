@@ -18,18 +18,24 @@ var (
 	initCmd = &cobra.Command{
 		Use:               "init [options] [NAME]",
 		Short:             "Initialize a virtual machine",
-		Long:              "initialize a virtual machine ",
+		Long:              "Initialize a virtual machine",
 		PersistentPreRunE: rootlessOnly,
 		RunE:              initMachine,
 		Args:              cobra.MaximumNArgs(1),
-		Example:           `podman machine init myvm`,
+		Example:           `podman machine init podman-machine-default`,
 		ValidArgsFunction: completion.AutocompleteNone,
 	}
 
 	initOpts           = machine.InitOptions{}
+	initOptionalFlags  = InitOptionalFlags{}
 	defaultMachineName = machine.DefaultMachineName
 	now                bool
 )
+
+// Flags which have a meaning when unspecified that differs from the flag default
+type InitOptionalFlags struct {
+	UserModeNetworking bool
+}
 
 // maxMachineNameSize is set to thirty to limit huge machine names primarily
 // because macOS has a much smaller file size limit.
@@ -55,7 +61,7 @@ func init() {
 	flags.Uint64Var(
 		&initOpts.DiskSize,
 		diskSizeFlagName, cfg.ContainersConfDefaultsRO.Machine.DiskSize,
-		"Disk size in GB",
+		"Disk size in GiB",
 	)
 
 	_ = initCmd.RegisterFlagCompletionFunc(diskSizeFlagName, completion.AutocompleteNone)
@@ -64,7 +70,7 @@ func init() {
 	flags.Uint64VarP(
 		&initOpts.Memory,
 		memoryFlagName, "m", cfg.ContainersConfDefaultsRO.Machine.Memory,
-		"Memory in MB",
+		"Memory in MiB",
 	)
 	_ = initCmd.RegisterFlagCompletionFunc(memoryFlagName, completion.AutocompleteNone)
 
@@ -110,6 +116,10 @@ func init() {
 
 	rootfulFlagName := "rootful"
 	flags.BoolVar(&initOpts.Rootful, rootfulFlagName, false, "Whether this machine should prefer rootful container execution")
+
+	userModeNetFlagName := "user-mode-networking"
+	flags.BoolVar(&initOptionalFlags.UserModeNetworking, userModeNetFlagName, false,
+		"Whether this machine should use user-mode networking, routing traffic through a host user-space process")
 }
 
 func initMachine(cmd *cobra.Command, args []string) error {
@@ -118,7 +128,10 @@ func initMachine(cmd *cobra.Command, args []string) error {
 		vm  machine.VM
 	)
 
-	provider := GetSystemDefaultProvider()
+	provider, err := GetSystemProvider()
+	if err != nil {
+		return err
+	}
 	initOpts.Name = defaultMachineName
 	if len(args) > 0 {
 		if len(args[0]) > maxMachineNameSize {
@@ -132,6 +145,12 @@ func initMachine(cmd *cobra.Command, args []string) error {
 	for idx, vol := range initOpts.Volumes {
 		initOpts.Volumes[idx] = os.ExpandEnv(vol)
 	}
+
+	// Process optional flags (flags where unspecified / nil has meaning )
+	if cmd.Flags().Changed("user-mode-networking") {
+		initOpts.UserModeNetworking = &initOptionalFlags.UserModeNetworking
+	}
+
 	vm, err = provider.NewMachine(initOpts)
 	if err != nil {
 		return err

@@ -10,7 +10,7 @@ import (
 	"github.com/containers/podman/v4/pkg/bindings"
 	"github.com/containers/podman/v4/pkg/bindings/images"
 	"github.com/containers/podman/v4/pkg/bindings/manifests"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
 )
@@ -176,7 +176,10 @@ var _ = Describe("Podman manifests", func() {
 	})
 
 	It("Manifest Push", func() {
-		registry, err := podmanRegistry.Start()
+		registryOptions := &podmanRegistry.Options{
+			PodmanPath: getPodmanBinary(),
+		}
+		registry, err := podmanRegistry.StartWithOptions(registryOptions)
 		Expect(err).ToNot(HaveOccurred())
 
 		name := "quay.io/libpod/foobar:latest"

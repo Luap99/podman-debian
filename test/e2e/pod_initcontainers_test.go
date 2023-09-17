@@ -2,38 +2,16 @@ package integration
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/containers/podman/v4/libpod/define"
 	. "github.com/containers/podman/v4/test/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 )
 
 var _ = Describe("Podman init containers", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
-
-	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-
-	})
 
 	It("podman create init container without --pod should fail", func() {
 		session := podmanTest.Podman([]string{"create", "--init-ctr", "always", ALPINE, "top"})
@@ -91,7 +69,7 @@ var _ = Describe("Podman init containers", func() {
 		start := podmanTest.Podman([]string{"pod", "start", "foobar"})
 		start.WaitWithDefaultTimeout()
 		Expect(start).Should(Exit(0))
-		checkLog := podmanTest.Podman([]string{"exec", "-it", verify.OutputToString(), "cat", filename})
+		checkLog := podmanTest.Podman([]string{"exec", verify.OutputToString(), "cat", filename})
 		checkLog.WaitWithDefaultTimeout()
 		Expect(checkLog).Should(Exit(0))
 		Expect(checkLog.OutputToString()).To(Equal(content))
@@ -115,7 +93,7 @@ var _ = Describe("Podman init containers", func() {
 		// Container was rm'd
 		// Expect(check).Should(Exit(1))
 		Expect(check.ExitCode()).To(Equal(1), "I dont understand why the other way does not work")
-		// Lets double check with a stop and start
+		// Let's double check with a stop and start
 		stopPod := podmanTest.Podman([]string{"pod", "stop", "foobar"})
 		stopPod.WaitWithDefaultTimeout()
 		Expect(stopPod).Should(Exit(0))
@@ -124,7 +102,7 @@ var _ = Describe("Podman init containers", func() {
 		Expect(startPod).Should(Exit(0))
 
 		// Because no init was run, the file should not even exist
-		doubleCheck := podmanTest.Podman([]string{"exec", "-it", verify.OutputToString(), "cat", filename})
+		doubleCheck := podmanTest.Podman([]string{"exec", verify.OutputToString(), "cat", filename})
 		doubleCheck.WaitWithDefaultTimeout()
 		Expect(doubleCheck).Should(Exit(1))
 
@@ -145,7 +123,7 @@ var _ = Describe("Podman init containers", func() {
 		Expect(start).Should(Exit(0))
 
 		// capture the date written
-		checkLog := podmanTest.Podman([]string{"exec", "-it", verify.OutputToString(), "cat", filename})
+		checkLog := podmanTest.Podman([]string{"exec", verify.OutputToString(), "cat", filename})
 		checkLog.WaitWithDefaultTimeout()
 		firstResult := checkLog.OutputToString()
 		Expect(checkLog).Should(Exit(0))
@@ -159,7 +137,7 @@ var _ = Describe("Podman init containers", func() {
 		Expect(startPod).Should(Exit(0))
 
 		// Check the file again with exec
-		secondCheckLog := podmanTest.Podman([]string{"exec", "-it", verify.OutputToString(), "cat", filename})
+		secondCheckLog := podmanTest.Podman([]string{"exec", verify.OutputToString(), "cat", filename})
 		secondCheckLog.WaitWithDefaultTimeout()
 		Expect(secondCheckLog).Should(Exit(0))
 
