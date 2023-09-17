@@ -1,7 +1,7 @@
 test--skip-TestPostDeleteHooks.patch
 system-goimports.patch
 downgrade-checkpoint-restore-criu.patch
-disable-sigstore.patch
-revert-newer-docker.patch
 fix-fcos-i386.patch
+revert-newer-docker.patch
 revert-newer-docker2.patch
+disable-sigstore.patch
