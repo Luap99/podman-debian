@@ -11,22 +11,22 @@ Create a network configuration for use with Podman. By default, Podman creates a
 A *Macvlan* connection can be created with the *-d macvlan* option. A parent device for macvlan or
 ipvlan can be designated with the *-o parent=`<device>`* or *--network-interface=`<device>`* option.
 
-If no options are provided, Podman will assign a free subnet and name for the network.
+If no options are provided, Podman assigns a free subnet and name for the network.
 
-Upon completion of creating the network, Podman will display the name of the newly added network.
+Upon completion of creating the network, Podman displays the name of the newly added network.
 
-NOTE: The support for the network name pasta is deprecated and will be removed in the next major
+NOTE: The support for the network name "pasta" is deprecated and will be removed in the next major
 release because it is used as a special network mode in **podman run/create --network**.
 
 ## OPTIONS
 #### **--disable-dns**
 
 Disables the DNS plugin for this network which if enabled, can perform container to container name
-resolution. It is only supported with the `bridge` driver, for other drivers it will be always disabled.
+resolution. It is only supported with the `bridge` driver, for other drivers it is always disabled.
 
 #### **--dns**=*ip*
 
-Set network-scoped DNS resolver/nameserver for containers in this network. If not set, the host servers from `/etc/resolv.conf` will be used.  It can be overwritten on the container level with the `podman run/create --dns` option. This option can be specified multiple times to set more than one IP.
+Set network-scoped DNS resolver/nameserver for containers in this network. If not set, the host servers from `/etc/resolv.conf` is used.  It can be overwritten on the container level with the `podman run/create --dns` option. This option can be specified multiple times to set more than one IP.
 
 #### **--driver**, **-d**=*driver*
 
@@ -52,28 +52,34 @@ The argument order of the **--subnet**, **--gateway** and **--ip-range** options
 #### **--ignore**
 
 Ignore the create request if a network with the same name already exists instead of failing.
-Note, trying to create a network with an existing name and different parameters, will not change the configuration of the existing one
+Note, trying to create a network with an existing name and different parameters does not change the configuration of the existing one.
 
 #### **--interface-name**=*name*
 
 This option maps the the *network_interface* option in the network config, see **podman network inspect**.
-Depending on the driver this can have different effects, for `bridge` it will be the bridge interface name.
-For `macvlan` and `ipvlan` this will be the parent device on the host. It is the same as `--opt parent=...`.
+Depending on the driver, this can have different effects; for `bridge`, it uses the bridge interface name.
+For `macvlan` and `ipvlan`, it is the parent device on the host. It is the same as `--opt parent=...`.
 
 #### **--internal**
 
-Restrict external access of this network. Note when using this option, the dnsname plugin will be
-automatically disabled.
+Restrict external access of this network when using a `bridge` network. Note when using the CNI backend
+DNS will be automatically disabled, see **--disable-dns**.
+
+When using the `macvlan` or `ipvlan` driver with this option no default route will be added to the container.
+Because it bypasses the host network stack no additional restrictions can be set by podman and if a
+privileged container is run it can set a default route themselves. If this is a concern then the
+container connections should be blocked on your actual network gateway.
 
 #### **--ip-range**=*range*
 
-Allocate container IP from a range.  The range must be a complete subnet and in CIDR notation.  The *ip-range* option
-must be used with a *subnet* option. Can be specified multiple times.
+Allocate container IP from a range. The range must be a either a complete subnet in CIDR notation or be in
+the `<startIP>-<endIP>` syntax which allows for a more flexible range compared to the CIDR subnet.
+The *ip-range* option must be used with a *subnet* option. Can be specified multiple times.
 The argument order of the **--subnet**, **--gateway** and **--ip-range** options must match.
 
 #### **--ipam-driver**=*driver*
 
-Set the ipam driver (IP Address Management Driver) for the network. When unset podman will choose an
+Set the ipam driver (IP Address Management Driver) for the network. When unset podman chooses an
 ipam driver automatically based on the network driver.
 
 Valid values are:
@@ -86,7 +92,7 @@ View the driver in the **podman network inspect** output under the `ipam_options
 
 #### **--ipv6**
 
-Enable IPv6 (Dual Stack) networking. If not subnets are given it will allocate an ipv4 and an ipv6 subnet.
+Enable IPv6 (Dual Stack) networking. If no subnets are given, it allocates an ipv4 and an ipv6 subnet.
 
 #### **--label**=*label*
 
@@ -96,10 +102,12 @@ Set metadata for a network (e.g., --label mykey=value).
 
 Set driver specific options.
 
-All drivers accept the `mtu` and `metric` options.
+All drivers accept the `mtu`, `metric`, `no_default_route` and options.
 
 - `mtu`: Sets the Maximum Transmission Unit (MTU) and takes an integer value.
 - `metric` Sets the Route Metric for the default route created in every container joined to this network. Accepts a positive integer value. Can only be used with the Netavark network backend.
+- `no_default_route`: If set to 1, Podman will not automatically add a default route to subnets. Routes can still be added
+manually by creating a custom route using `--route`.
 
 Additionally the `bridge` driver supports the following options:
 
@@ -110,10 +118,18 @@ Additionally the `bridge` driver supports the following options:
 
 The `macvlan` and `ipvlan` driver support the following options:
 
-- `parent`: The host device which should be used for the macvlan interface. Defaults to the default route interface.
+- `parent`: The host device which is used for the macvlan interface. Defaults to the default route interface.
 - `mode`: This option sets the specified ip/macvlan mode on the interface.
   - Supported values for `macvlan` are `bridge`, `private`, `vepa`, `passthru`. Defaults to `bridge`.
   - Supported values for `ipvlan` are `l2`, `l3`, `l3s`. Defaults to `l2`.
+
+Additionally the `macvlan` driver supports the `bclim` option:
+
+- `bclim`: Set the threshold for broadcast queueing. Must be a 32 bit integer. Setting this value to `-1` disables broadcast queueing altogether.
+
+#### **--route**=*route*
+
+A static route in the format `<destination in CIDR notation>,<gateway>,<route metric (optional)>`. This route will be added to every container in this network. Only available with the netavark backend. It can be specified multiple times if more than one static route is desired.
 
 #### **--subnet**=*subnet*
 
@@ -147,7 +163,7 @@ $ podman network create --subnet 192.168.33.0/24 --gateway 192.168.33.3 newnet
 newnet
 ```
 
-Create a network that uses a *192.168.55.0/24** subnet and has an IP address range of *192.168.55.129 - 192.168.55.254*.
+Create a network that uses a *192.168.55.0/24* subnet and has an IP address range of *192.168.55.129 - 192.168.55.254*.
 ```
 $ podman network create --subnet 192.168.55.0/24 --ip-range 192.168.55.128/25
 podman5
@@ -157,6 +173,17 @@ Create a network with a static ipv4 and ipv6 subnet and set a gateway.
 ```
 $ podman network create --subnet 192.168.55.0/24 --gateway 192.168.55.3 --subnet fd52:2a5a:747e:3acd::/64 --gateway fd52:2a5a:747e:3acd::10
 podman4
+```
+
+Create a network with a static subnet and a static route.
+```
+$ podman network create --subnet 192.168.33.0/24 --route 10.1.0.0/24,192.168.33.10 newnet
+```
+
+Create a network with a static subnet and a static route without a default
+route.
+```
+$ podman network create --subnet 192.168.33.0/24 --route 10.1.0.0/24,192.168.33.10 --opt no_default_route=1 newnet
 ```
 
 Create a Macvlan based network using the host interface eth0. Macvlan networks can only be used as root.

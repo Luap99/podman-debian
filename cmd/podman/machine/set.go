@@ -16,8 +16,8 @@ import (
 var (
 	setCmd = &cobra.Command{
 		Use:               "set [options] [NAME]",
-		Short:             "Sets a virtual machine setting",
-		Long:              "Sets an updatable virtual machine setting",
+		Short:             "Set a virtual machine setting",
+		Long:              "Set an updatable virtual machine setting",
 		PersistentPreRunE: rootlessOnly,
 		RunE:              setMachine,
 		Args:              cobra.MaximumNArgs(1),
@@ -32,10 +32,11 @@ var (
 )
 
 type SetFlags struct {
-	CPUs     uint64
-	DiskSize uint64
-	Memory   uint64
-	Rootful  bool
+	CPUs               uint64
+	DiskSize           uint64
+	Memory             uint64
+	Rootful            bool
+	UserModeNetworking bool
 }
 
 func init() {
@@ -60,7 +61,7 @@ func init() {
 	flags.Uint64Var(
 		&setFlags.DiskSize,
 		diskSizeFlagName, 0,
-		"Disk size in GB",
+		"Disk size in GiB",
 	)
 
 	_ = setCmd.RegisterFlagCompletionFunc(diskSizeFlagName, completion.AutocompleteNone)
@@ -69,9 +70,13 @@ func init() {
 	flags.Uint64VarP(
 		&setFlags.Memory,
 		memoryFlagName, "m", 0,
-		"Memory in MB",
+		"Memory in MiB",
 	)
 	_ = setCmd.RegisterFlagCompletionFunc(memoryFlagName, completion.AutocompleteNone)
+
+	userModeNetFlagName := "user-mode-networking"
+	flags.BoolVar(&setFlags.UserModeNetworking, userModeNetFlagName, false, // defaults not-relevant due to use of Changed()
+		"Whether this machine should use user-mode networking, routing traffic through a host user-space process")
 }
 
 func setMachine(cmd *cobra.Command, args []string) error {
@@ -84,7 +89,10 @@ func setMachine(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 && len(args[0]) > 0 {
 		vmName = args[0]
 	}
-	provider := GetSystemDefaultProvider()
+	provider, err := GetSystemProvider()
+	if err != nil {
+		return err
+	}
 	vm, err = provider.LoadVMByName(vmName)
 	if err != nil {
 		return err
@@ -101,6 +109,9 @@ func setMachine(cmd *cobra.Command, args []string) error {
 	}
 	if cmd.Flags().Changed("disk-size") {
 		setOpts.DiskSize = &setFlags.DiskSize
+	}
+	if cmd.Flags().Changed("user-mode-networking") {
+		setOpts.UserModeNetworking = &setFlags.UserModeNetworking
 	}
 
 	setErrs, lasterr := vm.Set(vmName, setOpts)

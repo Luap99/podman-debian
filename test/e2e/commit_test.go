@@ -6,31 +6,12 @@ import (
 	"strings"
 
 	. "github.com/containers/podman/v4/test/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 )
 
 var _ = Describe("Podman commit", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
-
-	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		Expect(err).ToNot(HaveOccurred())
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-
-	})
 
 	It("podman commit container", func() {
 		_, ec, _ := podmanTest.RunLsContainer("test1")
@@ -119,15 +100,8 @@ var _ = Describe("Podman commit", func() {
 
 		check := podmanTest.Podman([]string{"inspect", "foobar.com/test1-image:latest"})
 		check.WaitWithDefaultTimeout()
-		data := check.InspectImageJSON()
-		foundBlue := false
-		for _, i := range data[0].Labels {
-			if i == "blue" {
-				foundBlue = true
-				break
-			}
-		}
-		Expect(foundBlue).To(BeTrue())
+		inspectResults := check.InspectImageJSON()
+		Expect(inspectResults[0].Labels).To(HaveKeyWithValue("image", "blue"))
 	})
 
 	It("podman commit container with --squash", func() {
@@ -245,7 +219,7 @@ var _ = Describe("Podman commit", func() {
 	})
 
 	It("podman commit container check env variables", func() {
-		s := podmanTest.Podman([]string{"run", "--name", "test1", "-e", "TEST=1=1-01=9.01", "-it", "alpine", "true"})
+		s := podmanTest.Podman([]string{"run", "--name", "test1", "-e", "TEST=1=1-01=9.01", "alpine", "true"})
 		s.WaitWithDefaultTimeout()
 		Expect(s).Should(Exit(0))
 
@@ -270,12 +244,8 @@ var _ = Describe("Podman commit", func() {
 		cwd, err := os.Getwd()
 		Expect(err).ToNot(HaveOccurred())
 		Expect(os.Chdir(os.TempDir())).To(Succeed())
-		targetPath, err := CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
+		targetPath := podmanTest.TempDir
 		targetFile := filepath.Join(targetPath, "idFile")
-		defer Expect(os.RemoveAll(targetFile)).To(BeNil())
 		defer Expect(os.Chdir(cwd)).To(BeNil())
 
 		_, ec, _ := podmanTest.RunLsContainer("test1")

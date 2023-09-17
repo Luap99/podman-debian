@@ -2,14 +2,12 @@ package integration
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
-	"strings"
 	"time"
 
 	. "github.com/containers/podman/v4/test/utils"
 	"github.com/containers/storage/pkg/stringid"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 )
@@ -25,27 +23,6 @@ func isEventBackendJournald(podmanTest *PodmanTestIntegration) bool {
 }
 
 var _ = Describe("Podman logs", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
-
-	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-
-	})
 
 	It("podman logs on not existent container", func() {
 		results := podmanTest.Podman([]string{"logs", "notexist"})
@@ -60,7 +37,7 @@ var _ = Describe("Podman logs", func() {
 
 		skipIfJournaldInContainer := func() {
 			if log == "journald" {
-				SkipIfInContainer("journalctl inside a container doesn't work correctly")
+				SkipIfJournaldUnavailable()
 			}
 		}
 
@@ -141,7 +118,7 @@ var _ = Describe("Podman logs", func() {
 			skipIfJournaldInContainer()
 
 			// this uses -d so that we do not have 1000 unnecessary lines printed in every test log
-			logc := podmanTest.Podman([]string{"run", "--log-driver", log, "-dt", ALPINE, "sh", "-c", "i=1; while [ \"$i\" -ne 1000 ]; do echo \"line $i\"; i=$((i + 1)); done"})
+			logc := podmanTest.Podman([]string{"run", "--log-driver", log, "-d", ALPINE, "sh", "-c", "i=1; while [ \"$i\" -ne 1000 ]; do echo \"line $i\"; i=$((i + 1)); done"})
 			logc.WaitWithDefaultTimeout()
 			Expect(logc).To(Exit(0))
 			cid := logc.OutputToString()
@@ -282,13 +259,13 @@ var _ = Describe("Podman logs", func() {
 
 			output := results.OutputToStringArray()
 			Expect(output).To(HaveLen(6))
-			Expect(strings.Contains(output[0], cid1[:12]) || strings.Contains(output[0], cid2[:12])).To(BeTrue())
+			Expect(output[0]).To(Or(ContainSubstring(cid1[:12]), ContainSubstring(cid2[:12])))
 		})
 
 		It("podman logs on a created container should result in 0 exit code: "+log, func() {
 			skipIfJournaldInContainer()
 
-			session := podmanTest.Podman([]string{"create", "--log-driver", log, "-t", "--name", "log", ALPINE})
+			session := podmanTest.Podman([]string{"create", "--log-driver", log, "--name", "log", ALPINE})
 			session.WaitWithDefaultTimeout()
 			Expect(session).To(Exit(0))
 
@@ -343,7 +320,7 @@ var _ = Describe("Podman logs", func() {
 
 			containerName := "logs-f"
 
-			logc := podmanTest.Podman([]string{"run", "--log-driver", log, "--name", containerName, "-d", ALPINE, "true"})
+			logc := podmanTest.Podman([]string{"run", "--log-driver", log, "--name", containerName, ALPINE, "true"})
 			logc.WaitWithDefaultTimeout()
 			Expect(logc).To(Exit(0))
 
@@ -352,6 +329,7 @@ var _ = Describe("Podman logs", func() {
 			if log == "journald" && !isEventBackendJournald(podmanTest) {
 				// --follow + journald log-driver is only supported with journald events-backend(PR #10431)
 				Expect(results).To(Exit(125))
+				Expect(results.ErrorToString()).To(ContainSubstring("using --follow with the journald --log-driver but without the journald --events-backend"))
 				return
 			}
 			Expect(results).To(Exit(0))
@@ -360,7 +338,7 @@ var _ = Describe("Podman logs", func() {
 		It("using container with container log-size: "+log, func() {
 			skipIfJournaldInContainer()
 
-			logc := podmanTest.Podman([]string{"run", "--log-driver", log, "--log-opt=max-size=10k", "-d", ALPINE, "sh", "-c", "echo podman podman podman"})
+			logc := podmanTest.Podman([]string{"run", "--log-driver", log, "--log-opt=max-size=10k", "-d", ALPINE, "echo", "podman podman podman"})
 			logc.WaitWithDefaultTimeout()
 			Expect(logc).To(Exit(0))
 			cid := logc.OutputToString()
@@ -383,7 +361,7 @@ var _ = Describe("Podman logs", func() {
 		It("Make sure logs match expected length: "+log, func() {
 			skipIfJournaldInContainer()
 
-			logc := podmanTest.Podman([]string{"run", "--log-driver", log, "-t", "--name", "test", ALPINE, "sh", "-c", "echo 1; echo 2"})
+			logc := podmanTest.Podman([]string{"run", "--log-driver", log, "--name", "test", ALPINE, "sh", "-c", "echo 1; echo 2"})
 			logc.WaitWithDefaultTimeout()
 			Expect(logc).To(Exit(0))
 
@@ -396,8 +374,8 @@ var _ = Describe("Podman logs", func() {
 			Expect(results).To(Exit(0))
 			outlines := results.OutputToStringArray()
 			Expect(outlines).To(HaveLen(2))
-			Expect(outlines[0]).To(Equal("1\r"))
-			Expect(outlines[1]).To(Equal("2\r"))
+			Expect(outlines[0]).To(Equal("1"))
+			Expect(outlines[1]).To(Equal("2"))
 		})
 
 		It("podman logs test stdout and stderr: "+log, func() {
@@ -451,15 +429,15 @@ var _ = Describe("Podman logs", func() {
 			testPod.WaitWithDefaultTimeout()
 			Expect(testPod).To(Exit(0))
 
-			log1 := podmanTest.Podman([]string{"run", "--log-driver", log, "--name", containerName1, "-d", "--pod", podName, BB, "/bin/sh", "-c", "echo log1"})
+			log1 := podmanTest.Podman([]string{"run", "--log-driver", log, "--name", containerName1, "--pod", podName, BB, "echo", "log1"})
 			log1.WaitWithDefaultTimeout()
 			Expect(log1).To(Exit(0))
 
-			log2 := podmanTest.Podman([]string{"run", "--log-driver", log, "--name", containerName2, "-d", "--pod", podName, BB, "/bin/sh", "-c", "echo log2"})
+			log2 := podmanTest.Podman([]string{"run", "--log-driver", log, "--name", containerName2, "--pod", podName, BB, "echo", "log2"})
 			log2.WaitWithDefaultTimeout()
 			Expect(log2).To(Exit(0))
 
-			ctr := podmanTest.Podman([]string{"run", "--log-driver", log, "--name", containerName3, "-d", BB, "date"})
+			ctr := podmanTest.Podman([]string{"run", "--log-driver", log, "--name", containerName3, BB, "date"})
 			ctr.WaitWithDefaultTimeout()
 			Expect(ctr).To(Exit(0))
 
@@ -491,11 +469,11 @@ var _ = Describe("Podman logs", func() {
 			testPod.WaitWithDefaultTimeout()
 			Expect(testPod).To(Exit(0))
 
-			log1 := podmanTest.Podman([]string{"run", "--log-driver", log, "--name", containerName1, "-d", "--pod", podName, BB, "/bin/sh", "-c", "echo log1"})
+			log1 := podmanTest.Podman([]string{"run", "--log-driver", log, "--name", containerName1, "--pod", podName, BB, "echo", "log1"})
 			log1.WaitWithDefaultTimeout()
 			Expect(log1).To(Exit(0))
 
-			log2 := podmanTest.Podman([]string{"run", "--log-driver", log, "--name", containerName2, "-d", "--pod", podName, BB, "/bin/sh", "-c", "echo log2"})
+			log2 := podmanTest.Podman([]string{"run", "--log-driver", log, "--name", containerName2, "--pod", podName, BB, "echo", "log2"})
 			log2.WaitWithDefaultTimeout()
 			Expect(log2).To(Exit(0))
 
@@ -513,7 +491,7 @@ var _ = Describe("Podman logs", func() {
 	}
 
 	It("using journald for container with container tag", func() {
-		SkipIfInContainer("journalctl inside a container doesn't work correctly")
+		SkipIfJournaldUnavailable()
 		logc := podmanTest.Podman([]string{"run", "--log-driver", "journald", "--log-opt=tag={{.ImageName}}", "-d", ALPINE, "sh", "-c", "echo podman; sleep 0.1; echo podman; sleep 0.1; echo podman"})
 		logc.WaitWithDefaultTimeout()
 		Expect(logc).To(Exit(0))
@@ -530,7 +508,7 @@ var _ = Describe("Podman logs", func() {
 	})
 
 	It("using journald container name", func() {
-		SkipIfInContainer("journalctl inside a container doesn't work correctly")
+		SkipIfJournaldUnavailable()
 		containerName := "inside-journal"
 		logc := podmanTest.Podman([]string{"run", "--log-driver", "journald", "-d", "--name", containerName, ALPINE, "sh", "-c", "echo podman; sleep 0.1; echo podman; sleep 0.1; echo podman"})
 		logc.WaitWithDefaultTimeout()
@@ -555,12 +533,12 @@ var _ = Describe("Podman logs", func() {
 
 		logs := podmanTest.Podman([]string{"logs", "-f", ctrName})
 		logs.WaitWithDefaultTimeout()
-		Expect(logs).To(Not(Exit(0)))
+		Expect(logs).To(Exit(125))
+		Expect(logs.ErrorToString()).To(ContainSubstring("this container is using the 'none' log driver, cannot read logs: this container is not logging output"))
 	})
 
 	It("podman pod logs with container names", func() {
 		SkipIfRemote("Remote can only process one container at a time")
-		SkipIfInContainer("journalctl inside a container doesn't work correctly")
 		podName := "testPod"
 		containerName1 := "container1"
 		containerName2 := "container2"
@@ -569,11 +547,11 @@ var _ = Describe("Podman logs", func() {
 		testPod.WaitWithDefaultTimeout()
 		Expect(testPod).To(Exit(0))
 
-		log1 := podmanTest.Podman([]string{"run", "--name", containerName1, "-d", "--pod", podName, BB, "/bin/sh", "-c", "echo log1"})
+		log1 := podmanTest.Podman([]string{"run", "--name", containerName1, "--pod", podName, BB, "echo", "log1"})
 		log1.WaitWithDefaultTimeout()
 		Expect(log1).To(Exit(0))
 
-		log2 := podmanTest.Podman([]string{"run", "--name", containerName2, "-d", "--pod", podName, BB, "/bin/sh", "-c", "echo log2"})
+		log2 := podmanTest.Podman([]string{"run", "--name", containerName2, "--pod", podName, BB, "echo", "log2"})
 		log2.WaitWithDefaultTimeout()
 		Expect(log2).To(Exit(0))
 
@@ -588,17 +566,16 @@ var _ = Describe("Podman logs", func() {
 	})
 	It("podman pod logs with different colors", func() {
 		SkipIfRemote("Remote can only process one container at a time")
-		SkipIfInContainer("journalctl inside a container doesn't work correctly")
 		podName := "testPod"
 		containerName1 := "container1"
 		containerName2 := "container2"
 		testPod := podmanTest.Podman([]string{"pod", "create", fmt.Sprintf("--name=%s", podName)})
 		testPod.WaitWithDefaultTimeout()
 		Expect(testPod).To(Exit(0))
-		log1 := podmanTest.Podman([]string{"run", "--name", containerName1, "-d", "--pod", podName, BB, "/bin/sh", "-c", "echo log1"})
+		log1 := podmanTest.Podman([]string{"run", "--name", containerName1, "--pod", podName, BB, "echo", "log1"})
 		log1.WaitWithDefaultTimeout()
 		Expect(log1).To(Exit(0))
-		log2 := podmanTest.Podman([]string{"run", "--name", containerName2, "-d", "--pod", podName, BB, "/bin/sh", "-c", "echo log2"})
+		log2 := podmanTest.Podman([]string{"run", "--name", containerName2, "--pod", podName, BB, "echo", "log2"})
 		log2.WaitWithDefaultTimeout()
 		Expect(log2).To(Exit(0))
 		results := podmanTest.Podman([]string{"pod", "logs", "--color", podName})

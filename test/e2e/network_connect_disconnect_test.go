@@ -1,38 +1,15 @@
 package integration
 
 import (
-	"os"
-
 	. "github.com/containers/podman/v4/test/utils"
 	"github.com/containers/storage/pkg/stringid"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 	"github.com/onsi/gomega/types"
 )
 
 var _ = Describe("Podman network connect and disconnect", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
-
-	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-
-	})
 
 	It("bad network name in disconnect should result in error", func() {
 		dis := podmanTest.Podman([]string{"network", "disconnect", "foobar", "test"})
@@ -87,11 +64,11 @@ var _ = Describe("Podman network connect and disconnect", func() {
 		ctr.WaitWithDefaultTimeout()
 		Expect(ctr).Should(Exit(0))
 
-		exec := podmanTest.Podman([]string{"exec", "-it", "test", "ip", "addr", "show", "eth0"})
+		exec := podmanTest.Podman([]string{"exec", "test", "ip", "addr", "show", "eth0"})
 		exec.WaitWithDefaultTimeout()
 		Expect(exec).Should(Exit(0))
 
-		exec2 := podmanTest.Podman([]string{"exec", "-it", "test", "cat", "/etc/resolv.conf"})
+		exec2 := podmanTest.Podman([]string{"exec", "test", "cat", "/etc/resolv.conf"})
 		exec2.WaitWithDefaultTimeout()
 		Expect(exec2).Should(Exit(0))
 		Expect(exec2.OutputToString()).To(ContainSubstring(ns))
@@ -106,11 +83,11 @@ var _ = Describe("Podman network connect and disconnect", func() {
 		Expect(inspect).Should(Exit(0))
 		Expect(inspect.OutputToString()).To(Equal("0"))
 
-		exec = podmanTest.Podman([]string{"exec", "-it", "test", "ip", "addr", "show", "eth0"})
+		exec = podmanTest.Podman([]string{"exec", "test", "ip", "addr", "show", "eth0"})
 		exec.WaitWithDefaultTimeout()
 		Expect(exec).Should(ExitWithError())
 
-		exec3 := podmanTest.Podman([]string{"exec", "-it", "test", "cat", "/etc/resolv.conf"})
+		exec3 := podmanTest.Podman([]string{"exec", "test", "cat", "/etc/resolv.conf"})
 		exec3.WaitWithDefaultTimeout()
 		Expect(exec3).Should(Exit(0))
 		Expect(exec3.OutputToString()).ToNot(ContainSubstring(ns))
@@ -201,7 +178,7 @@ var _ = Describe("Podman network connect and disconnect", func() {
 		Expect(ctr).Should(Exit(0))
 		cid := ctr.OutputToString()
 
-		exec := podmanTest.Podman([]string{"exec", "-it", "test", "ip", "addr", "show", "eth0"})
+		exec := podmanTest.Podman([]string{"exec", "test", "ip", "addr", "show", "eth0"})
 		exec.WaitWithDefaultTimeout()
 		Expect(exec).Should(Exit(0))
 
@@ -217,7 +194,7 @@ var _ = Describe("Podman network connect and disconnect", func() {
 		Expect(gw).Should(Exit(0))
 		ns := gw.OutputToString()
 
-		exec2 := podmanTest.Podman([]string{"exec", "-it", "test", "cat", "/etc/resolv.conf"})
+		exec2 := podmanTest.Podman([]string{"exec", "test", "cat", "/etc/resolv.conf"})
 		exec2.WaitWithDefaultTimeout()
 		Expect(exec2).Should(Exit(0))
 		Expect(exec2.OutputToString()).ToNot(ContainSubstring(ns))
@@ -240,13 +217,13 @@ var _ = Describe("Podman network connect and disconnect", func() {
 		Expect(inspect).Should(Exit(0))
 		Expect(inspect.OutputToString()).To(Equal("[" + cid[0:12] + "]"))
 
-		exec = podmanTest.Podman([]string{"exec", "-it", "test", "ip", "addr", "show", "eth1"})
+		exec = podmanTest.Podman([]string{"exec", "test", "ip", "addr", "show", "eth1"})
 		exec.WaitWithDefaultTimeout()
 		Expect(exec).Should(Exit(0))
 		Expect(exec.OutputToString()).Should(ContainSubstring(ip))
 		Expect(exec.OutputToString()).Should(ContainSubstring(mac))
 
-		exec3 := podmanTest.Podman([]string{"exec", "-it", "test", "cat", "/etc/resolv.conf"})
+		exec3 := podmanTest.Podman([]string{"exec", "test", "cat", "/etc/resolv.conf"})
 		exec3.WaitWithDefaultTimeout()
 		Expect(exec3).Should(Exit(0))
 		Expect(exec3.OutputToString()).To(ContainSubstring(ns))
@@ -293,11 +270,11 @@ var _ = Describe("Podman network connect and disconnect", func() {
 		start.WaitWithDefaultTimeout()
 		Expect(start).Should(Exit(0))
 
-		exec := podmanTest.Podman([]string{"exec", "-it", "test", "ip", "addr", "show", "eth0"})
+		exec := podmanTest.Podman([]string{"exec", "test", "ip", "addr", "show", "eth0"})
 		exec.WaitWithDefaultTimeout()
 		Expect(exec).Should(Exit(0))
 
-		exec = podmanTest.Podman([]string{"exec", "-it", "test", "ip", "addr", "show", "eth1"})
+		exec = podmanTest.Podman([]string{"exec", "test", "ip", "addr", "show", "eth1"})
 		exec.WaitWithDefaultTimeout()
 		Expect(exec).Should(Exit(0))
 	})
@@ -318,7 +295,7 @@ var _ = Describe("Podman network connect and disconnect", func() {
 		ctr.WaitWithDefaultTimeout()
 		Expect(ctr).Should(Exit(0))
 
-		exec := podmanTest.Podman([]string{"exec", "-it", "test", "ip", "addr", "show", "eth0"})
+		exec := podmanTest.Podman([]string{"exec", "test", "ip", "addr", "show", "eth0"})
 		exec.WaitWithDefaultTimeout()
 		Expect(exec).Should(Exit(0))
 
@@ -344,7 +321,7 @@ var _ = Describe("Podman network connect and disconnect", func() {
 		Expect(inspect.OutputToString()).To(ContainSubstring(netName))
 		Expect(inspect.OutputToString()).To(ContainSubstring(newNetName))
 
-		exec = podmanTest.Podman([]string{"exec", "-it", "test", "ip", "addr", "show", "eth1"})
+		exec = podmanTest.Podman([]string{"exec", "test", "ip", "addr", "show", "eth1"})
 		exec.WaitWithDefaultTimeout()
 		Expect(exec).Should(Exit(0))
 	})
@@ -379,7 +356,7 @@ var _ = Describe("Podman network connect and disconnect", func() {
 		start.WaitWithDefaultTimeout()
 		Expect(start).Should(Exit(0))
 
-		exec := podmanTest.Podman([]string{"exec", "-it", "test", "ip", "addr", "show", "eth0"})
+		exec := podmanTest.Podman([]string{"exec", "test", "ip", "addr", "show", "eth0"})
 		exec.WaitWithDefaultTimeout()
 
 		// because the network interface order is not guaranteed to be the same we have to check both eth0 and eth1
@@ -389,7 +366,7 @@ var _ = Describe("Podman network connect and disconnect", func() {
 			exitMatcher = Exit(0)
 		}
 
-		exec = podmanTest.Podman([]string{"exec", "-it", "test", "ip", "addr", "show", "eth1"})
+		exec = podmanTest.Podman([]string{"exec", "test", "ip", "addr", "show", "eth1"})
 		exec.WaitWithDefaultTimeout()
 		Expect(exec).Should(exitMatcher)
 	})
@@ -410,7 +387,7 @@ var _ = Describe("Podman network connect and disconnect", func() {
 		ctr.WaitWithDefaultTimeout()
 		Expect(ctr).Should(Exit(0))
 
-		exec := podmanTest.Podman([]string{"exec", "-it", "test", "ip", "addr", "show", "eth0"})
+		exec := podmanTest.Podman([]string{"exec", "test", "ip", "addr", "show", "eth0"})
 		exec.WaitWithDefaultTimeout()
 		Expect(exec).Should(Exit(0))
 
@@ -423,7 +400,7 @@ var _ = Describe("Podman network connect and disconnect", func() {
 		Expect(inspect).Should(Exit(0))
 		Expect(inspect.OutputToString()).To(Equal("0"))
 
-		exec = podmanTest.Podman([]string{"exec", "-it", "test", "ip", "addr", "show", "eth0"})
+		exec = podmanTest.Podman([]string{"exec", "test", "ip", "addr", "show", "eth0"})
 		exec.WaitWithDefaultTimeout()
 		Expect(exec).Should(ExitWithError())
 	})

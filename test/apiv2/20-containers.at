@@ -32,7 +32,10 @@ t POST "containers/foo/attach?logs=true&stream=false" 200 \
   $'\001\031'$mytext
 t POST "containers/foo/kill" 204
 
-podman run -v /tmp:/tmp $IMAGE true
+podman run --replace --name=foo -v /tmp:/tmp $IMAGE true
+# cannot kill non-running container
+t POST "containers/foo/kill" 409
+t POST "libpod/containers/foo/kill" 409
 
 t GET libpod/containers/json 200 length=0
 
@@ -123,14 +126,27 @@ if root; then
 
     t GET containers/$CTRNAME/top?stream=false 200 \
       .Titles='[
+  "UID",
   "PID",
-  "USER",
+  "PPID",
+  "C",
+  "STIME",
+  "TTY",
   "TIME",
-  "COMMAND"
+  "CMD"
 ]'
 
     podman rm -f $CTRNAME
 fi
+
+CTRNAME=test123
+podman run --name $CTRNAME -d $IMAGE top
+t GET libpod/containers/$CTRNAME/top?ps_args=--invalid 500 \
+  .cause~".*unknown gnu long option.*"
+t GET containers/$CTRNAME/top?ps_args=--invalid 500 \
+  .cause~".*unknown gnu long option.*"
+
+podman rm -f $CTRNAME
 
 # Issue #15765: make sure the memory limit is capped
 if root; then
@@ -624,3 +640,14 @@ fi
 rm -rf $TMPD
 
 podman container rm -fa
+
+# 18951: Make sure container create supports the platform parameter.  Force an
+# initial architecture to make sure the test runs on all platforms.
+podman pull --platform=linux/amd64 $IMAGE
+t POST containers/create?platform=linux/amd64 \
+  Image=$IMAGE \
+  201
+t POST containers/create?platform=linux/aarch64 \
+  Image=$IMAGE \
+  404
+podman rmi -f $IMAGE

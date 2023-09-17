@@ -50,7 +50,7 @@ var (
 
 	playCmd = &cobra.Command{
 		Use:               "play [options] KUBEFILE|-",
-		Short:             "Play a pod or volume based on Kubernetes YAML.",
+		Short:             "Play a pod or volume based on Kubernetes YAML",
 		Long:              playDescription,
 		RunE:              play,
 		Args:              cobra.ExactArgs(1),
@@ -65,7 +65,7 @@ var (
 var (
 	playKubeCmd = &cobra.Command{
 		Use:               "kube [options] KUBEFILE|-",
-		Short:             "Play a pod or volume based on Kubernetes YAML.",
+		Short:             "Play a pod or volume based on Kubernetes YAML",
 		Long:              playDescription,
 		Hidden:            true,
 		RunE:              playKube,
@@ -161,6 +161,10 @@ func playFlags(cmd *cobra.Command) {
 	waitFlagName := "wait"
 	flags.BoolVarP(&playOptions.Wait, waitFlagName, "w", false, "Clean up all objects created when a SIGTERM is received or pods exit")
 
+	configmapFlagName := "configmap"
+	flags.StringSliceVar(&playOptions.ConfigMaps, configmapFlagName, []string{}, "`Pathname` of a YAML file containing a kubernetes configmap")
+	_ = cmd.RegisterFlagCompletionFunc(configmapFlagName, completion.AutocompleteDefault)
+
 	if !registry.IsRemote() {
 		certDirFlagName := "cert-dir"
 		flags.StringVar(&playOptions.CertDir, certDirFlagName, "", "`Pathname` of a directory containing TLS certificates and keys")
@@ -170,10 +174,6 @@ func playFlags(cmd *cobra.Command) {
 		flags.StringVar(&playOptions.SeccompProfileRoot, seccompProfileRootFlagName, defaultSeccompRoot, "Directory path for seccomp profiles")
 		_ = cmd.RegisterFlagCompletionFunc(seccompProfileRootFlagName, completion.AutocompleteDefault)
 
-		configmapFlagName := "configmap"
-		flags.StringSliceVar(&playOptions.ConfigMaps, configmapFlagName, []string{}, "`Pathname` of a YAML file containing a kubernetes configmap")
-		_ = cmd.RegisterFlagCompletionFunc(configmapFlagName, completion.AutocompleteDefault)
-
 		buildFlagName := "build"
 		flags.BoolVar(&playOptions.BuildCLI, buildFlagName, false, "Build all images in a YAML (given Containerfiles exist)")
 
@@ -181,18 +181,19 @@ func playFlags(cmd *cobra.Command) {
 		flags.StringVar(&playOptions.ContextDir, contextDirFlagName, "", "Path to top level of context directory")
 		_ = cmd.RegisterFlagCompletionFunc(contextDirFlagName, completion.AutocompleteDefault)
 
-		// NOTE: The service-container flag is marked as hidden as it
-		// is purely designed for running kube-play or play-kube in systemd units.
-		// It is not something users should need to know or care about.
-		//
-		// Having a flag rather than an env variable is cleaner.
-		serviceFlagName := "service-container"
-		flags.BoolVar(&playOptions.ServiceContainer, serviceFlagName, false, "Starts a service container before all pods")
-		_ = flags.MarkHidden("service-container")
-
 		flags.StringVar(&playOptions.SignaturePolicy, "signature-policy", "", "`Pathname` of signature policy file (not usually used)")
 
 		_ = flags.MarkHidden("signature-policy")
+
+		// Below flags are local-only and hidden since they are used in
+		// kube-play's systemd integration only and hence hidden from
+		// users.
+		serviceFlagName := "service-container"
+		flags.BoolVar(&playOptions.ServiceContainer, serviceFlagName, false, "Starts a service container before all pods")
+		_ = flags.MarkHidden(serviceFlagName)
+		exitFlagName := "service-exit-code-propagation"
+		flags.StringVar(&playOptions.ExitCodePropagation, exitFlagName, "", "Exit-code propagation of the service container")
+		_ = flags.MarkHidden(exitFlagName)
 	}
 }
 
@@ -279,7 +280,7 @@ func play(cmd *cobra.Command, args []string) error {
 	ch := make(chan os.Signal, 1)
 	var teardownReader *bytes.Reader
 	if playOptions.Wait {
-		// Stop the the shutdown signal handler so we can actually clean up after a SIGTERM or interrupt
+		// Stop the shutdown signal handler so we can actually clean up after a SIGTERM or interrupt
 		if err := shutdown.Stop(); err != nil && err != shutdown.ErrNotStarted {
 			return err
 		}
@@ -346,34 +347,26 @@ func playKube(cmd *cobra.Command, args []string) error {
 }
 
 func readerFromArg(fileName string) (*bytes.Reader, error) {
-	errURL := parse.ValidURL(fileName)
-	if fileName == "-" { // Read from stdin
-		data, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return nil, err
-		}
-		return bytes.NewReader(data), nil
-	}
-	if errURL == nil {
+	var reader io.Reader
+	switch {
+	case fileName == "-": // Read from stdin
+		reader = os.Stdin
+	case parse.ValidURL(fileName) == nil:
 		response, err := http.Get(fileName)
 		if err != nil {
 			return nil, err
 		}
 		defer response.Body.Close()
-
-		data, err := io.ReadAll(response.Body)
+		reader = response.Body
+	default:
+		f, err := os.Open(fileName)
 		if err != nil {
 			return nil, err
 		}
-		return bytes.NewReader(data), nil
+		defer f.Close()
+		reader = f
 	}
-	f, err := os.Open(fileName)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	data, err := io.ReadAll(f)
+	data, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, err
 	}
@@ -457,6 +450,9 @@ func kubeplay(body io.Reader) error {
 	report, err := registry.ContainerEngine().PlayKube(registry.GetContext(), body, playOptions.PlayKubeOptions)
 	if err != nil {
 		return err
+	}
+	if report.ExitCode != nil {
+		registry.SetExitCode(int(*report.ExitCode))
 	}
 	if err := printPlayReport(report); err != nil {
 		return err

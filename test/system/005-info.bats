@@ -42,7 +42,9 @@ host.conmon.path          | $expr_path
 host.conmon.package       | .*conmon.*
 host.cgroupManager        | \\\(systemd\\\|cgroupfs\\\)
 host.cgroupVersion        | v[12]
+host.networkBackendInfo   | .*dns.*package.*
 host.ociRuntime.path      | $expr_path
+host.pasta                | .*executable.*package.*
 store.configFile          | $expr_path
 store.graphDriverName     | [a-z0-9]\\\+\\\$
 store.graphRoot           | $expr_path
@@ -94,7 +96,6 @@ host.slirp4netns.executable | $expr_path
 }
 
 @test "podman info - confirm desired database" {
-    skip "FIXME: no way yet (2023-03-16) to override DB in system tests"
     if [[ -z "$CI_DESIRED_DATABASE" ]]; then
         # When running in Cirrus, CI_DESIRED_DATABASE *must* be defined
         # in .cirrus.yml so we can double-check that all CI VMs are

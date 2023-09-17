@@ -1,7 +1,7 @@
 % podman-network-inspect 1
 
 ## NAME
-podman\-network\-inspect - Displays the network configuration for one or more networks
+podman\-network\-inspect - Display the network configuration for one or more networks
 
 ## SYNOPSIS
 **podman network inspect** [*options*] *network* [*network* ...]
@@ -28,6 +28,7 @@ Pretty-print networks to JSON or using a Go template.
 | .NetworkDNSServers | Array of DNS servers used in this network |
 | .NetworkInterface  | Name of the network interface on the host |
 | .Options           | Network options                           |
+| .Routes            | List of static routes for this network    |
 | .Subnets           | List of subnets on this network           |
 
 ## EXAMPLE

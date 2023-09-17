@@ -4,34 +4,12 @@ import (
 	"fmt"
 	"os"
 
-	. "github.com/containers/podman/v4/test/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 )
 
 var _ = Describe("Podman rm", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
-
-	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-
-	})
 
 	It("podman rm stopped container", func() {
 		_, ec, cid := podmanTest.RunLsContainer("")
@@ -314,6 +292,11 @@ var _ = Describe("Podman rm", func() {
 		cid3 := session1.OutputToString()
 		shortCid3 := cid3[0:5]
 
+		session1 = podmanTest.RunTopContainerWithArgs("test4", []string{"--label", "test=with,comma"})
+		session1.WaitWithDefaultTimeout()
+		Expect(session1).Should(Exit(0))
+		cid4 := session1.OutputToString()
+
 		session1 = podmanTest.Podman([]string{"rm", cid1, "-f", "--filter", "status=running"})
 		session1.WaitWithDefaultTimeout()
 		Expect(session1).Should(Exit(125))
@@ -322,7 +305,7 @@ var _ = Describe("Podman rm", func() {
 		session1 = podmanTest.Podman([]string{"rm", "-a", "-f", "--filter", fmt.Sprintf("id=%swrongid", shortCid3)})
 		session1.WaitWithDefaultTimeout()
 		Expect(session1).Should(Exit(0))
-		Expect(session1.OutputToString()).To(HaveLen(0))
+		Expect(session1.OutputToString()).To(BeEmpty())
 
 		session1 = podmanTest.Podman([]string{"rm", "-a", "-f", "--filter", fmt.Sprintf("id=%s", shortCid3)})
 		session1.WaitWithDefaultTimeout()
@@ -333,5 +316,31 @@ var _ = Describe("Podman rm", func() {
 		session1.WaitWithDefaultTimeout()
 		Expect(session1).Should(Exit(0))
 		Expect(session1.OutputToString()).To(BeEquivalentTo(cid2))
+
+		session1 = podmanTest.Podman([]string{"rm", "-f", "--filter", "label=test=with,comma"})
+		session1.WaitWithDefaultTimeout()
+		Expect(session1).Should(Exit(0))
+		Expect(session1.OutputToString()).To(BeEquivalentTo(cid4))
+	})
+
+	It("podman rm -fa with dependencies", func() {
+		ctr1Name := "ctr1"
+		ctr1 := podmanTest.RunTopContainer(ctr1Name)
+		ctr1.WaitWithDefaultTimeout()
+		Expect(ctr1).Should(Exit(0))
+		cid1 := ctr1.OutputToString()
+
+		ctr2 := podmanTest.Podman([]string{"run", "-d", "--network", fmt.Sprintf("container:%s", ctr1Name), ALPINE, "top"})
+		ctr2.WaitWithDefaultTimeout()
+		Expect(ctr2).Should(Exit(0))
+		cid2 := ctr2.OutputToString()
+
+		rm := podmanTest.Podman([]string{"rm", "-fa"})
+		rm.WaitWithDefaultTimeout()
+		Expect(rm).Should(Exit(0))
+		Expect(rm.ErrorToString()).To(BeEmpty(), "rm -fa error logged")
+		Expect(rm.OutputToStringArray()).Should(ConsistOf(cid1, cid2))
+
+		Expect(podmanTest.NumberOfContainers()).To(Equal(0))
 	})
 })

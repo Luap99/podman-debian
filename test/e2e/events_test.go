@@ -3,39 +3,17 @@ package integration
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"sync"
 	"time"
 
 	"github.com/containers/podman/v4/libpod/events"
-	. "github.com/containers/podman/v4/test/utils"
 	"github.com/containers/storage/pkg/stringid"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 )
 
 var _ = Describe("Podman events", func() {
-	var (
-		tempdir    string
-		podmanTest *PodmanTestIntegration
-	)
-
-	BeforeEach(func() {
-		var err error
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-	})
 
 	// For most, all, of these tests we do not "live" test following a log because it may make a fragile test
 	// system more complex.  Instead we run the "events" and then verify that the events are processed correctly.
@@ -59,6 +37,26 @@ var _ = Describe("Podman events", func() {
 		Expect(result.OutputToStringArray()).ToNot(BeEmpty(), "Number of events")
 		date := time.Now().Format("2006-01-02")
 		Expect(result.OutputToStringArray()).To(ContainElement(HavePrefix(date)), "event log has correct timestamp")
+	})
+	It("podman events with a volume filter", func() {
+		_, ec, vname := podmanTest.CreateVolume(nil)
+		Expect(ec).To(Equal(0))
+
+		// Run two event commands - one with the full volume name and the second with the prefix
+		result := podmanTest.Podman([]string{"events", "--stream=false", "--filter", fmt.Sprintf("volume=%s", vname)})
+		resultPrefix := podmanTest.Podman([]string{"events", "--stream=false", "--filter", fmt.Sprintf("volume=%s", vname[:5])})
+
+		result.WaitWithDefaultTimeout()
+		Expect(result).Should(Exit(0))
+		events := result.OutputToStringArray()
+		Expect(events).To(HaveLen(1), "number of events")
+		Expect(events[0]).To(ContainSubstring(vname), "event log includes volume name")
+
+		resultPrefix.WaitWithDefaultTimeout()
+		Expect(resultPrefix).Should(Exit(0))
+		events = resultPrefix.OutputToStringArray()
+		Expect(events).To(HaveLen(1), "number of events")
+		Expect(events[0]).To(ContainSubstring(vname), "event log includes volume name")
 	})
 
 	It("podman events with an event filter and container=cid", func() {
@@ -96,7 +94,7 @@ var _ = Describe("Podman events", func() {
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
 		events := result.OutputToStringArray()
-		fmt.Println(events)
+		GinkgoWriter.Println(events)
 		Expect(len(events)).To(BeNumerically(">=", 2), "Number of events")
 		Expect(events).To(ContainElement(ContainSubstring(" pod create ")))
 		Expect(events).To(ContainElement(ContainSubstring(" pod stop ")))
@@ -193,8 +191,7 @@ var _ = Describe("Podman events", func() {
 		Expect(result).Should(Exit(0))
 		tEnd := time.Now()
 		outDur := tEnd.Sub(untilT)
-		diff := outDur.Seconds() > 0
-		Expect(diff).To(BeTrue())
+		Expect(outDur.Seconds()).To(BeNumerically(">", 0), "duration")
 		Expect(result.OutputToString()).To(ContainSubstring(name1))
 		Expect(result.OutputToString()).To(ContainSubstring(name2))
 		Expect(result.OutputToString()).To(ContainSubstring(name3))

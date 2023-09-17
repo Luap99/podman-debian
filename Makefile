@@ -21,7 +21,7 @@
 ###
 
 # Default shell `/bin/sh` has different meanings depending on the platform.
-SHELL := /bin/bash
+SHELL := $(shell command -v bash;)
 GO ?= go
 GO_LDFLAGS:= $(shell if $(GO) version|grep -q gccgo ; then echo "-gccgoflags"; else echo "-ldflags"; fi)
 GOCMD = CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO)
@@ -38,7 +38,7 @@ LIBEXECDIR ?= ${PREFIX}/libexec
 LIBEXECPODMAN ?= ${LIBEXECDIR}/podman
 MANDIR ?= ${PREFIX}/share/man
 SHAREDIR_CONTAINERS ?= ${PREFIX}/share/containers
-ETCDIR ?= ${PREFIX}/etc
+ETCDIR ?= /etc
 LIBDIR ?= ${PREFIX}/lib
 TMPFILESDIR ?= ${LIBDIR}/tmpfiles.d
 USERTMPFILESDIR ?= ${PREFIX}/share/user-tmpfiles.d
@@ -57,19 +57,20 @@ BUILDTAGS ?= \
 	$(shell hack/libsubid_tag.sh) \
 	exclude_graphdriver_devicemapper \
 	seccomp
-ifeq ($(shell uname -s),FreeBSD)
-# Use bash for make's shell function - the default shell on FreeBSD
-# has a command builtin is not compatible with the way its used below
-SHELL := $(shell command -v bash)
-endif
+# N/B: This value is managed by Renovate, manual changes are
+# possible, as long as they don't disturb the formatting
+# (i.e. DO NOT ADD A 'v' prefix!)
+GOLANGCI_LINT_VERSION := 1.53.3
 PYTHON ?= $(shell command -v python3 python|head -n1)
 PKG_MANAGER ?= $(shell command -v dnf yum|head -n1)
 # ~/.local/bin is not in PATH on all systems
 PRE_COMMIT = $(shell command -v bin/venv/bin/pre-commit ~/.local/bin/pre-commit pre-commit | head -n1)
 ifeq ($(shell uname -s),FreeBSD)
 SED=gsed
+GREP=ggrep
 else
 SED=sed
+GREP=grep
 endif
 
 # This isn't what we actually build; it's a superset, used for target
@@ -126,9 +127,10 @@ LIBSECCOMP_COMMIT := v2.3.3
 GINKGOTIMEOUT ?= -timeout=90m
 # By default, run test/e2e
 GINKGOWHAT ?= test/e2e/.
-# By default, run tests in parallel across 3 nodes.
-GINKGONODES ?= 3
+GINKGO_PARALLEL=y
 GINKGO ?= ./test/tools/build/ginkgo
+# ginkgo json output is only useful in CI, not on developer runs
+GINKGO_JSON ?= $(if $(CI),--json-report ginkgo-e2e.json,)
 
 # Conditional required to produce empty-output if binary not built yet.
 RELEASE_VERSION = $(shell if test -x test/version/version; then test/version/version; fi)
@@ -199,7 +201,7 @@ endif
 # include this lightweight helper binary.
 #
 GV_GITURL=https://github.com/containers/gvisor-tap-vsock.git
-GV_SHA=aab0ac9367fc5142f5857c36ac2352bcb3c60ab7
+GV_SHA=407efb5dcdb0f4445935f7360535800b60447544
 
 ###
 ### Primary entry-point targets
@@ -214,16 +216,27 @@ all: binaries docs
 .PHONY: binaries
 ifeq ($(shell uname -s),FreeBSD)
 binaries: podman podman-remote ## Build podman and podman-remote binaries
+else ifneq (, $(findstring $(GOOS),darwin windows))
+binaries: podman-remote ## Build podman-remote (client) only binaries
 else
-binaries: podman podman-remote rootlessport quadlet ## Build podman, podman-remote and rootlessport binaries quadlet
+binaries: podman podman-remote podmansh rootlessport quadlet ## Build podman, podman-remote and rootlessport binaries quadlet
 endif
 
 # Extract text following double-# for targets, as their description for
 # the `help` target.  Otherwise These simple-substitutions are resolved
 # at reference-time (due to `=` and not `=:`).
 _HLP_TGTS_RX = '^[[:print:]]+:.*?\#\# .*$$'
-_HLP_TGTS_CMD = grep -E $(_HLP_TGTS_RX) $(MAKEFILE_LIST)
-_HLP_TGTS_LEN = $(shell $(call err_if_empty,_HLP_TGTS_CMD) | cut -d : -f 1 | wc -L)
+_HLP_TGTS_CMD = $(GREP) -E $(_HLP_TGTS_RX) $(MAKEFILE_LIST)
+_HLP_TGTS_LEN = $(shell $(call err_if_empty,_HLP_TGTS_CMD) | cut -d : -f 1 | wc -L 2>/dev/null || echo "PARSING_ERROR")
+# Separated condition for Darwin
+ifeq ($(shell uname -s)$(_HLP_TGTS_LEN),DarwinPARSING_ERROR)
+ifneq (,$(wildcard /usr/local/bin/gwc))
+_HLP_TGTS_LEN = $(shell $(call err_if_empty,_HLP_TGTS_CMD) | cut -d : -f 1 | gwc -L)
+else
+$(warning On Darwin (MacOS) installed coreutils is necessary)
+$(warning Use 'brew install coreutils' command to install coreutils on your system)
+endif
+endif
 _HLPFMT = "%-$(call err_if_empty,_HLP_TGTS_LEN)s %s\n"
 .PHONY: help
 help: ## (Default) Print listing of key targets with their descriptions
@@ -240,7 +253,7 @@ help: ## (Default) Print listing of key targets with their descriptions
 .PHONY: .gitvalidation
 .gitvalidation:
 	@echo "Validating vs commit '$(call err_if_empty,EPOCH_TEST_COMMIT)'"
-	GIT_CHECK_EXCLUDE="./vendor:./test/tools/vendor:docs/make.bat:test/buildah-bud/buildah-tests.diff" ./test/tools/build/git-validation -run DCO,short-subject,dangling-whitespace -range $(EPOCH_TEST_COMMIT)..$(HEAD)
+	GIT_CHECK_EXCLUDE="./vendor:./test/tools/vendor:docs/make.bat:test/buildah-bud/buildah-tests.diff:test/e2e/quadlet/remap-keep-id2.container" ./test/tools/build/git-validation -run DCO,short-subject,dangling-whitespace -range $(EPOCH_TEST_COMMIT)..$(HEAD)
 
 .PHONY: lint
 lint: golangci-lint
@@ -399,6 +412,12 @@ bin/rootlessport: $(SOURCES) go.mod go.sum
 .PHONY: rootlessport
 rootlessport: bin/rootlessport
 
+# podmansh calls `podman exec` into the `podmansh` container when used as
+# os.Args[0] and is intended to be set as a login shell for users.
+# Run: `man 1 podmansh` for details.
+podmansh: bin/podman
+	if [ ! -f bin/podmansh ]; then ln -s podman bin/podmansh; fi
+
 ###
 ### Secondary binary-build targets
 ###
@@ -426,13 +445,6 @@ local-cross: $(CROSS_BUILD_TARGETS) ## Cross compile podman binary for multiple 
 
 .PHONY: cross
 cross: local-cross
-
-.PHONY: build-no-cgo
-build-no-cgo:
-	BUILDTAGS="containers_image_openpgp exclude_graphdriver_btrfs \
-		exclude_graphdriver_devicemapper exclude_disk_quota" \
-	CGO_ENABLED=0 \
-	$(MAKE) all
 
 .PHONY: completions
 completions: podman podman-remote
@@ -482,6 +494,7 @@ docdir:
 
 .PHONY: docs
 docs: $(MANPAGES) ## Generate documentation
+	@ln -sf $(CURDIR)/docs/source/markdown/links/* docs/build/man/
 
 # docs/remote-docs.sh requires a locally executable 'podman-remote' binary
 # in addition to the target-architecture binary (if different). That's
@@ -503,6 +516,7 @@ podman-remote-%-docs: podman-remote
 man-page-check: bin/podman
 	hack/man-page-checker
 	hack/xref-helpmsgs-manpages
+	hack/man-page-table-check
 
 .PHONY: swagger-check
 swagger-check:
@@ -542,11 +556,11 @@ localunit: test/goecho/goecho test/version/version
 	UNIT=1 $(GINKGO) \
 		-r \
 		$(TESTFLAGS) \
-		--skipPackage test/e2e,pkg/apparmor,pkg/bindings,hack,pkg/machine/e2e \
+		--skip-package test/e2e,pkg/bindings,hack,pkg/machine/e2e \
 		--cover \
 		--covermode atomic \
 		--coverprofile coverprofile \
-		--outputdir ${COVERAGE_PATH} \
+		--output-dir ${COVERAGE_PATH} \
 		--tags "$(BUILDTAGS)" \
 		--succinct
 	$(GO) tool cover -html=${COVERAGE_PATH}/coverprofile -o ${COVERAGE_PATH}/coverage.html
@@ -558,8 +572,10 @@ test: localunit localintegration remoteintegration localsystem remotesystem  ## 
 
 .PHONY: ginkgo-run
 ginkgo-run: .install.ginkgo
-	ACK_GINKGO_RC=true $(GINKGO) version
-	ACK_GINKGO_RC=true $(GINKGO) -v $(TESTFLAGS) -tags "$(TAGS) remote" $(GINKGOTIMEOUT) -cover -flakeAttempts 3 -progress -trace -noColor -nodes $(GINKGONODES) -debug $(GINKGOWHAT) $(HACK)
+	$(GINKGO) version
+	$(GINKGO) -vv $(TESTFLAGS) --tags "$(TAGS) remote" $(GINKGOTIMEOUT) --flake-attempts 3 --trace --no-color \
+		$(GINKGO_JSON) $(if $(findstring y,$(GINKGO_PARALLEL)),-p,) $(if $(FOCUS),--focus "$(FOCUS)",) \
+		$(if $(FOCUS_FILE),--focus-file "$(FOCUS_FILE)",) $(GINKGOWHAT) $(HACK)
 
 .PHONY: ginkgo
 ginkgo:
@@ -571,7 +587,7 @@ ginkgo-remote:
 
 .PHONY: testbindings
 testbindings: .install.ginkgo
-	ACK_GINKGO_RC=true $(GINKGO) -v $(TESTFLAGS) -tags "$(TAGS) remote" $(GINKGOTIMEOUT) -progress -trace -noColor -debug -timeout 30m  -v -r ./pkg/bindings/test
+	$(GINKGO) -v $(TESTFLAGS) --tags "$(TAGS) remote" $(GINKGOTIMEOUT) --trace --no-color --timeout 30m  -v -r ./pkg/bindings/test
 
 .PHONY: localintegration
 localintegration: test-binaries ginkgo
@@ -581,15 +597,7 @@ remoteintegration: test-binaries ginkgo-remote
 
 .PHONY: localmachine
 localmachine: test-binaries .install.ginkgo
-	$(MAKE) ginkgo-run GINKGONODES=1 GINKGOWHAT=pkg/machine/e2e/. HACK=
-
-.PHONY: localbenchmarks
-localbenchmarks: install.tools test-binaries
-	PATH=$(PATH):$(shell pwd)/hack ACK_GINKGO_RC=true $(GINKGO) \
-		      -focus "Podman Benchmark Suite" \
-		      -tags "$(BUILDTAGS) benchmarks" -noColor \
-		      -noisySkippings=false -noisyPendings=false \
-		      test/e2e/.
+	$(MAKE) ginkgo-run GINKGO_PARALLEL=n GINKGOWHAT=pkg/machine/e2e/. HACK=
 
 .PHONY: localsystem
 localsystem:
@@ -665,7 +673,7 @@ tests-included:
 
 .PHONY: tests-expect-exit
 tests-expect-exit:
-	@if egrep --line-number 'Expect.*ExitCode' test/e2e/*.go | egrep -v ', ".*"\)'; then \
+	@if grep -E --line-number 'Expect.*ExitCode' test/e2e/*.go | grep -E -v ', ".*"\)'; then \
 		echo "^^^ Unhelpful use of Expect(ExitCode())"; \
 		echo "   Please use '.Should(Exit(...))' pattern instead."; \
 		echo "   If that's not possible, please add an annotation (description) to your assertion:"; \
@@ -772,8 +780,8 @@ win-gvproxy: test/version/version
 	cp tmp-gv/bin/gvproxy.exe bin/windows/
 	rm -rf tmp-gv
 
-.PHONY: package
-package:  ## Build rpm packages
+.PHONY: rpm
+rpm:  ## Build rpm packages
 	$(MAKE) -C rpm
 
 ###
@@ -783,9 +791,9 @@ package:  ## Build rpm packages
 # Remember that rpms install exec to /usr/bin/podman while a `make install`
 # installs them to /usr/local/bin/podman which is likely before. Always use
 # a full path to test installed podman or you risk to call another executable.
-.PHONY: package-install
-package-install: package  ## Install rpm packages
-	sudo $(call err_if_empty,PKG_MANAGER) -y install ${HOME}/rpmbuild/RPMS/*/*.rpm
+.PHONY: rpm-install
+rpm-install: package  ## Install rpm packages
+	$(call err_if_empty,PKG_MANAGER) -y install rpm/RPMS/*/*.rpm
 	/usr/bin/podman version
 	/usr/bin/podman info  # will catch a broken conmon
 
@@ -815,6 +823,7 @@ install.remote:
 install.bin:
 	install ${SELINUXOPT} -d -m 755 $(DESTDIR)$(BINDIR)
 	install ${SELINUXOPT} -m 755 bin/podman $(DESTDIR)$(BINDIR)/podman
+	ln -sf podman $(DESTDIR)$(BINDIR)/podmansh
 	test -z "${SELINUXOPT}" || chcon --verbose --reference=$(DESTDIR)$(BINDIR)/podman bin/podman
 	install ${SELINUXOPT} -d -m 755 $(DESTDIR)$(LIBEXECPODMAN)
 ifneq ($(shell uname -s),FreeBSD)
@@ -929,7 +938,7 @@ install.tools: .install.golangci-lint ## Install needed tools
 
 .PHONY: .install.golangci-lint
 .install.golangci-lint:
-	VERSION=1.51.1 ./hack/install_golangci.sh
+	VERSION=$(GOLANGCI_LINT_VERSION) ./hack/install_golangci.sh
 
 .PHONY: .install.swagger
 .install.swagger:

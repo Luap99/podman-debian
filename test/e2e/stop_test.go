@@ -5,34 +5,12 @@ import (
 	"os"
 	"strings"
 
-	. "github.com/containers/podman/v4/test/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 )
 
 var _ = Describe("Podman stop", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
-
-	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-
-	})
 
 	It("podman stop bogus container", func() {
 		session := podmanTest.Podman([]string{"stop", "foobar"})
@@ -126,6 +104,12 @@ var _ = Describe("Podman stop", func() {
 		finalCtrs.WaitWithDefaultTimeout()
 		Expect(finalCtrs).Should(Exit(0))
 		Expect(strings.TrimSpace(finalCtrs.OutputToString())).To(Equal(""))
+
+		// make sure we only have one cleanup event for this container
+		events := podmanTest.Podman([]string{"events", "--since=30s", "--stream=false"})
+		events.WaitWithDefaultTimeout()
+		Expect(events).Should(Exit(0))
+		Expect(strings.Count(events.OutputToString(), "container cleanup")).To(Equal(1), "cleanup event should show up exactly once")
 	})
 
 	It("podman stop all containers -t", func() {
@@ -398,6 +382,11 @@ var _ = Describe("Podman stop", func() {
 		cid3 := session1.OutputToString()
 		shortCid3 := cid3[0:5]
 
+		session1 = podmanTest.Podman([]string{"container", "create", "--label", "test=with,comma", ALPINE})
+		session1.WaitWithDefaultTimeout()
+		Expect(session1).Should(Exit(0))
+		cid4 := session1.OutputToString()
+
 		session1 = podmanTest.Podman([]string{"start", "--all"})
 		session1.WaitWithDefaultTimeout()
 		Expect(session1).Should(Exit(0))
@@ -409,12 +398,17 @@ var _ = Describe("Podman stop", func() {
 		session1 = podmanTest.Podman([]string{"stop", "-a", "--filter", fmt.Sprintf("id=%swrongid", shortCid3)})
 		session1.WaitWithDefaultTimeout()
 		Expect(session1).Should(Exit(0))
-		Expect(session1.OutputToString()).To(HaveLen(0))
+		Expect(session1.OutputToString()).To(BeEmpty())
 
 		session1 = podmanTest.Podman([]string{"stop", "-a", "--filter", fmt.Sprintf("id=%s", shortCid3)})
 		session1.WaitWithDefaultTimeout()
 		Expect(session1).Should(Exit(0))
 		Expect(session1.OutputToString()).To(BeEquivalentTo(cid3))
+
+		session1 = podmanTest.Podman([]string{"stop", "-a", "--filter", "label=test=with,comma"})
+		session1.WaitWithDefaultTimeout()
+		Expect(session1).Should(Exit(0))
+		Expect(session1.OutputToString()).To(BeEquivalentTo(cid4))
 
 		session1 = podmanTest.Podman([]string{"stop", "-f", fmt.Sprintf("id=%s", cid2)})
 		session1.WaitWithDefaultTimeout()

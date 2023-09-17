@@ -6,32 +6,15 @@ import (
 	"path/filepath"
 
 	. "github.com/containers/podman/v4/test/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 )
 
 var _ = Describe("Podman secret", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
-
-	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
 
 	AfterEach(func() {
 		podmanTest.CleanupSecrets()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-
 	})
 
 	It("podman secret create", func() {
@@ -246,7 +229,7 @@ var _ = Describe("Podman secret", func() {
 		Expect(list.OutputToStringArray()).To(HaveLen(2))
 		Expect(list.OutputToStringArray()[1]).To(ContainSubstring(secrID2))
 
-		list = podmanTest.Podman([]string{"secret", "ls", "--filter", fmt.Sprintf("name=%s,name=%s", secret1, secret2)})
+		list = podmanTest.Podman([]string{"secret", "ls", "--filter", fmt.Sprintf("name=%s", secret1), "--filter", fmt.Sprintf("name=%s", secret2)})
 		list.WaitWithDefaultTimeout()
 		Expect(list).Should(Exit(0))
 		Expect(list.OutputToStringArray()).To(HaveLen(3))

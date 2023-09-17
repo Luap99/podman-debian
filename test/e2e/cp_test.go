@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 
 	. "github.com/containers/podman/v4/test/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 )
@@ -17,27 +17,6 @@ import (
 // rather than e2e tests.  System tests are used in RHEL gating.
 
 var _ = Describe("Podman cp", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
-
-	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-
-	})
 
 	// Copy a file to the container, then back to the host and make sure
 	// that the contents match.
@@ -247,7 +226,7 @@ var _ = Describe("Podman cp", func() {
 		Expect(session).Should(Exit(0))
 
 		// owner of the file copied to a container is the root user
-		session = podmanTest.Podman([]string{"exec", "-it", "testctr", "ls", "-l", "testfile2"})
+		session = podmanTest.Podman([]string{"exec", "testctr", "ls", "-l", "testfile2"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(session.OutputToString()).To(ContainSubstring("root"))

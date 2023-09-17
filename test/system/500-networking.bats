@@ -26,7 +26,7 @@ load helpers.network
     run_podman network create $net3
 
     run_podman network ls --quiet
-    # just check the the order of the created networks is correct
+    # just check that the order of the created networks is correct
     # we cannot do an exact match since developer and CI systems could contain more networks
     is "$output" ".*$net1.*$net2.*$net3.*podman.*" "networks sorted alphabetically"
 
@@ -168,7 +168,7 @@ load helpers.network
     is "${lines[0]}" "$pod_name" "hostname is the pod hostname"
     is "${lines[1]}" "$pod_name" "/etc/hostname contains correct pod hostname"
 
-    run_podman pod rm $pod_name
+    run_podman pod rm -f -t0 $pod_name
     is "$output" "$pid" "Only ID in output (no extra errors)"
 
     # Clean up
@@ -449,6 +449,7 @@ load helpers.network
 }
 
 # Test for https://github.com/containers/podman/issues/10052
+# bats test_tags=distro-integration
 @test "podman network connect/disconnect with port forwarding" {
     random_1=$(random_string 30)
     HOST_PORT=$(random_free_port)
@@ -471,8 +472,10 @@ load helpers.network
     run_podman run -d --network $netname $IMAGE top
     background_cid=$output
 
+    local hostname=host-$(random_string 10)
     # Run a httpd container on first network with exposed port
     run_podman run -d -p "$HOST_PORT:80" \
+            --hostname $hostname \
             --network $netname \
             -v $INDEX1:/var/www/index.txt:Z \
             -w /var/www \
@@ -490,7 +493,7 @@ load helpers.network
 
     # check network alias for container short id
     run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname\").Aliases}}"
-    is "$output" "[${cid:0:12}]" "short container id in network aliases"
+    is "$output" "[${cid:0:12} $hostname]" "short container id and hostname in network aliases"
 
     # check /etc/hosts for our entry
     run_podman exec $cid cat /etc/hosts
@@ -550,7 +553,7 @@ load helpers.network
 
     # check network2 alias for container short id
     run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname2\").Aliases}}"
-    is "$output" "[${cid:0:12}]" "short container id in network aliases"
+    is "$output" "[${cid:0:12} $hostname]" "short container id and hostname in network2 aliases"
 
     # curl should work
     run curl --max-time 3 -s $SERVER/index.txt

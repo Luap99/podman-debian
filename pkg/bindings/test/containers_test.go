@@ -10,7 +10,7 @@ import (
 	"github.com/containers/podman/v4/pkg/bindings/containers"
 	"github.com/containers/podman/v4/pkg/domain/entities/reports"
 	"github.com/containers/podman/v4/pkg/specgen"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
 )
@@ -410,7 +410,7 @@ var _ = Describe("Podman containers ", func() {
 
 		// With bogus descriptors
 		_, err = containers.Top(bt.conn, cid, new(containers.TopOptions).WithDescriptors([]string{"Me,Neither"}))
-		Expect(err).ToNot(HaveOccurred())
+		Expect(err).To(HaveOccurred())
 	})
 
 	It("podman bogus container does not exist in local storage", func() {

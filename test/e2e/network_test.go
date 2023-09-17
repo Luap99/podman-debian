@@ -3,45 +3,22 @@ package integration
 import (
 	"encoding/json"
 	"fmt"
-	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/containers/common/libnetwork/types"
 	. "github.com/containers/podman/v4/test/utils"
 	"github.com/containers/storage/pkg/stringid"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 )
 
 var _ = Describe("Podman network", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
-
-	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-
-	})
 
 	It("podman --cni-config-dir backwards compat", func() {
 		SkipIfRemote("--cni-config-dir only works locally")
-		netDir, err := CreateTempDirInTempDir()
-		Expect(err).ToNot(HaveOccurred())
-		defer os.RemoveAll(netDir)
+		netDir := filepath.Join(podmanTest.TempDir, "networks123")
 		session := podmanTest.Podman([]string{"--cni-config-dir", netDir, "network", "ls", "--noheading"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
@@ -202,7 +179,7 @@ var _ = Describe("Podman network", func() {
 		Expect(session).Should(Exit(0))
 		Expect(session.OutputToString()).To(ContainSubstring(net + " " + netID[:12]))
 
-		session = podmanTest.Podman([]string{"network", "ls", "--format", "{{.Name}} {{.ID}}", "--filter", "id=" + netID[10:50], "--no-trunc"})
+		session = podmanTest.Podman([]string{"network", "ls", "--format", "{{.Name}} {{.ID}}", "--filter", "id=" + netID[:50], "--no-trunc"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(session.OutputToString()).To(ContainSubstring(net + " " + netID))
@@ -302,8 +279,8 @@ var _ = Describe("Podman network", func() {
 		conData := inspect.InspectContainerToJSON()
 		Expect(conData).To(HaveLen(1))
 		Expect(conData[0].NetworkSettings.Networks).To(HaveLen(1))
-		net, ok := conData[0].NetworkSettings.Networks[netName]
-		Expect(ok).To(BeTrue())
+		Expect(conData[0].NetworkSettings.Networks).To(HaveKey(netName))
+		net := conData[0].NetworkSettings.Networks[netName]
 		Expect(net).To(HaveField("NetworkID", netName))
 		Expect(net).To(HaveField("IPPrefixLen", 24))
 		Expect(net.IPAddress).To(HavePrefix("10.50.50."))
@@ -338,11 +315,11 @@ var _ = Describe("Podman network", func() {
 		conData := inspect.InspectContainerToJSON()
 		Expect(conData).To(HaveLen(1))
 		Expect(conData[0].NetworkSettings.Networks).To(HaveLen(2))
-		net1, ok := conData[0].NetworkSettings.Networks[netName1]
-		Expect(ok).To(BeTrue())
+		Expect(conData[0].NetworkSettings.Networks).To(HaveKey(netName1))
+		Expect(conData[0].NetworkSettings.Networks).To(HaveKey(netName2))
+		net1 := conData[0].NetworkSettings.Networks[netName1]
 		Expect(net1).To(HaveField("NetworkID", netName1))
-		net2, ok := conData[0].NetworkSettings.Networks[netName2]
-		Expect(ok).To(BeTrue())
+		net2 := conData[0].NetworkSettings.Networks[netName2]
 		Expect(net2).To(HaveField("NetworkID", netName2))
 
 		// Necessary to ensure the CNI network is removed cleanly
@@ -375,13 +352,13 @@ var _ = Describe("Podman network", func() {
 		conData := inspect.InspectContainerToJSON()
 		Expect(conData).To(HaveLen(1))
 		Expect(conData[0].NetworkSettings.Networks).To(HaveLen(2))
-		net1, ok := conData[0].NetworkSettings.Networks[netName1]
-		Expect(ok).To(BeTrue())
+		Expect(conData[0].NetworkSettings.Networks).To(HaveKey(netName1))
+		Expect(conData[0].NetworkSettings.Networks).To(HaveKey(netName2))
+		net1 := conData[0].NetworkSettings.Networks[netName1]
 		Expect(net1).To(HaveField("NetworkID", netName1))
 		Expect(net1).To(HaveField("IPPrefixLen", 25))
 		Expect(net1.IPAddress).To(HavePrefix("10.50.51."))
-		net2, ok := conData[0].NetworkSettings.Networks[netName2]
-		Expect(ok).To(BeTrue())
+		net2 := conData[0].NetworkSettings.Networks[netName2]
 		Expect(net2).To(HaveField("NetworkID", netName2))
 		Expect(net2).To(HaveField("IPPrefixLen", 26))
 		Expect(net2.IPAddress).To(HavePrefix("10.50.51."))
@@ -513,7 +490,7 @@ var _ = Describe("Podman network", func() {
 			time.Sleep(interval)
 			interval *= 2
 		}
-		Expect(worked).To(BeTrue())
+		Expect(worked).To(BeTrue(), "nginx came up")
 
 		// Nginx is now running so no need to do a loop
 		// Test against the first alias
@@ -592,7 +569,7 @@ var _ = Describe("Podman network", func() {
 			Expect(result).To(HaveField("Driver", "macvlan"))
 			Expect(result).To(HaveField("NetworkInterface", "lo"))
 			Expect(result.IPAMOptions).To(HaveKeyWithValue("driver", "dhcp"))
-			Expect(result.Subnets).To(HaveLen(0))
+			Expect(result.Subnets).To(BeEmpty())
 
 			nc = podmanTest.Podman([]string{"network", "rm", net})
 			nc.WaitWithDefaultTimeout()
@@ -622,7 +599,7 @@ var _ = Describe("Podman network", func() {
 		Expect(result).To(HaveField("Driver", "ipvlan"))
 		Expect(result).To(HaveField("NetworkInterface", "lo"))
 		Expect(result.IPAMOptions).To(HaveKeyWithValue("driver", "dhcp"))
-		Expect(result.Subnets).To(HaveLen(0))
+		Expect(result.Subnets).To(BeEmpty())
 
 		nc = podmanTest.Podman([]string{"network", "rm", net})
 		nc.WaitWithDefaultTimeout()

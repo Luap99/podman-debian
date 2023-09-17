@@ -17,6 +17,7 @@ import (
 	"github.com/containers/podman/v4/cmd/podman/registry"
 	"github.com/containers/podman/v4/cmd/podman/validate"
 	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/bindings"
 	"github.com/containers/podman/v4/pkg/checkpoint/crutils"
 	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/containers/podman/v4/pkg/parallel"
@@ -78,17 +79,24 @@ var (
 
 	useSyslog      bool
 	requireCleanup = true
-	noOut          = false
+
+	// Defaults for capturing/redirecting the command output since (the) cobra is
+	// global-hungry and doesn't allow you to attach anything that allows us to
+	// transform the noStdout BoolVar to a string that we can assign to useStdout.
+	noStdout  = false
+	useStdout = ""
 )
 
 func init() {
-	// Hooks are called before PersistentPreRunE()
+	// Hooks are called before PersistentPreRunE(). These hooks affect global
+	// state and are executed after processing the command-line, but before
+	// actually running the command.
 	cobra.OnInitialize(
+		stdOutHook, // Caution, this hook redirects stdout and output from any following hooks may be affected.
 		loggingHook,
 		syslogHook,
 		earlyInitHook,
 		configHook,
-		noOutHook,
 	)
 
 	rootFlags(rootCmd, registry.PodmanConfig())
@@ -109,7 +117,7 @@ func Execute() {
 			registry.SetExitCode(define.ExecErrorCodeGeneric)
 		}
 		if registry.IsRemote() {
-			if strings.Contains(err.Error(), "unable to connect to Podman") {
+			if errors.As(err, &bindings.ConnectError{}) {
 				fmt.Fprintln(os.Stderr, "Cannot connect to Podman. Please verify your connection to the Linux system using `podman system connection list`, or try `podman machine init` and `podman machine start` to manage a new Linux VM")
 			}
 		}
@@ -232,7 +240,7 @@ func persistentPreRunE(cmd *cobra.Command, args []string) error {
 	// Special case if command is hidden completion command ("__complete","__completeNoDesc")
 	// Since __completeNoDesc is an alias the cm.Name is always __complete
 	if cmd.Name() == cobra.ShellCompRequestCmd {
-		// Parse the cli arguments after the the completion cmd (always called as second argument)
+		// Parse the cli arguments after the completion cmd (always called as second argument)
 		// This ensures that the --url, --identity and --connection flags are properly set
 		compCmd, _, err := cmd.Root().Traverse(os.Args[2:])
 		if err != nil {
@@ -375,10 +383,23 @@ func loggingHook() {
 	}
 }
 
-func noOutHook() {
-	if noOut {
-		null, _ := os.Open(os.DevNull)
-		os.Stdout = null
+// used for capturing podman's formatted output to some file as per the -out and -noout flags.
+func stdOutHook() {
+	// if noStdOut was specified, then assign /dev/null as the standard file for output.
+	if noStdout {
+		useStdout = os.DevNull
+	}
+	// if we were given a filename for output, then open that and use it. we end up leaking
+	// the file since it's intended to be in scope as long as our process is running.
+	if useStdout != "" {
+		if fd, err := os.OpenFile(useStdout, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.ModePerm); err == nil {
+			os.Stdout = fd
+
+			// if we couldn't open the file for write, then just bail with an error.
+		} else {
+			fmt.Fprintf(os.Stderr, "unable to open file for standard output: %s\n", err.Error())
+			os.Exit(1)
+		}
 	}
 }
 
@@ -414,7 +435,14 @@ func rootFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig) {
 	lFlags.StringVar(&podmanConfig.Identity, identityFlagName, ident, "path to SSH identity file, (CONTAINER_SSHKEY)")
 	_ = cmd.RegisterFlagCompletionFunc(identityFlagName, completion.AutocompleteDefault)
 
-	lFlags.BoolVar(&noOut, "noout", false, "do not output to stdout")
+	// Flags that control or influence any kind of output.
+	outFlagName := "out"
+	lFlags.StringVar(&useStdout, outFlagName, "", "Send output (stdout) from podman to a file")
+	_ = cmd.RegisterFlagCompletionFunc(outFlagName, completion.AutocompleteDefault)
+
+	lFlags.BoolVar(&noStdout, "noout", false, "do not output to stdout")
+	_ = lFlags.MarkHidden("noout") // Superseded by --out
+
 	lFlags.BoolVarP(&podmanConfig.Remote, "remote", "r", registry.IsRemote(), "Access remote Podman service")
 	pFlags := cmd.PersistentFlags()
 	if registry.IsRemote() {
@@ -437,6 +465,8 @@ func rootFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig) {
 		pFlags.StringVar(&podmanConfig.ConmonPath, conmonFlagName, "", "Path of the conmon binary")
 		_ = cmd.RegisterFlagCompletionFunc(conmonFlagName, completion.AutocompleteDefault)
 
+		// TODO (5.0): --network-cmd-path is deprecated, remove this option with the next major release
+		// We need to find all the places that use r.config.Engine.NetworkCmdPath and remove it
 		networkCmdPathFlagName := "network-cmd-path"
 		pFlags.StringVar(&podmanConfig.ContainersConf.Engine.NetworkCmdPath, networkCmdPathFlagName, podmanConfig.ContainersConfDefaultsRO.Engine.NetworkCmdPath, "Path to the command for configuring the network")
 		_ = cmd.RegisterFlagCompletionFunc(networkCmdPathFlagName, completion.AutocompleteDefault)
@@ -476,6 +506,10 @@ func rootFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig) {
 		runrootFlagName := "runroot"
 		pFlags.StringVar(&podmanConfig.Runroot, runrootFlagName, "", "Path to the 'run directory' where all state information is stored")
 		_ = cmd.RegisterFlagCompletionFunc(runrootFlagName, completion.AutocompleteDefault)
+
+		imageStoreFlagName := "imagestore"
+		pFlags.StringVar(&podmanConfig.ImageStore, imageStoreFlagName, "", "Path to the 'image store', different from 'graph root', use this to split storing the image into a separate 'image store', see 'man containers-storage.conf' for details")
+		_ = cmd.RegisterFlagCompletionFunc(imageStoreFlagName, completion.AutocompleteDefault)
 
 		pFlags.BoolVar(&podmanConfig.TransientStore, "transient-store", false, "Enable transient container storage")
 

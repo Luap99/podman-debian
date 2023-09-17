@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/containers/buildah/pkg/cli"
 	"github.com/containers/common/pkg/auth"
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/image/v5/types"
@@ -24,6 +25,7 @@ type pushOptionsWrapper struct {
 	SignBySigstoreParamFileCLI string
 	EncryptionKeys             []string
 	EncryptLayers              []int
+	DigestFile                 string
 }
 
 var (
@@ -129,6 +131,10 @@ func pushFlags(cmd *cobra.Command) {
 	flags.StringVar(&pushOptions.CompressionFormat, compressionFormat, "", "compression format to use")
 	_ = cmd.RegisterFlagCompletionFunc(compressionFormat, common.AutocompleteCompressionFormat)
 
+	compressionLevel := "compression-level"
+	flags.Int(compressionLevel, 0, "compression level to use")
+	_ = cmd.RegisterFlagCompletionFunc(compressionLevel, completion.AutocompleteNone)
+
 	encryptionKeysFlagName := "encryption-key"
 	flags.StringSliceVar(&pushOptions.EncryptionKeys, encryptionKeysFlagName, nil, "Key with the encryption protocol to use to encrypt the image (e.g. jwe:/path/to/key.pem)")
 	_ = cmd.RegisterFlagCompletionFunc(encryptionKeysFlagName, completion.AutocompleteDefault)
@@ -140,7 +146,6 @@ func pushFlags(cmd *cobra.Command) {
 	if registry.IsRemote() {
 		_ = flags.MarkHidden("cert-dir")
 		_ = flags.MarkHidden("compress")
-		_ = flags.MarkHidden("digestfile")
 		_ = flags.MarkHidden("quiet")
 		_ = flags.MarkHidden(signByFlagName)
 		_ = flags.MarkHidden(signBySigstoreFlagName)
@@ -194,14 +199,33 @@ func imagePush(cmd *cobra.Command, args []string) error {
 	}
 	defer signingCleanup()
 
-	encConfig, encLayers, err := util.EncryptConfig(pushOptions.EncryptionKeys, pushOptions.EncryptLayers)
+	encConfig, encLayers, err := cli.EncryptConfig(pushOptions.EncryptionKeys, pushOptions.EncryptLayers)
 	if err != nil {
 		return fmt.Errorf("unable to obtain encryption config: %w", err)
 	}
 	pushOptions.OciEncryptConfig = encConfig
 	pushOptions.OciEncryptLayers = encLayers
 
+	if cmd.Flags().Changed("compression-level") {
+		val, err := cmd.Flags().GetInt("compression-level")
+		if err != nil {
+			return err
+		}
+		pushOptions.CompressionLevel = &val
+	}
+
 	// Let's do all the remaining Yoga in the API to prevent us from scattering
 	// logic across (too) many parts of the code.
-	return registry.ImageEngine().Push(registry.GetContext(), source, destination, pushOptions.ImagePushOptions)
+	report, err := registry.ImageEngine().Push(registry.GetContext(), source, destination, pushOptions.ImagePushOptions)
+	if err != nil {
+		return err
+	}
+
+	if pushOptions.DigestFile != "" {
+		if err := os.WriteFile(pushOptions.DigestFile, []byte(report.ManifestDigest), 0644); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

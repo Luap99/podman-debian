@@ -448,9 +448,6 @@ $name stderr" "logs work with passthrough"
     is "$output" ".*$service_name,.* (test_pod-b),$IMAGE,false,registry.*" "container-specified auto-update policy gets applied"
 
     # Kill the pod and make sure the service is not running.
-    # The restart policy is set to "never" since there is no
-    # design yet for propagating exit codes up to the service
-    # container.
     run_podman pod kill test_pod
     for i in {0..20}; do
         run systemctl is-active $service_name
@@ -459,8 +456,7 @@ $name stderr" "logs work with passthrough"
         fi
         sleep 0.5
     done
-    # The service is marked as failed as the service container exits non-zero.
-    is "$output" "failed" "systemd service transitioned to 'inactive' state: $service_name"
+    is "$output" "inactive" "systemd service transitioned to 'inactive' state: $service_name"
 
     # Now stop and start the service again.
     systemctl stop $service_name

@@ -3,11 +3,14 @@
 load helpers
 load helpers.network
 
+# bats test_tags=distro-integration
 @test "podman run - basic tests" {
     rand=$(random_string 30)
 
     err_no_such_cmd="Error:.*/no/such/command.*[Nn]o such file or directory"
-    err_no_exec_dir="Error:.*exec.*permission denied"
+    # runc: RHEL8 on 2023-07-17: "is a directory".
+    # Everything else (crun; runc on debian): "permission denied"
+    err_no_exec_dir="Error:.*exec.*\\\(permission denied\\\|is a directory\\\)"
 
     tests="
 true              |   0 |
@@ -294,6 +297,7 @@ echo $rand        |   0 | $rand
 }
 
 # #6829 : add username to /etc/passwd inside container if --userns=keep-id
+# bats test_tags=distro-integration
 @test "podman run : add username to /etc/passwd if --userns=keep-id" {
     skip_if_not_rootless "--userns=keep-id only works in rootless mode"
     # Default: always run as root
@@ -347,7 +351,7 @@ echo $rand        |   0 | $rand
 # #6991 : /etc/passwd is modifiable
 @test "podman run : --userns=keep-id: passwd file is modifiable" {
     skip_if_not_rootless "--userns=keep-id only works in rootless mode"
-    run_podman run -d --userns=keep-id --cap-add=dac_override $IMAGE sh -c 'while ! test -e /tmp/stop; do sleep 0.1; done'
+    run_podman run -d --userns=keep-id --cap-add=dac_override $IMAGE top
     cid="$output"
 
     # Assign a UID that is (a) not in our image /etc/passwd and (b) not
@@ -368,8 +372,7 @@ echo $rand        |   0 | $rand
     is "$output" "newuser3:x:$uid:999:$gecos:/home/newuser3:/bin/sh" \
        "newuser3 added to /etc/passwd in container"
 
-    run_podman exec $cid touch /tmp/stop
-    run_podman wait $cid
+    run_podman rm -f -t0 $cid
 }
 
 # For #7754: json-file was equating to 'none'
@@ -473,6 +476,14 @@ json-file | f
     is "$output" "$expect" "podman run with --tz=local, matches host"
 }
 
+@test "podman run --tz with zoneinfo" {
+    # First make sure that zoneinfo is actually in the image otherwise the test is pointless
+    run_podman run --rm $SYSTEMD_IMAGE ls /usr/share/zoneinfo
+
+    run_podman run --rm --tz Europe/Berlin $SYSTEMD_IMAGE readlink /etc/localtime
+    assert "$output" == "../usr/share/zoneinfo/Europe/Berlin" "localtime is linked correctly"
+}
+
 # run with --runtime should preserve the named runtime
 @test "podman run : full path to --runtime is preserved" {
     skip_if_remote "podman-remote does not support --runtime option"
@@ -508,6 +519,37 @@ json-file | f
     run_podman --noout create --name test $IMAGE echo hi
     is "$output" "" "output should be empty"
     run_podman --noout rm test
+    is "$output" "" "output should be empty"
+}
+
+@test "podman --out run should save the container id" {
+    outfile=${PODMAN_TMPDIR}/out-results
+
+    # first we'll need to run something, write its output to a file, and then read its contents.
+    run_podman --out $outfile run -d --name test $IMAGE echo hola
+    is "$output" "" "output should be redirected"
+    run_podman wait test
+
+    # compare the container id against the one in the file
+    run_podman container inspect --format '{{.Id}}' test
+    is "$output" "$(<$outfile)" "container id should match"
+
+    run_podman --out /dev/null rm test
+    is "$output" "" "output should be empty"
+}
+
+@test "podman --out create should save the container id" {
+    outfile=${PODMAN_TMPDIR}/out-results
+
+    # first we'll need to run something, write its output to a file, and then read its contents.
+    run_podman --out $outfile create --name test $IMAGE echo hola
+    is "$output" "" "output should be redirected"
+
+    # compare the container id against the one in the file
+    run_podman container inspect --format '{{.Id}}' test
+    is "$output" "$(<$outfile)" "container id should match"
+
+    run_podman --out /dev/null rm test
     is "$output" "" "output should be empty"
 }
 
@@ -569,8 +611,13 @@ json-file | f
 
 @test "Verify /run/.containerenv exist" {
     # Nonprivileged container: file exists, but must be empty
-    run_podman run --rm $IMAGE stat -c '%s' /run/.containerenv
-    is "$output" "0" "file size of /run/.containerenv, nonprivileged"
+    for opt in "" "--tmpfs=/run" "--tmpfs=/run --init" "--read-only" "--systemd=always"; do
+        run_podman run --rm $opt $IMAGE stat -c '%s' /run/.containerenv
+        is "$output" "0" "/run/.containerenv exists and is empty: podman run ${opt}"
+    done
+
+    run_podman 1 run --rm -v ${PODMAN_TMPDIR}:/run:Z $IMAGE stat -c '%s' /run/.containerenv
+    is "$output" "stat: can't stat '/run/.containerenv': No such file or directory" "do not create .containerenv on bind mounts"
 
     # Prep work: get ID of image; make a cont. name; determine if we're rootless
     run_podman inspect --format '{{.ID}}' $IMAGE
@@ -650,6 +697,7 @@ json-file | f
 # https://github.com/containers/podman/issues/9096
 # podman exec may truncate stdout/stderr; actually a bug in conmon:
 # https://github.com/containers/conmon/issues/236
+# bats test_tags=distro-integration
 @test "podman run - does not truncate or hang with big output" {
     # Size, in bytes, to dd and to expect in return
     char_count=700000
@@ -742,7 +790,11 @@ EOF
 }
 
 @test "podman run --device-cgroup-rule tests" {
-    skip_if_rootless "cannot add devices in rootless mode"
+    if is_rootless; then
+        run_podman 125 run --device-cgroup-rule="b 7:* rmw" --rm $IMAGE
+        is "$output" "Error: device cgroup rules are not supported in rootless mode or in a user namespace"
+        return
+    fi
 
     run_podman run --device-cgroup-rule="b 7:* rmw" --rm $IMAGE
     run_podman run --device-cgroup-rule="c 7:* rmw" --rm $IMAGE
@@ -1072,7 +1124,7 @@ EOF
 
     skip_if_remote "userns=auto is set on the server"
 
-    egrep -q "^containers:" /etc/subuid || skip "no IDs allocated for user 'containers'"
+    grep -E -q "^containers:" /etc/subuid || skip "no IDs allocated for user 'containers'"
 
     # check if the underlying file system supports idmapped mounts
     check_dir=$PODMAN_TMPDIR/idmap-check
@@ -1100,5 +1152,13 @@ EOF
     rm -rf $romount
 }
 
+@test "podman run --restart=always -- wait" {
+    # regression test for #18572 to make sure Podman waits less than 20 seconds
+    ctr=$(random_string)
+    run_podman run -d --restart=always --name=$ctr $IMAGE false
+    PODMAN_TIMEOUT=20 run_podman wait $ctr
+    is "$output" "1" "container should exit 1"
+    run_podman rm -f -t0 $ctr
+}
 
 # vim: filetype=sh

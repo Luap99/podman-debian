@@ -9,39 +9,20 @@ import (
 
 	"github.com/containers/podman/v4/libpod/define"
 	. "github.com/containers/podman/v4/test/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gbytes"
 	. "github.com/onsi/gomega/gexec"
 )
 
 var _ = Describe("Verify podman containers.conf usage", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
 
 	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
 		os.Setenv("CONTAINERS_CONF", "config/containers.conf")
 		if IsRemote() {
 			podmanTest.RestartRemoteService()
 		}
 
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-		os.Unsetenv("CONTAINERS_CONF")
-		os.Unsetenv("CONTAINERS_CONF_OVERRIDE")
 	})
 
 	It("limits test", func() {
@@ -110,8 +91,6 @@ var _ = Describe("Verify podman containers.conf usage", func() {
 		// FIXME: Needs crun-1.8.2-2 to allow this with --cgroup-manager=cgroupfs, once this is available remove the skip below.
 		SkipIfRootless("--cgroup-manager=cgoupfs and --cgroup-conf not supported in rootless mode with crun")
 		conffile := filepath.Join(podmanTest.TempDir, "container.conf")
-		tempdir, err = CreateTempDirInTempDir()
-		Expect(err).ToNot(HaveOccurred())
 
 		err := os.WriteFile(conffile, []byte("[containers]\ncgroup_conf = [\"pids.max=1234\",]\n"), 0755)
 		Expect(err).ToNot(HaveOccurred())
@@ -233,6 +212,8 @@ var _ = Describe("Verify podman containers.conf usage", func() {
 		Expect(hostNS).To(Equal(ctrNS))
 
 		session = podmanTest.Podman([]string{"run", option, "private", ALPINE, "ls", "-l", nspath})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
 		fields = strings.Split(session.OutputToString(), " ")
 		ctrNS = fields[len(fields)-1]
 		Expect(hostNS).ToNot(Equal(ctrNS))
@@ -259,7 +240,7 @@ var _ = Describe("Verify podman containers.conf usage", func() {
 	})
 
 	It("using journald for container with container log_tag", func() {
-		SkipIfInContainer("journalctl inside a container doesn't work correctly")
+		SkipIfJournaldUnavailable()
 		os.Setenv("CONTAINERS_CONF", "config/containers-journald.conf")
 		if IsRemote() {
 			podmanTest.RestartRemoteService()
@@ -281,17 +262,18 @@ var _ = Describe("Verify podman containers.conf usage", func() {
 
 	It("add volumes", func() {
 		conffile := filepath.Join(podmanTest.TempDir, "container.conf")
-		tempdir, err = CreateTempDirInTempDir()
-		Expect(err).ToNot(HaveOccurred())
 
-		err := os.WriteFile(conffile, []byte(fmt.Sprintf("[containers]\nvolumes=[\"%s:%s:Z\",]\n", tempdir, tempdir)), 0755)
+		volume := filepath.Join(podmanTest.TempDir, "vol")
+		err = os.MkdirAll(volume, os.ModePerm)
+		Expect(err).ToNot(HaveOccurred())
+		err := os.WriteFile(conffile, []byte(fmt.Sprintf("[containers]\nvolumes=[\"%s:%s:Z\",]\n", volume, volume)), 0755)
 		Expect(err).ToNot(HaveOccurred())
 
 		os.Setenv("CONTAINERS_CONF", conffile)
 		if IsRemote() {
 			podmanTest.RestartRemoteService()
 		}
-		result := podmanTest.Podman([]string{"run", ALPINE, "ls", tempdir})
+		result := podmanTest.Podman([]string{"run", ALPINE, "ls", volume})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
 	})
@@ -674,5 +656,36 @@ var _ = Describe("Verify podman containers.conf usage", func() {
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
 		Expect(result.OutputToString()).To(ContainSubstring("Path to the OCI-compatible binary used to run containers. (default \"testruntime\")"))
+	})
+
+	It("podman default_rootless_network_cmd", func() {
+		SkipIfNotRootless("default_rootless_network_cmd is only used rootless")
+
+		for _, mode := range []string{"pasta", "slirp4netns", "invalid"} {
+			conffile := filepath.Join(podmanTest.TempDir, "container.conf")
+			content := "[network]\ndefault_rootless_network_cmd=\"" + mode + "\"\n"
+			err := os.WriteFile(conffile, []byte(content), 0755)
+			Expect(err).ToNot(HaveOccurred())
+
+			os.Setenv("CONTAINERS_CONF_OVERRIDE", conffile)
+			if IsRemote() {
+				podmanTest.RestartRemoteService()
+			}
+
+			podman := podmanTest.Podman([]string{"create", "--name", mode, ALPINE, "ip", "addr"})
+			podman.WaitWithDefaultTimeout()
+
+			if mode == "invalid" {
+				Expect(podman).Should(Exit(125))
+				Expect(podman.ErrorToString()).Should(ContainSubstring("invalid default_rootless_network_cmd option \"invalid\""))
+				continue
+			}
+			Expect(podman).Should(Exit(0))
+
+			inspect := podmanTest.Podman([]string{"inspect", "--format", "{{.HostConfig.NetworkMode}}", mode})
+			inspect.WaitWithDefaultTimeout()
+			Expect(inspect).Should(Exit(0))
+			Expect(inspect.OutputToString()).Should(Equal(mode))
+		}
 	})
 })

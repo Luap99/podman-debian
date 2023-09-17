@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/containers/storage/pkg/idtools"
@@ -68,6 +69,9 @@ func TestParseOptionIDs(t *testing.T) {
 	assert.Equal(t, mappings[1].Size, 5)
 
 	_, err = parseOptionIDs(idMap, "@10000-20000-2")
+	assert.NotNil(t, err)
+
+	_, err = parseOptionIDs(idMap, "100-200-3###400-500-6")
 	assert.NotNil(t, err)
 }
 
@@ -142,6 +146,7 @@ func TestPostDeleteHooks(t *testing.T) {
 
 	statePath := filepath.Join(dir, "state")
 	copyPath := filepath.Join(dir, "copy")
+	cwdPath := filepath.Join(dir, "cwd")
 	c := Container{
 		runtime: &Runtime{},
 		config: &ContainerConfig{
@@ -169,6 +174,10 @@ func TestPostDeleteHooks(t *testing.T) {
 						Path: hookPath,
 						Args: []string{"sh", "-c", fmt.Sprintf("cp %s %s", statePath, copyPath)},
 					},
+					rspec.Hook{
+						Path: hookPath,
+						Args: []string{"sh", "-c", fmt.Sprintf("pwd >%s", cwdPath)},
+					},
 				},
 			},
 		},
@@ -177,7 +186,7 @@ func TestPostDeleteHooks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stateRegexp := `{"ociVersion":"1\.1\.0-rc.1","id":"123abc","status":"stopped","bundle":"` + dir + `","annotations":{"a":"b"}}`
+	stateRegexp := `{"ociVersion":"[0-9]+\.[0-9]+\..*","id":"123abc","status":"stopped","bundle":"` + dir + `","annotations":{"a":"b"}}`
 	for _, p := range []string{statePath, copyPath} {
 		path := p
 		t.Run(path, func(t *testing.T) {
@@ -188,6 +197,11 @@ func TestPostDeleteHooks(t *testing.T) {
 			assert.Regexp(t, stateRegexp, string(content))
 		})
 	}
+	content, err := os.ReadFile(cwdPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assert.Equal(t, strings.TrimSuffix(string(content), "\n"), dir)
 }
 
 func init() {

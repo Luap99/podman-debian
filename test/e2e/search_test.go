@@ -10,7 +10,7 @@ import (
 
 	"github.com/containers/podman/v4/pkg/domain/entities"
 	. "github.com/containers/podman/v4/test/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 )
@@ -25,11 +25,6 @@ func (e *endpoint) Address() string {
 }
 
 var _ = Describe("Podman search", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
 
 	const regFileContents = `
 [registries.search]
@@ -54,22 +49,6 @@ registries = ['{{.Host}}:{{.Port}}', '{{.Host}}:6000']
 [registries.insecure]
 registries = ['{{.Host}}:{{.Port}}']`
 	registryFileTwoTmpl := template.Must(template.New("registryFileTwo").Parse(regFileContents2))
-
-	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-	})
 
 	It("podman search", func() {
 		search := podmanTest.Podman([]string{"search", "alpine"})
@@ -196,6 +175,13 @@ registries = ['{{.Host}}:{{.Port}}']`
 		for i := 0; i < len(output); i++ {
 			Expect(output[i]).To(Equal(""))
 		}
+	})
+
+	It("podman search format list tags with custom", func() {
+		search := podmanTest.Podman([]string{"search", "--list-tags", "--format", "{{.Name}}", "--limit", "1", ALPINE})
+		search.WaitWithDefaultTimeout()
+		Expect(search).Should(Exit(0))
+		Expect(search.OutputToString()).To(Equal("quay.io/libpod/alpine"))
 	})
 
 	It("podman search attempts HTTP if tls-verify flag is set false", func() {
@@ -339,7 +325,7 @@ registries = ['{{.Host}}:{{.Port}}']`
 
 		Expect(search).Should(Exit(125))
 		Expect(search.OutputToString()).Should(BeEmpty())
-		Expect(search.ErrorToString()).To(ContainSubstring("error"))
+		Expect(search.ErrorToString()).To(ContainSubstring("http: server gave HTTP response to HTTPS client"))
 
 		// cleanup
 		resetRegistriesConfigEnv()
@@ -384,13 +370,14 @@ registries = ['{{.Host}}:{{.Port}}']`
 
 		Expect(search).Should(Exit(125))
 		Expect(search.OutputToString()).Should(BeEmpty())
-		Expect(search.ErrorToString()).To(ContainSubstring("error"))
+		Expect(search.ErrorToString()).To(ContainSubstring("http: server gave HTTP response to HTTPS client"))
 
 		// cleanup
 		resetRegistriesConfigEnv()
 	})
 
 	It("podman search doesn't attempt HTTP if one registry is not listed as insecure", func() {
+		Skip("FIXME FIXME FIXME #18768: This test is a NOP")
 		if podmanTest.Host.Arch == "ppc64le" {
 			Skip("No registry image for ppc64le")
 		}
@@ -453,7 +440,8 @@ registries = ['{{.Host}}:{{.Port}}']`
 		Expect(search).To(ExitWithError())
 	})
 
-	It("podman search with wildcards", func() {
+	// Registry is unreliable (#18484), this is another super-common flake
+	It("podman search with wildcards", FlakeAttempts(3), func() {
 		search := podmanTest.Podman([]string{"search", "registry.access.redhat.com/*openshift*"})
 		search.WaitWithDefaultTimeout()
 		Expect(search).Should(Exit(0))

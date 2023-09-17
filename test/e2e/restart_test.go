@@ -6,33 +6,12 @@ import (
 	"time"
 
 	. "github.com/containers/podman/v4/test/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 )
 
 var _ = Describe("Podman restart", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
-
-	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-
-	})
 
 	It("podman restart bogus container", func() {
 		session := podmanTest.Podman([]string{"start", "123"})
@@ -77,7 +56,7 @@ var _ = Describe("Podman restart", func() {
 	It("podman restart running container", func() {
 		_ = podmanTest.RunTopContainer("test1")
 		ok := WaitForContainer(podmanTest)
-		Expect(ok).To(BeTrue())
+		Expect(ok).To(BeTrue(), "test1 container is up")
 		startTime := podmanTest.Podman([]string{"inspect", "--format='{{.State.StartedAt}}'", "test1"})
 		startTime.WaitWithDefaultTimeout()
 
@@ -92,7 +71,7 @@ var _ = Describe("Podman restart", func() {
 	It("podman container restart running container", func() {
 		_ = podmanTest.RunTopContainer("test1")
 		ok := WaitForContainer(podmanTest)
-		Expect(ok).To(BeTrue())
+		Expect(ok).To(BeTrue(), "test1 container is up")
 		startTime := podmanTest.Podman([]string{"container", "inspect", "--format='{{.State.StartedAt}}'", "test1"})
 		startTime.WaitWithDefaultTimeout()
 
@@ -332,7 +311,7 @@ var _ = Describe("Podman restart", func() {
 		Expect(session1).Should(Exit(0))
 		cid2 := session1.OutputToString()
 
-		session1 = podmanTest.RunTopContainer("")
+		session1 = podmanTest.RunTopContainerWithArgs("", []string{"--label", "test=with,comma"})
 		session1.WaitWithDefaultTimeout()
 		Expect(session1).Should(Exit(0))
 		cid3 := session1.OutputToString()
@@ -345,9 +324,14 @@ var _ = Describe("Podman restart", func() {
 		session1 = podmanTest.Podman([]string{"restart", "-a", "--filter", fmt.Sprintf("id=%swrongid", shortCid3)})
 		session1.WaitWithDefaultTimeout()
 		Expect(session1).Should(Exit(0))
-		Expect(session1.OutputToString()).To(HaveLen(0))
+		Expect(session1.OutputToString()).To(BeEmpty())
 
 		session1 = podmanTest.Podman([]string{"restart", "-a", "--filter", fmt.Sprintf("id=%s", shortCid3)})
+		session1.WaitWithDefaultTimeout()
+		Expect(session1).Should(Exit(0))
+		Expect(session1.OutputToString()).To(BeEquivalentTo(cid3))
+
+		session1 = podmanTest.Podman([]string{"restart", "-a", "--filter", "label=test=with,comma"})
 		session1.WaitWithDefaultTimeout()
 		Expect(session1).Should(Exit(0))
 		Expect(session1.OutputToString()).To(BeEquivalentTo(cid3))

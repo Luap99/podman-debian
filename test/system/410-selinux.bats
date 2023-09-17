@@ -34,26 +34,34 @@ function check_label() {
 }
 
 
+# bats test_tags=distro-integration
 @test "podman selinux: confined container" {
     check_label "" "container_t"
 }
 
+# FIXME #19376 - container-selinux broken -- bats test_tags=distro-integration
 @test "podman selinux: container with label=disable" {
+    skip "Requires unavailable version of container-selinux"
     check_label "--security-opt label=disable" "spc_t"
 }
 
+# FIXME #19376 - container-selinux broken -- bats test_tags=distro-integration
 @test "podman selinux: privileged container" {
+    skip "Requires unavailable version of container-selinux"
     check_label "--privileged --userns=host" "spc_t"
 }
 
+# bats test_tags=distro-integration
 @test "podman selinux: init container" {
     check_label "--systemd=always" "container_init_t"
 }
 
+# bats test_tags=distro-integration
 @test "podman selinux: init container with --security-opt type" {
     check_label "--systemd=always --security-opt=label=type:spc_t" "spc_t"
 }
 
+# bats test_tags=distro-integration
 @test "podman selinux: init container with --security-opt level&type" {
     check_label "--systemd=always --security-opt=label=level:s0:c1,c2 --security-opt=label=type:spc_t" "spc_t" "s0:c1,c2"
 }
@@ -62,7 +70,9 @@ function check_label() {
     check_label "--systemd=always --security-opt=label=level:s0:c1,c2" "container_init_t"  "s0:c1,c2"
 }
 
+# FIXME #19376 - container-selinux broken -- bats test_tags=distro-integration
 @test "podman selinux: pid=host" {
+    skip "Requires unavailable version of container-selinux"
     # FIXME this test fails when run rootless with runc:
     #   Error: container_linux.go:367: starting container process caused: process_linux.go:495: container init caused: readonly path /proc/asound: operation not permitted: OCI permission denied
     if is_rootless; then
@@ -89,6 +99,8 @@ function check_label() {
     run_podman create --runtime=${KATA} --name myc $IMAGE
     run_podman inspect --format='{{ .ProcessLabel }}' myc
     is "$output" ".*container_kvm_t"
+
+    run_podman rm myc
 }
 
 # pr #6752
@@ -99,12 +111,11 @@ function check_label() {
                --security-opt seccomp=unconfined \
                --security-opt label=type:spc_t \
                --security-opt label=level:s0 \
-               $IMAGE sh -c 'while test ! -e /stop; do sleep 0.1; done'
+               $IMAGE top
     run_podman inspect --format='{{ .HostConfig.SecurityOpt }}' myc
     is "$output" "[label=type:spc_t,label=level:s0 seccomp=unconfined]" \
       "'podman inspect' preserves all --security-opts"
 
-    run_podman exec myc touch /stop
     run_podman rm -t 0 -f myc
 }
 
@@ -152,46 +163,53 @@ function check_label() {
 }
 
 # pr #7902 - containers in pods should all run under same context
+# bats test_tags=distro-integration
 @test "podman selinux: containers in pods share full context" {
     skip_if_no_selinux
 
+    # unique pod name helps when tracking down failure in journal
+    local podname=myselinuxpod_do_share
+
     # We don't need a fullblown pause container; avoid pulling the k8s one
-    run_podman pod create --name myselinuxpod \
+    run_podman pod create --name $podname \
                --infra-image $IMAGE \
                --infra-command /home/podman/pause
 
     # Get baseline
-    run_podman run --rm --pod myselinuxpod $IMAGE cat -v /proc/self/attr/current
+    run_podman run --rm --pod $podname $IMAGE cat -v /proc/self/attr/current
     context_c1="$output"
 
     # Prior to #7902, the labels (':c123,c456') would be different
-    run_podman run --rm --pod myselinuxpod $IMAGE cat -v /proc/self/attr/current
+    run_podman run --rm --pod $podname $IMAGE cat -v /proc/self/attr/current
     is "$output" "$context_c1" "SELinux context of 2nd container matches 1st"
 
     # What the heck. Try a third time just for extra confidence
-    run_podman run --rm --pod myselinuxpod $IMAGE cat -v /proc/self/attr/current
+    run_podman run --rm --pod $podname $IMAGE cat -v /proc/self/attr/current
     is "$output" "$context_c1" "SELinux context of 3rd container matches 1st"
 
-    run_podman pod rm myselinuxpod
+    run_podman pod rm -f -t0 $podname
 }
 
 # more pr #7902
 @test "podman selinux: containers in --no-infra pods do not share context" {
     skip_if_no_selinux
 
+    # unique pod name helps when tracking down failure in journal
+    local podname=myselinuxpod_dont_share
+
     # We don't need a fullblown pause container; avoid pulling the k8s one
-    run_podman pod create --name myselinuxpod --infra=false
+    run_podman pod create --name $podname --infra=false
 
     # Get baseline
-    run_podman run --rm --pod myselinuxpod $IMAGE cat -v /proc/self/attr/current
+    run_podman run --rm --pod $podname $IMAGE cat -v /proc/self/attr/current
     context_c1="$output"
 
     # Even after #7902, labels (':c123,c456') should be different
-    run_podman run --rm --pod myselinuxpod $IMAGE cat -v /proc/self/attr/current
+    run_podman run --rm --pod $podname $IMAGE cat -v /proc/self/attr/current
     assert "$output" != "$context_c1" \
            "context of two separate containers should be different"
 
-    run_podman pod rm myselinuxpod
+    run_podman pod rm -f -t0 $podname
 }
 
 # #8946 - better diagnostics for nonexistent attributes
@@ -215,10 +233,11 @@ function check_label() {
 
     # The '.*' in the error below is for dealing with podman-remote, which
     # includes "error preparing container <sha> for attach" in output.
-    run_podman 126 run --security-opt label=type:foo.bar $IMAGE true
+    run_podman 126 run --rm --security-opt label=type:foo.bar $IMAGE true
     is "$output" "Error.*: $expect" "podman emits useful diagnostic on failure"
 }
 
+# bats test_tags=distro-integration
 @test "podman selinux: check relabel" {
     skip_if_no_selinux
 
@@ -229,15 +248,15 @@ function check_label() {
     chcon -vR ${LABEL} $tmpdir
     ls -Z $tmpdir
 
-    run_podman run -v $tmpdir:/test $IMAGE cat /proc/self/attr/current
+    run_podman run --rm -v $tmpdir:/test $IMAGE cat /proc/self/attr/current
     run ls -dZ ${tmpdir}
     is "$output" "${LABEL} ${tmpdir}" "No Relabel Correctly"
 
-    run_podman run -v $tmpdir:/test:z --security-opt label=disable $IMAGE cat /proc/self/attr/current
+    run_podman run --rm -v $tmpdir:/test:z --security-opt label=disable $IMAGE cat /proc/self/attr/current
     run ls -dZ $tmpdir
     is "$output" "${RELABEL} $tmpdir" "Privileged Relabel Correctly"
 
-    run_podman run -v $tmpdir:/test:z --privileged $IMAGE cat /proc/self/attr/current
+    run_podman run --rm -v $tmpdir:/test:z --privileged $IMAGE cat /proc/self/attr/current
     run ls -dZ $tmpdir
     is "$output" "${RELABEL} $tmpdir" "Privileged Relabel Correctly"
 
@@ -272,7 +291,9 @@ function check_label() {
         is "$output" "system_u:object_r:usr_t:s0 $tmpdir/test1" \
            "Start did not Relabel"
     fi
-    run_podman run -v $tmpdir:/test:z $IMAGE cat /proc/self/attr/current
+    run_podman rm label
+
+    run_podman run --rm -v $tmpdir:/test:z $IMAGE cat /proc/self/attr/current
     run ls -dZ $tmpdir
     is "$output" "${RELABEL} $tmpdir" "Shared Relabel Correctly"
 }
