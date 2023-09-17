@@ -27,8 +27,8 @@ import (
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/podman/v4/pkg/machine"
 	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/containers/podman/v4/utils"
-	"github.com/containers/storage/pkg/homedir"
 	"github.com/containers/storage/pkg/ioutils"
 	"github.com/digitalocean/go-qemu/qmp"
 	"github.com/docker/go-units"
@@ -55,16 +55,6 @@ const (
 	dockerSock           = "/var/run/docker.sock"
 	dockerConnectTimeout = 5 * time.Second
 	apiUpTimeout         = 20 * time.Second
-)
-
-type apiForwardingState int
-
-const (
-	noForwarding apiForwardingState = iota
-	claimUnsupported
-	notInstalled
-	machineLocal
-	dockerGlobal
 )
 
 // NewMachine initializes an instance of a virtual machine based on the qemu
@@ -143,7 +133,7 @@ func (p *Virtualization) NewMachine(opts machine.InitOptions) (machine.VM, error
 		"-device", "virtio-serial",
 		// qemu needs to establish the long name; other connections can use the symlink'd
 		// Note both id and chardev start with an extra "a" because qemu requires that it
-		// starts with an letter but users can also use numbers
+		// starts with a letter but users can also use numbers
 		"-chardev", "socket,path=" + vm.ReadySocket.Path + ",server=on,wait=off,id=a" + vm.Name + "_ready",
 		"-device", "virtserialport,chardev=a" + vm.Name + "_ready" + ",name=org.fedoraproject.port.0",
 		"-pidfile", vm.VMPidFilePath.GetPath()}...)
@@ -252,8 +242,7 @@ func (v *MachineVM) Init(opts machine.InitOptions) (bool, error) {
 	var (
 		key string
 	)
-	sshDir := filepath.Join(homedir.Get(), ".ssh")
-	v.IdentityPath = filepath.Join(sshDir, v.Name)
+	v.IdentityPath = util.GetIdentityPath(v.Name)
 	v.Rootful = opts.Rootful
 
 	switch opts.ImagePath {
@@ -330,7 +319,6 @@ func (v *MachineVM) Init(opts machine.InitOptions) (bool, error) {
 	if len(opts.IgnitionPath) < 1 {
 		uri := machine.SSHRemoteConnection.MakeSSHURL(machine.LocalhostIP, fmt.Sprintf("/run/user/%d/podman/podman.sock", v.UID), strconv.Itoa(v.Port), v.RemoteUsername)
 		uriRoot := machine.SSHRemoteConnection.MakeSSHURL(machine.LocalhostIP, "/run/podman/podman.sock", strconv.Itoa(v.Port), "root")
-		identity := filepath.Join(sshDir, v.Name)
 
 		uris := []url.URL{uri, uriRoot}
 		names := []string{v.Name, v.Name + "-root"}
@@ -342,7 +330,7 @@ func (v *MachineVM) Init(opts machine.InitOptions) (bool, error) {
 		}
 
 		for i := 0; i < 2; i++ {
-			if err := machine.AddConnection(&uris[i], names[i], identity, opts.IsDefault && i == 0); err != nil {
+			if err := machine.AddConnection(&uris[i], names[i], v.IdentityPath, opts.IsDefault && i == 0); err != nil {
 				return false, err
 			}
 		}
@@ -374,6 +362,11 @@ func (v *MachineVM) Init(opts machine.InitOptions) (bool, error) {
 	if err := v.resizeDisk(opts.DiskSize, originalDiskSize>>(10*3)); err != nil {
 		return false, err
 	}
+
+	if opts.UserModeNetworking != nil && !*opts.UserModeNetworking {
+		logrus.Warn("ignoring init option to disable user-mode networking: this mode is not supported by the QEMU backend")
+	}
+
 	// If the user provides an ignition file, we need to
 	// copy it into the conf dir
 	if len(opts.IgnitionPath) > 0 {
@@ -384,16 +377,45 @@ func (v *MachineVM) Init(opts machine.InitOptions) (bool, error) {
 		return false, os.WriteFile(v.getIgnitionFile(), inputIgnition, 0644)
 	}
 	// Write the ignition file
-	ign := machine.DynamicIgnition{
+	ign := &machine.DynamicIgnition{
 		Name:      opts.Username,
 		Key:       key,
 		VMName:    v.Name,
+		VMType:    machine.QemuVirt,
 		TimeZone:  opts.TimeZone,
 		WritePath: v.getIgnitionFile(),
 		UID:       v.UID,
+		Rootful:   v.Rootful,
 	}
 
-	err = machine.NewIgnitionFile(ign, machine.QemuVirt)
+	if err := ign.GenerateIgnitionConfig(); err != nil {
+		return false, err
+	}
+
+	// ready is a unit file that sets up the virtual serial device
+	// where when the VM is done configuring, it will send an ack
+	// so a listening host knows it can being interacting with it
+	ready := `[Unit]
+Requires=dev-virtio\\x2dports-%s.device
+After=remove-moby.service sshd.socket sshd.service
+After=systemd-user-sessions.service
+OnFailure=emergency.target
+OnFailureJobMode=isolate
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c '/usr/bin/echo Ready >/dev/%s'
+[Install]
+RequiredBy=default.target
+`
+	readyUnit := machine.Unit{
+		Enabled:  machine.BoolToPtr(true),
+		Name:     "ready.service",
+		Contents: machine.StrToPtr(fmt.Sprintf(ready, "vport1p1", "vport1p1")),
+	}
+	ign.Cfg.Systemd.Units = append(ign.Cfg.Systemd.Units, readyUnit)
+
+	err = ign.Write()
 	return err == nil, err
 }
 
@@ -459,8 +481,10 @@ func (v *MachineVM) Start(name string, opts machine.StartOptions) error {
 		conn           net.Conn
 		err            error
 		qemuSocketConn net.Conn
-		wait           = time.Millisecond * 500
 	)
+
+	defaultBackoff := 500 * time.Millisecond
+	maxBackoffs := 6
 
 	v.Starting = true
 	if err := v.writeConfig(); err != nil {
@@ -513,13 +537,17 @@ func (v *MachineVM) Start(name string, opts machine.StartOptions) error {
 	if err := v.QMPMonitor.Address.Delete(); err != nil {
 		return err
 	}
-	for i := 0; i < 6; i++ {
+
+	backoff := defaultBackoff
+	for i := 0; i < maxBackoffs; i++ {
+		if i > 0 {
+			time.Sleep(backoff)
+			backoff *= 2
+		}
 		qemuSocketConn, err = net.Dial("unix", v.QMPMonitor.Address.GetPath())
 		if err == nil {
 			break
 		}
-		time.Sleep(wait)
-		wait++
 	}
 	if err != nil {
 		return err
@@ -602,7 +630,12 @@ func (v *MachineVM) Start(name string, opts machine.StartOptions) error {
 	// The socket is not made until the qemu process is running so here
 	// we do a backoff waiting for it.  Once we have a conn, we break and
 	// then wait to read it.
-	for i := 0; i < 6; i++ {
+	backoff = defaultBackoff
+	for i := 0; i < maxBackoffs; i++ {
+		if i > 0 {
+			time.Sleep(backoff)
+			backoff *= 2
+		}
 		conn, err = net.Dial("unix", filepath.Join(socketPath, "podman", v.Name+"_ready.sock"))
 		if err == nil {
 			break
@@ -612,8 +645,6 @@ func (v *MachineVM) Start(name string, opts machine.StartOptions) error {
 		if err != nil {
 			return err
 		}
-		time.Sleep(wait)
-		wait++
 	}
 	if err != nil {
 		return err
@@ -623,21 +654,56 @@ func (v *MachineVM) Start(name string, opts machine.StartOptions) error {
 	if err != nil {
 		return err
 	}
-	if len(v.Mounts) > 0 {
+
+	if v.HostUser.Modified {
+		if machine.UpdatePodmanDockerSockService(v, name, v.UID, v.Rootful) == nil {
+			// Reset modification state if there are no errors, otherwise ignore errors
+			// which are already logged
+			v.HostUser.Modified = false
+			_ = v.writeConfig()
+		}
+	}
+	if len(v.Mounts) == 0 {
+		v.waitAPIAndPrintInfo(forwardState, forwardSock, opts.NoInfo)
+		return nil
+	}
+
+	connected := false
+	backoff = defaultBackoff
+	var sshError error
+	for i := 0; i < maxBackoffs; i++ {
+		if i > 0 {
+			time.Sleep(backoff)
+			backoff *= 2
+		}
 		state, err := v.State(true)
 		if err != nil {
 			return err
 		}
-		listening := v.isListening()
-		for state != machine.Running || !listening {
-			time.Sleep(100 * time.Millisecond)
-			state, err = v.State(true)
-			if err != nil {
-				return err
+		if state == machine.Running && v.isListening() {
+			// Also make sure that SSH is up and running.  The
+			// ready service's dependencies don't fully make sure
+			// that clients can SSH into the machine immediately
+			// after boot.
+			//
+			// CoreOS users have reported the same observation but
+			// the underlying source of the issue remains unknown.
+			if sshError = v.SSH(name, machine.SSHOptions{Args: []string{"true"}}); sshError != nil {
+				logrus.Debugf("SSH readiness check for machine failed: %v", sshError)
+				continue
 			}
-			listening = v.isListening()
+			connected = true
+			break
 		}
 	}
+	if !connected {
+		msg := "machine did not transition into running state"
+		if sshError != nil {
+			return fmt.Errorf("%s: ssh error: %v", msg, sshError)
+		}
+		return errors.New(msg)
+	}
+
 	for _, mount := range v.Mounts {
 		if !opts.Quiet {
 			fmt.Printf("Mounting volume... %s:%s\n", mount.Source, mount.Target)
@@ -754,6 +820,13 @@ func (v *MachineVM) Stop(_ string, _ machine.StopOptions) error {
 	if _, err := os.Stat(v.QMPMonitor.Address.GetPath()); os.IsNotExist(err) {
 		// Right now it is NOT an error to stop a stopped machine
 		logrus.Debugf("QMP monitor socket %v does not exist", v.QMPMonitor.Address)
+		// Fix incorrect starting state in case of crash during start
+		if v.Starting {
+			v.Starting = false
+			if err := v.writeConfig(); err != nil {
+				return fmt.Errorf("writing JSON file: %w", err)
+			}
+		}
 		return nil
 	}
 	qmpMonitor, err := qmp.NewSocketMonitor(v.QMPMonitor.Network, v.QMPMonitor.Address.GetPath(), v.QMPMonitor.Timeout)
@@ -970,10 +1043,7 @@ func (v *MachineVM) Remove(_ string, opts machine.RemoveOptions) (string, func()
 				logrus.Error(err)
 			}
 		}
-		if err := machine.RemoveConnection(v.Name); err != nil {
-			logrus.Error(err)
-		}
-		if err := machine.RemoveConnection(v.Name + "-root"); err != nil {
+		if err := machine.RemoveConnections(v.Name, v.Name+"-root"); err != nil {
 			logrus.Error(err)
 		}
 		return nil
@@ -1011,7 +1081,7 @@ func (v *MachineVM) State(bypass bool) (machine.Status, error) {
 			logrus.Error(err)
 		}
 	}()
-	// If there is a monitor, lets see if we can query state
+	// If there is a monitor, let's see if we can query state
 	return v.checkStatus(monitor)
 }
 
@@ -1041,25 +1111,7 @@ func (v *MachineVM) SSH(_ string, opts machine.SSHOptions) error {
 		username = v.RemoteUsername
 	}
 
-	sshDestination := username + "@localhost"
-	port := strconv.Itoa(v.Port)
-
-	args := []string{"-i", v.IdentityPath, "-p", port, sshDestination,
-		"-o", "StrictHostKeyChecking=no", "-o", "LogLevel=ERROR", "-o", "SetEnv=LC_ALL="}
-	if len(opts.Args) > 0 {
-		args = append(args, opts.Args...)
-	} else {
-		fmt.Printf("Connecting to vm %s. To close connection, use `~.` or `exit`\n", v.Name)
-	}
-
-	cmd := exec.Command("ssh", args...)
-	logrus.Debugf("Executing: ssh %v\n", args)
-
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-
-	return cmd.Run()
+	return machine.CommonSSH(username, v.IdentityPath, v.Name, v.Port, opts.Args)
 }
 
 // executes qemu-image info to get the virtual disk size
@@ -1145,6 +1197,7 @@ func getVMInfos() ([]*machine.ListResponse, error) {
 			listEntry.IdentityPath = vm.IdentityPath
 			listEntry.CreatedAt = vm.Created
 			listEntry.Starting = vm.Starting
+			listEntry.UserModeNetworking = true // always true
 
 			if listEntry.CreatedAt.IsZero() {
 				listEntry.CreatedAt = time.Now()
@@ -1221,24 +1274,24 @@ func (p *Virtualization) Format() machine.ImageFormat {
 
 // startHostNetworking runs a binary on the host system that allows users
 // to set up port forwarding to the podman virtual machine
-func (v *MachineVM) startHostNetworking() (string, apiForwardingState, error) {
+func (v *MachineVM) startHostNetworking() (string, machine.APIForwardingState, error) {
 	cfg, err := config.Default()
 	if err != nil {
-		return "", noForwarding, err
+		return "", machine.NoForwarding, err
 	}
 	binary, err := cfg.FindHelperBinary(machine.ForwarderBinaryName, false)
 	if err != nil {
-		return "", noForwarding, err
+		return "", machine.NoForwarding, err
 	}
 
 	attr := new(os.ProcAttr)
 	dnr, err := os.OpenFile(os.DevNull, os.O_RDONLY, 0755)
 	if err != nil {
-		return "", noForwarding, err
+		return "", machine.NoForwarding, err
 	}
 	dnw, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0755)
 	if err != nil {
-		return "", noForwarding, err
+		return "", machine.NoForwarding, err
 	}
 
 	defer dnr.Close()
@@ -1251,7 +1304,7 @@ func (v *MachineVM) startHostNetworking() (string, apiForwardingState, error) {
 	cmd = append(cmd, []string{"-ssh-port", fmt.Sprintf("%d", v.Port)}...)
 
 	var forwardSock string
-	var state apiForwardingState
+	var state machine.APIForwardingState
 	if !v.isIncompatible() {
 		cmd, forwardSock, state = v.setupAPIForwarding(cmd)
 	}
@@ -1267,11 +1320,11 @@ func (v *MachineVM) startHostNetworking() (string, apiForwardingState, error) {
 	return forwardSock, state, nil
 }
 
-func (v *MachineVM) setupAPIForwarding(cmd []string) ([]string, string, apiForwardingState) {
+func (v *MachineVM) setupAPIForwarding(cmd []string) ([]string, string, machine.APIForwardingState) {
 	socket, err := v.forwardSocketPath()
 
 	if err != nil {
-		return cmd, "", noForwarding
+		return cmd, "", machine.NoForwarding
 	}
 
 	destSock := fmt.Sprintf("/run/user/%d/podman/podman.sock", v.UID)
@@ -1293,41 +1346,41 @@ func (v *MachineVM) setupAPIForwarding(cmd []string) ([]string, string, apiForwa
 
 	link, err := v.userGlobalSocketLink()
 	if err != nil {
-		return cmd, socket.GetPath(), machineLocal
+		return cmd, socket.GetPath(), machine.MachineLocal
 	}
 
 	if !dockerClaimSupported() {
-		return cmd, socket.GetPath(), claimUnsupported
+		return cmd, socket.GetPath(), machine.ClaimUnsupported
 	}
 
 	if !dockerClaimHelperInstalled() {
-		return cmd, socket.GetPath(), notInstalled
+		return cmd, socket.GetPath(), machine.NotInstalled
 	}
 
 	if !alreadyLinked(socket.GetPath(), link) {
 		if checkSockInUse(link) {
-			return cmd, socket.GetPath(), machineLocal
+			return cmd, socket.GetPath(), machine.MachineLocal
 		}
 
 		_ = os.Remove(link)
 		if err = os.Symlink(socket.GetPath(), link); err != nil {
 			logrus.Warnf("could not create user global API forwarding link: %s", err.Error())
-			return cmd, socket.GetPath(), machineLocal
+			return cmd, socket.GetPath(), machine.MachineLocal
 		}
 	}
 
 	if !alreadyLinked(link, dockerSock) {
 		if checkSockInUse(dockerSock) {
-			return cmd, socket.GetPath(), machineLocal
+			return cmd, socket.GetPath(), machine.MachineLocal
 		}
 
 		if !claimDockerSock() {
 			logrus.Warn("podman helper is installed, but was not able to claim the global docker sock")
-			return cmd, socket.GetPath(), machineLocal
+			return cmd, socket.GetPath(), machine.MachineLocal
 		}
 	}
 
-	return cmd, dockerSock, dockerGlobal
+	return cmd, dockerSock, machine.DockerGlobal
 }
 
 func (v *MachineVM) isIncompatible() bool {
@@ -1461,7 +1514,7 @@ func waitAndPingAPI(sock string) {
 	}
 }
 
-func (v *MachineVM) waitAPIAndPrintInfo(forwardState apiForwardingState, forwardSock string, noInfo bool) {
+func (v *MachineVM) waitAPIAndPrintInfo(forwardState machine.APIForwardingState, forwardSock string, noInfo bool) {
 	suffix := ""
 	if v.Name != machine.DefaultMachineName {
 		suffix = " " + v.Name
@@ -1484,7 +1537,7 @@ func (v *MachineVM) waitAPIAndPrintInfo(forwardState apiForwardingState, forward
 		fmt.Fprintf(os.Stderr, "\t# cat backup.tar | podman machine ssh%s tar xvPf - \n\n", suffix)
 	}
 
-	if forwardState == noForwarding {
+	if forwardState == machine.NoForwarding {
 		return
 	}
 
@@ -1499,12 +1552,12 @@ func (v *MachineVM) waitAPIAndPrintInfo(forwardState apiForwardingState, forward
 		}
 
 		fmt.Printf("API forwarding listening on: %s\n", forwardSock)
-		if forwardState == dockerGlobal {
+		if forwardState == machine.DockerGlobal {
 			fmt.Printf("Docker API clients default to this address. You do not need to set DOCKER_HOST.\n\n")
 		} else {
 			stillString := "still "
 			switch forwardState {
-			case notInstalled:
+			case machine.NotInstalled:
 				fmt.Printf("\nThe system helper service is not installed; the default Docker API socket\n")
 				fmt.Printf("address can't be used by podman. ")
 				if helper := findClaimHelper(); len(helper) > 0 {
@@ -1512,9 +1565,9 @@ func (v *MachineVM) waitAPIAndPrintInfo(forwardState apiForwardingState, forward
 					fmt.Printf("\n\tsudo %s install\n", helper)
 					fmt.Printf("\tpodman machine stop%s; podman machine start%s\n\n", suffix, suffix)
 				}
-			case machineLocal:
+			case machine.MachineLocal:
 				fmt.Printf("\nAnother process was listening on the default Docker API socket address.\n")
-			case claimUnsupported:
+			case machine.ClaimUnsupported:
 				fallthrough
 			default:
 				stillString = ""
@@ -1602,15 +1655,16 @@ func (v *MachineVM) Inspect() (*machine.InspectInfo, error) {
 	}
 	connInfo.PodmanSocket = podmanSocket
 	return &machine.InspectInfo{
-		ConfigPath:     v.ConfigPath,
-		ConnectionInfo: *connInfo,
-		Created:        v.Created,
-		Image:          v.ImageConfig,
-		LastUp:         v.LastUp,
-		Name:           v.Name,
-		Resources:      v.ResourceConfig,
-		SSHConfig:      v.SSHConfig,
-		State:          state,
+		ConfigPath:         v.ConfigPath,
+		ConnectionInfo:     *connInfo,
+		Created:            v.Created,
+		Image:              v.ImageConfig,
+		LastUp:             v.LastUp,
+		Name:               v.Name,
+		Resources:          v.ResourceConfig,
+		SSHConfig:          v.SSHConfig,
+		State:              state,
+		UserModeNetworking: true, // always true
 	}, nil
 }
 
@@ -1658,6 +1712,8 @@ func (v *MachineVM) setRootful(rootful bool) error {
 			return err
 		}
 	}
+
+	v.HostUser.Modified = true
 	return nil
 }
 

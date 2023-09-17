@@ -117,6 +117,20 @@ communicate with a registry and not use TLS verification.
   * Turn off TLS verification by passing false to the tls-verify option.
   * I.e. `podman push --tls-verify=false alpine docker://localhost:5000/myalpine:latest`
 
+
+For a global workaround, users[1] can create the file `/etc/containers/registries.conf.d/registry-NAME.conf`
+(replacing NAME with the name of this registry) with the following content (replacing FULLY.QUALIFIED.NAME.OF.REGISTRY with the address of this registry):
+
+```
+[[registry]]
+location = "FULLY.QUALIFIED.NAME.OF.REGISTRY"
+insecure = true
+```
+
+[1] If you are using a Mac / Windows, you should execute `podman machine ssh` to login into podman machine before adding the insecure entry to the registry—conf file.
+
+**This is an insecure method and should be used cautiously.**
+
 ---
 ### 5) rootless containers cannot ping hosts
 
@@ -272,8 +286,8 @@ You should ensure that each user has a unique range of UIDs, because overlapping
 would potentially allow one user to attack another user. In addition, make sure
 that the range of UIDs you allocate can cover all UIDs that the container
 requires. For example, if the container has a user with UID 10000, ensure you
-have at least 10001 subuids, and if the container needs to be run as a user with
-UID 1000000, ensure you have at least 1000001 subuids.
+have at least 10000 subuids, and if the container needs to be run as a user with
+UID 1000000, ensure you have at least 1000000 subuids.
 
 You could also use the `usermod` program to assign UIDs to a user.
 
@@ -458,7 +472,6 @@ the user session completed.
 Once the user logs out all the containers exit.
 
 #### Solution
-You'll need to either:
 
 ```console
 # loginctl enable-linger $UID
@@ -1386,3 +1399,25 @@ first process can acquire it, this type of `image not known` error can arise.
 The maintainers of Podman have considered heavier-duty locks to close this
 timing window. However, the slowdown that all Podman commands would encounter
 was not considered worth the cost of completely closing this small timing window.
+
+### 41) A podman build step with `--mount=type=secret` fails with "operation not permitted"
+
+Executing a step in a `Dockerfile`/`Containerfile` which mounts secrets using `--mount=type=secret` fails with "operation not permitted" when running on a host filesystem mounted with `nosuid` and when using the `runc` runtime.
+
+#### Symptom
+
+A `RUN` line in the `Dockerfile`/`Containerfile` contains a [secret mount](https://github.com/containers/common/blob/main/docs/Containerfile.5.md) such as `--mount=type=secret,id=MY_USER,target=/etc/dnf/vars/MY_USER`.
+When running `podman build` the process fails with an error message like:
+
+```
+STEP 3/13: RUN --mount=type=secret,id=MY_USER,target=/etc/dnf/vars/MY_USER     --mount=type=secret,id=MY_USER,target=/etc/dnf/vars/MY_USER     ...: time="2023-06-13T18:04:59+02:00" level=error msg="runc create failed: unable to start container process: error during container init: error mounting \"/var/tmp/buildah2251989386/mnt/buildah-bind-target-11\" to rootfs at \"/etc/dnf/vars/MY_USER\": mount /var/tmp/buildah2251989386/mnt/buildah-bind-target-11:/etc/dnf/vars/MY_USER (via /proc/self/fd/7), flags: 0x1021: operation not permitted"
+: exit status 1
+ERRO[0002] did not get container create message from subprocess: EOF
+```
+
+#### Solution
+
+* Install `crun`, e.g. with `dnf install crun`.
+* Use the `crun` runtime by passing `--runtime /usr/bin/crun` to `podman build`.
+
+See also [Buildah issue 4228](https://github.com/containers/buildah/issues/4228) for a full discussion of the problem.

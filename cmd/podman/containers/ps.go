@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -75,7 +76,7 @@ func listFlagSet(cmd *cobra.Command) {
 	flags.BoolVar(&listOpts.External, "external", false, "Show containers in storage not controlled by Podman")
 
 	filterFlagName := "filter"
-	flags.StringSliceVarP(&filters, filterFlagName, "f", []string{}, "Filter output based on conditions given")
+	flags.StringArrayVarP(&filters, filterFlagName, "f", []string{}, "Filter output based on conditions given")
 	_ = cmd.RegisterFlagCompletionFunc(filterFlagName, common.AutocompletePsFilters)
 
 	formatFlagName := "format"
@@ -300,6 +301,7 @@ func createPsOut() ([]map[string]string, string) {
 		"PIDNS":        "pidns",
 		"Pod":          "pod id",
 		"PodName":      "podname", // undo camelcase space break
+		"Restarts":     "restarts",
 		"RunningFor":   "running for",
 		"UTS":          "uts",
 		"User":         "userns",
@@ -351,8 +353,8 @@ func (l psReporter) Pod() string {
 	return l.ListContainer.Pod
 }
 
-// State returns the container state in human duration
-func (l psReporter) State() string {
+// Status returns the container status in the default ps output format.
+func (l psReporter) Status() string {
 	var state string
 	switch l.ListContainer.State {
 	case "running":
@@ -366,20 +368,19 @@ func (l psReporter) State() string {
 
 		// strings.Title is deprecated since go 1.18
 		// However for our use case it is still fine. The recommended replacement
-		// is adding about 400kb binary size so lets keep using this for now.
+		// is adding about 400kb binary size so let's keep using this for now.
 		//nolint:staticcheck
 		state = strings.Title(l.ListContainer.State)
+	}
+	hc := l.ListContainer.Status
+	if hc != "" {
+		state += " (" + hc + ")"
 	}
 	return state
 }
 
-// Status is a synonym for State()
-func (l psReporter) Status() string {
-	hc := l.ListContainer.Status
-	if hc != "" {
-		return l.State() + " (" + hc + ")"
-	}
-	return l.State()
+func (l psReporter) Restarts() string {
+	return strconv.Itoa(int(l.ListContainer.Restarts))
 }
 
 func (l psReporter) RunningFor() string {

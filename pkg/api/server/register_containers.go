@@ -444,7 +444,7 @@ func (s *APIServer) registerContainersHandlers(r *mux.Router) error {
 	//    name: ps_args
 	//    type: string
 	//    default: -ef
-	//    description: arguments to pass to ps such as aux. Requires ps(1) to be installed in the container if no ps(1) compatible AIX descriptors are used.
+	//    description: arguments to pass to ps such as aux.
 	// produces:
 	// - application/json
 	// responses:
@@ -749,7 +749,7 @@ func (s *APIServer) registerContainersHandlers(r *mux.Router) error {
 	//        - `health`=(`starting`, `healthy`, `unhealthy` or `none`)
 	//        - `id=<ID>` a container's ID
 	//        - `is-task`=(`true` or `false`)
-	//        - `label`=(`key` or `"key=value"`) of an container label
+	//        - `label`=(`key` or `"key=value"`) of a container label
 	//        - `name=<name>` a container's name
 	//        - `network`=(`<network id>` or `<network name>`)
 	//        - `pod`=(`<pod id>` or `<pod name>`)
@@ -1174,10 +1174,9 @@ func (s *APIServer) registerContainersHandlers(r *mux.Router) error {
 	//  - in: query
 	//    name: ps_args
 	//    type: string
-	//    default: -ef
+	//    default:
 	//    description: |
 	//      arguments to pass to ps such as aux.
-	//      Requires ps(1) to be installed in the container if no ps(1) compatible AIX descriptors are used.
 	// produces:
 	// - application/json
 	// responses:
@@ -1229,12 +1228,15 @@ func (s *APIServer) registerContainersHandlers(r *mux.Router) error {
 	//      enum:
 	//       - configured
 	//       - created
+	//       - exited
+	//       - healthy
+	//       - initialized
+	//       - paused
+	//       - removing
 	//       - running
 	//       - stopped
-	//       - paused
-	//       - exited
-	//       - removing
 	//       - stopping
+	//       - unhealthy
 	//    description: "Conditions to wait for. If no condition provided the 'exited' condition is assumed."
 	//  - in: query
 	//    name: interval

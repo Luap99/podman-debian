@@ -103,6 +103,7 @@ function _assert_mainpid_is_conmon() {
     _stop_socat
 }
 
+# bats test_tags=distro-integration
 @test "sdnotify : conmon" {
     export NOTIFY_SOCKET=$PODMAN_TMPDIR/conmon.sock
     _start_socat
@@ -110,7 +111,7 @@ function _assert_mainpid_is_conmon() {
     run_podman run -d --name sdnotify_conmon_c \
                --sdnotify=conmon \
                $IMAGE \
-               sh -c 'printenv NOTIFY_SOCKET;echo READY;while ! test -f /stop;do sleep 0.1;done'
+               sh -c 'printenv NOTIFY_SOCKET;echo READY;sleep 999'
     cid="$output"
     wait_for_ready $cid
 
@@ -135,25 +136,21 @@ READY=1" "sdnotify sent MAINPID and READY"
     _assert_mainpid_is_conmon "$output"
 
     # Done. Stop container, clean up.
-    run_podman exec $cid touch /stop
-    run_podman wait $cid
-    run_podman rm $cid
+    run_podman rm -f -t0 $cid
     _stop_socat
 }
 
 # These tests can fail in dev. environment because of SELinux.
 # quick fix: chcon -t container_runtime_exec_t ./bin/podman
+# bats test_tags=distro-integration
 @test "sdnotify : container" {
-    # Pull our systemd image. Retry in case of flakes.
-    run_podman pull $SYSTEMD_IMAGE || \
-        run_podman pull $SYSTEMD_IMAGE || \
-        run_podman pull $SYSTEMD_IMAGE
+    _prefetch $SYSTEMD_IMAGE
 
     export NOTIFY_SOCKET=$PODMAN_TMPDIR/container.sock
     _start_socat
 
     run_podman run -d --sdnotify=container $SYSTEMD_IMAGE \
-               sh -c 'printenv NOTIFY_SOCKET; echo READY; while ! test -f /stop;do sleep 0.1;done;systemd-notify --ready'
+               sh -c 'trap "touch /stop" SIGUSR1;printenv NOTIFY_SOCKET; echo READY; while ! test -f /stop;do sleep 0.1;done;systemd-notify --ready'
     cid="$output"
     wait_for_ready $cid
 
@@ -174,8 +171,8 @@ READY=1" "sdnotify sent MAINPID and READY"
 
     is "$output" "MAINPID=$mainPID" "Container is not ready yet, so we only know the main PID"
 
-    # Done. Stop container, clean up.
-    run_podman exec $cid touch /stop
+    # Done. Tell container to stop itself, and clean up
+    run_podman kill -s USR1 $cid
     run_podman wait $cid
 
     wait_for_file $_SOCAT_LOG
@@ -205,10 +202,18 @@ spec:
   - command:
     - /bin/sh
     - -c
-    - 'while :; do if test -e /tearsinrain; then exit 0; fi; sleep 1; done'
+    - 'while :; do if test -e /rain/tears; then exit 0; fi; sleep 1; done'
     image: $IMAGE
     name: test
     resources: {}
+    volumeMounts:
+    - mountPath: /rain:z
+      name: test-mountdir
+  volumes:
+  - hostPath:
+      path: $PODMAN_TMPDIR
+      type: Directory
+    name: test-mountdir
 EOF
 
     # The name of the service container is predictable: the first 12 characters
@@ -228,7 +233,7 @@ EOF
     main_pid="$output"
 
     # Tell pod to finish, then wait for all containers to stop
-    run_podman exec test_pod-test touch /tearsinrain
+    touch $PODMAN_TMPDIR/tears
     run_podman container wait $service_container test_pod-test
 
     # Make sure the containers have the correct policy.
@@ -255,10 +260,7 @@ READY=1" "sdnotify sent MAINPID and READY"
 @test "sdnotify : play kube - with policies" {
     skip_if_journald_unavailable
 
-    # Pull that image. Retry in case of flakes.
-    run_podman pull $SYSTEMD_IMAGE || \
-        run_podman pull $SYSTEMD_IMAGE || \
-        run_podman pull $SYSTEMD_IMAGE
+    _prefetch $SYSTEMD_IMAGE
 
     # Create the YAMl file
     yaml_source="$PODMAN_TMPDIR/test.yaml"
@@ -338,8 +340,10 @@ ignore"
     # potential issues.
     run_podman exec --env NOTIFY_SOCKET="/run/notify/notify.sock" $container_a /usr/bin/systemd-notify --ready
 
-    # Instruct the container to stop
-    run_podman exec $container_a /bin/touch /stop
+    # Instruct the container to stop.
+    # Run detached as the `exec` session races with the cleanup process
+    # of the exiting container (see #10825).
+    run_podman exec -d $container_a /bin/touch /stop
 
     run_podman container wait $container_a
     run_podman container inspect $container_a --format "{{.State.ExitCode}}"
@@ -363,4 +367,81 @@ READY=1" "sdnotify sent MAINPID and READY"
     run_podman rmi $(pause_image)
 }
 
+function generate_exit_code_yaml {
+    local fname=$1
+    local cmd1=$2
+    local cmd2=$3
+    local sdnotify_policy=$4
+    echo "
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: test
+  name: test_pod
+  annotations:
+    io.containers.sdnotify: "$sdnotify_policy"
+spec:
+  restartPolicy: Never
+  containers:
+    - name: ctr1
+      image: $IMAGE
+      command:
+      - $cmd1
+    - name: ctr2
+      image: $IMAGE
+      command:
+      - $cmd2
+" > $fname
+}
+
+# bats test_tags=distro-integration
+@test "podman kube play - exit-code propagation" {
+    fname=$PODMAN_TMPDIR/$(random_string).yaml
+
+    # Create a test matrix with the following arguments:
+    # exit-code propagation | ctr1 command | ctr2 command | service-container exit code
+    exit_tests="
+all  | true  | true  | 0
+all  | true  | false | 0
+all  | false | false | 137
+any  | true  | true  | 0
+any  | false | true  | 137
+any  | false | false | 137
+none | true  | true  | 0
+none | true  | false | 0
+none | false | false | 0
+"
+
+    # I am sorry, this is a long test as we need to test the upper matrix
+    # twice. The first run is using the default sdnotify policy of "ignore".
+    # In this case, the service container serves as the main PID of the service
+    # to have a minimal resource footprint.  The second run is using the
+    # "conmon" sdnotify policy in which case Podman needs to serve as the main
+    # PID to act as an sdnotify proxy; there Podman will wait for the service
+    # container to exit and reflects its exit code.
+    while read exit_code_prop cmd1 cmd2 exit_code; do
+        for sdnotify_policy in ignore conmon; do
+            generate_exit_code_yaml $fname $cmd1 $cmd2 $sdnotify_policy
+            yaml_sha=$(sha256sum $fname)
+            service_container="${yaml_sha:0:12}-service"
+            podman_exit=$exit_code
+            if [[ $sdnotify_policy == "ignore" ]];then
+                 podman_exit=0
+            fi
+            run_podman $podman_exit kube play --service-exit-code-propagation="$exit_code_prop" --service-container $fname
+            run_podman container inspect --format '{{.KubeExitCodePropagation}}' $service_container
+            is "$output" "$exit_code_prop" "service container has the expected policy set in its annotations"
+            run_podman wait $service_container
+            is "$output" "$exit_code" "service container reflects expected exit code $exit_code (policy: $policy, cmd1: $cmd1, cmd2: $cmd2)"
+            run_podman kube down $fname
+        done
+    done < <(parse_table "$exit_tests")
+
+    # A final smoke test to make sure bogus policies lead to an error
+    run_podman 125 kube play --service-exit-code-propagation=bogus --service-container $fname
+    is "$output" "Error: unsupported exit-code propagation \"bogus\"" "error on unsupported exit-code propagation"
+
+    run_podman rmi $(pause_image)
+}
 # vim: filetype=sh

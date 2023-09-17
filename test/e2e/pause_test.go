@@ -7,27 +7,17 @@ import (
 	"strings"
 
 	. "github.com/containers/podman/v4/test/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 )
 
 var _ = Describe("Podman pause", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
-
 	pausedState := "paused"
 	createdState := "created"
 
 	BeforeEach(func() {
 		SkipIfRootlessCgroupsV1("Pause is not supported in cgroups v1")
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
 
 		if CGROUPSV2 {
 			b, err := os.ReadFile("/proc/self/cgroup")
@@ -41,15 +31,6 @@ var _ = Describe("Podman pause", func() {
 				Skip("freezer controller not available on the current kernel")
 			}
 		}
-
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
 
 	})
 
@@ -151,6 +132,11 @@ var _ = Describe("Podman pause", func() {
 		Expect(podmanTest.NumberOfContainersRunning()).To(Equal(0))
 		Expect(strings.ToLower(podmanTest.GetContainerStatus())).To(ContainSubstring(pausedState))
 
+		// unpause so that the cleanup can stop the container,
+		// otherwise it fails with container state improper
+		session = podmanTest.Podman([]string{"unpause", cid})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
 	})
 
 	It("podman remove a paused container by id with force", func() {
@@ -451,7 +437,7 @@ var _ = Describe("Podman pause", func() {
 		Expect(session1).Should(Exit(0))
 		cid2 := session1.OutputToString()
 
-		session1 = podmanTest.RunTopContainer("")
+		session1 = podmanTest.RunTopContainerWithArgs("", []string{"--label", "test=with,comma"})
 		session1.WaitWithDefaultTimeout()
 		Expect(session1).Should(Exit(0))
 		cid3 := session1.OutputToString()
@@ -465,10 +451,20 @@ var _ = Describe("Podman pause", func() {
 		session1.WaitWithDefaultTimeout()
 		Expect(session1).Should(Exit(125))
 
+		session1 = podmanTest.Podman([]string{"pause", "-a", "--filter", "label=test=with,comma"})
+		session1.WaitWithDefaultTimeout()
+		Expect(session1).Should(Exit(0))
+		Expect(session1.OutputToString()).To(BeEquivalentTo(cid3))
+
+		session1 = podmanTest.Podman([]string{"unpause", "-a", "--filter", "label=test=with,comma"})
+		session1.WaitWithDefaultTimeout()
+		Expect(session1).Should(Exit(0))
+		Expect(session1.OutputToString()).To(BeEquivalentTo(cid3))
+
 		session1 = podmanTest.Podman([]string{"pause", "-a", "--filter", fmt.Sprintf("id=%swrongid", shortCid3)})
 		session1.WaitWithDefaultTimeout()
 		Expect(session1).Should(Exit(0))
-		Expect(session1.OutputToString()).To(HaveLen(0))
+		Expect(session1.OutputToString()).To(BeEmpty())
 
 		session1 = podmanTest.Podman([]string{"pause", "-a", "--filter", fmt.Sprintf("id=%s", shortCid3)})
 		session1.WaitWithDefaultTimeout()
@@ -478,7 +474,7 @@ var _ = Describe("Podman pause", func() {
 		session1 = podmanTest.Podman([]string{"unpause", "-a", "--filter", fmt.Sprintf("id=%swrongid", shortCid3)})
 		session1.WaitWithDefaultTimeout()
 		Expect(session1).Should(Exit(0))
-		Expect(session1.OutputToString()).To(HaveLen(0))
+		Expect(session1.OutputToString()).To(BeEmpty())
 
 		session1 = podmanTest.Podman([]string{"unpause", "-a", "--filter", fmt.Sprintf("id=%s", shortCid3)})
 		session1.WaitWithDefaultTimeout()

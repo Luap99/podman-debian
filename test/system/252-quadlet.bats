@@ -15,8 +15,8 @@ function start_time() {
 
 function setup() {
     skip_if_remote "quadlet tests are meaningless over remote"
-    skip_if_rootless_cgroupsv1 "Can't use --cgroups=split w/ CGv1 (#17456)"
-    skip_if_journald_unavailable "quadlet isn't really usable without journal"
+    skip_if_rootless_cgroupsv1 "Can't use --cgroups=split w/ CGv1 (issue 17456, wontfix)"
+    skip_if_journald_unavailable "Needed for RHEL. FIXME: we might be able to reenable a subset of tests."
 
     test -x "$QUADLET" || die "Cannot run quadlet tests without executable \$QUADLET ($QUADLET)"
 
@@ -52,7 +52,9 @@ function run_quadlet() {
     cp $sourcefile $quadlet_tmpdir/
 
     echo "$_LOG_PROMPT $QUADLET $_DASHUSER $UNIT_DIR"
-    QUADLET_UNIT_DIRS="$quadlet_tmpdir" run $QUADLET $_DASHUSER $UNIT_DIR
+    QUADLET_UNIT_DIRS="$quadlet_tmpdir" run \
+                     timeout --foreground -v --kill=10 $PODMAN_TIMEOUT \
+                     $QUADLET $_DASHUSER $UNIT_DIR
     echo "$output"
     assert $status -eq 0 "Failed to convert quadlet file: $sourcefile"
     is "$output" "" "quadlet should report no errors"
@@ -89,6 +91,7 @@ function service_setup() {
     echo "$output"
     assert $status -eq 0 "Error starting systemd unit $service"
 
+    # FIXME FIXME FIXME: this is racy with short-lived containers!
     echo "$_LOG_PROMPT systemctl status $service"
     run systemctl status "$service"
     echo "$output"
@@ -168,6 +171,32 @@ EOF
     is "$output" "running" "container should be started by systemd and hence be running"
 
     service_cleanup $QUADLET_SERVICE_NAME failed
+}
+
+@test "quadlet conflict names" {
+    # If two directories in the search have files with the same name, quadlet should
+    # only process the first name
+    dir1=$PODMAN_TMPDIR/$(random_string)
+    dir2=$PODMAN_TMPDIR/$(random_string)
+    local quadlet_file=basic_$(random_string).container
+    mkdir -p $dir1 $dir2
+
+    cat > $dir1/$quadlet_file <<EOF
+[Container]
+Image=$IMAGE
+Notify=yes
+EOF
+
+    cat > $dir2/$quadlet_file <<EOF
+[Container]
+Image=$IMAGE
+Notify=no
+EOF
+    QUADLET_UNIT_DIRS="$dir1:$dir2" run \
+                    timeout --foreground -v --kill=10 $PODMAN_TIMEOUT \
+                    $QUADLET --dryrun
+    assert "$output" =~ "Notify=yes" "quadlet should show Notify=yes"
+    assert "$output" !~ "Notify=no" "quadlet should not show Notify=no"
 }
 
 @test "quadlet - envvar" {
@@ -437,8 +466,7 @@ EOF
     run_podman container inspect  --format "{{.State.Status}}" test_pod-test
     is "$output" "running" "container should be started by systemd and hence be running"
 
-    # The service is marked as failed as the service container exits non-zero.
-    service_cleanup $QUADLET_SERVICE_NAME failed
+    service_cleanup $QUADLET_SERVICE_NAME inactive
     run_podman rmi $(pause_image)
 }
 
@@ -449,15 +477,14 @@ EOF
     cat > $quadlet_file <<EOF
 [Container]
 Rootfs=/:O
-Exec=sh -c "echo STARTED CONTAINER; echo "READY=1" | socat -u STDIN unix-sendto:\$NOTIFY_SOCKET; top"
+Exec=sh -c "echo STARTED CONTAINER; echo "READY=1" | socat -u STDIN unix-sendto:\$NOTIFY_SOCKET; top -b"
+Notify=yes
 EOF
 
     run_quadlet "$quadlet_file"
     service_setup $QUADLET_SERVICE_NAME
 
-    # Ensure we have output. Output is synced via sd-notify (socat in Exec)
-    run journalctl "--since=$STARTED_TIME" --unit="$QUADLET_SERVICE_NAME"
-    is "$output" '.*STARTED CONTAINER.*'
+    wait_for_output "STARTED CONTAINER" $QUADLET_CONTAINER_NAME
 }
 
 @test "quadlet - selinux disable" {
@@ -467,15 +494,14 @@ EOF
 [Container]
 Image=$IMAGE
 SecurityLabelDisable=true
-Exec=sh -c "echo STARTED CONTAINER; echo "READY=1" | socat -u STDIN unix-sendto:\$NOTIFY_SOCKET; top"
+Exec=sh -c "echo STARTED CONTAINER; top -b"
 EOF
 
     run_quadlet "$quadlet_file"
     service_setup $QUADLET_SERVICE_NAME
 
     # Ensure we have output. Output is synced via sd-notify (socat in Exec)
-    run journalctl "--since=$STARTED_TIME" --unit="$QUADLET_SERVICE_NAME"
-    is "$output" '.*STARTED CONTAINER.*'
+    wait_for_output "STARTED CONTAINER" $QUADLET_CONTAINER_NAME
 
     run_podman container inspect  --format "{{.ProcessLabel}}" $QUADLET_CONTAINER_NAME
     is "$output" "" "container should be started without specifying a Process Label"
@@ -494,15 +520,14 @@ Image=$IMAGE
 SecurityLabelType=spc_t
 SecurityLabelLevel=s0:c100,c200
 SecurityLabelFileType=container_ro_file_t
-Exec=sh -c "echo STARTED CONTAINER; echo "READY=1" | socat -u STDIN unix-sendto:\$NOTIFY_SOCKET; top"
+Exec=sh -c "echo STARTED CONTAINER; top -b"
 EOF
 
     run_quadlet "$quadlet_file"
     service_setup $QUADLET_SERVICE_NAME
 
     # Ensure we have output. Output is synced via sd-notify (socat in Exec)
-    run journalctl "--since=$STARTED_TIME" --unit="$QUADLET_SERVICE_NAME"
-    is "$output" '.*STARTED CONTAINER.*'
+    wait_for_output "STARTED CONTAINER" $NAME
 
     run_podman container ps
     run_podman container inspect  --format "{{.ProcessLabel}}" $NAME
@@ -522,15 +547,15 @@ EOF
 ContainerName=$NAME
 Image=$IMAGE
 Secret=$SECRET_NAME,type=env,target=MYSECRET
-Exec=sh -c "echo STARTED CONTAINER; echo "READY=1" | socat -u STDIN unix-sendto:\$NOTIFY_SOCKET; top"
+Exec=sh -c "echo STARTED CONTAINER; echo "READY=1" | socat -u STDIN unix-sendto:\$NOTIFY_SOCKET; top -b"
+Notify=yes
 EOF
 
     run_quadlet "$quadlet_file"
     service_setup $QUADLET_SERVICE_NAME
 
     # Ensure we have output. Output is synced via sd-notify (socat in Exec)
-    run journalctl "--since=$STARTED_TIME" --unit="$QUADLET_SERVICE_NAME"
-    is "$output" '.*STARTED CONTAINER.*'
+    wait_for_output "STARTED CONTAINER" $QUADLET_CONTAINER_NAME
 
     run_podman exec $QUADLET_CONTAINER_NAME /bin/sh -c "printenv MYSECRET"
     is "$output" $SECRET
@@ -548,15 +573,15 @@ EOF
 ContainerName=$NAME
 Image=$IMAGE
 Secret=$SECRET_NAME,type=mount,target=/root/secret
-Exec=sh -c "echo STARTED CONTAINER; echo "READY=1" | socat -u STDIN unix-sendto:\$NOTIFY_SOCKET; top"
+Exec=sh -c "echo STARTED CONTAINER; echo "READY=1" | socat -u STDIN unix-sendto:\$NOTIFY_SOCKET; top -b"
+Notify=yes
 EOF
 
     run_quadlet "$quadlet_file"
     service_setup $QUADLET_SERVICE_NAME
 
     # Ensure we have output. Output is synced via sd-notify (socat in Exec)
-    run journalctl "--since=$STARTED_TIME" --unit="$QUADLET_SERVICE_NAME"
-    is "$output" '.*STARTED CONTAINER.*'
+    wait_for_output "STARTED CONTAINER" $QUADLET_CONTAINER_NAME
 
     run_podman exec $QUADLET_CONTAINER_NAME /bin/sh -c "cat /root/secret"
     is "$output" $SECRET
@@ -578,6 +603,7 @@ EOF
 Image=$IMAGE
 Volume=%T/$tmp_dir:/test_content:Z
 Exec=sh -c "echo STARTED CONTAINER; echo "READY=1" | socat -u STDIN unix-sendto:\$NOTIFY_SOCKET; top"
+Notify=yes
 EOF
 
     run_quadlet "$quadlet_file"
@@ -630,6 +656,84 @@ EOF
     is "${output/* --userns keep-id:uid=200,gid=210 */found}" "found"
 
     service_cleanup $QUADLET_SERVICE_NAME failed
+}
+
+@test "quadlet - exit-code propagation" {
+   exit_tests="
+all  | true  | 0   | inactive
+all  | false | 137 | failed
+none | false | 0   | inactive
+"
+   while read exit_code_prop cmd exit_code service_state; do
+      local basename=propagate-${exit_code_prop}-${cmd}-$(random_string)
+      local quadlet_file=$PODMAN_TMPDIR/$basename.kube
+      local yaml_file=$PODMAN_TMPDIR/$basename.yaml
+
+      cat > $yaml_file <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: test
+  name: test_pod
+spec:
+  restartPolicy: Never
+  containers:
+    - name: ctr
+      image: $IMAGE
+      command:
+      - $cmd
+EOF
+       cat > $quadlet_file <<EOF
+[Kube]
+Yaml=$yaml_file
+ExitCodePropagation=$exit_code_prop
+EOF
+
+      run_quadlet "$quadlet_file"
+      run systemctl status $QUADLET_SERVICE_NAME
+
+      yaml_sha=$(sha256sum $yaml_file)
+      service_container="${yaml_sha:0:12}-service"
+
+      service_setup $QUADLET_SERVICE_NAME
+
+      # Ensure we have output. Output is synced via sd-notify (socat in Exec)
+      run journalctl "--since=$STARTED_TIME" --unit="$QUADLET_SERVICE_NAME"
+      is "$output" '.*Started.*\.service.*'
+
+      # Opportunistic test: confirm that the Propagation field got set.
+      # This is racy, because the container is short-lived and quadlet
+      # cleans up on exit (via kube-down in ExecStopPost). So we use '?'
+      # and only check output if the inspect succeeds.
+      run_podman '?' container inspect --format '{{.KubeExitCodePropagation}}' $service_container
+      if [[ $status -eq 0 ]]; then
+          is "$output" "$exit_code_prop" \
+             "$basename: service container has the expected policy set in its annotations"
+      else
+          assert "$output" =~ "no such container $service_container" \
+                 "$basename: unexpected error from podman container inspect"
+      fi
+
+      # Container must stop of its own accord before we call service_cleanup(),
+      # otherwise the 'systemctl stop' there may affect the unit's status.
+      # Again, use '?' to handle the abovementioned race condition.
+      run_podman '?' wait $service_container
+      if [[ $status -eq 0 ]]; then
+          assert "$output" = "$exit_code" \
+                 "$basename: service container reflects expected exit code"
+      else
+          assert "$output" =~ "no container with name or ID" \
+                 "$basename: unexpected error from podman wait"
+      fi
+
+      # This is the actual propagation check
+      service_cleanup $QUADLET_SERVICE_NAME $service_state
+      run_podman ps -aq
+      is "$output" "" "all containers are cleaned up even in case of errors"
+   done < <(parse_table "$exit_tests")
+
+   run_podman rmi $(pause_image)
 }
 
 # vim: filetype=sh

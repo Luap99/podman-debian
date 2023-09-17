@@ -10,11 +10,10 @@ PODMAN_TEST_IMAGE_USER=${PODMAN_TEST_IMAGE_USER:-"libpod"}
 PODMAN_TEST_IMAGE_NAME=${PODMAN_TEST_IMAGE_NAME:-"testimage"}
 PODMAN_TEST_IMAGE_TAG=${PODMAN_TEST_IMAGE_TAG:-"20221018"}
 PODMAN_TEST_IMAGE_FQN="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/$PODMAN_TEST_IMAGE_NAME:$PODMAN_TEST_IMAGE_TAG"
-PODMAN_TEST_IMAGE_ID=
 
 # Larger image containing systemd tools.
 PODMAN_SYSTEMD_IMAGE_NAME=${PODMAN_SYSTEMD_IMAGE_NAME:-"systemd-image"}
-PODMAN_SYSTEMD_IMAGE_TAG=${PODMAN_SYSTEMD_IMAGE_TAG:-"20230106"}
+PODMAN_SYSTEMD_IMAGE_TAG=${PODMAN_SYSTEMD_IMAGE_TAG:-"20230531"}
 PODMAN_SYSTEMD_IMAGE_FQN="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/$PODMAN_SYSTEMD_IMAGE_NAME:$PODMAN_SYSTEMD_IMAGE_TAG"
 
 # Remote image that we *DO NOT* fetch or keep by default; used for testing pull
@@ -37,6 +36,97 @@ if [ $(id -u) -eq 0 ]; then
 fi
 
 ###############################################################################
+# BEGIN tools for fetching & caching test images
+#
+# Registries are flaky: any time we have to pull an image, that's a risk.
+#
+
+# Store in a semipermanent location. Not important for CI, but nice for
+# developers so test restarts don't hang fetching images.
+export PODMAN_IMAGECACHE=${BATS_TMPDIR:-/tmp}/podman-systest-imagecache-$(id -u)
+mkdir -p ${PODMAN_IMAGECACHE}
+
+function _prefetch() {
+     local want=$1
+
+     # Do we already have it in image store?
+     run_podman '?' image exists "$want"
+     if [[ $status -eq 0 ]]; then
+         return
+     fi
+
+    # No image. Do we have it already cached? (Replace / and : with --)
+    local cachename=$(sed -e 's;[/:];--;g' <<<"$want")
+    local cachepath="${PODMAN_IMAGECACHE}/${cachename}.tar"
+    if [[ ! -e "$cachepath" ]]; then
+        # Not cached. Fetch it and cache it. Retry twice, because of flakes.
+        cmd="skopeo copy --preserve-digests docker://$want oci-archive:$cachepath"
+        echo "$_LOG_PROMPT $cmd"
+        run $cmd
+        echo "$output"
+        if [[ $status -ne 0 ]]; then
+            echo "# 'pull $want' failed, will retry..." >&3
+            sleep 5
+
+            run $cmd
+            echo "$output"
+            if [[ $status -ne 0 ]]; then
+                echo "# 'pull $want' failed again, will retry one last time..." >&3
+                sleep 30
+                $cmd
+            fi
+        fi
+    fi
+
+    # Kludge alert.
+    # Skopeo has no --storage-driver, --root, or --runroot flags; those
+    # need to be expressed in the destination string inside [brackets].
+    # See containers-transports(5). So if we see those options in
+    # _PODMAN_TEST_OPTS, transmogrify $want into skopeo form.
+    skopeo_opts=''
+    driver="$(expr "$_PODMAN_TEST_OPTS" : ".*--storage-driver \([^ ]\+\)" || true)"
+    if [[ -n "$driver" ]]; then
+        skopeo_opts+="$driver@"
+    fi
+
+    altroot="$(expr "$_PODMAN_TEST_OPTS" : ".*--root \([^ ]\+\)" || true)"
+    if [[ -n "$altroot" ]] && [[ -d "$altroot" ]]; then
+        skopeo_opts+="$altroot"
+
+        altrunroot="$(expr "$_PODMAN_TEST_OPTS" : ".*--runroot \([^ ]\+\)" || true)"
+        if [[ -n "$altrunroot" ]] && [[ -d "$altrunroot" ]]; then
+            skopeo_opts+="+$altrunroot"
+        fi
+    fi
+
+    if [[ -n "$skopeo_opts" ]]; then
+        want="[$skopeo_opts]$want"
+    fi
+
+    # Cached image is now guaranteed to exist. Be sure to load it
+    # with skopeo, not podman, in order to preserve metadata
+    cmd="skopeo copy --all oci-archive:$cachepath containers-storage:$want"
+    echo "$_LOG_PROMPT $cmd"
+    $cmd
+}
+
+
+# Wrapper for skopeo, because skopeo doesn't work rootless if $XDG is unset
+# (as it is in RHEL gating): it defaults to /run/containers/<uid>, which
+# of course is a root-only dir, hence fails with permission denied.
+# -- https://github.com/containers/skopeo/issues/823
+function skopeo() {
+    local xdg=${XDG_RUNTIME_DIR}
+    if [ -z "$xdg" ]; then
+        if is_rootless; then
+            xdg=/run/user/$(id -u)
+        fi
+    fi
+    XDG_RUNTIME_DIR=${xdg} command skopeo "$@"
+}
+
+# END   tools for fetching & caching test images
+###############################################################################
 # BEGIN setup/teardown tools
 
 # Provide common setup and teardown functions, but do not name them such!
@@ -45,6 +135,11 @@ fi
 
 # Setup helper: establish a test environment with exactly the images needed
 function basic_setup() {
+    # FIXME FIXME FIXME: remove if #17216 is fixed. See below also.
+    if [[ -e "${BATS_SUITE_TMPDIR}/forget-it" ]]; then
+        skip "everything is hosed, no point in going on"
+    fi
+
     # Clean up all containers
     run_podman rm -t 0 --all --force --ignore
 
@@ -53,12 +148,44 @@ function basic_setup() {
     for line in "${lines[@]}"; do
         set $line
         echo "# setup(): removing stray external container $1 ($2)" >&3
-        run_podman rm -f $1
+        run_podman '?' rm -f $1
+        if [[ $status -ne 0 ]]; then
+            echo "# [setup] $_LOG_PROMPT podman rm -f $1" >&3
+            for errline in "${lines[@]}"; do
+                echo "# $errline" >&3
+            done
+            # FIXME FIXME FIXME: temporary hack for #18831. If we see the
+            # unmount/EINVAL flake, nothing will ever work again.
+            if [[ $output =~ unmounting.*invalid ]]; then
+                touch "${BATS_SUITE_TMPDIR}/forget-it"
+            fi
+        fi
     done
 
-    # Clean up all images except those desired
+    # Clean up all images except those desired.
+    # 2023-06-26 REMINDER: it is tempting to think that this is clunky,
+    # wouldn't it be safer/cleaner to just 'rmi -a' then '_prefetch $IMAGE'?
+    # Yes, but it's also tremendously slower: 29m for a CI run, to 39m.
+    # Image loads are slow.
     found_needed_image=
-    run_podman images --all --format '{{.Repository}}:{{.Tag}} {{.ID}}'
+    run_podman '?' images --all --format '{{.Repository}}:{{.Tag}} {{.ID}}'
+    # FIXME FIXME FIXME: temporary hack for #17216. If we see the unlinkat-busy
+    # flake, nothing will ever work again.
+    if [[ $status -ne 0 ]]; then
+        if [[ "$output" =~ unlinkat.*busy ]]; then
+            # Signal (see above) to skip all subsequent tests.
+            touch "${BATS_SUITE_TMPDIR}/forget-it"
+            # Gather some debugging info, then fail
+            echo "$_LOG_PROMPT ps auxww --forest"
+            ps auxww --forest
+            echo "$_LOG_PROMPT mount"
+            mount
+            echo "$_LOG_PROMPT lsof /var/lib/containers"
+            lsof /var/lib/containers
+            false
+        fi
+    fi
+
     for line in "${lines[@]}"; do
         set $line
         if [[ "$1" == "$PODMAN_TEST_IMAGE_FQN" ]]; then
@@ -83,16 +210,15 @@ function basic_setup() {
         fi
     done
 
-    # Make sure desired images are present
-    if [ -z "$found_needed_image" ]; then
-        run_podman pull "$PODMAN_TEST_IMAGE_FQN"
+    # Make sure desired image is present
+    if [[ -z "$found_needed_image" ]]; then
+        _prefetch $PODMAN_TEST_IMAGE_FQN
     fi
 
-    # Argh. Although BATS provides $BATS_TMPDIR, it's just /tmp!
-    # That's bloody worthless. Let's make our own, in which subtests
-    # can write whatever they like and trust that it'll be deleted
-    # on cleanup.
-    # TODO: do this outside of setup, so it carries across tests?
+    # Temporary subdirectory, in which tests can write whatever they like
+    # and trust that it'll be deleted on cleanup.
+    # (BATS v1.3 and above provide $BATS_TEST_TMPDIR, but we still use
+    # ancient BATS (v1.1) in RHEL gating tests.)
     PODMAN_TMPDIR=$(mktemp -d --tmpdir=${BATS_TMPDIR:-/tmp} podman_bats.XXXXXX)
 
     # In the unlikely event that a test runs is() before a run_podman()
@@ -102,10 +228,35 @@ function basic_setup() {
 # Basic teardown: remove all pods and containers
 function basic_teardown() {
     echo "# [teardown]" >&2
-    run_podman '?' pod rm -t 0 --all --force --ignore
-    run_podman '?'     rm -t 0 --all --force --ignore
-    run_podman '?' network prune --force
-    run_podman '?' volume rm -a -f
+    local actions=(
+        "pod rm -t 0 --all --force --ignore"
+            "rm -t 0 --all --force --ignore"
+        "network prune --force"
+        "volume rm -a -f"
+    )
+    for action in "${actions[@]}"; do
+        run_podman '?' $action
+
+        # The -f commands should never exit nonzero, but if they do we want
+        # to know about it.
+        #   FIXME: someday: also test for [[ -n "$output" ]] - can't do this
+        #   yet because too many tests don't clean up their containers
+        if [[ $status -ne 0 ]]; then
+            echo "# [teardown] $_LOG_PROMPT podman $action" >&3
+            for line in "${lines[*]}"; do
+                echo "# $line" >&3
+            done
+
+            # Special case for timeout: check for locks (#18514)
+            if [[ $status -eq 124 ]]; then
+                echo "# [teardown] $_LOG_PROMPT podman system locks" >&3
+                run $PODMAN system locks
+                for line in "${lines[*]}"; do
+                    echo "# $line" >&3
+                done
+            fi
+        fi
+    done
 
     command rm -rf $PODMAN_TMPDIR
 }
@@ -145,6 +296,11 @@ function restore_image() {
 ###############################################################################
 # BEGIN podman helpers
 
+# Displays '[HH:MM:SS.NNNNN]' in command output. logformatter relies on this.
+function timestamp() {
+    date +'[%T.%N]'
+}
+
 ################
 #  run_podman  #  Invoke $PODMAN, with timeout, using BATS 'run'
 ################
@@ -181,13 +337,13 @@ function run_podman() {
     MOST_RECENT_PODMAN_COMMAND="podman $*"
 
     # stdout is only emitted upon error; this echo is to help a debugger
-    echo "$_LOG_PROMPT $PODMAN $*"
+    echo "$(timestamp) $_LOG_PROMPT $PODMAN $*"
     # BATS hangs if a subprocess remains and keeps FD 3 open; this happens
     # if podman crashes unexpectedly without cleaning up subprocesses.
     run timeout --foreground -v --kill=10 $PODMAN_TIMEOUT $PODMAN $_PODMAN_TEST_OPTS "$@" 3>/dev/null
     # without "quotes", multiple lines are glommed together into one
     if [ -n "$output" ]; then
-        echo "$output"
+        echo "$(timestamp) $output"
 
         # FIXME FIXME FIXME: instrumenting to track down #15488. Please
         # remove once that's fixed. We include the args because, remember,
@@ -199,7 +355,7 @@ function run_podman() {
         fi
     fi
     if [ "$status" -ne 0 ]; then
-        echo -n "[ rc=$status ";
+        echo -n "$(timestamp) [ rc=$status ";
         if [ -n "$expected_rc" ]; then
             if [ "$status" -eq "$expected_rc" ]; then
                 echo -n "(expected) ";
@@ -524,16 +680,6 @@ function skip_if_rootless_cgroupsv1() {
 function skip_if_journald_unavailable {
     if journald_unavailable; then
         skip "Cannot use rootless journald on this system"
-    fi
-}
-
-function skip_if_root_ubuntu {
-    if is_ubuntu; then
-        if ! is_remote; then
-            if ! is_rootless; then
-                 skip "Cannot run this test on rootful ubuntu, usually due to user errors"
-            fi
-        fi
     fi
 }
 

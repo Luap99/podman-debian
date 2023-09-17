@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 
 	. "github.com/containers/podman/v4/test/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 )
@@ -26,27 +26,6 @@ func createContainersConfFileWithDevices(pTest *PodmanTestIntegration, devices s
 }
 
 var _ = Describe("Podman run device", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
-
-	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-		os.Unsetenv("CONTAINERS_CONF")
-	})
 
 	It("podman run bad device test", func() {
 		session := podmanTest.Podman([]string{"run", "-q", "--device", "/dev/baddevice", ALPINE, "true"})
@@ -93,14 +72,16 @@ var _ = Describe("Podman run device", func() {
 
 	It("podman run device host device and container device parameter are directories", func() {
 		SkipIfRootless("Cannot create devices in /dev in rootless mode")
-		Expect(os.MkdirAll("/dev/foodevdir", os.ModePerm)).To(Succeed())
-		defer os.RemoveAll("/dev/foodevdir")
+		// path must be unique to this test, not used anywhere else
+		devdir := "/dev/devdirrundevice"
+		Expect(os.MkdirAll(devdir, os.ModePerm)).To(Succeed())
+		defer os.RemoveAll(devdir)
 
-		mknod := SystemExec("mknod", []string{"/dev/foodevdir/null", "c", "1", "3"})
+		mknod := SystemExec("mknod", []string{devdir + "/null", "c", "1", "3"})
 		mknod.WaitWithDefaultTimeout()
 		Expect(mknod).Should(Exit(0))
 
-		session := podmanTest.Podman([]string{"run", "-q", "--device", "/dev/foodevdir:/dev/bar", ALPINE, "stat", "-c%t:%T", "/dev/bar/null"})
+		session := podmanTest.Podman([]string{"run", "-q", "--device", devdir + ":/dev/bar", ALPINE, "stat", "-c%t:%T", "/dev/bar/null"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(session.OutputToString()).To(Equal("1:3"))

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/containers/storage/pkg/homedir"
@@ -17,22 +18,22 @@ import (
 )
 
 type InitOptions struct {
-	CPUS         uint64
-	DiskSize     uint64
-	IgnitionPath string
-	ImagePath    string
-	Volumes      []string
-	VolumeDriver string
-	IsDefault    bool
-	Memory       uint64
-	Name         string
-	TimeZone     string
-	URI          url.URL
-	Username     string
-	ReExec       bool
-	Rootful      bool
-	// The numerical userid of the user that called machine
-	UID string
+	CPUS               uint64
+	DiskSize           uint64
+	IgnitionPath       string
+	ImagePath          string
+	Volumes            []string
+	VolumeDriver       string
+	IsDefault          bool
+	Memory             uint64
+	Name               string
+	TimeZone           string
+	URI                url.URL
+	Username           string
+	ReExec             bool
+	Rootful            bool
+	UID                string // uid of the user that called machine
+	UserModeNetworking *bool  // nil = use backend/system default, false = disable, true = enable
 }
 
 type Status = string
@@ -65,11 +66,6 @@ type RemoteConnectionType string
 var (
 	SSHRemoteConnection     RemoteConnectionType = "ssh"
 	DefaultIgnitionUserName                      = "core"
-	ErrNoSuchVM                                  = errors.New("VM does not exist")
-	ErrVMAlreadyExists                           = errors.New("VM already exists")
-	ErrVMAlreadyRunning                          = errors.New("VM already running or starting")
-	ErrMultipleActiveVM                          = errors.New("only one VM can be active at a time")
-	ErrNotImplemented                            = errors.New("functionality not implemented")
 	ForwarderBinaryName                          = "gvproxy"
 )
 
@@ -91,26 +87,28 @@ type Download struct {
 type ListOptions struct{}
 
 type ListResponse struct {
-	Name           string
-	CreatedAt      time.Time
-	LastUp         time.Time
-	Running        bool
-	Starting       bool
-	Stream         string
-	VMType         string
-	CPUs           uint64
-	Memory         uint64
-	DiskSize       uint64
-	Port           int
-	RemoteUsername string
-	IdentityPath   string
+	Name               string
+	CreatedAt          time.Time
+	LastUp             time.Time
+	Running            bool
+	Starting           bool
+	Stream             string
+	VMType             string
+	CPUs               uint64
+	Memory             uint64
+	DiskSize           uint64
+	Port               int
+	RemoteUsername     string
+	IdentityPath       string
+	UserModeNetworking bool
 }
 
 type SetOptions struct {
-	CPUs     *uint64
-	DiskSize *uint64
-	Memory   *uint64
-	Rootful  *bool
+	CPUs               *uint64
+	DiskSize           *uint64
+	Memory             *uint64
+	Rootful            *bool
+	UserModeNetworking *bool
 }
 
 type SSHOptions struct {
@@ -151,15 +149,16 @@ type DistributionDownload interface {
 	CleanCache() error
 }
 type InspectInfo struct {
-	ConfigPath     VMFile
-	ConnectionInfo ConnectionConfig
-	Created        time.Time
-	Image          ImageConfig
-	LastUp         time.Time
-	Name           string
-	Resources      ResourceConfig
-	SSHConfig      SSHConfig
-	State          Status
+	ConfigPath         VMFile
+	ConnectionInfo     ConnectionConfig
+	Created            time.Time
+	Image              ImageConfig
+	LastUp             time.Time
+	Name               string
+	Resources          ResourceConfig
+	SSHConfig          SSHConfig
+	State              Status
+	UserModeNetworking bool
 }
 
 func (rc RemoteConnectionType) MakeSSHURL(host, path, port, userName string) url.URL {
@@ -360,6 +359,8 @@ type HostUser struct {
 	Rootful bool
 	// UID is the numerical id of the user that called machine
 	UID int
+	// Whether one of these fields has changed and actions should be taken
+	Modified bool `json:"HostUserModified"`
 }
 
 // SSHConfig contains remote access information for SSH
@@ -399,4 +400,31 @@ func (v VMType) String() string {
 		return "hyperv"
 	}
 	return "qemu"
+}
+
+type APIForwardingState int
+
+const (
+	NoForwarding APIForwardingState = iota
+	ClaimUnsupported
+	NotInstalled
+	MachineLocal
+	DockerGlobal
+)
+
+func ParseVMType(input string, emptyFallback VMType) (VMType, error) {
+	switch strings.TrimSpace(strings.ToLower(input)) {
+	case "qemu":
+		return QemuVirt, nil
+	case "wsl":
+		return WSLVirt, nil
+	case "applehv":
+		return AppleHvVirt, nil
+	case "hyperv":
+		return HyperVVirt, nil
+	case "":
+		return emptyFallback, nil
+	default:
+		return QemuVirt, fmt.Errorf("unknown VMType `%s`", input)
+	}
 }

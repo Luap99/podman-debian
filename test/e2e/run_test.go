@@ -15,37 +15,47 @@ import (
 	"github.com/containers/podman/v4/libpod/define"
 	. "github.com/containers/podman/v4/test/utils"
 	"github.com/containers/storage/pkg/stringid"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 )
 
 var _ = Describe("Podman run", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
-
-	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-	})
 
 	It("podman run a container based on local image", func() {
 		session := podmanTest.Podman([]string{"run", ALPINE, "ls"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
+	})
+
+	// This test may seem entirely pointless, it is not.  Due to compatibility
+	// and historical reasons, the container name generator uses a globally
+	// scoped RNG, seeded from a global state.  An easy way to check if its
+	// been initialized properly (i.e. pseudo-non-deterministically) is
+	// checking if the name-generator spits out the same name twice.  Because
+	// existing containers are checked when generating names, the test must ensure
+	// the first container is removed before creating a second.
+	It("podman generates different names for successive containers", func() {
+		var names [2]string
+
+		for i := range names {
+			session := podmanTest.Podman([]string{"create", ALPINE, "true"})
+			session.WaitWithDefaultTimeout()
+			Expect(session).Should(Exit(0))
+			cid := session.OutputToString()
+			Expect(cid).To(Not(Equal("")))
+
+			session = podmanTest.Podman([]string{"container", "inspect", "--format", "{{.Name}}", cid})
+			session.WaitWithDefaultTimeout()
+			Expect(session).Should(Exit(0))
+			names[i] = session.OutputToString()
+			Expect(names[i]).To(Not(Equal("")))
+
+			session = podmanTest.Podman([]string{"rm", cid})
+			session.WaitWithDefaultTimeout()
+			Expect(session).Should(Exit(0))
+		}
+		Expect(names[0]).ToNot(Equal(names[1]), "Podman generated duplicate successive container names, has the global RNG been seeded correctly?")
 	})
 
 	It("podman run check /run/.containerenv", func() {
@@ -182,7 +192,7 @@ var _ = Describe("Podman run", func() {
 	It("podman create pod with name in /etc/hosts", func() {
 		name := "test_container"
 		hostname := "test_hostname"
-		session := podmanTest.Podman([]string{"run", "-ti", "--rm", "--name", name, "--hostname", hostname, ALPINE, "cat", "/etc/hosts"})
+		session := podmanTest.Podman([]string{"run", "--rm", "--name", name, "--hostname", hostname, ALPINE, "cat", "/etc/hosts"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(session.OutputToString()).To(ContainSubstring(name))
@@ -239,8 +249,8 @@ var _ = Describe("Podman run", func() {
 		Expect(esession).Should(Exit(0))
 		Expect(tarball).Should(BeARegularFile())
 
-		// N/B: This will loose any extended attributes like SELinux types
-		fmt.Fprintf(os.Stderr, "Extracting container root tarball\n")
+		// N/B: This will lose any extended attributes like SELinux types
+		GinkgoWriter.Printf("Extracting container root tarball\n")
 		tarsession := SystemExec("tar", []string{"xf", tarball, "-C", rootfs})
 		Expect(tarsession).Should(Exit(0))
 		Expect(filepath.Join(rootfs, uls)).Should(BeADirectory())
@@ -341,7 +351,7 @@ var _ = Describe("Podman run", func() {
 		in := []byte(`{"defaultAction":"SCMP_ACT_ALLOW","syscalls":[{"name":"getcwd","action":"SCMP_ACT_ERRNO"}]}`)
 		jsonFile, err := podmanTest.CreateSeccompJSON(in)
 		if err != nil {
-			fmt.Println(err)
+			GinkgoWriter.Println(err)
 			Skip("Failed to prepare seccomp.json for test.")
 		}
 		return jsonFile
@@ -440,28 +450,28 @@ var _ = Describe("Podman run", func() {
 	})
 
 	It("podman run seccomp test", func() {
-		session := podmanTest.Podman([]string{"run", "-it", "--security-opt", strings.Join([]string{"seccomp=", forbidGetCWDSeccompProfile()}, ""), ALPINE, "pwd"})
+		session := podmanTest.Podman([]string{"run", "--security-opt", strings.Join([]string{"seccomp=", forbidGetCWDSeccompProfile()}, ""), ALPINE, "pwd"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).To(ExitWithError())
-		Expect(session.OutputToString()).To(ContainSubstring("Operation not permitted"))
+		Expect(session.ErrorToString()).To(ContainSubstring("Operation not permitted"))
 	})
 
 	It("podman run seccomp test --privileged", func() {
-		session := podmanTest.Podman([]string{"run", "-it", "--privileged", "--security-opt", strings.Join([]string{"seccomp=", forbidGetCWDSeccompProfile()}, ""), ALPINE, "pwd"})
+		session := podmanTest.Podman([]string{"run", "--privileged", "--security-opt", strings.Join([]string{"seccomp=", forbidGetCWDSeccompProfile()}, ""), ALPINE, "pwd"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).To(ExitWithError())
-		Expect(session.OutputToString()).To(ContainSubstring("Operation not permitted"))
+		Expect(session.ErrorToString()).To(ContainSubstring("Operation not permitted"))
 	})
 
 	It("podman run seccomp test --privileged no profile should be unconfined", func() {
-		session := podmanTest.Podman([]string{"run", "-it", "--privileged", ALPINE, "grep", "Seccomp", "/proc/self/status"})
+		session := podmanTest.Podman([]string{"run", "--privileged", ALPINE, "grep", "Seccomp", "/proc/self/status"})
 		session.WaitWithDefaultTimeout()
 		Expect(session.OutputToString()).To(ContainSubstring("0"))
 		Expect(session).Should(Exit(0))
 	})
 
 	It("podman run seccomp test no profile should be default", func() {
-		session := podmanTest.Podman([]string{"run", "-it", ALPINE, "grep", "Seccomp", "/proc/self/status"})
+		session := podmanTest.Podman([]string{"run", ALPINE, "grep", "Seccomp", "/proc/self/status"})
 		session.WaitWithDefaultTimeout()
 		Expect(session.OutputToString()).To(ContainSubstring("2"))
 		Expect(session).Should(Exit(0))
@@ -1224,11 +1234,9 @@ USER mail`, BB)
 		session := podmanTest.Podman([]string{"run", "--volume", vol1 + ":/myvol1:z", "--volume", vol2 + ":/myvol2:shared,z", fedoraMinimal, "findmnt", "-o", "TARGET,PROPAGATION"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		match, shared := session.GrepString("shared")
-		Expect(match).Should(BeTrue())
+		Expect(session.OutputToString()).To(ContainSubstring("shared"))
 		// make sure it's only shared (and not 'shared,slave')
-		isSharedOnly := !strings.Contains(shared[0], "shared,")
-		Expect(isSharedOnly).Should(BeTrue())
+		Expect(session.OutputToString()).To(Not(ContainSubstring("shared,")))
 	})
 
 	It("podman run --security-opts proc-opts=", func() {
@@ -1252,7 +1260,7 @@ USER mail`, BB)
 		session := podmanTest.Podman([]string{"run", "--mount", "type=devpts,target=/foo/bar", fedoraMinimal, "stat", "-f", "-c%T", "/foo/bar"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(session.OutputToString()).To(ContainSubstring("devpts"))
+		Expect(session.OutputToString()).To(ContainSubstring(define.TypeDevpts))
 	})
 
 	It("podman run --mount type=devpts,target=/dev/pts with uid, gid and mode", func() {
@@ -1387,7 +1395,7 @@ USER mail`, BB)
 				break
 			}
 		}
-		Expect(found).To(BeTrue())
+		Expect(found).To(BeTrue(), "found expected /ran file")
 
 		err = os.Remove(aliveFile)
 		Expect(err).ToNot(HaveOccurred())
@@ -1403,7 +1411,7 @@ USER mail`, BB)
 				break
 			}
 		}
-		Expect(found).To(BeTrue())
+		Expect(found).To(BeTrue(), "found /ran file after restart")
 	})
 
 	It("podman run with restart policy does not restart on manual stop", func() {
@@ -1486,7 +1494,7 @@ USER mail`, BB)
 		curCgroupsBytes, err := os.ReadFile("/proc/self/cgroup")
 		Expect(err).ShouldNot(HaveOccurred())
 		curCgroups := trim(string(curCgroupsBytes))
-		fmt.Printf("Output:\n%s\n", curCgroups)
+		GinkgoWriter.Printf("Output:\n%s\n", curCgroups)
 		Expect(curCgroups).ToNot(Equal(""))
 
 		container := podmanTest.Podman([]string{"run", "--cgroupns=host", "--cgroups=disabled", ALPINE, "cat", "/proc/self/cgroup"})
@@ -1494,7 +1502,7 @@ USER mail`, BB)
 		Expect(container).Should(Exit(0))
 
 		ctrCgroups := trim(container.OutputToString())
-		fmt.Printf("Output\n:%s\n", ctrCgroups)
+		GinkgoWriter.Printf("Output\n:%s\n", ctrCgroups)
 
 		Expect(ctrCgroups).To(Equal(curCgroups))
 	})
@@ -1509,7 +1517,7 @@ USER mail`, BB)
 		curCgroupsBytes, err := os.ReadFile("/proc/self/cgroup")
 		Expect(err).ToNot(HaveOccurred())
 		var curCgroups string = string(curCgroupsBytes)
-		fmt.Printf("Output:\n%s\n", curCgroups)
+		GinkgoWriter.Printf("Output:\n%s\n", curCgroups)
 		Expect(curCgroups).To(Not(Equal("")))
 
 		ctrName := "testctr"
@@ -1526,7 +1534,7 @@ USER mail`, BB)
 		ctrCgroupsBytes, err := os.ReadFile(fmt.Sprintf("/proc/%d/cgroup", pid))
 		Expect(err).ToNot(HaveOccurred())
 		var ctrCgroups string = string(ctrCgroupsBytes)
-		fmt.Printf("Output\n:%s\n", ctrCgroups)
+		GinkgoWriter.Printf("Output\n:%s\n", ctrCgroups)
 		Expect(curCgroups).To(Not(Equal(ctrCgroups)))
 	})
 
@@ -1589,7 +1597,7 @@ USER mail`, BB)
 
 	It("podman run --privileged and --group-add", func() {
 		groupName := "mail"
-		session := podmanTest.Podman([]string{"run", "-t", "-i", "--group-add", groupName, "--privileged", fedoraMinimal, "groups"})
+		session := podmanTest.Podman([]string{"run", "--group-add", groupName, "--privileged", fedoraMinimal, "groups"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(session.OutputToString()).To(ContainSubstring(groupName))
@@ -1603,6 +1611,7 @@ USER mail`, BB)
 		tzFile := filepath.Join(testDir, "tzfile.txt")
 		file, err := os.Create(tzFile)
 		Expect(err).ToNot(HaveOccurred())
+		defer os.Remove(tzFile)
 
 		_, err = file.WriteString("Hello")
 		Expect(err).ToNot(HaveOccurred())
@@ -1612,18 +1621,8 @@ USER mail`, BB)
 		session := podmanTest.Podman([]string{"run", "--tz", badTZFile, "--rm", ALPINE, "date"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).To(ExitWithError())
-		Expect(session.ErrorToString()).To(ContainSubstring("finding timezone for container"))
-
-		err = os.Remove(tzFile)
-		Expect(err).ToNot(HaveOccurred())
-
-		session = podmanTest.Podman([]string{"run", "--tz", "foo", "--rm", ALPINE, "date"})
-		session.WaitWithDefaultTimeout()
-		Expect(session).To(ExitWithError())
-
-		session = podmanTest.Podman([]string{"run", "--tz", "America", "--rm", ALPINE, "date"})
-		session.WaitWithDefaultTimeout()
-		Expect(session).To(ExitWithError())
+		Expect(session.ErrorToString()).To(
+			Equal("Error: running container create option: finding timezone: time: invalid location name"))
 
 		session = podmanTest.Podman([]string{"run", "--tz", "Pacific/Honolulu", "--rm", ALPINE, "date", "+'%H %Z'"})
 		session.WaitWithDefaultTimeout()
@@ -2068,7 +2067,7 @@ WORKDIR /madethis`, BB)
 		mount.WaitWithDefaultTimeout()
 		Expect(mount).Should(Exit(0))
 		t, strings := mount.GrepString("tmpfs on /run/lock")
-		Expect(t).To(BeTrue())
+		Expect(t).To(BeTrue(), "found /run/lock")
 		Expect(strings[0]).Should(ContainSubstring("size=10240k"))
 	})
 

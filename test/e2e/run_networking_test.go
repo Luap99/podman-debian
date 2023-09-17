@@ -12,36 +12,15 @@ import (
 	"github.com/containers/common/libnetwork/types"
 	. "github.com/containers/podman/v4/test/utils"
 	"github.com/containers/storage/pkg/stringid"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
-	"github.com/uber/jaeger-client-go/utils"
 	"github.com/vishvananda/netlink"
 )
 
 var _ = Describe("Podman run networking", func() {
-	var (
-		tempdir     string
-		err         error
-		podmanTest  *PodmanTestIntegration
-		hostname, _ = os.Hostname()
-	)
 
-	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-
-	})
+	hostname, _ := os.Hostname()
 
 	It("podman verify network scoped DNS server and also verify updating network dns server", func() {
 		// Following test is only functional with netavark and aardvark
@@ -69,7 +48,7 @@ var _ = Describe("Podman run networking", func() {
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
-		session = podmanTest.Podman([]string{"exec", "-i", "con1", "nslookup", "google.com", aardvarkDNSGateway})
+		session = podmanTest.Podman([]string{"exec", "con1", "nslookup", "google.com", aardvarkDNSGateway})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(session.OutputToString()).To(ContainSubstring("Non-authoritative answer: Name: google.com Address:"))
@@ -84,7 +63,7 @@ var _ = Describe("Podman run networking", func() {
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
-		session = podmanTest.Podman([]string{"exec", "-i", "con1", "nslookup", "google.com", aardvarkDNSGateway})
+		session = podmanTest.Podman([]string{"exec", "con1", "nslookup", "google.com", aardvarkDNSGateway})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(1))
 		Expect(session.OutputToString()).To(ContainSubstring(";; connection timed out; no servers could be reached"))
@@ -618,8 +597,12 @@ EXPOSE 2004-2005/tcp`, ALPINE)
 	})
 
 	It("podman run network bind to HostIP", func() {
-		ip, err := utils.HostIP()
+		// Determine our likeliest outgoing IP address
+		conn, err := net.Dial("udp", "8.8.8.8:80")
 		Expect(err).ToNot(HaveOccurred())
+
+		defer conn.Close()
+		ip := conn.LocalAddr().(*net.UDPAddr).IP
 		port := GetPort()
 
 		slirp4netnsHelp := SystemExec("slirp4netns", []string{"--help"})
@@ -628,7 +611,7 @@ EXPOSE 2004-2005/tcp`, ALPINE)
 
 		if strings.Contains(slirp4netnsHelp.OutputToString(), "outbound-addr") {
 			ncListener := StartSystemExec("nc", []string{"-v", "-n", "-l", "-p", fmt.Sprintf("%d", port)})
-			session := podmanTest.Podman([]string{"run", "--network", networkConfiguration, "-dt", ALPINE, "nc", "-w", "2", "10.0.2.2", fmt.Sprintf("%d", port)})
+			session := podmanTest.Podman([]string{"run", "--network", networkConfiguration, ALPINE, "nc", "-w", "2", "10.0.2.2", fmt.Sprintf("%d", port)})
 			session.Wait(30)
 			ncListener.Wait(30)
 
@@ -636,7 +619,7 @@ EXPOSE 2004-2005/tcp`, ALPINE)
 			Expect(ncListener).Should(Exit(0))
 			Expect(ncListener.ErrorToString()).To(ContainSubstring(ip.String()))
 		} else {
-			session := podmanTest.Podman([]string{"run", "--network", networkConfiguration, "-dt", ALPINE, "nc", "-w", "2", "10.0.2.2", fmt.Sprintf("%d", port)})
+			session := podmanTest.Podman([]string{"run", "--network", networkConfiguration, ALPINE, "nc", "-w", "2", "10.0.2.2", fmt.Sprintf("%d", port)})
 			session.Wait(30)
 			Expect(session).To(ExitWithError())
 			Expect(session.ErrorToString()).To(ContainSubstring("outbound_addr not supported"))
@@ -770,12 +753,12 @@ EXPOSE 2004-2005/tcp`, ALPINE)
 		ctr2.WaitWithDefaultTimeout()
 		Expect(ctr2).Should(Exit(0))
 
-		exec3 := podmanTest.Podman([]string{"exec", "-i", ctrName2, "cat", "/etc/resolv.conf"})
+		exec3 := podmanTest.Podman([]string{"exec", ctrName2, "cat", "/etc/resolv.conf"})
 		exec3.WaitWithDefaultTimeout()
 		Expect(exec3).Should(Exit(0))
 		Expect(exec3.OutputToString()).To(ContainSubstring("nameserver 192.0.2.1"))
 
-		exec4 := podmanTest.Podman([]string{"exec", "-i", ctrName2, "cat", "/etc/hosts"})
+		exec4 := podmanTest.Podman([]string{"exec", ctrName2, "cat", "/etc/hosts"})
 		exec4.WaitWithDefaultTimeout()
 		Expect(exec4).Should(Exit(0))
 		Expect(exec4.OutputToString()).To(ContainSubstring("192.0.2.2 test1"))
@@ -1007,38 +990,13 @@ EXPOSE 2004-2005/tcp`, ALPINE)
 		Expect(create).Should(Exit(0))
 		defer podmanTest.removeNetwork(netName)
 
-		run := podmanTest.Podman([]string{"run", "-t", "-i", "--rm", "--net", netName, "--ip", ipAddr, ALPINE, "ip", "addr"})
+		run := podmanTest.Podman([]string{"run", "--rm", "--net", netName, "--ip", ipAddr, ALPINE, "ip", "addr"})
 		run.WaitWithDefaultTimeout()
 		Expect(run).Should(Exit(0))
 		Expect(run.OutputToString()).To(ContainSubstring(ipAddr))
 	})
 
 	It("podman network works across user ns", func() {
-		netName := stringid.GenerateRandomID()
-		create := podmanTest.Podman([]string{"network", "create", netName})
-		create.WaitWithDefaultTimeout()
-		Expect(create).Should(Exit(0))
-		defer podmanTest.removeNetwork(netName)
-
-		name := "nc-server"
-		run := podmanTest.Podman([]string{"run", "--log-driver", "k8s-file", "-d", "--name", name, "--net", netName, ALPINE, "nc", "-l", "-p", "9480"})
-		run.WaitWithDefaultTimeout()
-		Expect(run).Should(Exit(0))
-
-		// NOTE: we force the k8s-file log driver to make sure the
-		// tests are passing inside a container.
-		run = podmanTest.Podman([]string{"run", "--log-driver", "k8s-file", "--rm", "--net", netName, "--uidmap", "0:1:4096", ALPINE, "sh", "-c", fmt.Sprintf("echo podman | nc -w 1 %s.dns.podman 9480", name)})
-		run.WaitWithDefaultTimeout()
-		Expect(run).Should(Exit(0))
-
-		log := podmanTest.Podman([]string{"logs", name})
-		log.WaitWithDefaultTimeout()
-		Expect(log).Should(Exit(0))
-		Expect(log.OutputToString()).To(Equal("podman"))
-	})
-
-	It("podman Netavark network works across user ns", func() {
-		SkipIfCNI(podmanTest)
 		netName := createNetworkName("")
 		create := podmanTest.Podman([]string{"network", "create", netName})
 		create.WaitWithDefaultTimeout()
@@ -1052,7 +1010,8 @@ EXPOSE 2004-2005/tcp`, ALPINE)
 
 		// NOTE: we force the k8s-file log driver to make sure the
 		// tests are passing inside a container.
-		run = podmanTest.Podman([]string{"run", "--log-driver", "k8s-file", "--rm", "--net", netName, "--uidmap", "0:1:4096", ALPINE, "sh", "-c", fmt.Sprintf("echo podman | nc -w 1 %s.dns.podman 9480", name)})
+		// "sleep" needed to give aardvark-dns time to come up; #16272
+		run = podmanTest.Podman([]string{"run", "--log-driver", "k8s-file", "--rm", "--net", netName, "--uidmap", "0:1:4096", ALPINE, "sh", "-c", fmt.Sprintf("sleep 2;echo podman | nc -w 1 %s.dns.podman 9480", name)})
 		run.WaitWithDefaultTimeout()
 		Expect(run).Should(Exit(0))
 
@@ -1071,7 +1030,7 @@ EXPOSE 2004-2005/tcp`, ALPINE)
 		Expect(create).Should(Exit(0))
 		defer podmanTest.removeNetwork(netName)
 
-		run := podmanTest.Podman([]string{"run", "-t", "-i", "--rm", "--pod", "new:" + podname, "--net", netName, "--ip", ipAddr, ALPINE, "ip", "addr"})
+		run := podmanTest.Podman([]string{"run", "--rm", "--pod", "new:" + podname, "--net", netName, "--ip", ipAddr, ALPINE, "ip", "addr"})
 		run.WaitWithDefaultTimeout()
 		Expect(run).Should(Exit(0))
 		Expect(run.OutputToString()).To(ContainSubstring(ipAddr))
@@ -1149,7 +1108,8 @@ EXPOSE 2004-2005/tcp`, ALPINE)
 		Expect(session).Should(Exit(0))
 
 		pod2 := "testpod2"
-		session = podmanTest.Podman([]string{"pod", "create", "--network", net, "--name", pod2})
+		hostname := "hostn1"
+		session = podmanTest.Podman([]string{"pod", "create", "--network", net, "--name", pod2, "--hostname", hostname})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
@@ -1169,59 +1129,13 @@ EXPOSE 2004-2005/tcp`, ALPINE)
 		session = podmanTest.Podman([]string{"run", "--name", "con4", "--network", net, ALPINE, "nslookup", pod2 + ".dns.podman"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-	})
 
-	It("podman run check dnsname plugin with Netavark", func() {
-		SkipIfCNI(podmanTest)
-		pod := "testpod"
-		session := podmanTest.Podman([]string{"pod", "create", "--name", pod})
-		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
-
-		net := createNetworkName("IntTest")
-		session = podmanTest.Podman([]string{"network", "create", net})
-		session.WaitWithDefaultTimeout()
-		defer podmanTest.removeNetwork(net)
-		Expect(session).Should(Exit(0))
-
-		pod2 := "testpod2"
-		session = podmanTest.Podman([]string{"pod", "create", "--network", net, "--name", pod2})
-		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
-
-		session = podmanTest.Podman([]string{"run", "--name", "con1", "--network", net, ALPINE, "nslookup", "con1"})
-		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
-
-		session = podmanTest.Podman([]string{"run", "--name", "con2", "--pod", pod, "--network", net, ALPINE, "nslookup", "con2"})
-		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
-
-		session = podmanTest.Podman([]string{"run", "--name", "con3", "--pod", pod2, ALPINE, "nslookup", "con1"})
-		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(1))
-		Expect(session.ErrorToString()).To(ContainSubstring("can't resolve 'con1'"))
-
-		session = podmanTest.Podman([]string{"run", "--name", "con4", "--network", net, ALPINE, "nslookup", pod2 + ".dns.podman"})
+		session = podmanTest.Podman([]string{"run", "--network", net, ALPINE, "nslookup", hostname})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 	})
 
 	It("podman network adds dns search domain with dns", func() {
-		net := createNetworkName("dnsname")
-		session := podmanTest.Podman([]string{"network", "create", net})
-		session.WaitWithDefaultTimeout()
-		defer podmanTest.removeNetwork(net)
-		Expect(session).Should(Exit(0))
-
-		session = podmanTest.Podman([]string{"run", "--network", net, ALPINE, "cat", "/etc/resolv.conf"})
-		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
-		Expect(session.OutputToString()).To(ContainSubstring("search dns.podman"))
-	})
-
-	It("podman run check dnsname adds dns search domain with Netavark", func() {
-		SkipIfCNI(podmanTest)
 		net := createNetworkName("dnsname")
 		session := podmanTest.Podman([]string{"network", "create", net})
 		session.WaitWithDefaultTimeout()
@@ -1271,5 +1185,22 @@ EXPOSE 2004-2005/tcp`, ALPINE)
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(session.OutputToStringArray()).To(HaveLen(4), "output should only show link local address")
+	})
+
+	It("podman run with macvlan network", func() {
+		net := "mv-" + stringid.GenerateRandomID()
+		session := podmanTest.Podman([]string{"network", "create", "-d", "macvlan", "--subnet", "10.10.0.0/24", net})
+		session.WaitWithDefaultTimeout()
+		defer podmanTest.removeNetwork(net)
+		Expect(session).Should(Exit(0))
+
+		// use options and search to make sure we get the same resolv.conf everywhere
+		run := podmanTest.Podman([]string{"run", "--network", net, "--dns", "127.0.0.128",
+			"--dns-option", "ndots:1", "--dns-search", ".", ALPINE, "cat", "/etc/resolv.conf"})
+		run.WaitWithDefaultTimeout()
+		Expect(run).Should(Exit(0))
+		Expect(string(run.Out.Contents())).To(Equal(`nameserver 127.0.0.128
+options ndots:1
+`))
 	})
 })

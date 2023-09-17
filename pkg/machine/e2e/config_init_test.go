@@ -7,11 +7,11 @@ import (
 type initMachine struct {
 	/*
 	      --cpus uint              Number of CPUs (default 1)
-	      --disk-size uint         Disk size in GB (default 100)
+	      --disk-size uint         Disk size in GiB (default 100)
 	      --ignition-path string   Path to ignition file
 	      --username string        Username of the remote user (default "core" for FCOS, "user" for Fedora)
 	      --image-path string      Path to bootable image (default "testing")
-	  -m, --memory uint            Memory in MB (default 2048)
+	  -m, --memory uint            Memory in MiB (default 2048)
 	      --now                    Start machine now
 	      --rootful                Whether this machine should prefer rootful container execution
 	      --timezone string        Set timezone (default "local")
@@ -27,7 +27,7 @@ type initMachine struct {
 	memory       *uint
 	now          bool
 	timezone     string
-	rootful      bool //nolint:unused
+	rootful      bool
 	volumes      []string
 
 	cmd []string
@@ -61,6 +61,9 @@ func (i *initMachine) buildCmd(m *machineTestBuilder) []string {
 	}
 	if i.now {
 		cmd = append(cmd, "--now")
+	}
+	if i.rootful {
+		cmd = append(cmd, "--rootful")
 	}
 	cmd = append(cmd, m.name)
 	i.cmd = cmd
@@ -108,5 +111,10 @@ func (i *initMachine) withTimezone(tz string) *initMachine {
 
 func (i *initMachine) withVolume(v string) *initMachine {
 	i.volumes = append(i.volumes, v)
+	return i
+}
+
+func (i *initMachine) withRootful(r bool) *initMachine {
+	i.rootful = r
 	return i
 }

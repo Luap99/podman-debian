@@ -229,7 +229,7 @@ func (s *APIServer) registerImagesHandlers(r *mux.Router) error {
 	//  - in: query
 	//    name: noprune
 	//    type: boolean
-	//    description: not supported. will be logged as an invalid parameter if enabled
+	//    description: do not remove dangling parent images
 	// produces:
 	//  - application/json
 	// responses:
@@ -546,8 +546,8 @@ func (s *APIServer) registerImagesHandlers(r *mux.Router) error {
 	//      (As of version 1.xx)
 	//  - in: query
 	//    name: pull
-	//    type: boolean
-	//    default: false
+	//    type: string
+	//    default:
 	//    description: |
 	//      Attempt to pull the image even if an older image exists locally
 	//      (As of version 1.xx)
@@ -1351,7 +1351,7 @@ func (s *APIServer) registerImagesHandlers(r *mux.Router) error {
 	//   - images
 	// summary: Report on changes to images's filesystem; adds, deletes or modifications.
 	// description: |
-	//   Returns which files in a images's filesystem have been added, deleted, or modified. The Kind of modification can be one of:
+	//   Returns which files in an image's filesystem have been added, deleted, or modified. The Kind of modification can be one of:
 	//
 	//   0: Modified
 	//   1: Added
@@ -1453,8 +1453,8 @@ func (s *APIServer) registerImagesHandlers(r *mux.Router) error {
 	//      (As of version 1.xx)
 	//  - in: query
 	//    name: pull
-	//    type: boolean
-	//    default: false
+	//    type: string
+	//    default:
 	//    description: |
 	//      Attempt to pull the image even if an older image exists locally
 	//      (As of version 1.xx)

@@ -153,12 +153,19 @@ func ManifestInspect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	imageEngine := abi.ImageEngine{Libpod: runtime}
-	opts := entities.ManifestInspectOptions{}
+	_, authfile, err := auth.GetCredentials(r)
+	if err != nil {
+		utils.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	defer auth.RemoveAuthfile(authfile)
+
+	opts := entities.ManifestInspectOptions{Authfile: authfile}
 	if _, found := r.URL.Query()["tlsVerify"]; found {
 		opts.SkipTLSVerify = types.NewOptionalBool(!query.TLSVerify)
 	}
 
+	imageEngine := abi.ImageEngine{Libpod: runtime}
 	rawManifest, err := imageEngine.ManifestInspect(r.Context(), name, opts)
 	if err != nil {
 		utils.Error(w, http.StatusNotFound, err)
@@ -328,6 +335,7 @@ func ManifestPush(w http.ResponseWriter, r *http.Request) {
 	query := struct {
 		All               bool   `schema:"all"`
 		CompressionFormat string `schema:"compressionFormat"`
+		CompressionLevel  *int   `schema:"compressionLevel"`
 		Format            string `schema:"format"`
 		RemoveSignatures  bool   `schema:"removeSignatures"`
 		TLSVerify         bool   `schema:"tlsVerify"`
@@ -366,6 +374,7 @@ func ManifestPush(w http.ResponseWriter, r *http.Request) {
 		All:               query.All,
 		Authfile:          authfile,
 		CompressionFormat: query.CompressionFormat,
+		CompressionLevel:  query.CompressionLevel,
 		Format:            query.Format,
 		Password:          password,
 		Quiet:             true,

@@ -63,6 +63,7 @@ echo -e "\n# Begin single-use VM global variables (${BASH_SOURCE[0]})" \
 # shellcheck disable=SC2154
 grep -q "$DISTRO_NV" <<<"$OS_REL_VER" || \
     grep -q "$OS_REL_VER" <<<"$DISTRO_NV" || \
+    grep -q "rawhide" <<<"$DISTRO_NV" || \
     die "Automation spec. '$DISTRO_NV'; actual host '$OS_REL_VER'"
 
 # Only allow this script to execute once
@@ -75,6 +76,8 @@ fi
 
 cd "${GOSRC}/"
 
+mkdir -p /etc/containers/containers.conf.d
+
 # Defined by lib.sh: Does the host support cgroups v1 or v2? Use runc or crun
 # respectively.
 # **IMPORTANT**: $OCI_RUNTIME is a fakeout! It is used only in e2e tests.
@@ -84,7 +87,7 @@ case "$CG_FS_TYPE" in
         if ((CONTAINER==0)); then
             warn "Forcing testing with runc instead of crun"
             echo "OCI_RUNTIME=runc" >> /etc/ci_environment
-            printf "[engine]\nruntime=\"runc\"\n" >>/etc/containers/containers.conf
+            printf "[engine]\nruntime=\"runc\"\n" > /etc/containers/containers.conf.d/90-runtime.conf
         fi
         ;;
     cgroup2fs)
@@ -92,6 +95,25 @@ case "$CG_FS_TYPE" in
         ;;
     *) die_unknown CG_FS_TYPE
 esac
+
+# Force the requested database backend without having to use command-line args
+# shellcheck disable=SC2154
+printf "[engine]\ndatabase_backend=\"$CI_DESIRED_DATABASE\"\n" > /etc/containers/containers.conf.d/92-db.conf
+
+# For debian envs pre-configure storage driver as overlay.
+# See: Discussion here https://github.com/containers/podman/pull/18510#discussion_r1189812306
+# for more details.
+# TODO: remove this once all CI VM have newer buildah version. (i.e where buildah
+# does not defaults to using `vfs` as storage driver)
+# shellcheck disable=SC2154
+if [[ "$OS_RELEASE_ID" == "debian" ]]; then
+    conf=/etc/containers/storage.conf
+    if [[ -e $conf ]]; then
+        die "FATAL! INTERNAL ERROR! Cannot override $conf"
+    fi
+    msg "Overriding $conf, setting overlay (was: $buildah_storage)"
+    printf '[storage]\ndriver = "overlay"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n' >$conf
+fi
 
 if ((CONTAINER==0)); then  # Not yet running inside a container
     # Discovered reemergence of BFQ scheduler bug in kernel 5.8.12-200
@@ -387,6 +409,28 @@ case "$TEST_FLAVOR" in
     release) ;;
     *) die_unknown TEST_FLAVOR
 esac
+
+# See ./contrib/cirrus/CIModes.md.
+# Vars defined by cirrus-ci
+# shellcheck disable=SC2154
+if [[ ! "$OS_RELEASE_ID" =~ "debian" ]] && \
+   [[ "$CIRRUS_CHANGE_TITLE" =~ CI:NEXT ]]
+then
+    # shellcheck disable=SC2154
+    if [[ "$CIRRUS_PR_DRAFT" != "true" ]]; then
+        die "Magic 'CI:NEXT' string can only be used on DRAFT PRs"
+    fi
+
+    showrun dnf copr enable rhcontainerbot/podman-next -y
+
+    # DNF ignores repos that don't exist.  For example, updates-testing is not
+    # enabled on Fedora N-1 CI VMs.  Don't updated everything, isolate just the
+    # podman-next COPR updates.
+    showrun dnf update -y \
+      "--enablerepo=copr:copr.fedorainfracloud.org:rhcontainerbot:podman-next" \
+      "--disablerepo=copr:copr.fedorainfracloud.org:sbrivio:passt" \
+      "--disablerepo=fedora*" "--disablerepo=updates*"
+fi
 
 # Must be the very last command.  Prevents setup from running twice.
 echo 'SETUP_ENVIRONMENT=1' >> /etc/ci_environment

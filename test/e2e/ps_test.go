@@ -2,7 +2,6 @@ package integration
 
 import (
 	"fmt"
-	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -10,33 +9,12 @@ import (
 	. "github.com/containers/podman/v4/test/utils"
 	"github.com/containers/storage/pkg/stringid"
 	"github.com/docker/go-units"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 )
 
 var _ = Describe("Podman ps", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
-
-	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-
-	})
 
 	It("podman ps no containers", func() {
 		session := podmanTest.Podman([]string{"ps"})
@@ -212,6 +190,26 @@ var _ = Describe("Podman ps", func() {
 		Expect(actual).ToNot(ContainSubstring("table"))
 	})
 
+	It("podman ps --filter label=test=with,comma", func() {
+		ctrAlpha := "first"
+		container := podmanTest.Podman([]string{"run", "-dt", "--label", "test=with,comma", "--name", ctrAlpha, ALPINE, "top"})
+		container.WaitWithDefaultTimeout()
+		Expect(container).Should(Exit(0))
+
+		ctrBravo := "second"
+		containerBravo := podmanTest.Podman([]string{"run", "-dt", "--name", ctrBravo, ALPINE, "top"})
+		containerBravo.WaitWithDefaultTimeout()
+		Expect(containerBravo).Should(Exit(0))
+
+		result := podmanTest.Podman([]string{"ps", "-a", "--format", "table {{.Names}}", "--filter", "label=test=with,comma"})
+		result.WaitWithDefaultTimeout()
+		result.WaitWithDefaultTimeout()
+		Expect(result).Should(Exit(0))
+		actual := result.OutputToString()
+		Expect(actual).To(ContainSubstring("first"))
+		Expect(actual).ToNot(ContainSubstring("table"))
+	})
+
 	It("podman ps namespace flag", func() {
 		_, ec, _ := podmanTest.RunLsContainer("")
 		Expect(ec).To(Equal(0))
@@ -271,7 +269,7 @@ var _ = Describe("Podman ps", func() {
 
 	It("podman ps print a human-readable `Status` with json format", func() {
 		_, ec, _ := podmanTest.RunLsContainer("test1")
-		Expect(ec).To(Equal(0))
+		Expect(ec).To(Equal(0), "container exit code")
 
 		result := podmanTest.Podman([]string{"ps", "-a", "--format", "json"})
 		result.WaitWithDefaultTimeout()
@@ -279,7 +277,7 @@ var _ = Describe("Podman ps", func() {
 		Expect(result.OutputToString()).To(BeValidJSON())
 		// must contain "Status"
 		match, StatusLine := result.GrepString(`Status`)
-		Expect(match).To(BeTrue())
+		Expect(match).To(BeTrue(), "found 'Status'")
 		// we waited for container to exit, so this must contain `Exited`
 		Expect(StatusLine[0]).To(ContainSubstring("Exited"))
 	})
@@ -327,7 +325,7 @@ var _ = Describe("Podman ps", func() {
 		Expect(result).Should(Exit(0))
 		Expect(result.OutputToString()).To(Equal(cid))
 
-		// Query for an non-existing image using regex should not match anything
+		// Query for a non-existing image using regex should not match anything
 		result = podmanTest.Podman([]string{"ps", "-q", "--no-trunc", "-a", "--filter", "ancestor=^quai.io/libpod/alpi"})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(Exit(0))
@@ -375,7 +373,7 @@ var _ = Describe("Podman ps", func() {
 	})
 
 	It("podman ps filter by exited does not need all", func() {
-		ctr := podmanTest.Podman([]string{"run", "-t", "-i", ALPINE, "ls", "/"})
+		ctr := podmanTest.Podman([]string{"run", ALPINE, "ls", "/"})
 		ctr.WaitWithDefaultTimeout()
 		Expect(ctr).Should(Exit(0))
 
@@ -392,7 +390,7 @@ var _ = Describe("Podman ps", func() {
 
 	It("podman filter without status does not find non-running", func() {
 		ctrName := "aContainerName"
-		ctr := podmanTest.Podman([]string{"create", "--name", ctrName, "-t", "-i", ALPINE, "ls", "/"})
+		ctr := podmanTest.Podman([]string{"create", "--name", ctrName, ALPINE, "ls", "/"})
 		ctr.WaitWithDefaultTimeout()
 		Expect(ctr).Should(Exit(0))
 
@@ -420,7 +418,7 @@ var _ = Describe("Podman ps", func() {
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
-		session = podmanTest.Podman([]string{"create", "-t", ALPINE, "top"})
+		session = podmanTest.Podman([]string{"create", ALPINE, "top"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
@@ -435,7 +433,7 @@ var _ = Describe("Podman ps", func() {
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
-		session = podmanTest.Podman([]string{"create", "-t", ALPINE, "top"})
+		session = podmanTest.Podman([]string{"create", ALPINE, "top"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
@@ -460,7 +458,7 @@ var _ = Describe("Podman ps", func() {
 			size1, _ := units.FromHumanSize(matches1[1])
 			size2, _ := units.FromHumanSize(matches2[1])
 			return size1 < size2
-		})).To(BeTrue())
+		})).To(BeTrue(), "slice is sorted")
 
 	})
 
@@ -480,7 +478,7 @@ var _ = Describe("Podman ps", func() {
 		Expect(session.OutputToString()).ToNot(ContainSubstring("COMMAND"))
 
 		sortedArr := session.OutputToStringArray()
-		Expect(sort.SliceIsSorted(sortedArr, func(i, j int) bool { return sortedArr[i] < sortedArr[j] })).To(BeTrue())
+		Expect(sort.SliceIsSorted(sortedArr, func(i, j int) bool { return sortedArr[i] < sortedArr[j] })).To(BeTrue(), "slice is sorted")
 	})
 
 	It("podman --pod", func() {

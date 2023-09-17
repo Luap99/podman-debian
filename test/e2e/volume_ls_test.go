@@ -2,35 +2,17 @@ package integration
 
 import (
 	"fmt"
-	"os"
 
 	. "github.com/containers/podman/v4/test/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 )
 
 var _ = Describe("Podman volume ls", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
-
-	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
 
 	AfterEach(func() {
 		podmanTest.CleanupVolume()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-
 	})
 
 	It("podman ls volume", func() {
@@ -39,6 +21,17 @@ var _ = Describe("Podman volume ls", func() {
 		Expect(session).Should(Exit(0))
 
 		session = podmanTest.Podman([]string{"volume", "ls"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToStringArray()).To(HaveLen(2))
+	})
+
+	It("podman ls volume filter with comma label", func() {
+		session := podmanTest.Podman([]string{"volume", "create", "--label", "test=with,comma", "myvol3"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+
+		session = podmanTest.Podman([]string{"volume", "ls", "--filter", "label=test=with,comma"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(session.OutputToStringArray()).To(HaveLen(2))
@@ -187,32 +180,35 @@ var _ = Describe("Podman volume ls", func() {
 	})
 
 	It("podman ls volume with multiple --filter flag", func() {
-		session := podmanTest.Podman([]string{"volume", "create", "--label", "foo=bar", "myvol"})
-		volName := session.OutputToString()
+		session := podmanTest.Podman([]string{"volume", "create", "--label", "a=b", "--label", "b=c", "vol1"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
-		session = podmanTest.Podman([]string{"volume", "create", "--label", "foo2=bar2", "anothervol"})
-		anotherVol := session.OutputToString()
+		vol1Name := session.OutputToString()
+
+		session = podmanTest.Podman([]string{"volume", "create", "--label", "b=c", "--label", "a=b", "vol2"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
-		session = podmanTest.Podman([]string{"volume", "create"})
+		vol2Name := session.OutputToString()
+
+		session = podmanTest.Podman([]string{"volume", "create", "--label", "b=c", "--label", "c=d", "vol3"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 
-		session = podmanTest.Podman([]string{"volume", "ls", "--filter", "label=foo", "--filter", "label=foo2"})
-		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
-		Expect(session.OutputToStringArray()).To(HaveLen(3))
-		Expect(session.OutputToStringArray()[1]).To(ContainSubstring(volName))
-		Expect(session.OutputToStringArray()[2]).To(ContainSubstring(anotherVol))
+		vol3Name := session.OutputToString()
 
-		session = podmanTest.Podman([]string{"volume", "ls", "--filter", "label=foo=bar", "--filter", "label=foo2=bar2"})
+		session = podmanTest.Podman([]string{"volume", "ls", "-q", "--filter", "label=a=b", "--filter", "label=b=c"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
-		Expect(session.OutputToStringArray()).To(HaveLen(3))
-		Expect(session.OutputToStringArray()[1]).To(ContainSubstring(volName))
-		Expect(session.OutputToStringArray()[2]).To(ContainSubstring(anotherVol))
+		Expect(session.OutputToStringArray()).To(HaveLen(2))
+		Expect(session.OutputToStringArray()[0]).To(Equal(vol1Name))
+		Expect(session.OutputToStringArray()[1]).To(Equal(vol2Name))
+
+		session = podmanTest.Podman([]string{"volume", "ls", "-q", "--filter", "label=c=d", "--filter", "label=b=c"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToStringArray()).To(HaveLen(1))
+		Expect(session.OutputToStringArray()[0]).To(Equal(vol3Name))
 	})
 })

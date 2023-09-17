@@ -5,6 +5,7 @@
 
 load helpers
 
+# bats test_tags=distro-integration
 @test "podman exec - basic test" {
     rand_filename=$(random_string 20)
     rand_content=$(random_string 50)
@@ -22,13 +23,20 @@ load helpers
 
     # Specially defined situations: exec a dir, or no such command.
     # We don't check the full error message because runc & crun differ.
-    run_podman 126 exec $cid /etc
-    is "$output" ".*permission denied"  "podman exec /etc"
+    #
+    # UPDATE 2023-07-17 runc on RHEL8 (but not Debian) now says "is a dir"
+    # and exits 255 instead of 126 as it does everywhere else.
+    run_podman '?' exec $cid /etc
+    is "$output" ".*\(permission denied\|is a directory\)"  \
+       "podman exec /etc"
+    assert "$status" -ne 0 "exit status from 'exec /etc'"
     run_podman 127 exec $cid /no/such/command
     is "$output" ".*such file or dir"   "podman exec /no/such/command"
 
-    # Done
-    run_podman exec $cid rm -f /$rand_filename
+    # Done. Tell the container to stop.
+    # The '-d' is because container exit is racy: the exec process itself
+    # could get caught and killed by cleanup, causing this step to exit 137
+    run_podman exec -d $cid rm -f /$rand_filename
 
     run_podman wait $cid
     is "$output" "0"   "output from podman wait (container exit code)"
@@ -36,6 +44,7 @@ load helpers
     run_podman rm $cid
 }
 
+# bats test_tags=distro-integration
 @test "podman exec - leak check" {
     skip_if_remote "test is meaningless over remote"
 
@@ -59,7 +68,7 @@ load helpers
 # Issue #4785 - piping to exec statement - fixed in #4818
 # Issue #5046 - piping to exec truncates results (actually a conmon issue)
 @test "podman exec - cat from stdin" {
-    run_podman run -d $IMAGE sh -c 'while [ ! -e /stop ]; do sleep 0.1;done'
+    run_podman run -d $IMAGE top
     cid="$output"
 
     echo_string=$(random_string 20)
@@ -80,26 +89,21 @@ load helpers
     is "${output% *}" "$expect " "SHA of file in container"
 
     # Clean up
-    run_podman exec $cid touch /stop
-    run_podman wait $cid
-    run_podman rm $cid
+    run_podman rm -f -t0 $cid
 }
 
 # #6829 : add username to /etc/passwd inside container if --userns=keep-id
 @test "podman exec - with keep-id" {
     skip_if_not_rootless "--userns=keep-id only works in rootless mode"
     # Multiple --userns options confirm command-line override (last one wins)
-    run_podman run -d --userns=private --userns=keep-id $IMAGE sh -c \
-               "echo READY;while [ ! -f /tmp/stop ]; do sleep 1; done"
+    run_podman run -d --userns=private --userns=keep-id $IMAGE sh -c 'echo READY;top'
     cid="$output"
     wait_for_ready $cid
 
     run_podman exec $cid id -un
     is "$output" "$(id -un)" "container is running as current user"
 
-    run_podman exec --user=$(id -un) $cid touch /tmp/stop
-    run_podman wait $cid
-    run_podman rm $cid
+    run_podman rm -f -t0 $cid
 }
 
 # #11496: podman-remote loses output
@@ -128,6 +132,20 @@ load helpers
 
     # Clean up
     run_podman rm -t 0 -f $cid
+}
+
+@test "podman exec --wait" {
+    skip_if_remote "test is meaningless over remote"
+
+    # wait on bogus container
+    run_podman 125 exec --wait 5 "bogus_container" echo hello
+    assert "$output" = "Error: timed out waiting for container: bogus_container"
+
+    run_podman create --name "wait_container" $IMAGE top
+    run_podman 255 exec --wait 5 "wait_container" echo hello
+    assert "$output" = "Error: can only create exec sessions on running containers: container state improper"
+
+    run_podman rm -f wait_container
 }
 
 # vim: filetype=sh

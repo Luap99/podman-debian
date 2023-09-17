@@ -121,7 +121,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		OSVersion               string   `schema:"osversion"`
 		OutputFormat            string   `schema:"outputformat"`
 		Platform                []string `schema:"platform"`
-		Pull                    bool     `schema:"pull"`
+		Pull                    string   `schema:"pull"`
 		PullPolicy              string   `schema:"pullpolicy"`
 		Quiet                   bool     `schema:"q"`
 		Registry                string   `schema:"registry"`
@@ -221,9 +221,11 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 			var m = []string{}
 			if err := json.Unmarshal([]byte(query.Dockerfile), &m); err != nil {
 				// it's not json, assume just a string
-				m = []string{filepath.Join(contextDirectory, query.Dockerfile)}
+				m = []string{query.Dockerfile}
 			}
-			containerFiles = m
+			for _, containerfile := range m {
+				containerFiles = append(containerFiles, filepath.Join(contextDirectory, filepath.Clean(filepath.FromSlash(containerfile))))
+			}
 			dockerFileSet = true
 		}
 	}
@@ -578,8 +580,19 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		pullPolicy = buildahDefine.PolicyMap[query.PullPolicy]
 	} else {
 		if _, found := r.URL.Query()["pull"]; found {
-			if query.Pull {
+			switch strings.ToLower(query.Pull) {
+			case "0", "f", "false":
+				pullPolicy = buildahDefine.PullIfMissing
+			case "on", "1", "t", "true":
 				pullPolicy = buildahDefine.PullAlways
+			default:
+				policyFromMap, foundPolicy := buildahDefine.PolicyMap[query.Pull]
+				if foundPolicy {
+					pullPolicy = policyFromMap
+				} else {
+					utils.BadRequest(w, "pull", query.Pull, fmt.Errorf("invalid pull policy: %q", query.Pull))
+					return
+				}
 			}
 		}
 	}
