@@ -66,7 +66,7 @@ Index: libpod/pkg/domain/infra/abi/images.go
 ===================================================================
 --- libpod.orig/pkg/domain/infra/abi/images.go
 +++ libpod/pkg/domain/infra/abi/images.go
-@@ -306,7 +306,7 @@ func (ir *ImageEngine) Push(ctx context.
+@@ -307,7 +307,7 @@ func (ir *ImageEngine) Push(ctx context.
  	pushOptions.RemoveSignatures = options.RemoveSignatures
  	pushOptions.PolicyAllowStorage = true
  	pushOptions.SignaturePolicyPath = options.SignaturePolicy
@@ -79,7 +79,7 @@ Index: libpod/pkg/domain/infra/abi/manifest.go
 ===================================================================
 --- libpod.orig/pkg/domain/infra/abi/manifest.go
 +++ libpod/pkg/domain/infra/abi/manifest.go
-@@ -333,7 +333,7 @@ func (ir *ImageEngine) ManifestPush(ctx
+@@ -337,7 +337,7 @@ func (ir *ImageEngine) ManifestPush(ctx
  	pushOptions.ImageListSelection = cp.CopySpecificImages
  	pushOptions.ManifestMIMEType = manifestType
  	pushOptions.RemoveSignatures = opts.RemoveSignatures
@@ -88,20 +88,6 @@ Index: libpod/pkg/domain/infra/abi/manifest.go
  	pushOptions.SignBy = opts.SignBy
  	pushOptions.SignPassphrase = opts.SignPassphrase
  	pushOptions.SignBySigstorePrivateKeyFile = opts.SignBySigstorePrivateKeyFile
-Index: libpod/pkg/domain/infra/tunnel/images.go
-===================================================================
---- libpod.orig/pkg/domain/infra/tunnel/images.go
-+++ libpod/pkg/domain/infra/tunnel/images.go
-@@ -244,9 +244,6 @@ func (ir *ImageEngine) Import(ctx contex
- }
- 
- func (ir *ImageEngine) Push(ctx context.Context, source string, destination string, opts entities.ImagePushOptions) error {
--	if opts.Signers != nil {
--		return fmt.Errorf("forwarding Signers is not supported for remote clients")
--	}
- 	if opts.OciEncryptConfig != nil {
- 		return fmt.Errorf("encryption is not supported for remote clients")
- 	}
 Index: libpod/pkg/domain/infra/tunnel/manifest.go
 ===================================================================
 --- libpod.orig/pkg/domain/infra/tunnel/manifest.go
@@ -128,7 +114,7 @@ Index: libpod/pkg/domain/entities/images.go
  	"github.com/containers/image/v5/types"
  	encconfig "github.com/containers/ocicrypt/config"
  	"github.com/containers/podman/v4/pkg/inspect"
-@@ -214,7 +213,7 @@ type ImagePushOptions struct {
+@@ -211,7 +210,7 @@ type ImagePushOptions struct {
  	// Signers, if non-empty, asks for signatures to be added during the copy
  	// using the provided signers.
  	// Rejected for remote calls.
@@ -198,3 +184,17 @@ Index: libpod/pkg/trust/trust_test.go
  package trust
  
  import (
+Index: libpod/pkg/domain/infra/tunnel/images.go
+===================================================================
+--- libpod.orig/pkg/domain/infra/tunnel/images.go
++++ libpod/pkg/domain/infra/tunnel/images.go
+@@ -244,9 +244,6 @@ func (ir *ImageEngine) Import(ctx contex
+ }
+ 
+ func (ir *ImageEngine) Push(ctx context.Context, source string, destination string, opts entities.ImagePushOptions) (*entities.ImagePushReport, error) {
+-	if opts.Signers != nil {
+-		return nil, fmt.Errorf("forwarding Signers is not supported for remote clients")
+-	}
+ 	if opts.OciEncryptConfig != nil {
+ 		return nil, fmt.Errorf("encryption is not supported for remote clients")
+ 	}
