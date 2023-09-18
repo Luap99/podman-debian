@@ -1,0 +1,37 @@
+libpod (4.6.2-1) unstable; urgency=medium
+
+  * Podman 4.6 changes the default storage driver from vfs to overlay.
+    The overlay driver has been available for some time, but it had to be
+    enabled explicitly in the Debian version of podman. The overlay driver
+    is generally much faster and uses less disk space than the vfs driver.
+
+    To take advantage of overlay, it's necessary to delete the local
+    container storage, destroying any containers you may currently
+    have. Make sure to save or export any images, containers and volumes
+    before doing so, or you will lose them!
+
+    Some helpful commands:
+
+    # save the filesystem of a container
+    podman export -o important-container.tar important_container
+    # save a volume
+    podman volume export -o important-volume.tar important_volume
+    # save all container images
+    podman save -o images.tar
+
+    # delete ~/.local/share/containers (!!!)
+
+    # check that podman is using the overlay driver (!)
+    podman info | grep graphDriverName
+
+    # re-import all container images
+    podman load -i images.tar
+    # re-import a saved container filesystem as a container image
+    podman import important-container.tar
+    # re-import a volume
+    podman volume import important_volume important-volume.tar
+
+    Notes gracefully provided by Gregor Riepl <onitake@gmail.com>
+
+ -- Reinhard Tartler <siretart@tauware.de>  Mon, 18 Sep 2023 17:43:52 -0400
+
