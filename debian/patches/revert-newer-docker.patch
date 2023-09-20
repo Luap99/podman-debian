@@ -13,11 +13,11 @@ Date:   Wed Jan 25 19:22:41 2023 +0100
     
     Signed-off-by: Miloslav Trmač <mitr@redhat.com>
 
-diff --git a/pkg/api/handlers/compat/system.go b/pkg/api/handlers/compat/system.go
-index 23f116d16..64f184643 100644
---- b/pkg/api/handlers/compat/system.go
-+++ a/pkg/api/handlers/compat/system.go
-@@ -11,7 +11,6 @@
+Index: libpod/pkg/api/handlers/compat/system.go
+===================================================================
+--- libpod.orig/pkg/api/handlers/compat/system.go
++++ libpod/pkg/api/handlers/compat/system.go
+@@ -11,7 +11,6 @@ import (
  	"github.com/containers/podman/v4/pkg/domain/entities"
  	"github.com/containers/podman/v4/pkg/domain/infra/abi"
  	docker "github.com/docker/docker/api/types"
@@ -25,7 +25,7 @@ index 23f116d16..64f184643 100644
  )
  
  func GetDiskUsage(w http.ResponseWriter, r *http.Request) {
-@@ -65,9 +64,9 @@
+@@ -65,9 +64,9 @@ func GetDiskUsage(w http.ResponseWriter,
  		ctnrs[i] = &t
  	}
  
@@ -37,7 +37,7 @@ index 23f116d16..64f184643 100644
  			CreatedAt:  "",
  			Driver:     "",
  			Labels:     map[string]string{},
-@@ -76,7 +75,7 @@
+@@ -76,7 +75,7 @@ func GetDiskUsage(w http.ResponseWriter,
  			Options:    nil,
  			Scope:      "local",
  			Status:     nil,
@@ -46,11 +46,11 @@ index 23f116d16..64f184643 100644
  				RefCount: int64(o.Links),
  				Size:     o.Size,
  			},
-diff --git a/pkg/api/handlers/compat/volumes.go b/pkg/api/handlers/compat/volumes.go
-index fe6ae36aa..b31a1bb75 100644
---- b/pkg/api/handlers/compat/volumes.go
-+++ a/pkg/api/handlers/compat/volumes.go
-@@ -52,14 +52,14 @@
+Index: libpod/pkg/api/handlers/compat/volumes.go
+===================================================================
+--- libpod.orig/pkg/api/handlers/compat/volumes.go
++++ libpod/pkg/api/handlers/compat/volumes.go
+@@ -56,14 +56,14 @@ func ListVolumes(w http.ResponseWriter,
  		utils.InternalServerError(w, err)
  		return
  	}
@@ -67,7 +67,7 @@ index fe6ae36aa..b31a1bb75 100644
  			Name:       v.Name(),
  			Driver:     v.Driver(),
  			Mountpoint: mp,
-@@ -70,7 +70,7 @@
+@@ -74,7 +74,7 @@ func ListVolumes(w http.ResponseWriter,
  		}
  		volumeConfigs = append(volumeConfigs, &config)
  	}
@@ -76,7 +76,7 @@ index fe6ae36aa..b31a1bb75 100644
  		Volumes:  volumeConfigs,
  		Warnings: []string{},
  	}
-@@ -91,7 +91,7 @@
+@@ -95,7 +95,7 @@ func CreateVolume(w http.ResponseWriter,
  		return
  	}
  	// decode params from body
@@ -85,7 +85,7 @@ index fe6ae36aa..b31a1bb75 100644
  	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
  		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("Decode(): %w", err))
  		return
-@@ -118,7 +118,7 @@
+@@ -122,7 +122,7 @@ func CreateVolume(w http.ResponseWriter,
  			utils.InternalServerError(w, err)
  			return
  		}
@@ -94,7 +94,7 @@ index fe6ae36aa..b31a1bb75 100644
  			CreatedAt:  existingVolume.CreatedTime().Format(time.RFC3339),
  			Driver:     existingVolume.Driver(),
  			Labels:     existingVolume.Labels(),
-@@ -163,7 +163,7 @@
+@@ -167,7 +167,7 @@ func CreateVolume(w http.ResponseWriter,
  		utils.InternalServerError(w, err)
  		return
  	}
@@ -103,7 +103,7 @@ index fe6ae36aa..b31a1bb75 100644
  		Name:       config.Name,
  		Driver:     config.Driver,
  		Mountpoint: mp,
-@@ -193,7 +193,7 @@
+@@ -197,7 +197,7 @@ func InspectVolume(w http.ResponseWriter
  		utils.InternalServerError(w, err)
  		return
  	}
@@ -112,11 +112,11 @@ index fe6ae36aa..b31a1bb75 100644
  		Name:       vol.Name(),
  		Driver:     vol.Driver(),
  		Mountpoint: mp,
-diff --git a/pkg/api/handlers/swagger/responses.go b/pkg/api/handlers/swagger/responses.go
-index d97bde6dd..a1175fec9 100644
---- b/pkg/api/handlers/swagger/responses.go
-+++ a/pkg/api/handlers/swagger/responses.go
-@@ -240,7 +240,7 @@
+Index: libpod/pkg/api/handlers/swagger/responses.go
+===================================================================
+--- libpod.orig/pkg/api/handlers/swagger/responses.go
++++ libpod/pkg/api/handlers/swagger/responses.go
+@@ -240,7 +240,7 @@ type containersList struct {
  // swagger:response
  type volumeInspect struct {
  	// in:body
@@ -125,7 +125,7 @@ index d97bde6dd..a1175fec9 100644
  }
  
  // Volume prune
-@@ -254,7 +254,7 @@
+@@ -254,7 +254,7 @@ type volumePruneResponse struct {
  // swagger:response
  type volumeList struct {
  	// in:body
@@ -134,10 +134,10 @@ index d97bde6dd..a1175fec9 100644
  }
  
  // Volume list
-diff --git a/test/apiv2/45-system.at b/test/apiv2/45-system.at
-index 04e743537..42a2f146f 100644
---- b/test/apiv2/45-system.at
-+++ a/test/apiv2/45-system.at
+Index: libpod/test/apiv2/45-system.at
+===================================================================
+--- libpod.orig/test/apiv2/45-system.at
++++ libpod/test/apiv2/45-system.at
 @@ -7,7 +7,7 @@
  t POST 'libpod/system/prune?volumes=true&all=true' params='' 200
  
