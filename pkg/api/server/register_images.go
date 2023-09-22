@@ -546,8 +546,8 @@ func (s *APIServer) registerImagesHandlers(r *mux.Router) error {
 	//      (As of version 1.xx)
 	//  - in: query
 	//    name: pull
-	//    type: string
-	//    default:
+	//    type: boolean
+	//    default: false
 	//    description: |
 	//      Attempt to pull the image even if an older image exists locally
 	//      (As of version 1.xx)
@@ -725,6 +725,11 @@ func (s *APIServer) registerImagesHandlers(r *mux.Router) error {
 	//    name: destination
 	//    type: string
 	//    description: Allows for pushing the image to a different destination than the image refers to.
+	//  - in: query
+	//    name: forceCompressionFormat
+	//    description: Enforce compressing the layers with the specified --compression and do not reuse differently compressed blobs on the registry.
+	//    type: boolean
+	//    default: false
 	//  - in: query
 	//    name: tlsVerify
 	//    description: Require TLS verification.
@@ -1453,8 +1458,8 @@ func (s *APIServer) registerImagesHandlers(r *mux.Router) error {
 	//      (As of version 1.xx)
 	//  - in: query
 	//    name: pull
-	//    type: string
-	//    default:
+	//    type: boolean
+	//    default: false
 	//    description: |
 	//      Attempt to pull the image even if an older image exists locally
 	//      (As of version 1.xx)
@@ -1546,6 +1551,12 @@ func (s *APIServer) registerImagesHandlers(r *mux.Router) error {
 	//    description: |
 	//      JSON map of key, value pairs to set as labels on the new image
 	//      (As of version 1.xx)
+	//  - in: query
+	//    name: layerLabel
+	//    description: Add an intermediate image *label* (e.g. label=*value*) to the intermediate image metadata.
+	//    type: array
+	//    items:
+	//      type: string
 	//  - in: query
 	//    name: layers
 	//    type: boolean

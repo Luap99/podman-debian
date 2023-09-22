@@ -8,7 +8,6 @@ import time
 from typing import IO, List, Optional
 
 from docker import errors
-from docker.errors import BuildError
 from docker.models.containers import Container
 from docker.models.images import Image
 from docker.models.volumes import Volume
@@ -240,6 +239,26 @@ class TestContainers(common.DockerTestCase):
         ret, _ = ctr.exec_run(["stat", "/workspace/scratch/test"])
         self.assertEqual(ret, 0, "Working directory created if it doesn't exist")
 
+    def test_build_pull(self):
+        dockerfile = (
+            b"FROM quay.io/libpod/alpine:latest\n"
+            b"USER 1000:1000\n"
+        )
+        img: Image
+        img, logs = self.docker.images.build(fileobj=io.BytesIO(dockerfile), quiet=False, pull=True)
+        has_tried_pull = False
+        for e in logs:
+            if "stream" in e and "trying to pull" in e["stream"].lower():
+                has_tried_pull = True
+        self.assertTrue(has_tried_pull, "the build process has not tried to pull the base image")
+
+        img, logs = self.docker.images.build(fileobj=io.BytesIO(dockerfile), quiet=False, pull=False)
+        has_tried_pull = False
+        for e in logs:
+            if "stream" in e and "trying to pull" in e["stream"].lower():
+                has_tried_pull = True
+        self.assertFalse(has_tried_pull, "the build process has tried tried to pull the base image")
+
     def test_mount_rw_by_default(self):
         ctr: Optional[Container] = None
         vol: Optional[Volume] = None
@@ -283,48 +302,3 @@ class TestContainers(common.DockerTestCase):
         finally:
             ctr.stop()
             ctr.remove(force=True)
-
-    def test_build_pull_true(self):
-        dockerfile = (
-            b"FROM quay.io/libpod/alpine:latest\n"
-        )
-        img: Image
-        img, logs = self.docker.images.build(fileobj=io.BytesIO(dockerfile), quiet=False, pull=True)
-        has_tried_pull = False
-        for e in logs:
-            if "stream" in e and "trying to pull" in e["stream"].lower():
-                has_tried_pull = True
-        self.assertTrue(has_tried_pull, "the build process has not tried to pull the base image")
-
-    def test_build_pull_one(self):
-        dockerfile = (
-            b"FROM quay.io/libpod/alpine:latest\n"
-        )
-        img: Image
-        img, logs = self.docker.images.build(fileobj=io.BytesIO(dockerfile), quiet=False, pull=1)
-        has_tried_pull = False
-        for e in logs:
-            if "stream" in e and "trying to pull" in e["stream"].lower():
-                has_tried_pull = True
-        self.assertTrue(has_tried_pull, "the build process has not tried to pull the base image")
-
-    def test_build_pull_false(self):
-        dockerfile = (
-            b"FROM quay.io/libpod/alpine:latest\n"
-        )
-        img, logs = self.docker.images.build(fileobj=io.BytesIO(dockerfile), quiet=False, pull=False)
-        has_tried_pull = False
-        for e in logs:
-            if "stream" in e and "trying to pull" in e["stream"].lower():
-                has_tried_pull = True
-        self.assertFalse(has_tried_pull, "the build process has tried tried to pull the base image")
-
-    def test_build_pull_never(self):
-        try:
-            dockerfile = (
-                b"FROM quay.io/libpod/does-not-exist:latest\n"
-            )
-            _, _ = self.docker.images.build(fileobj=io.BytesIO(dockerfile), quiet=False, pull="never")
-            self.fail("this line should not have been reached")
-        except BuildError as e:
-            self.assertTrue("image not known" in e.msg, "the exception should have been caused by missing base image")

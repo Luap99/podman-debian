@@ -13,7 +13,7 @@ Note: **N/A** means that the option cannot be supported in a single-node Podman 
 | imagePullSecrets                                    | no      |
 | enableServiceLinks                                  | no      |
 | os\.name                                            | no      |
-| volumes                                             | no      |
+| volumes                                             | ✅      |
 | nodeSelector                                        | N/A     |
 | nodeName                                            | N/A     |
 | affinity\.nodeAffinity                              | N/A     |
@@ -33,7 +33,7 @@ Note: **N/A** means that the option cannot be supported in a single-node Podman 
 | topologySpreadConstraints\.labelSelector            | N/A     |
 | topologySpreadConstraints\.minDomains               | N/A     |
 | restartPolicy                                       | ✅      |
-| terminationGracePeriod                              | no      |
+| terminationGracePeriodSeconds                       | ✅      |
 | activeDeadlineSeconds                               | no      |
 | readinessGates\.conditionType                       | no      |
 | hostname                                            | ✅      |
@@ -64,8 +64,8 @@ Note: **N/A** means that the option cannot be supported in a single-node Podman 
 | securityContext\.seLinuxOptions\.role               | ✅      |
 | securityContext\.seLinuxOptions\.type               | ✅      |
 | securityContext\.seLinuxOptions\.user               | ✅      |
-| securityContext\.sysctls\.name                      | no      |
-| securityContext\.sysctls\.value                     | no      |
+| securityContext\.sysctls\.name                      | ✅      |
+| securityContext\.sysctls\.value                     | ✅      |
 | securityContext\.windowsOptions\.gmsaCredentialSpec | no      |
 | securityContext\.windowsOptions\.hostProcess        | no      |
 | securityContext\.windowsOptions\.runAsUserName      | no      |
@@ -121,7 +121,7 @@ Note: **N/A** means that the option cannot be supported in a single-node Podman 
 | securityContext\.runAsNonRoot                       | no      |
 | securityContext\.runAsGroup                         | ✅      |
 | securityContext\.readOnlyRootFilesystem             | ✅      |
-| securityContext\.procMount                          | no      |
+| securityContext\.procMount                          | ✅      |
 | securityContext\.privileged                         | ✅      |
 | securityContext\.allowPrivilegeEscalation           | ✅      |
 | securityContext\.capabilities\.add                  | ✅      |
@@ -173,3 +173,15 @@ Note: **N/A** means that the option cannot be supported in a single-node Podman 
 | revisionHistoryLimit                    | no                                                    |
 | progressDeadlineSeconds                 | no                                                    |
 | paused                                  | no                                                    |
+
+## DaemonSet Fields
+
+| Field                                   | Support                                               |
+|-----------------------------------------|-------------------------------------------------------|
+| selector                                | ✅                                                    |
+| template                                | ✅                                                    |
+| minReadySeconds                         | no                                                    |
+| strategy\.type                          | no                                                    |
+| strategy\.rollingUpdate\.maxSurge       | no                                                    |
+| strategy\.rollingUpdate\.maxUnavailable | no                                                    |
+| revisionHistoryLimit                    | no                                                    |

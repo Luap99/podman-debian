@@ -4,6 +4,8 @@
 #
 
 load helpers
+load helpers.network
+load helpers.registry
 
 # Shared throughout this module: PID of socat process, and path to its log
 _SOCAT_PID=
@@ -124,16 +126,15 @@ function _assert_mainpid_is_conmon() {
     run_podman logs sdnotify_conmon_c
     is "$output" "READY" "\$NOTIFY_SOCKET in container"
 
-    # The 'echo's help us debug failed runs
-    wait_for_file $_SOCAT_LOG
-    run cat $_SOCAT_LOG
-    echo "socat log:"
-    echo "$output"
+    # loop-wait for the final READY line
+    wait_for_file_content $_SOCAT_LOG "READY=1"
 
-    is "$output" "MAINPID=$mainPID
+    # ...and confirm the entire file contents
+    logcontents="$(< $_SOCAT_LOG)"
+    assert "$logcontents" = "MAINPID=$mainPID
 READY=1" "sdnotify sent MAINPID and READY"
 
-    _assert_mainpid_is_conmon "$output"
+    _assert_mainpid_is_conmon "$logcontents"
 
     # Done. Stop container, clean up.
     run_podman rm -f -t0 $cid
@@ -162,27 +163,76 @@ READY=1" "sdnotify sent MAINPID and READY"
 
     run_podman container inspect $cid --format "{{.State.ConmonPid}}"
     mainPID="$output"
-    # With container, READY=1 isn't necessarily the last message received;
-    # just look for it anywhere in received messages
-    run cat $_SOCAT_LOG
-    # The 'echo's help us debug failed runs
-    echo "socat log:"
-    echo "$output"
 
-    is "$output" "MAINPID=$mainPID" "Container is not ready yet, so we only know the main PID"
+    # Container does not send READY=1 until our signal. Until then, there must
+    # be exactly one line in the log
+    wait_for_file_content $_SOCAT_LOG "MAINPID=$mainPID"
+    # ...and that line must contain the expected PID, nothing more
+    assert "$(< $_SOCAT_LOG)" = "MAINPID=$mainPID" "Container has started, but must not indicate READY yet"
 
     # Done. Tell container to stop itself, and clean up
     run_podman kill -s USR1 $cid
     run_podman wait $cid
 
-    wait_for_file $_SOCAT_LOG
-    run cat $_SOCAT_LOG
-    echo "socat log:"
-    echo "$output"
-    is "$output" "MAINPID=$mainPID
-READY=1"
+    wait_for_file_content $_SOCAT_LOG "READY=1"
+    assert "$(< $_SOCAT_LOG)" = "MAINPID=$mainPID
+READY=1" "Container log after ready signal"
 
     run_podman rm $cid
+    _stop_socat
+}
+
+# These tests can fail in dev. environment because of SELinux.
+# quick fix: chcon -t container_runtime_exec_t ./bin/podman
+@test "sdnotify : healthy" {
+    export NOTIFY_SOCKET=$PODMAN_TMPDIR/container.sock
+    _start_socat
+
+    wait_file="$PODMAN_TMPDIR/$(random_string).wait_for_me"
+    run_podman 125 create --sdnotify=healthy $IMAGE
+    is "$output" "Error: invalid argument: sdnotify policy \"healthy\" requires a healthcheck to be set"
+
+    # Create a container with a simple `/bin/true` healthcheck that we need to
+    # run manually.
+    ctr=$(random_string)
+    run_podman create --name $ctr     \
+            --health-cmd=/bin/true    \
+            --health-retries=1        \
+            --health-interval=disable \
+            --sdnotify=healthy        \
+            $IMAGE sleep infinity
+
+    # Start the container in the background which will block until the
+    # container turned healthy.  After that, create the wait_file which
+    # indicates that start has returned.
+    (timeout --foreground -v --kill=5 20 $PODMAN start $ctr && touch $wait_file) &
+
+    run_podman wait --condition=running $ctr
+
+    # Make sure that the MAINPID is set but without the READY message.
+    run_podman container inspect $ctr --format "{{.State.ConmonPid}}"
+    mainPID="$output"
+
+    # Container does not send READY=1 until it runs a successful health check.
+    # Until then, there must be exactly one line in the log
+    wait_for_file_content $_SOCAT_LOG "MAINPID="
+    # ...and that line must contain the expected PID, nothing more
+    assert "$(< $_SOCAT_LOG)" = "MAINPID=$mainPID" "Container logs after start, prior to healthcheck run"
+
+    # Now run the healthcheck and look for the READY message.
+    run_podman healthcheck run $ctr
+    is "$output" "" "output from 'podman healthcheck run'"
+
+    # Wait for start to return.  At that point the READY message must have been
+    # sent.
+    wait_for_file_content $_SOCAT_LOG "READY=1"
+    assert "$(< $_SOCAT_LOG)" = "MAINPID=$mainPID
+READY=1" "Container log after healthcheck run"
+
+    run_podman container inspect  --format "{{.State.Status}}" $ctr
+    is "$output" "running" "make sure container is still running"
+
+    run_podman rm -f -t0 $ctr
     _stop_socat
 }
 
@@ -241,13 +291,8 @@ EOF
     is "$output" "ignore
 ignore"
 
-    # The 'echo's help us debug failed runs
-    run cat $_SOCAT_LOG
-    echo "socat log:"
-    echo "$output"
-
-    # The "with policies" test below checks the MAINPID.
-    is "$output" "MAINPID=$main_pid
+    wait_for_file_content $_SOCAT_LOG "READY=1"
+    assert "$(< $_SOCAT_LOG)" = "MAINPID=$main_pid
 READY=1" "sdnotify sent MAINPID and READY"
 
     _stop_socat
@@ -348,18 +393,14 @@ ignore"
     run_podman container wait $container_a
     run_podman container inspect $container_a --format "{{.State.ExitCode}}"
     is "$output" "0" "container exited cleanly after sending READY message"
-    wait_for_file $_SOCAT_LOG
-    # The 'echo's help us debug failed runs
-    run cat $_SOCAT_LOG
-    echo "socat log:"
-    echo "$output"
 
-    is "$output" "MAINPID=.*
+    wait_for_file_content $_SOCAT_LOG "READY=1"
+    assert "$(< $_SOCAT_LOG)" =~ "MAINPID=.*
 READY=1" "sdnotify sent MAINPID and READY"
 
     # Make sure that Podman is the service's MainPID
-    main_pid=$(awk -F= '{print $2}' <<< ${lines[0]})
-    is "$(</proc/$main_pid/comm)" "podman" "podman is the service mainPID"
+    main_pid=$(head -n1 $_SOCAT_LOG | awk -F= '{print $2}')
+    is "$(</proc/$main_pid/comm)" "podman" "podman is the service mainPID ($main_pid)"
     _stop_socat
 
     # Clean up pod and pause image
@@ -430,10 +471,12 @@ none | false | false | 0
                  podman_exit=0
             fi
             run_podman $podman_exit kube play --service-exit-code-propagation="$exit_code_prop" --service-container $fname
+            # Make sure that there are no error logs (e.g., #19715)
+            assert "$output" !~ "error msg="
             run_podman container inspect --format '{{.KubeExitCodePropagation}}' $service_container
             is "$output" "$exit_code_prop" "service container has the expected policy set in its annotations"
             run_podman wait $service_container
-            is "$output" "$exit_code" "service container reflects expected exit code $exit_code (policy: $policy, cmd1: $cmd1, cmd2: $cmd2)"
+            is "$output" "$exit_code" "service container exit code (propagation: $exit_code_prop, policy: $service_policy, cmds: $cmd1 + $cmd2)"
             run_podman kube down $fname
         done
     done < <(parse_table "$exit_tests")
@@ -443,5 +486,86 @@ none | false | false | 0
     is "$output" "Error: unsupported exit-code propagation \"bogus\"" "error on unsupported exit-code propagation"
 
     run_podman rmi $(pause_image)
+}
+
+@test "podman pull - EXTEND_TIMEOUT_USEC" {
+    # Make sure that Podman extends the start timeout via DBUS when running
+    # inside a systemd unit (i.e., with NOTIFY_SOCKET set).  Extending the
+    # timeout works by continuously sending EXTEND_TIMEOUT_USEC; Podman does
+    # this at most 10 times, adding up to ~5min.
+
+    image_on_local_registry=localhost:${PODMAN_LOGIN_REGISTRY_PORT}/name:tag
+    registry_flags="--tls-verify=false --creds ${PODMAN_LOGIN_USER}:${PODMAN_LOGIN_PASS}"
+    start_registry
+
+    export NOTIFY_SOCKET=$PODMAN_TMPDIR/notify.sock
+    _start_socat
+
+    run_podman push $registry_flags $IMAGE $image_on_local_registry
+    run_podman pull $registry_flags $image_on_local_registry
+    is "${lines[1]}" "Pulling image $image_on_local_registry inside systemd: setting pull timeout to 5m0s" "NOTIFY_SOCKET is passed to container"
+
+    run cat $_SOCAT_LOG
+    # The 'echo's help us debug failed runs
+    echo "socat log:"
+    echo "$output"
+    is "$output" "EXTEND_TIMEOUT_USEC=30000000"
+
+    run_podman rmi $image_on_local_registry
+    _stop_socat
+}
+
+@test "podman system service" {
+    # This test makes sure that podman-system-service uses the NOTIFY_SOCKET
+    # correctly and that it unsets it after sending the expected MAINPID and
+    # READY message by making sure no EXTEND_TIMEOUT_USEC is sent on pull.
+
+    # Start a local registry and pre-populate it with an image we'll pull later on.
+    image_on_local_registry=localhost:${PODMAN_LOGIN_REGISTRY_PORT}/name:tag
+    registry_flags="--tls-verify=false --creds ${PODMAN_LOGIN_USER}:${PODMAN_LOGIN_PASS}"
+    start_registry
+    run_podman push $registry_flags $IMAGE $image_on_local_registry
+
+    export NOTIFY_SOCKET=$PODMAN_TMPDIR/notify.sock
+    podman_socket="unix://$PODMAN_TMPDIR/podman.sock"
+    envfile=$PODMAN_TMPDIR/envfile
+    _start_socat
+
+    (timeout --foreground -v --kill=10 30 $PODMAN system service -t0 $podman_socket &)
+
+    wait_for_file $_SOCAT_LOG
+    local timeout=10
+    while [[ $timeout -gt 0 ]]; do
+        run cat $_SOCAT_LOG
+        # The 'echo's help us debug failed runs
+        echo "socat log:"
+        echo "$output"
+
+        if [[ "$output" =~ "READY=1" ]]; then
+            break
+        fi
+        timeout=$((timeout - 1))
+        assert $timeout -gt 0 "Timed out waiting for podman-system-service to send expected data over NOTIFY_SOCKET"
+        sleep 0.5
+    done
+
+    assert "$output" =~ "MAINPID=.*
+READY=1" "podman-system-service sends expected data over NOTIFY_SOCKET"
+    mainpid=${lines[0]:8}
+
+    # Now pull remotely and make sure that the service does _not_ extend the
+    # timeout; the NOTIFY_SOCKET should be unset at that point.
+    run_podman --url $podman_socket pull $registry_flags $image_on_local_registry
+
+    run cat $_SOCAT_LOG
+    # The 'echo's help us debug failed runs
+    echo "socat log:"
+    echo "$output"
+    assert "$output" !~ "EXTEND_TIMEOUT_USEC="
+
+    # Give the system-service 5sec to terminate before killing it.
+    /bin/kill --timeout 5000 KILL --signal TERM $mainpid
+    run_podman rmi $image_on_local_registry
+    _stop_socat
 }
 # vim: filetype=sh

@@ -49,6 +49,7 @@ of this document, it's not possible to override the behavior of `$CIRRUS_PR`.
 + swagger
 + *alt_build*
 + osx_alt_build
++ freebsd_alt_build
 + docker-py_test
 + *unit_test*
 + apiv2_test
@@ -84,6 +85,7 @@ of this document, it's not possible to override the behavior of `$CIRRUS_PR`.
 + validate
 + *alt_build*
 + osx_alt_build
++ freebsd_alt_build
 + test_image_build
 + meta
 + success
@@ -106,11 +108,12 @@ is removed.
 commit-change before Cirrus-CI will notice the draft-status update (i.e.
 pressing the re-run button **is not** good enough).
 
-### Intended Branch tasks (and Cirrus-cron jobs, except "multiarch"):
+### Intended Branch tasks (and Cirrus-cron jobs):
 + *build*
 + swagger
 + *alt_build*
 + osx_alt_build
++ freebsd_alt_build
 + *local_system_test*
 + *remote_system_test*
 + *rootless_remote_system_test*
@@ -119,16 +122,12 @@ pressing the re-run button **is not** good enough).
 + success
 + artifacts
 
-### Intended for "multiarch" Cirrus-Cron (always a branch):
-+ image_build
-+ meta
-+ success
-
 ### Intended for new Tag tasks:
 + *build*
 + swagger
 + *alt_build*
 + osx_alt_build
++ freebsd_alt_build
 + meta
 + success
 + artifacts

@@ -1,3 +1,6 @@
+//go:build !remote
+// +build !remote
+
 package generate
 
 import (
@@ -26,6 +29,15 @@ func setProcOpts(s *specgen.SpecGenerator, g *generate.Generator) {
 	for i := range g.Config.Mounts {
 		if g.Config.Mounts[i].Destination == "/proc" {
 			g.Config.Mounts[i].Options = s.ProcOpts
+			return
+		}
+	}
+}
+
+func setDevOptsReadOnly(g *generate.Generator) {
+	for i := range g.Config.Mounts {
+		if g.Config.Mounts[i].Destination == "/dev" {
+			g.Config.Mounts[i].Options = append(g.Config.Mounts[i].Options, "ro")
 			return
 		}
 	}
@@ -314,7 +326,11 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 	if s.OOMScoreAdj != nil {
 		g.SetProcessOOMScoreAdj(*s.OOMScoreAdj)
 	}
+
 	setProcOpts(s, &g)
+	if s.ReadOnlyFilesystem && !s.ReadWriteTmpfs {
+		setDevOptsReadOnly(&g)
+	}
 
 	return configSpec, nil
 }

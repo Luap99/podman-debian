@@ -44,7 +44,9 @@ For rootless containers, when administrators place Quadlet files in the
 Quadlet when the login session begins. If the administrator places a Quadlet
 file in the /etc/containers/systemd/users/${UID}/ directory, then only the
 user with the matching UID execute the Quadlet when the login
-session gets started.
+session gets started. For unit files placed in subdirectories within
+/etc/containers/systemd/user/${UID}/ and the other user unit search paths,
+Quadlet will recursively search and run the unit files present in these subdirectories.
 
 Note: When a Quadlet is starting, Podman often pulls one more container images which may take a considerable amount of time.
 Systemd defaults service start time to 90 seconds, or fails the service. Pre-pulling the image or extending
@@ -79,6 +81,30 @@ Currently, only the `Alias`, `WantedBy` and `RequiredBy` keys are supported.
 words `WantedBy=other.service`, not `WantedBy=other.container`. The same is
 true for other kinds of dependencies, too, like `After=other.service`.
 
+### Debugging unit files
+
+After placing the unit file in one of the unit search paths (mentioned above), you can start it with
+`systemctl start {--user}`. If it fails with "Failed to start example.service: Unit example.service not found.",
+then it is possible that you used incorrect syntax or you used an option from a newer version of Podman
+Quadlet and the generator failed to create a service file.
+
+View the generated files and/or error messages with:
+```
+/usr/lib/systemd/system-generators/podman-system-generator {--user} --dryrun
+```
+
+#### Debugging a limited set of unit files
+
+If you would like to debug a limited set of unit files, you can copy them to a separate directory and set the
+`QUADLET_UNIT_DIRS` environment variable to this directory when running the command below:
+
+```
+QUADLET_UNIT_DIRS=<Directory> /usr/lib/systemd/system-generators/podman-system-generator {--user} --dryrun
+```
+
+This will instruct Quadlet to look for units in this directory instead of the common ones and by
+that limit the output to only the units you are debugging.
+
 ## Container units [Container]
 
 Container units are named with a `.container` extension and contain a `[Container]` section describing
@@ -87,8 +113,9 @@ the container that is run as a service. The resulting service file contains a li
 options passed to Podman. However, some options also affect the details of how systemd is set up to run and
 interact with the container.
 
-By default, the Podman container has the same name as the unit, but with a `systemd-` prefix.
-I.e. a `$name.container` file creates a `$name.service` unit and a `systemd-$name` Podman container.
+By default, the Podman container has the same name as the unit, but with a `systemd-` prefix, i.e.
+a `$name.container` file creates a `$name.service` unit and a `systemd-$name` Podman container. The
+`ContainerName` option allows for overriding this default name with a user-provided one.
 
 There is only one required key, `Image`, which defines the container image the service runs.
 
@@ -98,9 +125,12 @@ Valid options for `[Container]` are listed below:
 |--------------------------------|------------------------------------------------------|
 | AddCapability=CAP              | --cap-add CAP                                        |
 | AddDevice=/dev/foo             | --device /dev/foo                                    |
-| Annotation="YXZ"               | --annotation "XYZ"                                   |
+| Annotation="XYZ"               | --annotation "XYZ"                                   |
 | AutoUpdate=registry            | --label "io.containers.autoupdate=registry"          |
 | ContainerName=name             | --name name                                          |
+| DNS=192.168.55.1               | --dns=192.168.55.1                                   |
+| DNSSearch=foo.com              | --dns-search=foo.com                                 |
+| DNSOption=ndots:1              | --dns-option=ndots:1                                 |
 | DropCapability=CAP             | --cap-drop=CAP                                       |
 | Environment=foo=bar            | --env foo=bar                                        |
 | EnvironmentFile=/tmp/env       | --env-file /tmp/env                                  |
@@ -114,22 +144,23 @@ Valid options for `[Container]` are listed below:
 | HealthRetries=5                | --health-retries=5                                   |
 | HealthStartPeriod=1m           | --health-start-period=period=1m                      |
 | HealthStartupCmd="command"     | --health-startup-cmd="command"                       |
-| HealthStartupInterval=1m       | --health-startup-interval=2m                         |
+| HealthStartupInterval=1m       | --health-startup-interval=1m                         |
 | HealthStartupRetries=8         | --health-startup-retries=8                           |
 | HealthStartupSuccess=2         | --health-startup-success=2                           |
 | HealthStartupTimeout=1m33s     | --health-startup-timeout=1m33s                       |
 | HealthTimeout=20s              | --health-timeout=20s                                 |
 | HostName=new-host-name         | --hostname="new-host-name"                           |
 | Image=ubi8                     | Image specification - ubi8                           |
-| IP=192.5.0.1                   | --ip 192.5.0.0                                       |
-| IP6=fd46:db93:aa76:ac37::10    | --ip6 2001:db8::1                                    |
-| Label="YXZ"                    | --label "XYZ"                                        |
+| IP=192.5.0.1                   | --ip 192.5.0.1                                       |
+| IP6=2001:db8::1                | --ip6 2001:db8::1                                    |
+| Label="XYZ"                    | --label "XYZ"                                        |
 | LogDriver=journald             | --log-driver journald                                |
 | Mount=type=...                 | --mount type=...                                     |
 | Network=host                   | --net host                                           |
 | NoNewPrivileges=true           | --security-opt no-new-privileges                     |
 | Rootfs=/var/lib/rootfs         | --rootfs /var/lib/rootfs                             |
 | Notify=true                    | --sdnotify container                                 |
+| PidsLimit=10000                | --pids-limit 10000                                   |
 | PodmanArgs=--add-host foobar   | --add-host foobar                                    |
 | PublishPort=50-59              | --publish 50-59                                      |
 | Pull=never                     | --pull=never                                         |
@@ -141,9 +172,11 @@ Valid options for `[Container]` are listed below:
 | SecurityLabelLevel=s0:c1,c2    | --security-opt label=level:s0:c1,c2                  |
 | SecurityLabelNested=true       | --security-opt label=nested                          |
 | SecurityLabelType=spc_t        | --security-opt label=type:spc_t                      |
+| ShmSize=100m                   | --shm-size=100m                                      |
 | Sysctl=name=value              | --sysctl=name=value                                  |
 | Timezone=local                 | --tz local                                           |
 | Tmpfs=/work                    | --tmpfs /work                                        |
+| Ulimit=nofile:1000:10000       | --ulimit nofile:1000:10000                           |
 | User=bin                       | --user bin                                           |
 | UserNS=keep-id:uid=200,gid=210 | --userns keep-id:uid=200,gid=210                     |
 | VolatileTmp=true               | --tmpfs /tmp                                         |
@@ -194,6 +227,24 @@ Indicates whether the container will be auto-updated ([podman-auto-update(1)](po
 The (optional) name of the Podman container. If this is not specified, the default value
 of `systemd-%N` is used, which is the same as the service name but with a `systemd-`
 prefix to avoid conflicts with user-managed containers.
+
+### `DNS=`
+
+Set network-scoped DNS resolver/nameserver for containers in this network.
+
+This key can be listed multiple times.
+
+### `DNSOption=`
+
+Set custom DNS options.
+
+This key can be listed multiple times.
+
+### `DNSSearch=`
+
+Set custom DNS search domains. Use **DNSSearch=.** to remove the search domain.
+
+This key can be listed multiple times.
 
 ### `DropCapability=`
 
@@ -369,7 +420,7 @@ setuid and file capabilities.
 
 The rootfs to use for the container. Rootfs points to a directory on the system that contains the content to be run within the container. This option conflicts with the `Image` option.
 
-The format of the rootfs is the same as when passed to `podman run --rootfs`, so it supports ovelay mounts as well.
+The format of the rootfs is the same as when passed to `podman run --rootfs`, so it supports overlay mounts as well.
 
 Note: On SELinux systems, the rootfs needs the correct label, which is by default unconfined_u:object_r:container_file_t:s0.
 
@@ -382,12 +433,17 @@ starts the child in the container. However, if the container application support
 `Notify` to true passes the notification details to the container allowing it to notify
 of startup on its own.
 
+### `PidsLimit=`
+
+Tune the container's pids limit.
+This is equivalent to the Podman `--pids-limit` option.
+
 ### `PodmanArgs=`
 
 This key contains a list of arguments passed directly to the end of the `podman run` command
 in the generated file (right before the image name in the command line). It can be used to
 access Podman features otherwise unsupported by the generator. Since the generator is unaware
-of what unexpected interactions can be caused by these arguments, is not recommended to use
+of what unexpected interactions can be caused by these arguments, it is not recommended to use
 this option.
 
 The format of this is a space separated list of arguments, which can optionally be individually
@@ -456,6 +512,12 @@ Set the label process type for the container processes.
 Use a Podman secret in the container either as a file or an environment variable.
 This is equivalent to the Podman `--secret` option and generally has the form `secret[,opt=opt ...]`
 
+### `ShmSize=`
+
+Size of /dev/shm.
+
+This is equivalent to the Podman `--shm-size` option and generally has the form `number[unit]`
+
 ### `Sysctl=`
 
 Configures namespaced kernel parameters for the container. The format is `Sysctl=name=value`.
@@ -477,6 +539,10 @@ This key can be listed multiple times.
 ### `Timezone=` (if unset uses system-configured default)
 
 The timezone to run the container in.
+
+### `Ulimit=`
+
+Ulimit options. Sets the ulimits values inside of the container.
 
 ### `User=`
 
@@ -526,21 +592,33 @@ There is only one required key, `Yaml`, which defines the path to the Kubernetes
 
 Valid options for `[Kube]` are listed below:
 
-| **[Kube] options**                  | **podman kube play equivalent**             |
-| ----------------------------------- | ------------------------------------------- |
-| ConfigMap=/tmp/config.map           | --config-map /tmp/config.map                |
-| LogDriver=journald                  | --log-driver journald                       |
-| Network=host                        | --net host                                  |
-| PodmanArgs=\-\-annotation=key=value | --annotation=key=value                      |
-| PublishPort=59-60                   | --publish=59-60                             |
-| UserNS=keep-id:uid=200,gid=210      | --userns keep-id:uid=200,gid=210            |
-| Yaml=/tmp/kube.yaml                 | podman kube play /tmp/kube.yaml             |
+| **[Kube] options**                  | **podman kube play equivalent**                                  |
+| ----------------------------------- | -----------------------------------------------------------------|
+| AutoUpdate=registry                 | --annotation "io.containers.autoupdate=registry"                 |
+| ConfigMap=/tmp/config.map           | --config-map /tmp/config.map                                     |
+| LogDriver=journald                  | --log-driver journald                                            |
+| Network=host                        | --net host                                                       |
+| PodmanArgs=\-\-annotation=key=value | --annotation=key=value                                           |
+| PublishPort=59-60                   | --publish=59-60                                                  |
+| SetWorkingDirectory=yaml            | Set `WorkingDirectory` of unit file to location of the YAML file |
+| UserNS=keep-id:uid=200,gid=210      | --userns keep-id:uid=200,gid=210                                 |
+| Yaml=/tmp/kube.yaml                 | podman kube play /tmp/kube.yaml                                  |
 
 Supported keys in the `[Kube]` section are:
 
+### `AutoUpdate=`
+
+Indicates whether containers will be auto-updated ([podman-auto-update(1)](podman-auto-update.1.md)). AutoUpdate can be specified multiple times. The following values are supported:
+
+* `registry`: Requires a fully-qualified image reference (e.g., quay.io/podman/stable:latest) to be used to create the container. This enforcement is necessary to know which images to actually check and pull. If an image ID was used, Podman does not know which image to check/pull anymore.
+
+* `local`: Tells Podman to compare the image a container is using to the image with its raw name in local storage. If an image is updated locally, Podman simply restarts the systemd unit executing the Kubernetes Quadlet.
+
+* `name/(local|registry)`: Tells Podman to perform the `local` or `registry` autoupdate on the specified container name.
+
 ### `ConfigMap=`
 
-Pass the Kubernetes ConfigMap YAML at path to `podman kube play` via the `--configmap` argument.
+Pass the Kubernetes ConfigMap YAML path to `podman kube play` via the `--configmap` argument.
 Unlike the `configmap` argument, the value may contain only one path but
 it may be absolute or relative to the location of the unit file.
 
@@ -607,6 +685,16 @@ entry from the unit file takes precedence
 
 This key can be listed multiple times.
 
+### `SetWorkingDirectory=`
+
+Set the `WorkingDirectory` field of the `Service` group of the Systemd service unit file.
+Used to allow `podman kube play` to correctly resolve relative paths.
+Supported values are `yaml` and `unit` to set the working directory to that of the YAML or Quadlet Unit file respectively.
+
+Alternatively, users can explicitly set the `WorkingDirectory` field of the `Service` group in the `.kube` file.
+Please note that if the `WorkingDirectory` field of the `Service` group is set,
+Quadlet will not set it even if `SetWorkingDirectory` is set
+
 ### `Unmask=`
 
 Specify the paths to unmask separated by a colon. unmask=ALL or /path/1:/path/2, or shell expanded paths (/proc/*):
@@ -632,27 +720,35 @@ Network files are named with a `.network` extension and contain a section `[Netw
 named Podman network. The generated service is a one-time command that ensures that the network
 exists on the host, creating it if needed.
 
-For a network file named `$NAME.network`, the generated Podman network is called `systemd-$NAME`,
-and the generated service file `$NAME-network.service`.
+By default, the Podman network has the same name as the unit, but with a `systemd-` prefix, i.e. for
+a network file named `$NAME.network`, the generated Podman network is called `systemd-$NAME`, and
+the generated service file is `$NAME-network.service`. The `NetworkName` option allows for
+overriding this default name with a user-provided one.
+
+Please note that stopping the corresponding service will not remove the podman network.
+In addition, updating an existing network is not supported.
+In order to update the network parameters you will first need to manually remove the podman network and then restart the service.
 
 Using network units allows containers to depend on networks being automatically pre-created. This is
 particularly interesting when using special options to control network creation, as Podman otherwise creates networks with the default options.
 
 Valid options for `[Network]` are listed below:
 
-| **[Network] options**            | **podman network create equivalent**   |
-| -----------------                | ------------------                     |
-| DisableDNS=true                  | --disable-dns                          |
-| Driver=bridge                    | --driver bridge                        |
-| Gateway=192.168.55.3             | --gateway 192.168.55.3                 |
-| Internal=true                    | --internal                             |
-| IPAMDriver=dhcp                  | --ipam-driver dhcp                     |
-| IPRange=192.168.55.128/25        | --ip-range 192.168.55.128/25           |
-| IPv6=true                        | --ipv6                                 |
-| Label="YXZ"                      | --label "XYZ"                          |
-| Options=isolate                  | --opt isolate                          |
-| PodmanArgs=--dns=192.168.55.1    | --dns=192.168.55.1                     |
-| Subnet=192.5.0.0/16              | --subnet 192.5.0.0/16                  |
+| **[Network] options**         | **podman network create equivalent** |
+|-------------------------------|--------------------------------------|
+| DisableDNS=true               | --disable-dns                        |
+| DNS=192.168.55.1              | --dns=192.168.55.1                   |
+| Driver=bridge                 | --driver bridge                      |
+| Gateway=192.168.55.3          | --gateway 192.168.55.3               |
+| Internal=true                 | --internal                           |
+| IPAMDriver=dhcp               | --ipam-driver dhcp                   |
+| IPRange=192.168.55.128/25     | --ip-range 192.168.55.128/25         |
+| IPv6=true                     | --ipv6                               |
+| Label="XYZ"                   | --label "XYZ"                        |
+| NetworkName=foo               | podman network create foo            |
+| Options=isolate               | --opt isolate                        |
+| PodmanArgs=--dns=192.168.55.1 | --dns=192.168.55.1                   |
+| Subnet=192.5.0.0/16           | --subnet 192.5.0.0/16                |
 
 Supported keys in `[Network]` section are:
 
@@ -661,6 +757,12 @@ Supported keys in `[Network]` section are:
 If enabled, disables the DNS plugin for this network.
 
 This is equivalent to the Podman `--disable-dns` option
+
+### `DNS=`
+
+Set network-scoped DNS resolver/nameserver for containers in this network.
+
+This key can be listed multiple times.
 
 ### `Driver=` (defaults to `bridge`)
 
@@ -711,6 +813,12 @@ Set one or more OCI labels on the network. The format is a list of
 
 This key can be listed multiple times.
 
+### `NetworkName=`
+
+The (optional) name of the Podman network. If this is not specified, the default value of
+`systemd-%N` is used, which is the same as the unit name but with a `systemd-` prefix to avoid
+conflicts with user-managed networks.
+
 ### `Options=`
 
 Set driver specific options.
@@ -744,8 +852,10 @@ Volume files are named with a `.volume` extension and contain a section `[Volume
 named Podman volume. The generated service is a one-time command that ensures that the volume
 exists on the host, creating it if needed.
 
-For a volume file named `$NAME.volume`, the generated Podman volume is called `systemd-$NAME`,
-and the generated service file `$NAME-volume.service`.
+By default, the Podman volume has the same name as the unit, but with a `systemd-` prefix, i.e. for
+a volume file named `$NAME.volume`, the generated Podman volume is called `systemd-$NAME`, and the
+generated service file is `$NAME-volume.service`. The `VolumeName` option allows for overriding this
+default name with a user-provided one.
 
 Using volume units allows containers to depend on volumes being automatically pre-created. This is
 particularly interesting when using special options to control volume creation,
@@ -753,14 +863,15 @@ as Podman otherwise creates volumes with the default options.
 
 Valid options for `[Volume]` are listed below:
 
-| **[Volume] options**             | **podman volume create equivalent**   |
-| -----------------                | ------------------                    |
-| Device=tmpfs                     | --opt device=tmpfs                    |
-| Copy=true                        | --opt copy                            |
-| Group=192                        | --opt group=192                       |
-| Label="foo=bar"                  | --label "foo=bar"                     |
-| Options=XYZ                      | --opt XYZ                             |
-| PodmanArgs=--driver=image        | --driver=image                        |
+| **[Volume] options**      | **podman volume create equivalent** |
+|---------------------------|-------------------------------------|
+| Device=tmpfs              | --opt device=tmpfs                  |
+| Copy=true                 | --opt copy                          |
+| Group=192                 | --opt group=192                     |
+| Label="foo=bar"           | --label "foo=bar"                   |
+| Options=XYZ               | --opt XYZ                           |
+| PodmanArgs=--driver=image | --driver=image                      |
+| VolumeName=foo            | podman volume create foo            |
 
 Supported keys in `[Volume]` section are:
 
@@ -808,6 +919,12 @@ The filesystem type of `Device` as used by the **mount(8)** commands `-t` option
 ### `User=`
 
 The host (numeric) UID, or user name to use as the owner for the volume
+
+### `VolumeName=`
+
+The (optional) name of the Podman volume. If this is not specified, the default value of
+`systemd-%N` is used, which is the same as the unit name but with a `systemd-` prefix to avoid
+conflicts with user-managed volumes.
 
 ## EXAMPLES
 

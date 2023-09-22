@@ -27,7 +27,7 @@ man pages.
 
 #### **--cgroup-manager**=*manager*
 
-The CGroup manager to use for container cgroups. Supported values are cgroupfs or systemd. Default is systemd unless overridden in the containers.conf file.
+The CGroup manager to use for container cgroups. Supported values are __cgroupfs__ or __systemd__. Default is _systemd_ unless overridden in the containers.conf file.
 
 Note: Setting this flag can cause certain commands to break when called on containers previously created by the other CGroup manager type.
 Note: CGroup manager is not supported in rootless mode when using CGroups Version V1.
@@ -86,7 +86,13 @@ This will override *imagestore* option in `containers-storage.conf(5)`, refer to
 
 #### **--log-level**=*level*
 
-Log messages at and above specified level: debug, info, warn, error, fatal or panic (default: "warn")
+Log messages at and above specified level: __debug__, __info__, __warn__, __error__, __fatal__ or __panic__ (default: _warn_)
+
+#### **--module**=*path*
+
+Load the specified `containers.conf(5)` module.  Can be an absolute or relative path.  Please refer to `containers.conf(5)` for details.
+
+This feature is not supported on the remote client, including Mac and Windows (excluding WSL2) machines
 
 #### **--network-cmd-path**=*path*
 Path to the `slirp4netns(1)` command binary to use for setting up a slirp4netns network.
@@ -289,18 +295,19 @@ the exit codes follow the `chroot` standard, see below:
     Error: unknown flag: --foo
     125
 
-  **126** Executing a _contained command_ and the _command_ cannot be invoked
+  **126** Executing a _container command_ and the _command_ cannot be invoked
 
     $ podman run busybox /etc; echo $?
     Error: container_linux.go:346: starting container process caused "exec: \"/etc\": permission denied": OCI runtime error
     126
 
-  **127** Executing a _contained command_ and the _command_ cannot be found
+  **127** Executing a _container command_ and the _command_ cannot be found
+
     $ podman run busybox foo; echo $?
     Error: container_linux.go:346: starting container process caused "exec: \"foo\": executable file not found in $PATH": OCI runtime error
     127
 
-  **Exit code** _contained command_ exit code
+  **Exit code** otherwise, `podman` returns the exit code of the _container command_
 
     $ podman run busybox /bin/sh -c 'exit 3'; echo $?
     3
@@ -313,8 +320,10 @@ the exit codes follow the `chroot` standard, see below:
 | [podman-attach(1)](podman-attach.1.md)           | Attach to a running container.                                              |
 | [podman-auto-update(1)](podman-auto-update.1.md) | Auto update containers according to their auto-update policy                |
 | [podman-build(1)](podman-build.1.md)             | Build a container image using a Containerfile.                              |
+| [podman-farm(1)](podman-farm.1.md)     | Farm out builds to machines running podman for different architectures        |
 | [podman-commit(1)](podman-commit.1.md)           | Create new image based on the changed container.                            |
 | [podman-completion(1)](podman-completion.1.md)   | Generate shell completion scripts                                           |
+| [podman-compose(1)](podman-compose.1.md)         | Run Compose workloads via an external compose provider.                     |
 | [podman-container(1)](podman-container.1.md)     | Manage containers.                                                          |
 | [podman-cp(1)](podman-cp.1.md)                   | Copy files/folders between a container and the local filesystem.            |
 | [podman-create(1)](podman-create.1.md)           | Create a new container.                                                     |
@@ -386,7 +395,7 @@ If the **CONTAINERS_CONF** environment variable is set, then its value is used f
 
 The mounts.conf file specifies volume mount directories that are automatically mounted inside containers when executing the `podman run` or `podman start` commands. Administrators can override the defaults file by creating `/etc/containers/mounts.conf`.
 
-When Podman runs in rootless mode, the file `$HOME/.config/containers/mounts.conf` overrides the default if it exists. Please refer to containers-mounts.conf(5) for further details.
+When Podman runs in rootless mode, the file `$HOME/.config/containers/mounts.conf` overrides the default if it exists. For details, see containers-mounts.conf(5).
 
 **policy.json** (`/etc/containers/policy.json`)
 
@@ -443,7 +452,7 @@ The Overlay file system (OverlayFS) is not supported with kernels prior to 5.12.
 
 The Network File System (NFS) and other distributed file systems (for example: Lustre, Spectrum Scale, the General Parallel File System (GPFS)) are not supported when running in rootless mode as these file systems do not understand user namespace.  However, rootless Podman can make use of an NFS Homedir by modifying the `$HOME/.config/containers/storage.conf` to have the `graphroot` option point to a directory stored on local (Non NFS) storage.
 
-For more information, please refer to the [Podman Troubleshooting Page](https://github.com/containers/podman/blob/main/troubleshooting.md).
+For more information, see the [Podman Troubleshooting Page](https://github.com/containers/podman/blob/main/troubleshooting.md).
 
 ## SEE ALSO
 **[containers-mounts.conf(5)](https://github.com/containers/common/blob/main/docs/containers-mounts.conf.5.md)**, **[containers.conf(5)](https://github.com/containers/common/blob/main/docs/containers.conf.5.md)**, **[containers-registries.conf(5)](https://github.com/containers/image/blob/main/docs/containers-registries.conf.5.md)**, **[containers-storage.conf(5)](https://github.com/containers/storage/blob/main/docs/containers-storage.conf.5.md)**, **[buildah(1)](https://github.com/containers/buildah/blob/main/docs/buildah.1.md)**, **oci-hooks(5)**, **[containers-policy.json(5)](https://github.com/containers/image/blob/main/docs/containers-policy.json.5.md)**, **[crun(1)](https://github.com/containers/crun/blob/main/crun.1.md)**, **[runc(8)](https://github.com/opencontainers/runc/blob/main/man/runc.8.md)**, **[subuid(5)](https://www.unix.com/man-page/linux/5/subuid)**, **[subgid(5)](https://www.unix.com/man-page/linux/5/subgid)**, **[slirp4netns(1)](https://github.com/rootless-containers/slirp4netns/blob/master/slirp4netns.1.md)**, **[pasta(1)](https://passt.top/builds/latest/web/passt.1.html)**, **[conmon(8)](https://github.com/containers/conmon/blob/main/docs/conmon.8.md)**

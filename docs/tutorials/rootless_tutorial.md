@@ -19,11 +19,11 @@ or for all commands by changing the value for the "Default OCI runtime" in the `
 
 ### Installing Podman
 
-For installing Podman, please see the [installation instructions](https://podman.io/getting-started/installation).
+For installing Podman, see the [installation instructions](https://podman.io/getting-started/installation).
 
 ### Building Podman
 
-For building Podman, please see the [build instructions](https://podman.io/getting-started/installation#building-from-scratch).
+For building Podman, see the [build instructions](https://podman.io/getting-started/installation#building-from-scratch).
 
 ### Install `slirp4netns`
 
@@ -85,6 +85,34 @@ usermod --add-subuids 100000-165535 --add-subgids 100000-165535 johndoe
 grep johndoe /etc/subuid /etc/subgid
 /etc/subuid:johndoe:100000:65536
 /etc/subgid:johndoe:100000:65536
+```
+
+#### Giving access to additional groups
+
+Users can fully map additional groups to a container namespace if
+those groups subordinated to the user:
+
+```
+usermod --add-subgids 2000-2000 johndoe
+grep johndoe /etc/subgid
+```
+
+This means the user `johndoe` can "impersonate" the group `2000` inside the
+container. Note that it is usually not a good idea to subordinate active
+user ids to other users, because it would allow user impersonation.
+
+`johndoe` can use `--group-add keep-groups` to preserve the additional
+groups, and `--gidmap="+g102000:@2000"` to map the group `2000` in the host
+to the group `102000` in the container:
+
+```
+podman run \
+  --rm \
+  --group-add keep-groups \
+  --gidmap="+g102000:@2000" \
+  --volume "$PWD:/data:ro" \
+  --workdir /data \
+  alpine ls -lisa
 ```
 
 ### Enable unprivileged `ping`

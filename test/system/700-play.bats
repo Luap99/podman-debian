@@ -206,6 +206,9 @@ EOF
     run_podman container inspect $service_container --format "{{.State.Running}}"
     is "$output" "true"
 
+    run_podman container inspect $service_container --format '{{.Config.StopTimeout}}'
+    is "$output" "10" "StopTimeout should be initialized to 10"
+
     # Stop the *main* container and make sure that
     #  1) The pod transitions to Exited
     #  2) The service container is stopped
@@ -278,7 +281,7 @@ EOF
     # will spin for indeterminate time.
     run_podman create --pod new:pod1         --restart=no --name test1 $IMAGE touch /testrw
     run_podman create --pod pod1 --read-only --restart=no --name test2 $IMAGE touch /testro
-    run_podman create --pod pod1 --read-only --restart=no --name test3 $IMAGE touch /tmp/testtmp
+    run_podman create --pod pod1 --read-only --restart=no --name test3 $IMAGE sh -c "echo "#!echo hi" > /tmp/testtmp; chmod +x /tmp/test/tmp; /tmp/testtmp"
 
     # Generate and run from yaml. (The "cat" is for debugging failures)
     run_podman kube generate pod1 -f $YAML
@@ -372,7 +375,6 @@ _EOF
     is "$output" bin "expect container within pod to run as the bin user"
     run_podman inspect --format "{{ .Config.Env }}" test_pod-test
     is "$output" ".*PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin.*" "expect PATH to be set"
-    is "$output" ".*TERM=xterm.*" "expect TERM to be set"
     is "$output" ".*container=podman.*" "expect container to be set"
 
     run_podman stop -a -t 0
@@ -431,12 +433,27 @@ _EOF
     assert "$output" =~ "annotation exceeds maximum size, 63, of kubernetes annotation:" "Expected to fail with Length greater than 63"
 }
 
+@test "podman play --no-trunc --annotation > Max" {
+    TESTDIR=$PODMAN_TMPDIR/testdir
+    RANDOMSTRING=$(random_string 65)
+    mkdir -p $TESTDIR
+    echo "$testYaml" | sed "s|TESTDIR|${TESTDIR}|g" > $PODMAN_TMPDIR/test.yaml
+    run_podman play kube --no-trunc --annotation "name=$RANDOMSTRING" $PODMAN_TMPDIR/test.yaml
+}
+
 @test "podman play Yaml with annotation > Max" {
    RANDOMSTRING=$(random_string 65)
 
    _write_test_yaml "annotations=test: ${RANDOMSTRING}" command=id
-    run_podman 125 play kube - < $PODMAN_TMPDIR/test.yaml
-    assert "$output" =~ "invalid annotation \"test\"=\"$RANDOMSTRING\"" "Expected to fail with annotation length greater than 63"
+   run_podman 125 play kube - < $PODMAN_TMPDIR/test.yaml
+   assert "$output" =~ "annotation \"test\"=\"$RANDOMSTRING\" value length exceeds Kubernetes max 63" "Expected to fail with annotation length greater than 63"
+}
+
+@test "podman play Yaml --no-trunc with annotation > Max" {
+   RANDOMSTRING=$(random_string 65)
+
+   _write_test_yaml "annotations=test: ${RANDOMSTRING}" command=id
+   run_podman play kube --no-trunc - < $PODMAN_TMPDIR/test.yaml
 }
 
 @test "podman kube play - default log driver" {
@@ -583,7 +600,7 @@ EOF
     run cat $YAML
     is "$output" ".*filetype: usr_t" "Generated YAML file should contain filetype usr_t"
     run_podman pod rm --force pod1
-    run_podman volume rm myvol --force
+    run_podman volume rm -t -1 myvol --force
 
     run_podman kube play $YAML
     if selinux_enabled; then
@@ -705,7 +722,80 @@ spec:
     run_podman kube play --configmap=$configmap_file $pod_file
     run_podman wait test_pod-server
     run_podman logs test_pod-server
-    is $output "foo:bar"
+    is "$output" "foo:bar"
 
     run_podman kube down $pod_file
+}
+
+@test "podman kube with --authfile=/tmp/bogus" {
+    TESTDIR=$PODMAN_TMPDIR/testdir
+    mkdir -p $TESTDIR
+    echo "$testYaml" | sed "s|TESTDIR|${TESTDIR}|g" > $PODMAN_TMPDIR/test.yaml
+    bogus=$PODMAN_TMPDIR/bogus-authfile
+
+    run_podman 125 kube play --authfile=$bogus - < $PODMAN_TMPDIR/test.yaml
+    is "$output" "Error: checking authfile: stat $bogus: no such file or directory" "$command should fail with not such file"
+}
+
+@test "podman kube play with umask from containers.conf" {
+    skip_if_remote "remote does not support CONTAINERS_CONF*"
+    YAML=$PODMAN_TMPDIR/test.yaml
+
+    containersConf=$PODMAN_TMPDIR/containers.conf
+    touch $containersConf
+    cat >$containersConf <<EOF
+[containers]
+umask = "0472"
+EOF
+
+    ctr="ctr"
+    ctrInPod="ctr-pod-ctr"
+
+    run_podman create --restart never --name $ctr $IMAGE sh -c "touch /umask-test;stat -c '%a' /umask-test"
+    run_podman kube generate -f $YAML $ctr
+    CONTAINERS_CONF_OVERRIDE="$containersConf" run_podman kube play $YAML
+    run_podman container inspect --format '{{ .Config.Umask }}' $ctrInPod
+    is "${output}" "0472"
+    # Confirm that umask actually takes effect
+    run_podman logs $ctrInPod
+    is "$output" "204" "stat() on created file"
+
+    run_podman kube down $YAML
+    run_podman pod rm -a
+    run_podman rm -a
+}
+
+@test "podman kube generate tmpfs on /tmp" {
+      KUBE=$PODMAN_TMPDIR/kube.yaml
+      run_podman create --name test $IMAGE sleep 100
+      run_podman kube generate test -f $KUBE
+      run_podman kube play $KUBE
+      run_podman exec test-pod-test sh -c "mount | grep /tmp"
+      assert "$output" !~ "noexec" "mounts on /tmp should not be noexec"
+      run_podman kube down $KUBE
+      run_podman pod rm -a -f -t 0
+      run_podman rm -a -f -t 0
+}
+
+@test "podman kube play - pull policy" {
+    skip_if_remote "pull debug logs only work locally"
+
+    yaml_source="$PODMAN_TMPDIR/test.yaml"
+    _write_test_yaml command=true
+
+    # Exploit a debug message to make sure the expected pull policy is used
+    run_podman --debug kube play $yaml_source
+    assert "$output" =~ "Pulling image $IMAGE \(policy\: missing\)" "default pull policy is missing"
+    run_podman kube down $yaml_source
+
+    local_image="localhost/name:latest"
+    run_podman tag $IMAGE $local_image
+    rm $yaml_source
+    _write_test_yaml command=true image=$local_image
+
+    run_podman --debug kube play $yaml_source
+    assert "$output" =~ "Pulling image $local_image \(policy\: newer\)" "pull policy is set to newhen pulling latest tag"
+    run_podman kube down $yaml_source
+
+    run_podman rmi $local_image
 }

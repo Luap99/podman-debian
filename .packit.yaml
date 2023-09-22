@@ -6,7 +6,12 @@ specfile_path: rpm/podman.spec
 upstream_tag_template: v{version}
 
 srpm_build_deps:
+  - git-archive-all
   - make
+
+actions:
+  fix-spec-file:
+    - "bash .packit.sh"
 
 jobs:
   - job: copr_build
@@ -16,6 +21,8 @@ jobs:
     targets:
       - fedora-all-x86_64
       - fedora-all-aarch64
+      - fedora-eln-x86_64
+      - fedora-eln-aarch64
       - centos-stream+epel-next-8-x86_64
       - centos-stream+epel-next-8-aarch64
       - centos-stream+epel-next-9-x86_64

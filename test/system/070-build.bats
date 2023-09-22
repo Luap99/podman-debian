@@ -31,11 +31,6 @@ EOF
 }
 
 @test "podman buildx - basic test" {
-    run_podman info --format "{{.Store.GraphDriverName}}"
-    if [[ "$output" == "vfs" ]]; then
-        skip "Test not supported with VFS podman storage driver (#17520)"
-    fi
-
     rand_filename=$(random_string 20)
     rand_content=$(random_string 50)
 
@@ -1098,6 +1093,18 @@ EOF
     run_podman run -d --name test_ctr build_test  top
     run_podman run --rm --volumes-from test_ctr $IMAGE  echo $rand_content
     is "$output"   "$rand_content"   "No error should be thrown about volume in use"
+
+    run_podman rmi -f build_test
+}
+
+@test "podman build empty context dir" {
+    buildcontextdir=$PODMAN_TMPDIR/emptydir
+    mkdir -p $buildcontextdir
+    containerfile=$PODMAN_TMPDIR/Containerfile
+    echo FROM scratch >$containerfile
+
+    run_podman build -t build_test -f $containerfile $buildcontextdir
+    assert "$output" !~ "EOF" "output should not contain EOF error"
 
     run_podman rmi -f build_test
 }

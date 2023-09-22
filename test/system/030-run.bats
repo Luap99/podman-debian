@@ -79,7 +79,7 @@ echo $rand        |   0 | $rand
 }
 
 @test "podman run - uidmapping has no /sys/kernel mounts" {
-    skip_if_cgroupsv1 "FIXME: #15025: run --uidmap fails on cgroups v1"
+    skip_if_cgroupsv1 "run --uidmap fails on cgroups v1 (issue 15025, wontfix)"
     skip_if_rootless "cannot umount as rootless"
     skip_if_remote "TODO Fix this for remote case"
 
@@ -181,13 +181,17 @@ echo $rand        |   0 | $rand
     run_podman image exists $NONLOCAL_IMAGE
 
     # Now try running with --rmi : it should succeed, but not remove the image
-    run_podman run --rmi --rm $NONLOCAL_IMAGE /bin/true
+    run_podman 0+w run --rmi --rm $NONLOCAL_IMAGE /bin/true
+    is "$output" ".*image is in use by a container" "--rmi should warn that the image was not removed"
     run_podman image exists $NONLOCAL_IMAGE
 
     # Remove the stray container, and run one more time with --rmi.
     run_podman rm /keepme
-    run_podman run --rmi --rm $NONLOCAL_IMAGE /bin/true
+    run_podman run --rmi $NONLOCAL_IMAGE /bin/true
     run_podman 1 image exists $NONLOCAL_IMAGE
+
+    run_podman 125 run --rmi --rm=false $NONLOCAL_IMAGE /bin/true
+    is "$output" "Error: the --rmi option does not work without --rm" "--rmi should refuse to remove images when --rm=false set by user"
 }
 
 # 'run --conmon-pidfile --cid-file' makes sure we don't regress on these flags.
@@ -225,7 +229,7 @@ echo $rand        |   0 | $rand
        "conmon pidfile (= PID $conmon_pid_from_file) points to conmon process"
 
     # All OK. Kill container.
-    run_podman rm -f $cid
+    run_podman rm -f -t0 $cid
     if [[ -e $cidfile ]]; then
         die "cidfile $cidfile should be removed along with container"
     fi
@@ -782,6 +786,17 @@ EOF
     user=$(id -un)
     run_podman 1 run --rm $IMAGE grep $user /etc/passwd
     run_podman run --hostuser=$user --rm $IMAGE grep $user /etc/passwd
+
+    # find a user with a uid > 100 that is a valid octal
+    # Issue #19800
+    octal_user=$(awk -F\: '$1!="nobody" && $3>100 && $3~/^[0-7]+$/ {print $1 " " $3; exit}' /etc/passwd)
+    # test only if a valid user was found
+    if test -n "$octal_user"; then
+        read octal_username octal_userid <<< $octal_user
+        run_podman run --user=$octal_username --hostuser=$octal_username --rm $IMAGE id -u
+        is "$output" "$octal_userid"
+    fi
+
     user=$(id -u)
     run_podman run --hostuser=$user --rm $IMAGE grep $user /etc/passwd
     run_podman run --hostuser=$user --user $user --rm $IMAGE grep $user /etc/passwd
@@ -818,8 +833,17 @@ EOF
 
 @test "podman run defaultenv" {
     run_podman run --rm $IMAGE printenv
-    assert "$output" =~ "TERM=xterm" "env includes TERM"
+    assert "$output" !~ "TERM=" "env doesn't include TERM by default"
     assert "$output" =~ "container=podman" "env includes container=podman"
+
+    run_podman 1 run -t=false --rm $IMAGE printenv TERM
+    assert "$output" == "" "env doesn't include TERM"
+
+    run_podman run -t=true --rm $IMAGE printenv TERM    # uses CRLF terminators
+    assert "$output" == $'xterm\r' "env includes default TERM"
+
+    run_podman run -t=false -e TERM=foobar --rm $IMAGE printenv TERM
+    assert "$output" == "foobar" "env includes TERM"
 
     run_podman run --unsetenv=TERM --rm $IMAGE printenv
     assert "$output" =~ "container=podman" "env includes container=podman"
@@ -871,6 +895,9 @@ EOF
     run_podman inspect --format "{{ .HostConfig.LogConfig.Size }}" $cid
     is "$output" "${size}MB"
     run_podman rm -t 0 -f $cid
+
+    # Make sure run_podman tm -t supports -1 option
+    run_podman rm -t -1 -f $cid
 }
 
 @test "podman run --kernel-memory warning" {
@@ -882,7 +909,7 @@ EOF
 
 # rhbz#1902979 : podman run fails to update /etc/hosts when --uidmap is provided
 @test "podman run update /etc/hosts" {
-    skip_if_cgroupsv1 "FIXME: #15025: run --uidmap fails on cgroups v1"
+    skip_if_cgroupsv1 "run --uidmap fails on cgroups v1 (issue 15025, wontfix)"
     HOST=$(random_string 25)
     run_podman run --uidmap 0:10001:10002 --rm --hostname ${HOST} $IMAGE grep ${HOST} /etc/hosts
     is "${lines[0]}" ".*${HOST}.*"
@@ -910,6 +937,17 @@ EOF
     oomscore=$((oomscore+1))
     CONTAINERS_CONF_OVERRIDE=$PODMAN_TMPDIR/containers.conf run_podman run --oom-score-adj=$oomscore --rm $IMAGE cat /proc/self/oom_score_adj
     is "$output" "$oomscore" "--oom-score-adj should override containers.conf"
+}
+
+# issue 19829
+@test "rootless podman clamps oom-score-adj if it is lower than the current one" {
+    skip_if_not_rootless
+    skip_if_remote
+    if grep -- -1000 /proc/self/oom_score_adj; then
+        skip "the current oom-score-adj is already -1000"
+    fi
+    run_podman 0+w run --oom-score-adj=-1000 --rm $IMAGE true
+    is "$output" ".*Requested oom_score_adj=.* is lower than the current one, changing to .*"
 }
 
 # CVE-2022-1227 : podman top joins container mount NS and uses nsenter from image
@@ -1012,14 +1050,20 @@ $IMAGE--c_ok" \
     run_podman stop -t 0 $cid
 
     # Actual test for 15895: with --systemd, no ttyN devices are passed through
-    run_podman run --rm -d --privileged --systemd=always $IMAGE ./pause
+    run_podman run -d --privileged --systemd=always $IMAGE top
     cid="$output"
 
     run_podman exec $cid sh -c "find /dev -regex '/dev/tty[0-9].*' | wc -w"
     assert "$output" = "0" \
            "ls /dev/tty[0-9] with --systemd=always: should have no ttyN devices"
 
-    run_podman stop -t 0 $cid
+    # Make sure run_podman stop supports -1 option
+    # FIXME: do we really really mean to say FFFFFFFFFFFFFFFF here???
+    run_podman 0+w stop -t -1 $cid
+    if ! is_remote; then
+        assert "$output" =~ "StopSignal \(37\) failed to stop container .* in 18446744073709551615 seconds, resorting to SIGKILL" "stop -t -1 (negative one) issues warning"
+    fi
+    run_podman rm -t -1 -f $cid
 }
 
 @test "podman run --privileged as rootless will not mount /dev/tty\d+" {
@@ -1073,7 +1117,12 @@ EOF
     CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman 1 run --rm $IMAGE touch /testro
     CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm --read-only=false $IMAGE touch /testrw
     CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm $IMAGE touch /tmp/testrw
-    CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman 1 run --rm --read-only-tmpfs=false $IMAGE touch /tmp/testro
+    for dir in /tmp /var/tmp /dev /dev/shm /run; do
+        CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman 1 run --rm --read-only-tmpfs=false $IMAGE touch $dir/testro
+        assert "$output" =~ "touch: $dir/testro: Read-only file system"
+        CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm --read-only-tmpfs=true $IMAGE touch $dir/testro
+        CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm --read-only=false $IMAGE touch $dir/testro
+    done
 }
 
 @test "podman run ulimit from containers.conf" {
@@ -1100,7 +1149,7 @@ EOF
     run_podman 125 create --name "$randomname/bad" $IMAGE
     run_podman create --name "/$randomname" $IMAGE
     run_podman ps -a --filter name="^/$randomname$" --format '{{ .Names }}'
-    is $output "$randomname" "Should be able to find container by name"
+    is "$output" "$randomname" "Should be able to find container by name"
     run_podman rm "/$randomname"
     run_podman 125 create --name "$randomname/" $IMAGE
 }
@@ -1159,6 +1208,55 @@ EOF
     PODMAN_TIMEOUT=20 run_podman wait $ctr
     is "$output" "1" "container should exit 1"
     run_podman rm -f -t0 $ctr
+}
+
+@test "podman --authfile=nonexistent-path" {
+    # List of commands to be tested. These all share a common authfile check.
+    #
+    # Table format is:
+    #   podman command | arguments | '-' if it does not work with podman-remote
+    echo "from $IMAGE" > $PODMAN_TMPDIR/Containerfile
+    tests="
+auto-update          |                  | -
+build                | $PODMAN_TMPDIR   |
+container runlabel   | run $IMAGE       | -
+create               | $IMAGE argument  |
+image sign           | $IMAGE           | -
+kube play            | argument         |
+logout               | $IMAGE           |
+manifest add         | $IMAGE argument  |
+manifest inspect     | $IMAGE           |
+manifest push        | $IMAGE argument  |
+pull                 | $IMAGE argument  |
+push                 | $IMAGE argument  |
+run                  | $IMAGE false     |
+search               | $IMAGE           |
+"
+
+    bogus=$PODMAN_TMPDIR/bogus-authfile
+    touch $PODMAN_TMPDIR/Containerfile
+
+    while read command args local_only;do
+        # skip commands that don't work in podman-remote
+        if [[ "$local_only" = "-" ]]; then
+            if is_remote; then
+                continue
+            fi
+        fi
+
+        # parse_table gives us '' (two single quotes) for empty columns
+        if [[ "$args" = "''" ]]; then args=;fi
+
+        run_podman 125 $command --authfile=$bogus $args
+        assert "$output" = "Error: checking authfile: stat $bogus: no such file or directory" \
+           "$command --authfile=nonexistent-path"
+
+        if [[ "$command" != "logout" ]]; then
+           REGISTRY_AUTH_FILE=$bogus run_podman ? $command $args
+           assert "$output" !~ "checking authfile" \
+              "$command REGISTRY_AUTH_FILE=nonexistent-path"
+        fi
+    done < <(parse_table "$tests")
 }
 
 # vim: filetype=sh

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	. "github.com/containers/podman/v4/test/utils"
+	"github.com/containers/storage/pkg/stringid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -35,6 +36,26 @@ var _ = Describe("Podman secret", func() {
 		inspect.WaitWithDefaultTimeout()
 		Expect(inspect).Should(Exit(0))
 		Expect(inspect.OutputToString()).To(ContainSubstring("opt1:val"))
+
+		session = podmanTest.Podman([]string{"secret", "create", "-d", "file", "--driver-opts", "opt1=val1", "a", secretFilePath})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(125))
+		Expect(session.ErrorToString()).To(Equal("Error: a: secret name in use"))
+
+		session = podmanTest.Podman([]string{"secret", "create", "-d", "file", "--driver-opts", "opt1=val1", "--replace", "a", secretFilePath})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(session.OutputToString()).To(Not(Equal(secrID)))
+
+		inspect = podmanTest.Podman([]string{"secret", "inspect", "-f", "{{.Spec.Driver.Options}}", secrID})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect).To(ExitWithError())
+		Expect(inspect.ErrorToString()).To(ContainSubstring(fmt.Sprintf("Error: inspecting secret: no secret with name or id %q: no such secret", secrID)))
+
+		inspect = podmanTest.Podman([]string{"secret", "inspect", "-f", "{{.Spec.Driver.Options}}", "a"})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect).Should(Exit(0))
+		Expect(inspect.OutputToString()).To(ContainSubstring("opt1:val1"))
 	})
 
 	It("podman secret create bad name should fail", func() {
@@ -42,14 +63,23 @@ var _ = Describe("Podman secret", func() {
 		err := os.WriteFile(secretFilePath, []byte("mysecret"), 0755)
 		Expect(err).ToNot(HaveOccurred())
 
-		session := podmanTest.Podman([]string{"secret", "create", "?!", secretFilePath})
+		badName := "foo/bar"
+		session := podmanTest.Podman([]string{"secret", "create", badName, secretFilePath})
 		session.WaitWithDefaultTimeout()
 		Expect(session).To(ExitWithError())
+		Expect(session.ErrorToString()).To(Equal(fmt.Sprintf("Error: secret name %q can not include '=', '/', ',', or the '\\0' (NULL) and be between 1 and 253 characters: invalid secret name", badName)))
+
+		badName = "foo=bar"
+		session = podmanTest.Podman([]string{"secret", "create", badName, secretFilePath})
+		session.WaitWithDefaultTimeout()
+		Expect(session).To(ExitWithError())
+		Expect(session.ErrorToString()).To(Equal(fmt.Sprintf("Error: secret name %q can not include '=', '/', ',', or the '\\0' (NULL) and be between 1 and 253 characters: invalid secret name", badName)))
 	})
 
 	It("podman secret inspect", func() {
+		random := stringid.GenerateRandomID()
 		secretFilePath := filepath.Join(podmanTest.TempDir, "secret")
-		err := os.WriteFile(secretFilePath, []byte("mysecret"), 0755)
+		err := os.WriteFile(secretFilePath, []byte(random), 0755)
 		Expect(err).ToNot(HaveOccurred())
 
 		session := podmanTest.Podman([]string{"secret", "create", "a", secretFilePath})
@@ -61,6 +91,16 @@ var _ = Describe("Podman secret", func() {
 		inspect.WaitWithDefaultTimeout()
 		Expect(inspect).Should(Exit(0))
 		Expect(inspect.OutputToString()).To(BeValidJSON())
+
+		inspect = podmanTest.Podman([]string{"secret", "inspect", "--format", "{{ .SecretData }}", secrID})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect).Should(Exit(0))
+		Expect(inspect.OutputToString()).To(Equal(""))
+
+		inspect = podmanTest.Podman([]string{"secret", "inspect", "--showsecret", "--format", "{{ .SecretData }}", secrID})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect).Should(Exit(0))
+		Expect(inspect.OutputToString()).To(Equal(random))
 	})
 
 	It("podman secret inspect with --format", func() {
@@ -294,6 +334,18 @@ var _ = Describe("Podman secret", func() {
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(session.OutputToStringArray()).To(HaveLen(1))
+	})
+
+	It("podman secret rm --ignore", func() {
+		remove := podmanTest.Podman([]string{"secret", "rm", "non-existent-secret"})
+		remove.WaitWithDefaultTimeout()
+		Expect(remove).Should(Not(Exit(0)))
+		Expect(remove.ErrorToString()).To(Equal("Error: no secret with name or id \"non-existent-secret\": no such secret"))
+
+		ignoreRm := podmanTest.Podman([]string{"secret", "rm", "--ignore", "non-existent-secret"})
+		ignoreRm.WaitWithDefaultTimeout()
+		Expect(ignoreRm).Should(Exit(0))
+		Expect(ignoreRm.ErrorToString()).To(BeEmpty())
 	})
 
 	It("podman secret creates from environment variable", func() {
