@@ -169,7 +169,7 @@ var _ = Describe("Podman login and logout", func() {
 		session = podmanTest.Podman([]string{"push", "--authfile", "/tmp/nonexistent", ALPINE, testImg})
 		session.WaitWithDefaultTimeout()
 		Expect(session).To(ExitWithError())
-		Expect(session.ErrorToString()).To(Equal("Error: stat /tmp/nonexistent: no such file or directory"))
+		Expect(session.ErrorToString()).To(Equal("Error: checking authfile: stat /tmp/nonexistent: no such file or directory"))
 
 		session = podmanTest.Podman([]string{"push", "--authfile", authFile, ALPINE, testImg})
 		session.WaitWithDefaultTimeout()
@@ -272,10 +272,6 @@ var _ = Describe("Podman login and logout", func() {
 		setup := SystemExec("cp", []string{filepath.Join(certPath, "domain.crt"), filepath.Join(certDir, "ca.crt")})
 		setup.WaitWithDefaultTimeout()
 		defer os.RemoveAll(certDir)
-
-		// FIXME: #18405, podman-run barfs if $REGISTRY_AUTH_FILE missing
-		err = os.WriteFile(os.Getenv("REGISTRY_AUTH_FILE"), []byte(`{"auths": {}}`), 0600)
-		Expect(err).ToNot(HaveOccurred(), "touching authfile")
 
 		// N/B: This second registry container shares the same auth and cert dirs
 		//      as the registry started from BeforeEach().  Since this one starts

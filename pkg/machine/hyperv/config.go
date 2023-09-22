@@ -17,17 +17,17 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type Virtualization struct {
-	artifact    machine.Artifact
-	compression machine.ImageCompression
-	format      machine.ImageFormat
+type HyperVVirtualization struct {
+	machine.Virtualization
 }
 
-func (v Virtualization) Artifact() machine.Artifact {
-	return machine.None
+func VirtualizationProvider() machine.VirtProvider {
+	return &HyperVVirtualization{
+		machine.NewVirtualization(machine.HyperV, machine.Zip, machine.Vhdx, vmtype),
+	}
 }
 
-func (v Virtualization) CheckExclusiveActiveVM() (bool, string, error) {
+func (v HyperVVirtualization) CheckExclusiveActiveVM() (bool, string, error) {
 	vmm := hypervctl.NewVirtualMachineManager()
 	// Use of GetAll is OK here because we do not want to use the same name
 	// as something already *actually* configured in hyperv
@@ -43,22 +43,14 @@ func (v Virtualization) CheckExclusiveActiveVM() (bool, string, error) {
 	return false, "", nil
 }
 
-func (v Virtualization) Compression() machine.ImageCompression {
-	return v.compression
-}
-
-func (v Virtualization) Format() machine.ImageFormat {
-	return v.format
-}
-
-func (v Virtualization) IsValidVMName(name string) (bool, error) {
+func (v HyperVVirtualization) IsValidVMName(name string) (bool, error) {
 	// We check both the local filesystem and hyperv for the valid name
 	mm := HyperVMachine{Name: name}
 	configDir, err := machine.GetConfDir(v.VMType())
 	if err != nil {
 		return false, err
 	}
-	if err := loadMacMachineFromJSON(configDir, &mm); err != nil {
+	if err := mm.loadHyperVMachineFromJSON(configDir); err != nil {
 		return false, err
 	}
 	// The name is valid for the local filesystem
@@ -69,7 +61,7 @@ func (v Virtualization) IsValidVMName(name string) (bool, error) {
 	return true, nil
 }
 
-func (v Virtualization) List(opts machine.ListOptions) ([]*machine.ListResponse, error) {
+func (v HyperVVirtualization) List(opts machine.ListOptions) ([]*machine.ListResponse, error) {
 	mms, err := v.loadFromLocalJson()
 	if err != nil {
 		return nil, err
@@ -103,16 +95,18 @@ func (v Virtualization) List(opts machine.ListOptions) ([]*machine.ListResponse,
 	return response, err
 }
 
-func (v Virtualization) LoadVMByName(name string) (machine.VM, error) {
+func (v HyperVVirtualization) LoadVMByName(name string) (machine.VM, error) {
 	m := &HyperVMachine{Name: name}
 	return m.loadFromFile()
 }
 
-func (v Virtualization) NewMachine(opts machine.InitOptions) (machine.VM, error) {
+func (v HyperVVirtualization) NewMachine(opts machine.InitOptions) (machine.VM, error) {
 	m := HyperVMachine{Name: opts.Name}
 	if len(opts.ImagePath) < 1 {
 		return nil, errors.New("must define --image-path for hyperv support")
 	}
+
+	m.RemoteUsername = opts.Username
 
 	configDir, err := machine.GetConfDir(machine.HyperVVirt)
 	if err != nil {
@@ -123,6 +117,7 @@ func (v Virtualization) NewMachine(opts machine.InitOptions) (machine.VM, error)
 	if err != nil {
 		return nil, err
 	}
+
 	m.ConfigPath = *configPath
 
 	ignitionPath, err := machine.NewMachineFile(filepath.Join(configDir, m.Name)+".ign", nil)
@@ -139,22 +134,26 @@ func (v Virtualization) NewMachine(opts machine.InitOptions) (machine.VM, error)
 		return nil, err
 	}
 
+	// Set the proxy pid file
+	gvProxyPid, err := machine.NewMachineFile(filepath.Join(dataDir, "gvproxy.pid"), nil)
+	if err != nil {
+		return nil, err
+	}
+	m.GvProxyPid = *gvProxyPid
+
+	dl, err := VirtualizationProvider().NewDownload(m.Name)
+	if err != nil {
+		return nil, err
+	}
 	// Acquire the image
-	// Until we are producing vhdx images in fcos, all images must be fed to us
-	// with --image-path.  We should, however, accept both a file or url
-	g, err := machine.NewGenericDownloader(machine.HyperVVirt, opts.Name, opts.ImagePath)
+	imagePath, imageStream, err := dl.AcquireVMImage(opts.ImagePath)
 	if err != nil {
 		return nil, err
 	}
 
-	imagePath, err := machine.NewMachineFile(g.Get().GetLocalUncompressedFile(dataDir), nil)
-	if err != nil {
-		return nil, err
-	}
+	// assign values to machine
 	m.ImagePath = *imagePath
-	if err := machine.DownloadImage(g); err != nil {
-		return nil, err
-	}
+	m.ImageStream = imageStream.String()
 
 	config := hypervctl.HardwareConfig{
 		CPUs:     uint16(opts.CPUS),
@@ -180,7 +179,7 @@ func (v Virtualization) NewMachine(opts machine.InitOptions) (machine.VM, error)
 	return v.LoadVMByName(opts.Name)
 }
 
-func (v Virtualization) RemoveAndCleanMachines() error {
+func (v HyperVVirtualization) RemoveAndCleanMachines() error {
 	// Error handling used here is following what qemu did
 	var (
 		prevErr error
@@ -238,11 +237,11 @@ func (v Virtualization) RemoveAndCleanMachines() error {
 	return prevErr
 }
 
-func (v Virtualization) VMType() machine.VMType {
+func (v HyperVVirtualization) VMType() machine.VMType {
 	return vmtype
 }
 
-func (v Virtualization) loadFromLocalJson() ([]*HyperVMachine, error) {
+func (v HyperVVirtualization) loadFromLocalJson() ([]*HyperVMachine, error) {
 	var (
 		jsonFiles []string
 		mms       []*HyperVMachine
@@ -265,7 +264,7 @@ func (v Virtualization) loadFromLocalJson() ([]*HyperVMachine, error) {
 
 	for _, jsonFile := range jsonFiles {
 		mm := HyperVMachine{}
-		if err := loadMacMachineFromJSON(jsonFile, &mm); err != nil {
+		if err := mm.loadHyperVMachineFromJSON(jsonFile); err != nil {
 			return nil, err
 		}
 		if err != nil {

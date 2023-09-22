@@ -46,7 +46,7 @@ var (
 	playOptions        = playKubeOptionsWrapper{}
 	playDescription    = `Reads in a structured file of Kubernetes YAML.
 
-  Creates pods or volumes based on the Kubernetes kind described in the YAML. Supported kinds are Pods, Deployments and PersistentVolumeClaims.`
+  Creates pods or volumes based on the Kubernetes kind described in the YAML. Supported kinds are Pods, Deployments, DaemonSets and PersistentVolumeClaims.`
 
 	playCmd = &cobra.Command{
 		Use:               "play [options] KUBEFILE|-",
@@ -165,6 +165,9 @@ func playFlags(cmd *cobra.Command) {
 	flags.StringSliceVar(&playOptions.ConfigMaps, configmapFlagName, []string{}, "`Pathname` of a YAML file containing a kubernetes configmap")
 	_ = cmd.RegisterFlagCompletionFunc(configmapFlagName, completion.AutocompleteDefault)
 
+	noTruncFlagName := "no-trunc"
+	flags.BoolVar(&playOptions.UseLongAnnotations, noTruncFlagName, false, "Use annotations that are not truncated to the Kubernetes maximum length of 63 characters")
+
 	if !registry.IsRemote() {
 		certDirFlagName := "cert-dir"
 		flags.StringVar(&playOptions.CertDir, certDirFlagName, "", "`Pathname` of a directory containing TLS certificates and keys")
@@ -214,8 +217,8 @@ func play(cmd *cobra.Command, args []string) error {
 	if cmd.Flags().Changed("build") {
 		playOptions.Build = types.NewOptionalBool(playOptions.BuildCLI)
 	}
-	if playOptions.Authfile != "" {
-		if _, err := os.Stat(playOptions.Authfile); err != nil {
+	if cmd.Flags().Changed("authfile") {
+		if err := auth.CheckAuthFile(playOptions.Authfile); err != nil {
 			return err
 		}
 	}
@@ -240,7 +243,7 @@ func play(cmd *cobra.Command, args []string) error {
 			playOptions.Annotations = make(map[string]string)
 		}
 		annotation := splitN[1]
-		if len(annotation) > define.MaxKubeAnnotation {
+		if len(annotation) > define.MaxKubeAnnotation && !playOptions.UseLongAnnotations {
 			return fmt.Errorf("annotation exceeds maximum size, %d, of kubernetes annotation: %s", define.MaxKubeAnnotation, annotation)
 		}
 		playOptions.Annotations[splitN[0]] = annotation
@@ -316,7 +319,7 @@ func play(cmd *cobra.Command, args []string) error {
 		// rerunning the same YAML file will cause an error and remove
 		// the previously created workload.
 		//
-		// teardown any containers, pods, and volumes that might have created before we hit the error
+		// teardown any containers, pods, and volumes that might have been created before we hit the error
 		// reader, err := readerFromArg(args[0])
 		// if err != nil {
 		// 	return err

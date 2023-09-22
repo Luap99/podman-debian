@@ -16,13 +16,12 @@ import (
 	"github.com/containers/podman/v4/pkg/domain/infra/abi"
 	"github.com/containers/storage"
 	"github.com/docker/docker/pkg/jsonmessage"
-	"github.com/gorilla/schema"
 	"github.com/sirupsen/logrus"
 )
 
 // PushImage is the handler for the compat http endpoint for pushing images.
 func PushImage(w http.ResponseWriter, r *http.Request) {
-	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
+	decoder := utils.GetDecoder(r)
 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 
 	// Now use the ABI implementation to prevent us from having duplicate
@@ -197,7 +196,7 @@ loop: // break out of for/select infinite loop
 				break loop
 			} else {
 				writeStatusCode(http.StatusOK)
-				writeReference() // There may not be any progess, so make sure the reference gets written
+				writeReference() // There may not be any progress, so make sure the reference gets written
 			}
 
 			tag := query.Tag

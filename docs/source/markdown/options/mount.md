@@ -6,29 +6,43 @@
 
 Attach a filesystem mount to the container
 
-Current supported mount TYPEs are **bind**, **volume**, **image**, **tmpfs** and **devpts**. <sup>[[1]](#Footnote1)</sup>
+Current supported mount TYPEs are **bind**, **devpts**, **glob**, **image**, **ramfs**, **tmpfs** and **volume**. <sup>[[1]](#Footnote1)</sup>
 
        e.g.
-
        type=bind,source=/path/on/host,destination=/path/in/container
 
        type=bind,src=/path/on/host,dst=/path/in/container,relabel=shared
 
        type=bind,src=/path/on/host,dst=/path/in/container,relabel=shared,U=true
 
-       type=volume,source=vol1,destination=/path/in/container,ro=true
+       type=devpts,destination=/dev/pts
 
-       type=tmpfs,tmpfs-size=512M,destination=/path/in/container
+       type=glob,src=/usr/lib/libfoo*,destination=/usr/lib,ro=true
 
        type=image,source=fedora,destination=/fedora-image,rw=true
 
-       type=devpts,destination=/dev/pts
+       type=ramfs,tmpfs-size=512M,destination=/path/in/container
+
+       type=tmpfs,tmpfs-size=512M,destination=/path/in/container
+
+       type=tmpfs,destination=/path/in/container,noswap
+
+       type=volume,source=vol1,destination=/path/in/container,ro=true
 
        Common Options:
 
-	      · src, source: mount source spec for bind and volume. Mandatory for bind.
+	      · src, source: mount source spec for bind, glob, and volume. Mandatory for bind and glob.
 
 	      · dst, destination, target: mount destination spec.
+
+	      When source globs are specified without the destination directory,
+              the files and directories are mounted with their complete path
+	      within the container. When the destination is specified, the
+	      files and directories matching the glob on the base file name
+	      on the destination directory are mounted. The option
+	      `type=glob,src=/foo*,destination=/tmp/bar` tells container engines
+	      to mount host files matching /foo* to the /tmp/bar/
+	      directory in the container.
 
        Options specific to volume:
 
@@ -47,7 +61,7 @@ Current supported mount TYPEs are **bind**, **volume**, **image**, **tmpfs** and
 
 	      · rw, readwrite: true or false (default).
 
-       Options specific to bind:
+       Options specific to bind and glob:
 
 	      · ro, readonly: true or false (default).
 
@@ -61,17 +75,17 @@ Current supported mount TYPEs are **bind**, **volume**, **image**, **tmpfs** and
 
 	      . U, chown: true or false (default). Change recursively the owner and group of the source volume based on the UID and GID of the container.
 
-       Options specific to tmpfs:
+       Options specific to tmpfs and ramfs:
 
 	      · ro, readonly: true or false (default).
 
-	      · tmpfs-size: Size of the tmpfs mount in bytes. Unlimited by default in Linux.
+	      · tmpfs-size: Size of the tmpfs/ramfs mount in bytes. Unlimited by default in Linux.
 
-	      · tmpfs-mode: File mode of the tmpfs in octal. (e.g. 700 or 0700.) Defaults to 1777 in Linux.
+	      · tmpfs-mode: File mode of the tmpfs/ramfs in octal. (e.g. 700 or 0700.) Defaults to 1777 in Linux.
 
-	      · tmpcopyup: Enable copyup from the image directory at the same location to the tmpfs. Used by default.
+	      · tmpcopyup: Enable copyup from the image directory at the same location to the tmpfs/ramfs. Used by default.
 
-	      · notmpcopyup: Disable copying files from the image to the tmpfs.
+	      · notmpcopyup: Disable copying files from the image to the tmpfs/ramfs.
 
 	      . U, chown: true or false (default). Change recursively the owner and group of the source volume based on the UID and GID of the container.
 

@@ -387,4 +387,51 @@ $content--2.*" "logs --until -f on running container works"
 
     _log_test_follow_until journald
 }
+
+# https://github.com/containers/podman/issues/19545
+@test "podman logs --tail, k8s-file with partial lines" {
+    cname="tail_container"
+
+    # "-t" gives us ^Ms (CRs) in the log
+    run_podman run --name $cname --log-driver k8s-file -t $IMAGE echo hi
+
+    # Hand-craft a log file with partial lines and carriage returns
+    run_podman inspect --format '{{.HostConfig.LogConfig.Path}}' $cname
+    logpath="$output"
+    timestamp=$(head -n1 "$logpath" | awk '{print $1}')
+    cr=$'\r'
+    nl=$'\n'
+    # Delete, don't overwrite, in case conmon still has the fd open
+    rm -f $logpath
+    cat > $logpath <<EOF
+$timestamp stdout F podman1$cr
+$timestamp stdout P podman2
+$timestamp stdout F $cr
+$timestamp stdout F podman3$cr
+EOF
+
+    # FIXME: remove after 2024-01-01 if no more flakes seen.
+    cat -vET $logpath
+
+    expect1="podman3${cr}"
+    expect2="podman2${cr}${nl}podman3${cr}"
+    expect3="podman1${cr}${nl}podman2${cr}${nl}podman3${cr}"
+
+    # This always worked
+    run_podman logs --tail 1 $cname
+    assert "$output" = "$expect1" "--tail 1"
+
+    # Prior to this PR, the first line would be "^M" without the podman
+    run_podman logs --tail 2 $cname
+    assert "$output" = "$expect2" "--tail 2"
+
+    # Confirm that we won't overrun
+    for i in 3 4 5; do
+        run_podman logs --tail $i $cname
+        assert "$output" = "$expect3" "--tail $i"
+    done
+
+    run_podman rm $cname
+}
+
 # vim: filetype=sh

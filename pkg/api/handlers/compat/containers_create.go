@@ -28,12 +28,11 @@ import (
 	"github.com/containers/podman/v4/pkg/specgenutil"
 	"github.com/containers/storage"
 	"github.com/docker/docker/api/types/mount"
-	"github.com/gorilla/schema"
 )
 
 func CreateContainer(w http.ResponseWriter, r *http.Request) {
 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
-	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
+	decoder := utils.GetDecoder(r)
 	query := struct {
 		Name     string `schema:"name"`
 		Platform string `schema:"platform"`
@@ -436,6 +435,7 @@ func cliOpts(cc handlers.CreateContainerConfig, rtc *config.Config) (*entities.C
 		Rm:                cc.HostConfig.AutoRemove,
 		SecurityOpt:       cc.HostConfig.SecurityOpt,
 		StopSignal:        cc.Config.StopSignal,
+		StopTimeout:       rtc.Engine.StopTimeout, // podman default
 		StorageOpts:       stringMaptoArray(cc.HostConfig.StorageOpt),
 		Sysctl:            stringMaptoArray(cc.HostConfig.Sysctls),
 		Systemd:           "true", // podman default

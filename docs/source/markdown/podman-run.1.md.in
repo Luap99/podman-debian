@@ -28,7 +28,8 @@ These will be based on the host's version of the files, though they can be
 customized with options (for example, **--dns** will override the host's DNS
 servers in the created _resolv.conf_). Additionally, a container environment
 file is created in each container to indicate to programs they are running in a
-container. This file is located at _/run/.containerenv_. When using the
+container. This file is located at _/run/.containerenv_ (or
+_/var/run/.containerenv_ for FreeBSD containers). When using the
 --privileged flag the .containerenv contains name/value pairs indicating the
 container engine version, whether the engine is running in rootless mode, the
 container name and ID, as well as the image name and ID that the container is based on. Note: _/run/.containerenv_ will not be created when a volume is mounted on /run.
@@ -347,7 +348,7 @@ the container when it exits. The default is **false**.
 #### **--rmi**
 
 After exit of the container, remove the image unless another
-container is using it. The default is *false*.
+container is using it. Implies --rm on the new container. The default is *false*.
 
 @@option rootfs
 
@@ -466,6 +467,12 @@ system within the container, including tmpfs, set --read-only-tmpfs=false.
 $ podman run --read-only -i -t fedora /bin/bash
 
 $ podman run --read-only --read-only-tmpfs=false --tmpfs /run -i -t fedora /bin/bash
+```
+
+### Exposing shared libraries inside of container as read-only using a glob
+
+```
+$ podman run --mount type=glob,src=/usr/lib64/libnvidia\*,ro=true -i -t fedora /bin/bash
 ```
 
 ### Exposing log messages from the container to the host's log
@@ -870,7 +877,7 @@ run in detached mode (backgrounded), so Podman can exit but conmon continues to
 run.  Each container has their own instance of conmon. Conmon waits for the
 container to exit, gathers and saves the exit code, and then launches a Podman
 process to complete the container cleanup, by shutting down the network and
-storage.   For more information on conmon, please reference the conmon(8) man
+storage.   For more information about conmon, see the conmon(8) man
 page.
 
 ## FILES

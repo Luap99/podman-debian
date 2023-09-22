@@ -37,7 +37,7 @@
 # include it. Official rawhide should be able to fetch the last active build of
 # gvproxy, the min version requirement has been removed to allow it.
 # Ref: https://bugzilla.redhat.com/show_bug.cgi?id=2224434
-%if !%{defined copr_username} && 0%{?fedora} <= 37
+%if !%{defined copr_username} && 0%{?fedora} <= 38
 %define gvproxy_subpackage 1
 %endif
 
@@ -95,7 +95,6 @@ Source2: %{git_gvproxy}/archive/%{commit_gvproxy}/%{repo_gvproxy}-%{commit_gvpro
 %endif
 Provides: %{name}-manpages = %{epoch}:%{version}-%{release}
 BuildRequires: %{_bindir}/envsubst
-BuildRequires: %{_bindir}/go-md2man
 %if %{defined build_with_btrfs}
 BuildRequires: btrfs-progs-devel
 %endif
@@ -236,7 +235,7 @@ Provides: %{name}-%{name}sh = %{epoch}:%{version}-%{release}
 capabilities specified in user quadlets.
 
 It is a symlink to %{_bindir}/%{name} and execs into the `%{name}sh` container
-when `%{_bindir}/%{name}sh is set as a login shell or set as os.Args[0].
+when `%{_bindir}/%{name}sh` is set as a login shell or set as os.Args[0].
 
 %prep
 %autosetup -Sgit -n %{name}-%{version}
@@ -393,7 +392,6 @@ cp -pav test/system %{buildroot}/%{_datadir}/%{name}/test/
 %{_datadir}/zsh/site-functions/_%{name}-remote
 
 %files tests
-%license LICENSE
 %{_datadir}/%{name}/test
 
 %files plugins
@@ -412,8 +410,6 @@ cp -pav test/system %{buildroot}/%{_datadir}/%{name}/test/
 %endif
 
 %files -n %{name}sh
-%license LICENSE
-%doc README.md CONTRIBUTING.md install.md transfer.md
 %{_bindir}/%{name}sh
 
 %changelog

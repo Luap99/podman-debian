@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/containers/podman/v4/pkg/machine"
+	"github.com/containers/podman/v4/pkg/machine/wsl/wutil"
 	"github.com/containers/podman/v4/pkg/specgen"
 	"github.com/sirupsen/logrus"
 )
@@ -52,6 +53,21 @@ fi
 ip route add $ROUTE
 rm -rf /mnt/wsl/podman-usermodenet
 `
+
+func verifyWSLUserModeCompat() error {
+	if wutil.IsWSLStoreVersionInstalled() {
+		return nil
+	}
+
+	prefix := ""
+	if !winVersionAtLeast(10, 0, 19043) {
+		prefix = "upgrade to 22H2, "
+	}
+
+	return fmt.Errorf("user-mode networking requires a newer version of WSL: "+
+		"%sapply all outstanding windows updates, and then run `wsl --update`",
+		prefix)
+}
 
 func (v *MachineVM) startUserModeNetworking() error {
 	if !v.UserModeNetworking {
@@ -171,6 +187,10 @@ func (v *MachineVM) launchUserModeNetDist(exeFile string) error {
 }
 
 func installUserModeDist(dist string, imagePath string) error {
+	if err := verifyWSLUserModeCompat(); err != nil {
+		return err
+	}
+
 	exists, err := isWSLExist(userModeDist)
 	if err != nil {
 		return err

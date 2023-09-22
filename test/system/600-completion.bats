@@ -37,6 +37,11 @@ function check_shell_completion() {
 "
 
     for cmd in $(_podman_commands "$@"); do
+        # Skip the compose command which is calling `docker-compose --help`
+        # and hence won't match the assumptions made below.
+        if [[ "$cmd" == "compose" ]]; then
+            continue
+        fi
         # Human-readable podman command string, with multiple spaces collapsed
         name="podman"
         if is_remote; then
@@ -308,6 +313,25 @@ function _check_no_suggestions() {
     # Called with no args -- start with 'podman --help'. check_shell_completion() will
     # recurse for any subcommands.
     check_shell_completion
+
+    # check inspect with format flag
+    run_completion inspect -f "{{."
+    assert "$output" =~ ".*^\{\{\.Args\}\}\$.*" "Defaulting to container type is completed"
+
+    run_completion inspect created-$random_container_name -f "{{."
+    assert "$output" =~ ".*^\{\{\.Args\}\}\$.*" "Container type is completed"
+
+    run_completion inspect $random_image_name -f "{{."
+    assert "$output" =~ ".*^\{\{\.Digest\}\}\$.*" "Image type is completed"
+
+    run_completion inspect $random_volume_name -f "{{."
+    assert "$output" =~ ".*^\{\{\.Anonymous\}\}\$.*" "Volume type is completed"
+
+    run_completion inspect created-$random_pod_name -f "{{."
+    assert "$output" =~ ".*^\{\{\.BlkioDeviceReadBps\}\}\$.*" "Pod type is completed"
+
+    run_completion inspect $random_network_name -f "{{."
+    assert "$output" =~ ".*^\{\{\.DNSEnabled\}\}\$.*" "Network type is completed"
 
     # cleanup
     run_podman secret rm $random_secret_name

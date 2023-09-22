@@ -471,6 +471,28 @@ BOGUS=foo
 			Expect(session).Should(Exit(1))
 		})
 
+		It("Should scan and return output for files in subdirectories", func() {
+			dirName := "test_subdir"
+
+			err = CopyDirectory(filepath.Join("quadlet", dirName), quadletDir)
+
+			if err != nil {
+				GinkgoWriter.Println("error:", err)
+			}
+
+			session := podmanTest.Quadlet([]string{"-dryrun", "-user"}, quadletDir)
+			session.WaitWithDefaultTimeout()
+
+			current := session.OutputToStringArray()
+			expected := []string{
+				"---mysleep.service---",
+				"---mysleep_1.service---",
+				"---mysleep_2.service---",
+			}
+
+			Expect(current).To(ContainElements(expected))
+		})
+
 		It("Should parse a kube file and print it to stdout", func() {
 			fileName := "basic.kube"
 			testcase := loadQuadletTestcase(filepath.Join("quadlet", fileName))
@@ -555,6 +577,9 @@ BOGUS=foo
 		Entry("capabilities2.container", "capabilities2.container", 0, ""),
 		Entry("devices.container", "devices.container", 0, ""),
 		Entry("disableselinux.container", "disableselinux.container", 0, ""),
+		Entry("dns-options.container", "dns-options.container", 0, ""),
+		Entry("dns-search.container", "dns-search.container", 0, ""),
+		Entry("dns.container", "dns.container", 0, ""),
 		Entry("env-file.container", "env-file.container", 0, ""),
 		Entry("env-host-false.container", "env-host-false.container", 0, ""),
 		Entry("env-host.container", "env-host.container", 0, ""),
@@ -594,6 +619,7 @@ BOGUS=foo
 		Entry("seccomp.container", "seccomp.container", 0, ""),
 		Entry("secrets.container", "secrets.container", 0, ""),
 		Entry("selinux.container", "selinux.container", 0, ""),
+		Entry("shmsize.container", "shmsize.container", 0, ""),
 		Entry("shortname.container", "shortname.container", 0, "Warning: shortname.container specifies the image \"shortname\" which not a fully qualified image name. This is not ideal for performance and security reasons. See the podman-pull manpage discussion of short-name-aliases.conf for details."),
 		Entry("sysctl.container", "sysctl.container", 0, ""),
 		Entry("timezone.container", "timezone.container", 0, ""),
@@ -606,6 +632,7 @@ BOGUS=foo
 		Entry("device-copy.volume", "device-copy.volume", 0, ""),
 		Entry("device.volume", "device.volume", 0, ""),
 		Entry("label.volume", "label.volume", 0, ""),
+		Entry("name.volume", "name.volume", 0, ""),
 		Entry("podmanargs.volume", "podmanargs.volume", 0, ""),
 		Entry("uid.volume", "uid.volume", 0, ""),
 
@@ -623,9 +650,14 @@ BOGUS=foo
 		Entry("Kube - User Remap Auto", "remap-auto.kube", 0, ""),
 		Entry("Kube - User Remap Manual", "remap-manual.kube", 1, "converting \"remap-manual.kube\": RemapUsers=manual is not supported"),
 		Entry("Syslog Identifier", "syslog.identifier.kube", 0, ""),
+		Entry("Kube - Working Directory YAML Absolute Path", "workingdir-yaml-abs.kube", 0, ""),
+		Entry("Kube - Working Directory YAML Relative Path", "workingdir-yaml-rel.kube", 0, ""),
+		Entry("Kube - Working Directory Unit", "workingdir-unit.kube", 0, ""),
+		Entry("Kube - Working Directory already in Service", "workingdir-service.kube", 0, ""),
 
 		Entry("Network - Basic", "basic.network", 0, ""),
 		Entry("Network - Disable DNS", "disable-dns.network", 0, ""),
+		Entry("Network - DNS", "dns.network", 0, ""),
 		Entry("Network - Driver", "driver.network", 0, ""),
 		Entry("Network - Gateway not enough Subnet", "gateway.less-subnet.network", 1, "converting \"gateway.less-subnet.network\": cannot set more gateways than subnets"),
 		Entry("Network - Gateway without Subnet", "gateway.no-subnet.network", 1, "converting \"gateway.no-subnet.network\": cannot set gateway or range without subnet"),
@@ -635,6 +667,7 @@ BOGUS=foo
 		Entry("Network - Internal network", "internal.network", 0, ""),
 		Entry("Network - Label", "label.network", 0, ""),
 		Entry("Network - Multiple Options", "options.multiple.network", 0, ""),
+		Entry("Network - Name", "name.network", 0, ""),
 		Entry("Network - Options", "options.network", 0, ""),
 		Entry("Network - PodmanArgs", "podmanargs.network", 0, ""),
 		Entry("Network - Range not enough Subnet", "range.less-subnet.network", 1, "converting \"range.less-subnet.network\": cannot set more ranges than subnets"),

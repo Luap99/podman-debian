@@ -1,26 +1,28 @@
-//go:build arm64 && darwin
+//go:build darwin
+// +build darwin
 
 package applehv
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"path/filepath"
 	"time"
 
 	"github.com/containers/podman/v4/pkg/machine"
+	vfConfig "github.com/crc-org/vfkit/pkg/config"
 	"github.com/docker/go-units"
 	"golang.org/x/sys/unix"
 )
 
 const (
 	defaultVFKitEndpoint = "http://localhost:8081"
+	ignitionSocketName   = "ignition.sock"
 )
 
-type Virtualization struct {
-	artifact    machine.Artifact
-	compression machine.ImageCompression
-	format      machine.ImageFormat
+type AppleHVVirtualization struct {
+	machine.Virtualization
 }
 
 type MMHardwareConfig struct {
@@ -30,11 +32,13 @@ type MMHardwareConfig struct {
 	Memory   int32
 }
 
-func (v Virtualization) Artifact() machine.Artifact {
-	return machine.Metal
+func VirtualizationProvider() machine.VirtProvider {
+	return &AppleHVVirtualization{
+		machine.NewVirtualization(machine.AppleHV, machine.Xz, machine.Raw, vmtype),
+	}
 }
 
-func (v Virtualization) CheckExclusiveActiveVM() (bool, string, error) {
+func (v AppleHVVirtualization) CheckExclusiveActiveVM() (bool, string, error) {
 	fsVms, err := getVMInfos()
 	if err != nil {
 		return false, "", err
@@ -48,15 +52,7 @@ func (v Virtualization) CheckExclusiveActiveVM() (bool, string, error) {
 	return false, "", nil
 }
 
-func (v Virtualization) Compression() machine.ImageCompression {
-	return v.compression
-}
-
-func (v Virtualization) Format() machine.ImageFormat {
-	return v.format
-}
-
-func (v Virtualization) IsValidVMName(name string) (bool, error) {
+func (v AppleHVVirtualization) IsValidVMName(name string) (bool, error) {
 	mm := MacMachine{Name: name}
 	configDir, err := machine.GetConfDir(machine.AppleHvVirt)
 	if err != nil {
@@ -68,7 +64,7 @@ func (v Virtualization) IsValidVMName(name string) (bool, error) {
 	return true, nil
 }
 
-func (v Virtualization) List(opts machine.ListOptions) ([]*machine.ListResponse, error) {
+func (v AppleHVVirtualization) List(opts machine.ListOptions) ([]*machine.ListResponse, error) {
 	var (
 		response []*machine.ListResponse
 	)
@@ -79,7 +75,7 @@ func (v Virtualization) List(opts machine.ListOptions) ([]*machine.ListResponse,
 	}
 
 	for _, mm := range mms {
-		vmState, err := mm.state()
+		vmState, err := mm.Vfkit.state()
 		if err != nil {
 			if errors.Is(err, unix.ECONNREFUSED) {
 				vmState = machine.Stopped
@@ -108,12 +104,12 @@ func (v Virtualization) List(opts machine.ListOptions) ([]*machine.ListResponse,
 	return response, nil
 }
 
-func (v Virtualization) LoadVMByName(name string) (machine.VM, error) {
+func (v AppleHVVirtualization) LoadVMByName(name string) (machine.VM, error) {
 	m := MacMachine{Name: name}
 	return m.loadFromFile()
 }
 
-func (v Virtualization) NewMachine(opts machine.InitOptions) (machine.VM, error) {
+func (v AppleHVVirtualization) NewMachine(opts machine.InitOptions) (machine.VM, error) {
 	m := MacMachine{Name: opts.Name}
 
 	configDir, err := machine.GetConfDir(machine.AppleHvVirt)
@@ -126,6 +122,11 @@ func (v Virtualization) NewMachine(opts machine.InitOptions) (machine.VM, error)
 		return nil, err
 	}
 	m.ConfigPath = *configPath
+
+	dataDir, err := machine.GetDataDir(machine.AppleHvVirt)
+	if err != nil {
+		return nil, err
+	}
 
 	ignitionPath, err := machine.NewMachineFile(filepath.Join(configDir, m.Name)+".ign", nil)
 	if err != nil {
@@ -142,6 +143,8 @@ func (v Virtualization) NewMachine(opts machine.InitOptions) (machine.VM, error)
 		// Diskpath will be needed
 		Memory: opts.Memory,
 	}
+	bl := vfConfig.NewEFIBootloader(fmt.Sprintf("%s/%ss", dataDir, opts.Name), true)
+	m.Vfkit.VirtualMachine = vfConfig.NewVirtualMachine(uint(opts.CPUS), opts.Memory, bl)
 
 	if err := m.writeConfig(); err != nil {
 		return nil, err
@@ -149,16 +152,16 @@ func (v Virtualization) NewMachine(opts machine.InitOptions) (machine.VM, error)
 	return m.loadFromFile()
 }
 
-func (v Virtualization) RemoveAndCleanMachines() error {
+func (v AppleHVVirtualization) RemoveAndCleanMachines() error {
 	// This can be implemented when host networking is completed.
 	return machine.ErrNotImplemented
 }
 
-func (v Virtualization) VMType() machine.VMType {
+func (v AppleHVVirtualization) VMType() machine.VMType {
 	return vmtype
 }
 
-func (v Virtualization) loadFromLocalJson() ([]*MacMachine, error) {
+func (v AppleHVVirtualization) loadFromLocalJson() ([]*MacMachine, error) {
 	var (
 		jsonFiles []string
 		mms       []*MacMachine
