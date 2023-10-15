@@ -1,0 +1,116 @@
+From 8b4a79a744ac3fd176ca4dc0e3ae40f75159e090 Mon Sep 17 00:00:00 2001
+From: Giuseppe Scrivano <gscrivan@redhat.com>
+Date: Mon, 4 Sep 2023 10:09:15 +0200
+Subject: [PATCH] linux, rootless: clamp oom_score_adj if it is too low
+
+when running rootless, if the specified oom_score_adj for the
+container process is lower than the current value, clamp it to the
+current value and print a warning.
+
+Closes: https://github.com/containers/podman/issues/19829
+
+Signed-off-by: Giuseppe Scrivano <gscrivan@redhat.com>
+---
+ docs/source/markdown/options/oom-score-adj.md |  4 +++
+ pkg/specgen/generate/oci_linux.go             | 28 ++++++++++++++++++-
+ test/system/030-run.bats                      | 11 ++++++++
+ 3 files changed, 42 insertions(+), 1 deletion(-)
+
+
+Note: this unbreaks docker-compose/pack with runc 1.9
+
+Index: libpod/docs/source/markdown/options/oom-score-adj.md
+===================================================================
+--- libpod.orig/docs/source/markdown/options/oom-score-adj.md
++++ libpod/docs/source/markdown/options/oom-score-adj.md
+@@ -5,3 +5,7 @@
+ #### **--oom-score-adj**=*num*
+ 
+ Tune the host's OOM preferences for containers (accepts values from **-1000** to **1000**).
++
++When running in rootless mode, the specified value can't be lower than
++the oom_score_adj for the current process. In this case, the
++oom-score-adj is clamped to the current process value.
+Index: libpod/pkg/specgen/generate/oci_linux.go
+===================================================================
+--- libpod.orig/pkg/specgen/generate/oci_linux.go
++++ libpod/pkg/specgen/generate/oci_linux.go
+@@ -4,7 +4,9 @@ import (
+ 	"context"
+ 	"encoding/json"
+ 	"fmt"
++	"os"
+ 	"path"
++	"strconv"
+ 	"strings"
+ 
+ 	"github.com/containers/common/libimage"
+@@ -16,6 +18,7 @@ import (
+ 	"github.com/containers/podman/v4/pkg/specgen"
+ 	spec "github.com/opencontainers/runtime-spec/specs-go"
+ 	"github.com/opencontainers/runtime-tools/generate"
++	"github.com/sirupsen/logrus"
+ 	"golang.org/x/sys/unix"
+ )
+ 
+@@ -69,6 +72,25 @@ func getCgroupPermissions(unmask []strin
+ 	return ro
+ }
+ 
++func maybeClampOOMScoreAdj(oomScoreValue int, isRootless bool) (int, error) {
++	if !isRootless {
++		return oomScoreValue, nil
++	}
++	v, err := os.ReadFile("/proc/self/oom_score_adj")
++	if err != nil {
++		return oomScoreValue, err
++	}
++	currentValue, err := strconv.Atoi(strings.TrimRight(string(v), "\n"))
++	if err != nil {
++		return oomScoreValue, err
++	}
++	if currentValue > oomScoreValue {
++		logrus.Warnf("Requested oom_score_adj=%d is lower than the current one, changing to %d", oomScoreValue, currentValue)
++		return currentValue, nil
++	}
++	return oomScoreValue, nil
++}
++
+ // SpecGenToOCI returns the base configuration for the container.
+ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runtime, rtc *config.Config, newImage *libimage.Image, mounts []spec.Mount, pod *libpod.Pod, finalCmd []string, compatibleOptions *libpod.InfraInherit) (*spec.Spec, error) {
+ 	cgroupPerm := getCgroupPermissions(s.Unmask)
+@@ -313,7 +335,11 @@ func SpecGenToOCI(ctx context.Context, s
+ 	}
+ 
+ 	if s.OOMScoreAdj != nil {
+-		g.SetProcessOOMScoreAdj(*s.OOMScoreAdj)
++		score, err := maybeClampOOMScoreAdj(*s.OOMScoreAdj, isRootless)
++		if err != nil {
++			return nil, err
++		}
++		g.SetProcessOOMScoreAdj(score)
+ 	}
+ 	setProcOpts(s, &g)
+ 
+Index: libpod/test/system/030-run.bats
+===================================================================
+--- libpod.orig/test/system/030-run.bats
++++ libpod/test/system/030-run.bats
+@@ -912,6 +912,17 @@ EOF
+     is "$output" "$oomscore" "--oom-score-adj should override containers.conf"
+ }
+ 
++# issue 19829
++@test "rootless podman clamps oom-score-adj if it is lower than the current one" {
++    skip_if_not_rootless
++    skip_if_remote
++    if grep -- -1000 /proc/self/oom_score_adj; then
++        skip "the current oom-score-adj is already -1000"
++    fi
++    run_podman run --oom-score-adj=-1000 --rm $IMAGE true
++    is "$output" ".*Requested oom_score_adj=.* is lower than the current one, changing to .*"
++}
++
+ # CVE-2022-1227 : podman top joins container mount NS and uses nsenter from image
+ @test "podman top does not use nsenter from image" {
+     keepid="--userns=keep-id"
