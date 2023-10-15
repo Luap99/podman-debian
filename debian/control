@@ -117,6 +117,7 @@ Recommends:
  buildah (>= 1.31),
  catatonit | tini | dumb-init,
  dbus-user-session,
+ passt,
  slirp4netns (>= 0.4.1~),
  uidmap,
  ${misc:Recommends},
