@@ -1,6 +1,15 @@
 # Release Notes
 
-## 4.7.0-rc1
+## 4.7.1
+### Bugfixes
+- Fixed a bug involving non-English locales of Windows where machine installs using user-mode networking were rejected due to erroneous version detection ([#20209](https://github.com/containers/podman/issues/20209)).
+- Fixed a regression in --env-file handling ([#19565](https://github.com/containers/podman/issues/19565)).
+- Fixed a bug where podman inspect would fail when stat'ing a device failed.
+
+### API
+- The network list compat API endpoint is now much faster ([#20035](https://github.com/containers/podman/issues/20035)).
+
+## 4.7.0
 ### Security
 - Now the io.containers.capabilities LABEL in an image can be an empty string.
 
@@ -97,6 +106,8 @@
 - Fixed a crash validating --device argument for create and run ([#19335](https://github.com/containers/podman/issues/19335)).
 - Fixed a bug where `.HostConfig.PublishAllPorts` always evaluates to `false` when inspecting a container created with `--publish-all`.
 - Fixed a bug in `podman image trust` command to allow using the local policy.json file ([#19073](https://github.com/containers/podman/issues/19073)).
+- Fixed a bug where the cgroup file system was not correctly mounted when running without a network namespace in rootless mode ([#20073](https://github.com/containers/podman/issues/20073)).
+- Fixed a bug where the `--syslog` flag was not passed to the cleanup process.
 
 ### API
 - Fixed a bug with parsing of the pull query parameter for the compat /build endpoint ([#17778](https://github.com/containers/podman/issues/17778)).
