@@ -50,7 +50,7 @@ Index: libpod/pkg/api/handlers/compat/volumes.go
 ===================================================================
 --- libpod.orig/pkg/api/handlers/compat/volumes.go
 +++ libpod/pkg/api/handlers/compat/volumes.go
-@@ -56,14 +56,14 @@ func ListVolumes(w http.ResponseWriter,
+@@ -55,14 +55,14 @@ func ListVolumes(w http.ResponseWriter,
  		utils.InternalServerError(w, err)
  		return
  	}
@@ -67,7 +67,7 @@ Index: libpod/pkg/api/handlers/compat/volumes.go
  			Name:       v.Name(),
  			Driver:     v.Driver(),
  			Mountpoint: mp,
-@@ -74,7 +74,7 @@ func ListVolumes(w http.ResponseWriter,
+@@ -73,7 +73,7 @@ func ListVolumes(w http.ResponseWriter,
  		}
  		volumeConfigs = append(volumeConfigs, &config)
  	}
@@ -76,7 +76,7 @@ Index: libpod/pkg/api/handlers/compat/volumes.go
  		Volumes:  volumeConfigs,
  		Warnings: []string{},
  	}
-@@ -95,7 +95,7 @@ func CreateVolume(w http.ResponseWriter,
+@@ -94,7 +94,7 @@ func CreateVolume(w http.ResponseWriter,
  		return
  	}
  	// decode params from body
@@ -85,7 +85,7 @@ Index: libpod/pkg/api/handlers/compat/volumes.go
  	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
  		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("Decode(): %w", err))
  		return
-@@ -122,7 +122,7 @@ func CreateVolume(w http.ResponseWriter,
+@@ -121,7 +121,7 @@ func CreateVolume(w http.ResponseWriter,
  			utils.InternalServerError(w, err)
  			return
  		}
@@ -94,7 +94,7 @@ Index: libpod/pkg/api/handlers/compat/volumes.go
  			CreatedAt:  existingVolume.CreatedTime().Format(time.RFC3339),
  			Driver:     existingVolume.Driver(),
  			Labels:     existingVolume.Labels(),
-@@ -167,7 +167,7 @@ func CreateVolume(w http.ResponseWriter,
+@@ -166,7 +166,7 @@ func CreateVolume(w http.ResponseWriter,
  		utils.InternalServerError(w, err)
  		return
  	}
@@ -103,7 +103,7 @@ Index: libpod/pkg/api/handlers/compat/volumes.go
  		Name:       config.Name,
  		Driver:     config.Driver,
  		Mountpoint: mp,
-@@ -197,7 +197,7 @@ func InspectVolume(w http.ResponseWriter
+@@ -196,7 +196,7 @@ func InspectVolume(w http.ResponseWriter
  		utils.InternalServerError(w, err)
  		return
  	}

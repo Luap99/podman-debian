@@ -54,7 +54,7 @@ Index: libpod/pkg/specgen/generate/kube/kube.go
 ===================================================================
 --- libpod.orig/pkg/specgen/generate/kube/kube.go
 +++ libpod/pkg/specgen/generate/kube/kube.go
-@@ -32,7 +32,7 @@ import (
+@@ -35,7 +35,7 @@ import (
  	"github.com/containers/podman/v4/pkg/specgen/generate"
  	systemdDefine "github.com/containers/podman/v4/pkg/systemd/define"
  	"github.com/containers/podman/v4/pkg/util"
@@ -63,7 +63,7 @@ Index: libpod/pkg/specgen/generate/kube/kube.go
  	"github.com/docker/go-units"
  	spec "github.com/opencontainers/runtime-spec/specs-go"
  	"github.com/sirupsen/logrus"
-@@ -1039,7 +1039,7 @@ func getContainerResources(container v1.
+@@ -1111,7 +1111,7 @@ func getContainerResources(container v1.
  	requests := container.Resources.Requests
  
  	if limits == nil || limits.Memory().IsZero() {
