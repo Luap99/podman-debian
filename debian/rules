@@ -12,7 +12,8 @@ export GO111MODULE=off
 
 export DH_GOLANG_GO_GENERATE := 1
 
-export DH_GOLANG_INSTALL_EXTRA := testdata cni
+export DH_GOLANG_INSTALL_EXTRA := cni utils/testdata test/e2e/testdata pkg/trust/testdata
+
 
 # machine/qemu only works on amd64, arm64
 ifeq (,$(filter amd64 arm64,$(DEB_HOST_ARCH)))
