@@ -1,6 +1,6 @@
 libpod (4.7.1+ds4-1) experimental; urgency=medium
 
-  * New upstream release
+  * New upstream release (Closes: #1053131)
   * Refresh patches
   * Tighten dependencies
 
