@@ -35,10 +35,11 @@ endif
 
 
 export DH_GOLANG_TEST_EXCLUDES := $(DH_GOLANG_EXCLUDES) \
-	libpod/hack/podman-registry-go \
-	libpod/lock/file \
-	libpod/network/cni \
-	libpod/pkg/bindings/test \
+	hack \
+	lock/file \
+	network/cni \
+	pkg/bindings \
+	pkg/machine \
 	podman/cmd/podman/common
 
 
