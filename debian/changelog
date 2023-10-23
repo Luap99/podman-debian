@@ -1,6 +1,6 @@
 libpod (4.7.1+ds4-2) experimental; urgency=medium
 
-  * 
+  * more reliable way to build podman-machine
 
  -- Reinhard Tartler <siretart@tauware.de>  Mon, 23 Oct 2023 06:58:01 -0400
 
