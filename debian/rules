@@ -108,6 +108,7 @@ execute_after_dh_installman:
 	# installed in the podman-remote package instead
 	rm -f --verbose $(CURDIR)/debian/podman/usr/share/man/man1/podman-remote.1*
 	# avoid file conflicts, cf. #1054460
+	rm -f --verbose $(CURDIR)/debian/podman/usr/share/man/man1/podman-compose.1*
 	rm -f --verbose $(CURDIR)/debian/podman-docker/usr/share/man/man1/docker-compose.1*
 
 
