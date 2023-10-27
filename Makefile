@@ -33,6 +33,7 @@ PROJECT := github.com/containers/podman
 GIT_BASE_BRANCH ?= origin/main
 LIBPOD_INSTANCE := libpod_dev
 PREFIX ?= /usr/local
+RELEASE_PREFIX = /usr
 BINDIR ?= ${PREFIX}/bin
 LIBEXECDIR ?= ${PREFIX}/libexec
 LIBEXECPODMAN ?= ${LIBEXECDIR}/podman
@@ -60,7 +61,7 @@ BUILDTAGS ?= \
 # N/B: This value is managed by Renovate, manual changes are
 # possible, as long as they don't disturb the formatting
 # (i.e. DO NOT ADD A 'v' prefix!)
-GOLANGCI_LINT_VERSION := 1.53.3
+GOLANGCI_LINT_VERSION := 1.54.2
 PYTHON ?= $(shell command -v python3 python|head -n1)
 PKG_MANAGER ?= $(shell command -v dnf yum|head -n1)
 # ~/.local/bin is not in PATH on all systems
@@ -68,9 +69,11 @@ PRE_COMMIT = $(shell command -v bin/venv/bin/pre-commit ~/.local/bin/pre-commit 
 ifeq ($(shell uname -s),FreeBSD)
 SED=gsed
 GREP=ggrep
+MAN_L=	mandoc
 else
 SED=sed
 GREP=grep
+MAN_L=	man -l
 endif
 
 # This isn't what we actually build; it's a superset, used for target
@@ -144,7 +147,7 @@ override undefine GOBIN
 # This must never include the 'hack' directory
 export PATH := $(shell $(GO) env GOPATH)/bin:$(PATH)
 
-GOMD2MAN ?= $(shell command -v go-md2man || echo './test/tools/build/go-md2man')
+GOMD2MAN ?= ./test/tools/build/go-md2man
 
 CROSS_BUILD_TARGETS := \
 	bin/podman.cross.linux.amd64 \
@@ -157,6 +160,7 @@ CROSS_BUILD_TARGETS := \
 	bin/podman.cross.linux.mipsle \
 	bin/podman.cross.linux.mips64 \
 	bin/podman.cross.linux.mips64le \
+	bin/podman.cross.linux.riscv64 \
 	bin/podman.cross.freebsd.amd64 \
 	bin/podman.cross.freebsd.arm64
 
@@ -180,6 +184,10 @@ else ifeq ($(GOOS),darwin)
 BINSFX :=
 SRCBINDIR := bin/darwin
 CGO_ENABLED := 0
+else ifeq ($(GOOS),freebsd)
+BINSFX := -remote
+SRCBINDIR := bin
+RELEASE_PREFIX = /usr/local
 else
 BINSFX := -remote
 SRCBINDIR := bin
@@ -197,11 +205,11 @@ endif
 endif
 
 # win-sshproxy is checked out manually to keep from pulling in gvisor and it's transitive
-# dependencies. This is only used for the Windows installer task (podman.msi), which must
+# dependencies. This is only used for the Windows client archives, which must
 # include this lightweight helper binary.
 #
 GV_GITURL=https://github.com/containers/gvisor-tap-vsock.git
-GV_SHA=407efb5dcdb0f4445935f7360535800b60447544
+GV_SHA=db608827124caa71ba411cec8ea959bb942984fe
 
 ###
 ### Primary entry-point targets
@@ -253,7 +261,7 @@ help: ## (Default) Print listing of key targets with their descriptions
 .PHONY: .gitvalidation
 .gitvalidation:
 	@echo "Validating vs commit '$(call err_if_empty,EPOCH_TEST_COMMIT)'"
-	GIT_CHECK_EXCLUDE="./vendor:./test/tools/vendor:docs/make.bat:test/buildah-bud/buildah-tests.diff:test/e2e/quadlet/remap-keep-id2.container" ./test/tools/build/git-validation -run DCO,short-subject,dangling-whitespace -range $(EPOCH_TEST_COMMIT)..$(HEAD)
+	GIT_CHECK_EXCLUDE="./vendor:./test/tools/vendor:docs/make.bat:test/buildah-bud/buildah-tests.diff:test/e2e/quadlet/remap-keep-id2.container" ./test/tools/build/git-validation -run short-subject -range $(EPOCH_TEST_COMMIT)..$(HEAD)
 
 .PHONY: lint
 lint: golangci-lint
@@ -291,7 +299,7 @@ test/version/version: version/version.go
 
 .PHONY: codespell
 codespell:
-	codespell -S bin,vendor,.git,go.sum,.cirrus.yml,"RELEASE_NOTES.md,*.xz,*.gz,*.ps1,*.tar,swagger.yaml,*.tgz,bin2img,*ico,*.png,*.1,*.5,copyimg,*.orig,apidoc.go" -L passt,bu,hastable,te,clos,ans,pullrequest,uint,iff,od,seeked,splitted,marge,erro,hist,ether,specif -w
+	codespell -S bin,vendor,.git,go.sum,.cirrus.yml,"*.fish,RELEASE_NOTES.md,*.xz,*.gz,*.ps1,*.tar,swagger.yaml,*.tgz,bin2img,*ico,*.png,*.1,*.5,copyimg,*.orig,apidoc.go" -L passt,bu,hastable,te,clos,ans,pullrequest,uint,iff,od,seeked,splitted,marge,erro,hist,ether,specif -w
 
 .PHONY: validate
 validate: lint .gitvalidation validate.completions man-page-check swagger-check tests-included tests-expect-exit pr-removes-fixed-skips
@@ -303,7 +311,7 @@ build-all-new-commits:
 
 .PHONY: vendor
 vendor:
-	$(GO) mod tidy -compat=1.18
+	$(GO) mod tidy
 	$(GO) mod vendor
 	$(GO) mod verify
 
@@ -478,6 +486,17 @@ $(MANPAGES): %: %.md .install.md2man docdir
 #     like '[cgroups(7)](https://.....)'  -> just 'cgroups(7)';
 #  4. Remove HTML-ish stuff like '<sup>..</sup>' and '<a>..</a>'
 #  5. Replace "\" (backslash) at EOL with two spaces (no idea why)
+# Then two sanity checks:
+#  1. test for "included file options/blahblah"; this indicates a failure
+#     in the markdown-preprocess tool; and
+#  2. run 'man -l' against the generated man page, and check for tables
+#     with an empty right-hand column followed by an empty left-hand
+#     column on the next line. (Technically, on the next-next line,
+#     because the next line must be table borders). This is a horrible
+#     unmaintainable rats-nest of duplication, obscure grep options, and
+#     ASCII art. I (esm) believe the cost of releasing corrupt man pages
+#     is higher than the cost of carrying this kludge.
+#
 	@$(SED) -e 's/\((podman[^)]*\.md\(#.*\)\?)\)//g'    \
 	       -e 's/\[\(podman[^]]*\)\]/\1/g'              \
 	       -e 's/\[\([^]]*\)](http[^)]\+)/\1/g'         \
@@ -486,6 +505,9 @@ $(MANPAGES): %: %.md .install.md2man docdir
 	$(GOMD2MAN) -out $(subst source/markdown,build/man,$@)
 	@if grep 'included file options/' docs/build/man/*; then \
 		echo "FATAL: man pages must not contain ^^^^"; exit 1; \
+	fi
+	@if $(MAN_L) $(subst source/markdown,build/man,$@) | $(GREP) -Pazoq '│\s+│\n\s+├─+┼─+┤\n\s+│\s+│'; then  \
+		echo "FATAL: $< has a too-long table column; use 'man -l $(subst source/markdown,build/man,$@)' and look for empty table cells."; exit 1; \
 	fi
 
 .PHONY: docdir
@@ -702,11 +724,11 @@ podman-release: podman-release-$(GOARCH).tar.gz  # Build all Linux binaries for 
 # calls along with careful manipulation of `$GOOS` and `$GOARCH`.
 
 podman-release-%.tar.gz: test/version/version
-	$(eval TMPDIR := $(shell mktemp -d podman_tmp_XXXX))
-	$(eval SUBDIR := podman-v$(call err_if_empty,RELEASE_NUMBER))
-	$(eval _DSTARGS := "DESTDIR=$(TMPDIR)/$(SUBDIR)" "PREFIX=/usr")
+	$(eval tmpsubdir := $(shell mktemp -d podman_tmp_XXXX))
+	$(eval releasedir := podman-v$(call err_if_empty,RELEASE_NUMBER))
+	$(eval _dstargs := "DESTDIR=$(tmpsubdir)/$(releasedir)" "PREFIX=$(RELEASE_PREFIX)")
 	$(eval GOARCH := $*)
-	mkdir -p "$(call err_if_empty,TMPDIR)/$(SUBDIR)"
+	mkdir -p "$(call err_if_empty,tmpsubdir)/$(releasedir)"
 	$(MAKE) GOOS=$(GOOS) GOARCH=$(NATIVE_GOARCH) \
 		clean-binaries docs podman-remote-$(GOOS)-docs
 	if [[ "$(GOARCH)" != "$(NATIVE_GOARCH)" ]]; then \
@@ -715,19 +737,19 @@ podman-release-%.tar.gz: test/version/version
 	else \
 		$(MAKE) GOOS=$(GOOS) GOARCH=$(GOARCH) binaries; \
 	fi
-	$(MAKE) $(_DSTARGS) install.bin install.remote install.man install.systemd
-	tar -czvf $@ --xattrs -C "$(TMPDIR)" "./$(SUBDIR)"
+	$(MAKE) $(_dstargs) install.bin install.remote install.man install.systemd
+	tar -czvf $@ --xattrs -C "$(tmpsubdir)" "./$(releasedir)"
 	if [[ "$(GOARCH)" != "$(NATIVE_GOARCH)" ]]; then $(MAKE) clean-binaries; fi
-	-rm -rf "$(TMPDIR)"
+	-rm -rf "$(tmpsubdir)"
 
 podman-remote-release-%.zip: test/version/version ## Build podman-remote for %=$GOOS_$GOARCH, and docs. into an installation zip.
-	$(eval TMPDIR := $(shell mktemp -d podman_tmp_XXXX))
-	$(eval SUBDIR := podman-$(call err_if_empty,RELEASE_NUMBER))
-	$(eval _DSTARGS := "DESTDIR=$(TMPDIR)/$(SUBDIR)" "PREFIX=/usr")
+	$(eval tmpsubdir := $(shell mktemp -d podman_tmp_XXXX))
+	$(eval releasedir := podman-$(call err_if_empty,RELEASE_NUMBER))
+	$(eval _dstargs := "DESTDIR=$(tmpsubdir)/$(releasedir)" "PREFIX=$(RELEASE_PREFIX)")
 	$(eval GOOS := $(firstword $(subst _, ,$*)))
 	$(eval GOARCH := $(lastword $(subst _, ,$*)))
 	$(eval _GOPLAT := GOOS=$(call err_if_empty,GOOS) GOARCH=$(call err_if_empty,GOARCH))
-	mkdir -p "$(call err_if_empty,TMPDIR)/$(SUBDIR)"
+	mkdir -p "$(call err_if_empty,tmpsubdir)/$(releasedir)"
 	$(MAKE) GOOS=$(GOOS) GOARCH=$(GOARCH) \
 		clean-binaries podman-remote-$(GOOS)-docs
 	if [[ "$(GOARCH)" != "$(NATIVE_GOARCH)" ]]; then \
@@ -742,29 +764,13 @@ podman-remote-release-%.zip: test/version/version ## Build podman-remote for %=$
 	if [[ "$(GOOS)" == "darwin" ]]; then \
 		$(MAKE) $(GOPLAT) podman-mac-helper;\
 	fi
-	cp -r ./docs/build/remote/$(GOOS) "$(TMPDIR)/$(SUBDIR)/docs/"
-	cp ./contrib/remote/containers.conf "$(TMPDIR)/$(SUBDIR)/"
-	$(MAKE) $(GOPLAT) $(_DSTARGS) SELINUXOPT="" install.remote
-	cd "$(TMPDIR)" && \
-		zip --recurse-paths "$(CURDIR)/$@" "./$(SUBDIR)"
+	cp -r ./docs/build/remote/$(GOOS) "$(tmpsubdir)/$(releasedir)/docs/"
+	cp ./contrib/remote/containers.conf "$(tmpsubdir)/$(releasedir)/"
+	$(MAKE) $(GOPLAT) $(_dstargs) SELINUXOPT="" install.remote
+	cd "$(tmpsubdir)" && \
+		zip --recurse-paths "$(CURDIR)/$@" "./$(releasedir)"
 	if [[ "$(GOARCH)" != "$(NATIVE_GOARCH)" ]]; then $(MAKE) clean-binaries; fi
-	-rm -rf "$(TMPDIR)"
-
-podman.msi: test/version/version  ## Build podman-remote, package for installation on Windows
-	$(MAKE) podman-v$(call err_if_empty,RELEASE_NUMBER).msi
-	cp podman-v$(call err_if_empty,RELEASE_NUMBER).msi podman.msi
-
-podman-v%.msi: test/version/version
-# Passing explicitly OS and ARCH, because ARM is not supported by wixl https://gitlab.gnome.org/GNOME/msitools/-/blob/master/tools/wixl/builder.vala#L3
-	$(MAKE) GOOS=windows GOARCH=amd64 podman-remote-windows-docs
-	$(MAKE) GOOS=windows GOARCH=amd64 clean-binaries podman-remote podman-winpath win-gvproxy
-	$(eval DOCFILE := docs/build/remote/windows)
-	find $(DOCFILE) -print | \
-		wixl-heat --var var.ManSourceDir --component-group ManFiles \
-		--directory-ref INSTALLDIR --prefix $(DOCFILE)/ > \
-			$(DOCFILE)/pages.wsx
-	wixl -D VERSION=$(call err_if_empty,RELEASE_VERSION) -D ManSourceDir=$(DOCFILE) \
-		-o $@ contrib/msi/podman.wxs $(DOCFILE)/pages.wsx --arch x64
+	-rm -rf "$(tmpsubdir)"
 
 # Checks out and builds win-sshproxy helper. See comment on GV_GITURL declaration
 .PHONY: win-gvproxy
@@ -951,7 +957,7 @@ install.tools: .install.golangci-lint ## Install needed tools
 .PHONY: .install.md2man
 .install.md2man:
 	if [ ! -x "$(GOMD2MAN)" ]; then \
-		$(MAKE) -C test/tools build/go-md2man ; \
+		$(MAKE) -C test/tools build/go-md2man GOOS=$(NATIVE_GOOS) GOARCH=$(NATIVE_GOARCH); \
 	fi
 
 .PHONY: .install.pre-commit
@@ -974,9 +980,7 @@ release-artifacts: clean-binaries
 	$(MAKE) podman-remote-static-linux_arm64
 	tar -cvzf podman-remote-static-linux_arm64.tar.gz bin/podman-remote-static-linux_arm64
 	mv podman-remote-static-linux*.tar.gz release/
-	$(MAKE) podman.msi
-	mv podman-v*.msi release/
-	cd release/; sha256sum *.zip *.tar.gz *.msi > shasums
+	cd release/; sha256sum *.zip *.tar.gz > shasums
 
 .PHONY: uninstall
 uninstall:

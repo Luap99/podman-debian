@@ -25,7 +25,7 @@ load helpers
     run_podman mount --notruncate
     # FIXME: is it worth the effort to validate the CID ($1) ?
     reported_mountpoint=$(echo "$output" | awk '{print $2}')
-    is $reported_mountpoint $mount_path "mountpoint reported by 'podman mount'"
+    is "$reported_mountpoint" "$mount_path" "mountpoint reported by 'podman mount'"
 
     # umount, and make sure files are gone
     run_podman umount $c_name
@@ -173,6 +173,50 @@ load helpers
     run_podman rm -t 0 -f $cid
 }
 
+@test "podman mount containers.conf" {
+    skip_if_remote "remote does not support CONTAINERS_CONF*"
+
+    dest=/$(random_string 30)
+    tmpfile1=$PODMAN_TMPDIR/volume-test1
+    random1=$(random_string 30)
+    echo $random1 > $tmpfile1
+
+    tmpfile2=$PODMAN_TMPDIR/volume-test2
+    random2=$(random_string 30)
+    echo $random2 > $tmpfile2
+    bogus=$(random_string 10)
+
+    mountStr1=type=bind,src=$tmpfile1,destination=$dest,ro,Z
+    mountStr2=type=bind,src=$tmpfile2,destination=$dest,ro,Z
+    containersconf=$PODMAN_TMPDIR/containers.conf
+    cat >$containersconf <<EOF
+[containers]
+mounts=[ "$mountStr1", ]
+EOF
+    badcontainersconf=$PODMAN_TMPDIR/badcontainers.conf
+    cat >$badcontainersconf <<EOF
+[containers]
+mounts=[ "type=$bogus,src=$tmpfile2,destination=$dest,ro", ]
+EOF
+
+    run_podman 1 run $IMAGE cat $dest
+    is "$output" "cat: can't open '$dest': No such file or directory" "$dest does not exist"
+
+    CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run $IMAGE cat $dest
+    is "$output" "$random1" "file should contain $random1"
+
+    CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --mount $mountStr2 $IMAGE cat $dest
+    is "$output" "$random2" "overridden file should contain $random2"
+
+    CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman 125 run --mount $mountStr1 --mount $mountStr2 $IMAGE cat $dest
+    is "$output" "Error: $dest: duplicate mount destination" "Should through duplicate destination error for $dest"
+
+    CONTAINERS_CONF_OVERRIDE="$badcontainersconf" run_podman 125 run $IMAGE cat $dest
+    is "$output" "Error: parsing containers.conf mounts: invalid filesystem type \"$bogus\"" "containers.conf should fail with bad mounts entry"
+
+    run_podman rm --all --force -t 0
+}
+
 @test "podman mount external container - basic test" {
     # Only works with root (FIXME: does it work with rootless + vfs?)
     skip_if_rootless "mount does not work rootless"
@@ -193,7 +237,7 @@ load helpers
     run_podman mount --notruncate
 
     reported_mountpoint=$(echo "$output" | awk '{print $2}')
-    is $reported_mountpoint $mount_path "mountpoint reported by 'podman mount'"
+    is "$reported_mountpoint" "$mount_path" "mountpoint reported by 'podman mount'"
 
     # umount, and make sure files are gone
     run_podman umount $external_cid
@@ -201,6 +245,67 @@ load helpers
         die "'podman umount' did not umount"
     fi
     buildah rm $external_cid
+}
+
+@test "podman volume globs" {
+    v1a=v1_$(random_string)
+    v1b=v1_$(random_string)
+    v2=v2_$(random_string)
+    vol1a=${PODMAN_TMPDIR}/$v1a
+    vol1b=${PODMAN_TMPDIR}/$v1b
+    vol2=${PODMAN_TMPDIR}/$v2
+    touch $vol1a $vol1b $vol2
+
+    # if volumes source and dest match then pass
+    run_podman run --rm --mount type=glob,src=${PODMAN_TMPDIR}/v1\*,ro $IMAGE ls $vol1a $vol1b
+    run_podman 1 run --rm --mount source=${PODMAN_TMPDIR}/v1\*,type=glob,ro $IMAGE ls $vol2
+    is "$output" ".*No such file or directory" "$vol2 should not be mounted in the container"
+
+    run_podman 125 run --rm --mount source=${PODMAN_TMPDIR}/v3\*,type=glob,ro $IMAGE ls $vol2
+    is "$output" "Error: no file paths matching glob \"${PODMAN_TMPDIR}/v3\*\"" "Glob does not match so should throw error"
+
+    run_podman 1 run --rm --mount source=${PODMAN_TMPDIR}/v2\*,type=glob,ro,Z $IMAGE touch $vol2
+    is "$output" "touch: $vol2: Read-only file system" "Mount should be read-only"
+
+    run_podman run --rm --mount source=${PODMAN_TMPDIR}/v2\*,type=glob,ro=false,Z $IMAGE touch $vol2
+
+    run_podman run --rm --mount type=glob,src=${PODMAN_TMPDIR}/v1\*,destination=/non/existing/directory,ro $IMAGE ls /non/existing/directory
+    is "$output" ".*$v1a" "podman images --inspect should include $v1a"
+    is "$output" ".*$v1b" "podman images --inspect should include $v1b"
+
+    run_podman create --rm --mount type=glob,src=${PODMAN_TMPDIR}/v1\*,ro $IMAGE ls $vol1a $vol1b
+    cid=$output
+    run_podman container inspect $output
+    is "$output" ".*$vol1a" "podman images --inspect should include $vol1a"
+    is "$output" ".*$vol1b" "podman images --inspect should include $vol1b"
+
+    run_podman 125 run --rm --mount source=${PODMAN_TMPDIR}/v2\*,type=bind,ro=false $IMAGE touch $vol2
+    is "$output" "Error: must set volume destination" "Bind mounts require destination"
+
+    run_podman 125 run --rm --mount source=${PODMAN_TMPDIR}/v2\*,destination=/tmp/foobar, ro=false $IMAGE touch $vol2
+    is "$output" "Error: invalid reference format" "Default mounts don not support globs"
+
+    mkdir $PODMAN_TMPDIR/foo1 $PODMAN_TMPDIR/foo2 $PODMAN_TMPDIR/foo3
+    touch $PODMAN_TMPDIR/foo1/bar $PODMAN_TMPDIR/foo2/bar $PODMAN_TMPDIR/foo3/bar
+    touch $PODMAN_TMPDIR/foo1/bar1 $PODMAN_TMPDIR/foo2/bar2 $PODMAN_TMPDIR/foo3/bar3
+    run_podman 125 run --rm --mount type=glob,source=${PODMAN_TMPDIR}/foo?/bar,destination=/tmp $IMAGE ls -l /tmp
+    is "$output" "Error: /tmp/bar: duplicate mount destination" "Should report conflict on destination directory"
+    run_podman run --rm --mount type=glob,source=${PODMAN_TMPDIR}/foo?/bar?,destination=/tmp,ro $IMAGE ls /tmp
+    is "$output" "bar1.*bar2.*bar3" "Should match multiple source files on single destination directory"
+}
+
+@test "podman mount noswap memory mounts" {
+    # if volumes source and dest match then pass
+    run_podman run --rm --mount type=ramfs,destination=${PODMAN_TMPDIR} $IMAGE stat -f -c "%T" ${PODMAN_TMPDIR}
+    is "$output" "ramfs" "ramfs mounted"
+
+    if is_rootless; then
+        run_podman 125 run --rm --mount type=tmpfs,destination=${PODMAN_TMPDIR},noswap  $IMAGE stat -f -c "%T" ${PODMAN_TMPDIR}
+        is "$output" "Error: the 'noswap' option is only allowed with rootful tmpfs mounts: must provide an argument for option" "noswap not supported in rootless mode"
+    else
+        run_podman run --rm --mount type=tmpfs,destination=${PODMAN_TMPDIR},noswap  $IMAGE sh -c "mount| grep ${PODMAN_TMPDIR}"
+        is "$output" ".*noswap" "tmpfs noswap mounted"
+    fi
 }
 
 # vim: filetype=sh

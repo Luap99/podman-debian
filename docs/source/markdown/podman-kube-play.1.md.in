@@ -23,6 +23,7 @@ Currently, the supported Kubernetes kinds are:
 - PersistentVolumeClaim
 - ConfigMap
 - Secret
+- DaemonSet
 
 `Kubernetes Pods or Deployments`
 
@@ -44,6 +45,8 @@ Note: The command `podman play kube` is an alias of `podman kube play`, and perf
 
 Note: The command `podman kube down` can be used to stop and remove pods or containers based on the same Kubernetes YAML used
 by `podman kube play` to create them.
+
+Note: To customize the name of the infra container created during `podman kube play`, use the **io.podman.annotations.infra.name** annotation in the pod definition. This annotation is automatically set when generating a kube yaml from a pod that was created with the `--infra-name` flag set.
 
 `Kubernetes PersistentVolumeClaims`
 
@@ -68,10 +71,7 @@ metadata:
 ...
 spec:
   containers:
-  - command:
-    - top
-    - name: container
-      value: podman
+  - name: container
     image: foobar
 ...
 ```
@@ -111,9 +111,7 @@ metadata:
   name: foobar
 spec:
   containers:
-  - command:
-    - top
-    name: container-1
+  - name: container-1
     image: foobar
     envFrom:
     - configMapRef:
@@ -143,9 +141,7 @@ metadata:
   name: foobar
 spec:
   containers:
-  - command:
-    - top
-    name: container-1
+  - name: container-1
     image: foobar
     env:
     - name: FOO
@@ -213,6 +209,10 @@ When no network option is specified and *host* network mode is not configured in
 @@option no-hosts
 
 This option conflicts with host added in the Kubernetes YAML.
+
+#### **--no-trunc**
+
+Use annotations that are not truncated to the Kubernetes maximum length of 63 characters
 
 #### **--publish**=*[[ip:][hostPort]:]containerPort[/protocol]*
 

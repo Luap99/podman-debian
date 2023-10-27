@@ -6,7 +6,7 @@ Index: libpod/libpod/container_internal_common.go
  	"time"
  
  	metadata "github.com/checkpoint-restore/checkpointctl/lib"
--	"github.com/checkpoint-restore/go-criu/v6/stats"
+-	"github.com/checkpoint-restore/go-criu/v7/stats"
 +	"github.com/checkpoint-restore/go-criu/v5/stats"
  	cdi "github.com/container-orchestrated-devices/container-device-interface/pkg/cdi"
  	"github.com/containers/buildah"
@@ -19,7 +19,7 @@ Index: libpod/pkg/checkpoint/crutils/checkpoint_restore_utils.go
  	"path/filepath"
  
  	metadata "github.com/checkpoint-restore/checkpointctl/lib"
--	"github.com/checkpoint-restore/go-criu/v6/stats"
+-	"github.com/checkpoint-restore/go-criu/v7/stats"
 +	"github.com/checkpoint-restore/go-criu/v5/stats"
  	"github.com/containers/storage/pkg/archive"
  	"github.com/opencontainers/selinux/go-selinux/label"
@@ -32,8 +32,8 @@ Index: libpod/pkg/criu/criu_linux.go
  import (
  	"fmt"
  
--	"github.com/checkpoint-restore/go-criu/v6"
--	"github.com/checkpoint-restore/go-criu/v6/rpc"
+-	"github.com/checkpoint-restore/go-criu/v7"
+-	"github.com/checkpoint-restore/go-criu/v7/rpc"
 +	"github.com/checkpoint-restore/go-criu/v5"
 +	"github.com/checkpoint-restore/go-criu/v5/rpc"
  
@@ -47,7 +47,7 @@ Index: libpod/test/e2e/checkpoint_test.go
  	"strings"
  	"time"
  
--	"github.com/checkpoint-restore/go-criu/v6/stats"
+-	"github.com/checkpoint-restore/go-criu/v7/stats"
 +	"github.com/checkpoint-restore/go-criu/v5/stats"
  	"github.com/containers/podman/v4/pkg/checkpoint/crutils"
  	"github.com/containers/podman/v4/pkg/criu"

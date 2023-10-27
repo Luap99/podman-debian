@@ -11,12 +11,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/containers/common/libimage"
+	"github.com/containers/common/libimage/define"
 	"github.com/containers/image/v5/docker/reference"
 	"github.com/containers/image/v5/types"
 	"github.com/containers/podman/v4/libpod"
 	"github.com/containers/podman/v4/pkg/api/handlers"
 	"github.com/containers/podman/v4/pkg/api/handlers/utils"
+	"github.com/containers/podman/v4/pkg/api/handlers/utils/apiutil"
 	api "github.com/containers/podman/v4/pkg/api/types"
 	"github.com/containers/podman/v4/pkg/auth"
 	"github.com/containers/podman/v4/pkg/channel"
@@ -80,7 +81,7 @@ func ManifestCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := http.StatusOK
-	if _, err := utils.SupportedVersion(r, "< 4.0.0"); err == utils.ErrVersionNotSupported {
+	if _, err := utils.SupportedVersion(r, "< 4.0.0"); err == apiutil.ErrVersionNotSupported {
 		status = http.StatusCreated
 	}
 
@@ -172,7 +173,7 @@ func ManifestInspect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var schema2List libimage.ManifestListData
+	var schema2List define.ManifestListData
 	if err := json.Unmarshal(rawManifest, &schema2List); err != nil {
 		utils.Error(w, http.StatusInternalServerError, err)
 		return
@@ -333,13 +334,15 @@ func ManifestPush(w http.ResponseWriter, r *http.Request) {
 	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 
 	query := struct {
-		All               bool   `schema:"all"`
-		CompressionFormat string `schema:"compressionFormat"`
-		CompressionLevel  *int   `schema:"compressionLevel"`
-		Format            string `schema:"format"`
-		RemoveSignatures  bool   `schema:"removeSignatures"`
-		TLSVerify         bool   `schema:"tlsVerify"`
-		Quiet             bool   `schema:"quiet"`
+		All                    bool     `schema:"all"`
+		CompressionFormat      string   `schema:"compressionFormat"`
+		CompressionLevel       *int     `schema:"compressionLevel"`
+		ForceCompressionFormat bool     `schema:"forceCompressionFormat"`
+		Format                 string   `schema:"format"`
+		RemoveSignatures       bool     `schema:"removeSignatures"`
+		TLSVerify              bool     `schema:"tlsVerify"`
+		Quiet                  bool     `schema:"quiet"`
+		AddCompression         []string `schema:"addCompression"`
 	}{
 		// Add defaults here once needed.
 		TLSVerify: true,
@@ -371,15 +374,24 @@ func ManifestPush(w http.ResponseWriter, r *http.Request) {
 		password = authconf.Password
 	}
 	options := entities.ImagePushOptions{
-		All:               query.All,
-		Authfile:          authfile,
-		CompressionFormat: query.CompressionFormat,
-		CompressionLevel:  query.CompressionLevel,
-		Format:            query.Format,
-		Password:          password,
-		Quiet:             true,
-		RemoveSignatures:  query.RemoveSignatures,
-		Username:          username,
+		All:                    query.All,
+		Authfile:               authfile,
+		AddCompression:         query.AddCompression,
+		CompressionFormat:      query.CompressionFormat,
+		CompressionLevel:       query.CompressionLevel,
+		ForceCompressionFormat: query.ForceCompressionFormat,
+		Format:                 query.Format,
+		Password:               password,
+		Quiet:                  true,
+		RemoveSignatures:       query.RemoveSignatures,
+		Username:               username,
+	}
+	if _, found := r.URL.Query()["compressionFormat"]; found {
+		if _, foundForceCompression := r.URL.Query()["forceCompressionFormat"]; !foundForceCompression {
+			// If `compressionFormat` is set and no value for `forceCompressionFormat`
+			// is selected then default has to be `true`.
+			options.ForceCompressionFormat = true
+		}
 	}
 	if sys := runtime.SystemContext(); sys != nil {
 		options.CertDir = sys.DockerCertPath

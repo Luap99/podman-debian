@@ -443,6 +443,12 @@ $ podman create --name container3 --requires container1,container2 -t -i fedora 
 $ podman start --attach container3
 ```
 
+### Exposing shared libraries inside of container as read-only using a glob
+
+```
+$ podman create --mount type=glob,src=/usr/lib64/libnvidia\*,ro -i -t fedora /bin/bash
+```
+
 ### Configure keep supplemental groups for access to volume
 
 ```
@@ -518,7 +524,7 @@ run in detached mode (backgrounded), so Podman can exit but conmon continues to
 run.  Each container has their own instance of conmon. Conmon waits for the
 container to exit, gathers and saves the exit code, and then launches a Podman
 process to complete the container cleanup, by shutting down the network and
-storage.   For more information on conmon, please reference the conmon(8) man
+storage.   For more information about conmon, see the conmon(8) man
 page.
 
 ## FILES

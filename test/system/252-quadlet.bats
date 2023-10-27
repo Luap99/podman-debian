@@ -16,7 +16,7 @@ function start_time() {
 function setup() {
     skip_if_remote "quadlet tests are meaningless over remote"
     skip_if_rootless_cgroupsv1 "Can't use --cgroups=split w/ CGv1 (issue 17456, wontfix)"
-    skip_if_journald_unavailable "Needed for RHEL. FIXME: we might be able to reenable a subset of tests."
+    skip_if_journald_unavailable "Needed for RHEL. FIXME: we might be able to re-enable a subset of tests."
 
     test -x "$QUADLET" || die "Cannot run quadlet tests without executable \$QUADLET ($QUADLET)"
 
@@ -47,8 +47,11 @@ function run_quadlet() {
     local service=$(quadlet_to_service_name "$sourcefile")
 
     # quadlet always works on an entire directory, so copy the file
-    # to transform to a tmpdir
-    local quadlet_tmpdir=$(mktemp -d --tmpdir=$PODMAN_TMPDIR quadlet.XXXXXX)
+    # to transform to the given or newly created tmpdir
+    local quadlet_tmpdir="$2"
+    if [ -z "$quadlet_tmpdir" ]; then
+        quadlet_tmpdir=$(mktemp -d --tmpdir=$PODMAN_TMPDIR quadlet.XXXXXX)
+    fi
     cp $sourcefile $quadlet_tmpdir/
 
     echo "$_LOG_PROMPT $QUADLET $_DASHUSER $UNIT_DIR"
@@ -363,6 +366,61 @@ EOF
     run_podman volume rm $volume_name
 }
 
+# A quadlet container depends on a named quadlet volume
+@test "quadlet - named volume dependency" {
+    # Save the unit name to use as the volume for the container
+    local quadlet_vol_unit=dep_$(random_string).volume
+    local quadlet_vol_file=$PODMAN_TMPDIR/${quadlet_vol_unit}
+    cat > $quadlet_vol_file <<EOF
+[Volume]
+VolumeName=foo
+EOF
+
+    # Have quadlet create the systemd unit file for the volume unit
+    local quadlet_tmpdir=$(mktemp -d --tmpdir=$PODMAN_TMPDIR quadlet.XXXXXX)
+    run_quadlet "$quadlet_vol_file" "$quadlet_tmpdir"
+
+    # Save the volume service name since the variable will be overwritten
+    local vol_service=$QUADLET_SERVICE_NAME
+    local volume_name="foo"
+
+    local quadlet_file=$PODMAN_TMPDIR/user_$(random_string).container
+    cat > $quadlet_file <<EOF
+[Container]
+Image=$IMAGE
+Exec=top
+Volume=$quadlet_vol_unit:/tmp
+EOF
+
+    # Have quadlet create the systemd unit file for the container unit
+    run_quadlet "$quadlet_file" "$quadlet_tmpdir"
+
+    # Save the container service name for readability
+    local container_service=$QUADLET_SERVICE_NAME
+    local container_name=systemd-$(basename $quadlet_file .container)
+
+    # Volume should not exist
+    run_podman 1 volume exists ${volume_name}
+
+    # Start the container service which should also trigger the start of the volume service
+    service_setup $container_service
+
+    # Volume system unit should be active
+    run systemctl show --property=ActiveState "$vol_service"
+    assert "$output" = "ActiveState=active" "volume should be active via dependency"
+
+    # Volume should exist
+    run_podman volume exists ${volume_name}
+
+    # Container should be attached to defined volume
+    run_podman container inspect --format "{{(index .Mounts 0).Name}}" $container_name
+    assert "$output" = "$volume_name" "container should be attached to network $volume_name"
+
+    # Shutdown the service and remove the volume
+    service_cleanup $container_service failed
+    run_podman volume rm $volume_name
+}
+
 @test "quadlet - network" {
     local quadlet_file=$PODMAN_TMPDIR/basic_$(random_string).network
     cat > $quadlet_file <<EOF
@@ -431,8 +489,62 @@ EOF
     run_podman network rm $network_name
 }
 
+# A quadlet container depends on a named quadlet network
+@test "quadlet - named network dependency" {
+    # Save the unit name to use as the network for the container
+    local quadlet_network_unit=dep_$(random_string).network
+    local quadlet_network_file=$PODMAN_TMPDIR/${quadlet_network_unit}
+    cat > $quadlet_network_file <<EOF
+[Network]
+NetworkName=foo
+EOF
+
+    # Have quadlet create the systemd unit file for the network unit
+    local quadlet_tmpdir=$(mktemp -d --tmpdir=$PODMAN_TMPDIR quadlet.XXXXXX)
+    run_quadlet "$quadlet_network_file" "$quadlet_tmpdir"
+
+    # Save the network service name since the variable will be overwritten
+    local network_service=$QUADLET_SERVICE_NAME
+    local network_name="foo"
+
+    local quadlet_file=$PODMAN_TMPDIR/user_$(random_string).container
+    cat > $quadlet_file <<EOF
+[Container]
+Image=$IMAGE
+Exec=top
+Network=$quadlet_network_unit
+EOF
+
+    run_quadlet "$quadlet_file" "$quadlet_tmpdir"
+
+    # Save the container service name for readability
+    local container_service=$QUADLET_SERVICE_NAME
+    local container_name=systemd-$(basename $quadlet_file .container)
+
+    # Network should not exist
+    run_podman 1 network exists $network_name
+
+    service_setup $container_service
+
+    # Network system unit should be active
+    run systemctl show --property=ActiveState "$network_service"
+    assert "$output" = "ActiveState=active" "network should be active via dependency"
+
+    # Network should exist
+    run_podman network exists $network_name
+
+    # Container should be attached to defined network
+    run_podman container inspect --format "{{index .NetworkSettings.Networks \"$network_name\"}}" $container_name
+    assert "$output" != "<nil>" "container should be attached to network $network_name"
+
+    service_cleanup $QUADLET_SERVICE_NAME failed
+    run_podman network rm $network_name
+}
+
 @test "quadlet kube - basic" {
     # Create the YAMl file
+    pod_name="test_pod"
+    container_name="test"
     yaml_source="$PODMAN_TMPDIR/basic_$(random_string).yaml"
     cat >$yaml_source <<EOF
 apiVersion: v1
@@ -440,13 +552,16 @@ kind: Pod
 metadata:
   labels:
     app: test
-  name: test_pod
+  name: $pod_name
 spec:
   containers:
   - command:
-    - top
+    - "sh"
+    args:
+    - "-c"
+    - "echo STARTED CONTAINER; top -b"
     image: $IMAGE
-    name: test
+    name: $container_name
 EOF
 
     # Create the Quadlet file
@@ -459,14 +574,88 @@ EOF
     run_quadlet "$quadlet_file"
     service_setup $QUADLET_SERVICE_NAME
 
-    # Ensure we have output. Output is synced via sd-notify (socat in Exec)
-    run journalctl "--since=$STARTED_TIME" --unit="$QUADLET_SERVICE_NAME"
-    is "$output" '.*Started.*\.service.*'
+    # Ensure we have output.
+    wait_for_output "STARTED CONTAINER" $pod_name-$container_name
 
     run_podman container inspect  --format "{{.State.Status}}" test_pod-test
     is "$output" "running" "container should be started by systemd and hence be running"
 
     service_cleanup $QUADLET_SERVICE_NAME inactive
+    run_podman rmi $(pause_image)
+}
+
+@test "quadlet kube - named network dependency" {
+    # Save the unit name to use as the network for the container
+    local quadlet_network_unit=dep_$(random_string).network
+    local quadlet_network_file=$PODMAN_TMPDIR/${quadlet_network_unit}
+    cat > $quadlet_network_file <<EOF
+[Network]
+NetworkName=foo
+EOF
+
+    # Have quadlet create the systemd unit file for the network unit
+    local quadlet_tmpdir=$(mktemp -d --tmpdir=$PODMAN_TMPDIR quadlet.XXXXXX)
+    run_quadlet "$quadlet_network_file" "$quadlet_tmpdir"
+
+    # Save the network service name since the variable will be overwritten
+    local network_service=$QUADLET_SERVICE_NAME
+    local network_name="foo"
+
+    # Create the YAMl file
+    pod_name="test_pod"
+    container_name="test"
+    yaml_source="$PODMAN_TMPDIR/basic_$(random_string).yaml"
+    cat >$yaml_source <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: test
+  name: $pod_name
+spec:
+  containers:
+  - command:
+    - "sh"
+    args:
+    - "-c"
+    - "echo STARTED CONTAINER; top -b"
+    image: $IMAGE
+    name: $container_name
+EOF
+
+    # Create the Quadlet file
+    local quadlet_file=$PODMAN_TMPDIR/basic_$(random_string).kube
+    cat > $quadlet_file <<EOF
+[Kube]
+Yaml=${yaml_source}
+Network=$quadlet_network_unit
+EOF
+
+    # Network should not exist
+    run_podman 1 network exists $network_name
+
+    run_quadlet "$quadlet_file" "$quadlet_tmpdir"
+    service_setup $QUADLET_SERVICE_NAME
+
+    # Network system unit should be active
+    run systemctl show --property=ActiveState "$network_service"
+    assert "$output" = "ActiveState=active" "network should be active via dependency"
+
+    # Network should exist
+    run_podman network exists $network_name
+
+    # Ensure we have output.
+    wait_for_output "STARTED CONTAINER" $pod_name-$container_name
+
+    run_podman container inspect  --format "{{.State.Status}}" test_pod-test
+    assert "$output" =~ "running" "container should be started by systemd and hence be running"
+
+    # Container should be attached to defined network
+    run_podman container inspect --format "{{index .NetworkSettings.Networks \"$network_name\"}}" test_pod-test
+    assert "$output" != "<nil>" "container should be attached to network $network_name"
+
+    service_cleanup $QUADLET_SERVICE_NAME inactive
+    run_podman network rm $network_name
     run_podman rmi $(pause_image)
 }
 
@@ -590,9 +779,34 @@ EOF
     remove_secret $SECRET_NAME
 }
 
-@test "quadlet - volume path using specifier" {
-    local tmp_path=$(mktemp -d --tmpdir=$PODMAN_TMPDIR quadlet.volume.XXXXXX)
-    local tmp_dir=${tmp_path#/tmp/}
+@test "quadlet - volume path using systemd %T specifier" {
+    # "specifier" is systemd-speak for "replaceable fields"; see systemd.unit(5)
+    #
+    # Step 1: determine what systemd is using for %T. There does not
+    # seem to be any systemctly way to find this.
+    percent_t_file="${PODMAN_TMPDIR}/foo"
+    local service=get-percent-t.$(random_string 10).service
+    local unitfile=${UNIT_DIR}/$service
+    cat >$unitfile <<EOF
+[Unit]
+Description=Get the value of percent T
+
+[Service]
+ExecStart=/bin/bash -c "echo %T >$percent_t_file"
+Type=oneshot
+EOF
+    systemctl daemon-reload
+    systemctl --wait start $service
+    percent_t=$(< $percent_t_file)
+    # Clean up. Don't bother to systemctl-reload, service_setup does that below.
+    rm -f $unitfile
+
+    # Sanity check: just make sure it's not "/"
+    assert "${#percent_t}" -ge 4 "sanity check: length of %T ($percent_t)"
+
+    # Step 2: Make a subdirectory in %T, and in there, a scratch file
+    local tmp_path=$(mktemp -d --tmpdir=${percent_t} quadlet.volume.XXXXXX)
+    local tmp_subdir=$(basename $tmp_path)
     local file_name="f$(random_string 10).txt"
     local file_content="data_$(random_string 15)"
     echo $file_content > $tmp_path/$file_name
@@ -601,7 +815,7 @@ EOF
     cat > $quadlet_file <<EOF
 [Container]
 Image=$IMAGE
-Volume=%T/$tmp_dir:/test_content:Z
+Volume=%T/$tmp_subdir:/test_content:Z
 Exec=sh -c "echo STARTED CONTAINER; echo "READY=1" | socat -u STDIN unix-sendto:\$NOTIFY_SOCKET; top"
 Notify=yes
 EOF
@@ -609,8 +823,8 @@ EOF
     run_quadlet "$quadlet_file"
     service_setup $QUADLET_SERVICE_NAME
 
-    run_podman exec $QUADLET_CONTAINER_NAME /bin/sh -c "cat /test_content/$file_name"
-    is "$output" $file_content
+    run_podman exec $QUADLET_CONTAINER_NAME cat /test_content/$file_name
+    is "$output" "$file_content" "contents of testfile in container volume"
 
     rm -rf $tmp_path
 }
@@ -659,6 +873,8 @@ EOF
 }
 
 @test "quadlet - exit-code propagation" {
+   pod_name="test_pod"
+   container_name="ctr"
    exit_tests="
 all  | true  | 0   | inactive
 all  | false | 137 | failed
@@ -675,11 +891,11 @@ kind: Pod
 metadata:
   labels:
     app: test
-  name: test_pod
+  name: $pod_name
 spec:
   restartPolicy: Never
   containers:
-    - name: ctr
+    - name: $container_name
       image: $IMAGE
       command:
       - $cmd
@@ -688,6 +904,7 @@ EOF
 [Kube]
 Yaml=$yaml_file
 ExitCodePropagation=$exit_code_prop
+LogDriver=journald
 EOF
 
       run_quadlet "$quadlet_file"
@@ -734,6 +951,66 @@ EOF
    done < <(parse_table "$exit_tests")
 
    run_podman rmi $(pause_image)
+}
+
+@test "quadlet kube - Working Directory" {
+    yaml_source="$PODMAN_TMPDIR/basic_$(random_string).yaml"
+    local_path=local_path$(random_string)
+    pod_name=test_pod
+    container_name=test
+
+    cat >$yaml_source <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: test
+  name: $pod_name
+spec:
+  containers:
+  - command:
+    - "sh"
+    args:
+    - "-c"
+    - "echo STARTED CONTAINER; top -b"
+    image: $IMAGE
+    name: $container_name
+    volumeMounts:
+    - mountPath: /test
+      name: test-volume
+  volumes:
+  - name: test-volume
+    hostPath:
+      # directory location on host
+      path: ./$local_path
+      # this field is optional
+      type: DirectoryOrCreate
+EOF
+
+    # Create the Quadlet file
+    local quadlet_file=$PODMAN_TMPDIR/basic_$(random_string).kube
+    cat > $quadlet_file <<EOF
+[Kube]
+Yaml=${yaml_source}
+SetWorkingDirectory=yaml
+EOF
+
+    run_quadlet "$quadlet_file"
+    service_setup $QUADLET_SERVICE_NAME
+
+    # Ensure we have output.
+    wait_for_output "STARTED CONTAINER" $pod_name-$container_name
+
+    run_podman container inspect  --format "{{.State.Status}}" $pod_name-$container_name
+    is "$output" "running" "container should be started by systemd and hence be running"
+
+    run_podman ps
+
+    run_podman exec $pod_name-$container_name /bin/sh -c "echo hello > /test/test.txt"
+    is $(cat $PODMAN_TMPDIR/$local_path/test.txt) "hello"
+
+    service_cleanup $QUADLET_SERVICE_NAME inactive
+    run_podman rmi $(pause_image)
 }
 
 # vim: filetype=sh

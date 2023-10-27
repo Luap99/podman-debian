@@ -8,14 +8,6 @@ load helpers.network
 
 CHECKED_ROOTLESS=
 function setup() {
-    # FIXME: https://bugs.launchpad.net/ubuntu/+source/linux/+bug/1857257
-    # TL;DR they keep fixing it then breaking it again. There's a test we
-    # could run to see if it's fixed, but it's way too complicated. Since
-    # integration tests also skip checkpoint tests on Ubuntu, do the same here.
-    if is_ubuntu; then
-        skip "FIXME: checkpointing broken in Ubuntu 2004, 2104, 2110, 2204, ..."
-    fi
-
     # None of these tests work rootless....
     if is_rootless; then
         # ...however, is that a genuine cast-in-stone limitation, or one
@@ -230,7 +222,7 @@ function teardown() {
     local subnet="$(random_rfc1918_subnet)"
     run_podman network create --subnet "$subnet.0/24" $netname
 
-    run_podman run -d --network $netname $IMAGE sleep inf
+    run_podman run -d --network $netname $IMAGE top
     cid="$output"
     # get current ip and mac
     run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname\").IPAddress}}"
@@ -318,7 +310,7 @@ function teardown() {
     # now create a container with a static mac and ip
     local static_ip="$subnet.2"
     local static_mac="92:d0:c6:0a:29:38"
-    run_podman run -d --network "$netname:ip=$static_ip,mac=$static_mac" $IMAGE sleep inf
+    run_podman run -d --network "$netname:ip=$static_ip,mac=$static_mac" $IMAGE top
     cid="$output"
 
     run_podman container checkpoint $cid
@@ -348,7 +340,7 @@ function teardown() {
     run_podman rm -t 0 -f $cid
 
     # now create container again and try the same again with --export and --import
-    run_podman run -d --network "$netname:ip=$static_ip,mac=$static_mac" $IMAGE sleep inf
+    run_podman run -d --network "$netname:ip=$static_ip,mac=$static_mac" $IMAGE top
     cid="$output"
 
     run_podman container checkpoint --export "$archive" $cid

@@ -1,6 +1,11 @@
+//go:build amd64 || arm64
+// +build amd64 arm64
+
 package machine
 
-import "testing"
+import (
+	"testing"
+)
 
 func Test_compressionFromFile(t *testing.T) {
 	type args struct {
@@ -164,9 +169,9 @@ func TestFCOSStream_String(t *testing.T) {
 			want: "next",
 		},
 		{
-			name: "default is stable",
-			st:   99,
-			want: "stable",
+			name: "default is custom",
+			st:   CustomStream,
+			want: "custom",
 		},
 	}
 	for _, tt := range tests {

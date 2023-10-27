@@ -76,15 +76,10 @@ function service_cleanup() {
 # These tests can fail in dev. environment because of SELinux.
 # quick fix: chcon -t container_runtime_exec_t ./bin/podman
 @test "podman generate - systemd - basic" {
-    # Flakes with "ActiveState=failed (expected =inactive)"
-    if is_ubuntu; then
-        skip "FIXME: 2022-09-01: requires conmon-2.1.4, ubuntu has 2.1.3"
-    fi
-
     # Warn when a custom restart policy is used without --new (see #15284)
     run_podman create --restart=always $IMAGE
     cid="$output"
-    run_podman generate systemd $cid
+    run_podman 0+w generate systemd $cid
     is "$output" ".*Container $cid has restart policy .*always.* which can lead to issues on shutdown.*" "generate systemd emits warning"
     run_podman rm -f $cid
 
@@ -473,4 +468,14 @@ $name stderr" "logs work with passthrough"
     rm -f $UNIT_DIR/$unit_name
 }
 
+@test "podman generate - systemd - DEPRECATED" {
+    run_podman generate systemd --help
+    is "$output" ".*[DEPRECATED] command:"
+    is "$output" ".*\[DEPRECATED\] Generate systemd units.*"
+    run_podman create --name test $IMAGE
+    run_podman generate systemd test >/dev/null
+    is "$output" ".*[DEPRECATED] command:"
+    run_podman generate --help
+    is "$output" ".*\[DEPRECATED\] Generate systemd units"
+}
 # vim: filetype=sh

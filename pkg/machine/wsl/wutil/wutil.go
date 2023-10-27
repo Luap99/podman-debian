@@ -5,6 +5,7 @@ package wutil
 
 import (
 	"bufio"
+	"io"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -37,19 +38,34 @@ func IsWSLInstalled() bool {
 	if err = cmd.Start(); err != nil {
 		return false
 	}
-	scanner := bufio.NewScanner(transform.NewReader(out, unicode.UTF16(unicode.LittleEndian, unicode.UseBOM).NewDecoder()))
-	result := true
-	for scanner.Scan() {
-		line := scanner.Text()
-		// Windows 11 does not set an error exit code when a kernel is not avail
-		if strings.Contains(line, "kernel file is not found") {
-			result = false
-			break
-		}
+
+	kernelNotFound := matchOutputLine(out, "kernel file is not found")
+
+	if err := cmd.Wait(); err != nil {
+		return false
 	}
-	if err := cmd.Wait(); !result || err != nil {
+
+	return !kernelNotFound
+}
+
+func IsWSLStoreVersionInstalled() bool {
+	cmd := SilentExecCmd("wsl", "--version")
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Run(); err != nil {
 		return false
 	}
 
 	return true
+}
+
+func matchOutputLine(output io.ReadCloser, match string) bool {
+	scanner := bufio.NewScanner(transform.NewReader(output, unicode.UTF16(unicode.LittleEndian, unicode.UseBOM).NewDecoder()))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.Contains(line, match) {
+			return true
+		}
+	}
+	return false
 }

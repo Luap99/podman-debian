@@ -82,13 +82,12 @@ load helpers.network
     is "$output" 'Error: failed to find published port "99/tcp"'
 
     # Clean up
-    run_podman stop -t 1 myweb
-    run_podman rm myweb
+    run_podman rm -f -t0 myweb
 }
 
 # Issue #5466 - port-forwarding doesn't work with this option and -d
 @test "podman networking: port with --userns=keep-id for rootless or --uidmap=* for rootful" {
-    skip_if_cgroupsv1 "FIXME: #15025: run --uidmap fails on cgroups v1"
+    skip_if_cgroupsv1 "run --uidmap fails on cgroups v1 (issue 15025, wontfix)"
     for cidr in "" "$(random_rfc1918_subnet).0/24"; do
         myport=$(random_free_port 52000-52999)
         if [[ -z $cidr ]]; then
@@ -630,7 +629,11 @@ load helpers.network
         run curl --retry 2 -s $SERVER/index.txt
         is "$output" "$random_1" "curl 127.0.0.1:/index.txt after auto restart"
 
-        run_podman restart $cid
+        run_podman 0+w restart $cid
+        if ! is_remote; then
+            assert "$output" =~ "StopSignal SIGTERM failed to stop container .* in 10 seconds, resorting to SIGKILL" "podman restart issues warning"
+        fi
+
         # Verify http contents again: curl from localhost
         # Use retry since it can take a moment until the new container is ready
         run curl --retry 2 -s $SERVER/index.txt
@@ -772,7 +775,7 @@ EOF
 }
 
 @test "podman run /etc/* permissions" {
-    skip_if_cgroupsv1 "FIXME: #15025: run --uidmap fails on cgroups v1"
+    skip_if_cgroupsv1 "run --uidmap fails on cgroups v1 (issue 15025, wontfix)"
     userns="--userns=keep-id"
     if ! is_rootless; then
         userns="--uidmap=0:1111111:65536 --gidmap=0:1111111:65536"
@@ -790,7 +793,7 @@ EOF
 @test "podman network rm --force bogus" {
     run_podman 1 network rm bogus
     is "$output" "Error: unable to find network with name or ID bogus: network not found" "Should print error"
-    run_podman network rm --force bogus
+    run_podman network rm -t -1 --force bogus
     is "$output" "" "Should print no output"
 }
 
@@ -834,9 +837,17 @@ EOF
         run_podman create --network=$network $IMAGE
         cid=${output}
         run_podman inspect --format '{{ .NetworkSettings.Networks }}' $cid
-        is "$output" "map\[$network:.*" "NeworkSettincs should contain one network named $network"
+        is "$output" "map\[$network:.*" "NeworkSettings should contain one network named $network"
+        run_podman inspect --format '{{ .NetworkSettings.SandboxKey }}' $cid
+        assert "$output" == "" "SandboxKey for network=$network should be empty when not running"
         run_podman rm $cid
     done
+
+    run_podman run -d --network=none $IMAGE top
+    cid=${output}
+    run_podman inspect --format '{{ .NetworkSettings.SandboxKey }}' $cid
+    assert "$output" =~ "^/proc/[0-9]+/ns/net\$" "SandboxKey for network=none when running"
+    run_podman rm -f -t0 $cid
 
     # Check with ns:/PATH
     if ! is_rootless; then

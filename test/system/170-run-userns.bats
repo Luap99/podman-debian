@@ -32,7 +32,7 @@ function _require_crun() {
 }
 
 @test "podman --group-add without keep-groups while in a userns" {
-    skip_if_cgroupsv1 "FIXME: #15025: run --uidmap fails on cgroups v1"
+    skip_if_cgroupsv1 "run --uidmap fails on cgroups v1 (issue 15025, wontfix)"
     skip_if_rootless "chroot is not allowed in rootless mode"
     skip_if_remote "--group-add keep-groups not supported in remote mode"
     run chroot --groups 1234,5678 / ${PODMAN} run --rm --uidmap 0:200000:5000 --group-add 457 $IMAGE id
@@ -40,7 +40,7 @@ function _require_crun() {
 }
 
 @test "rootful pod with custom ID mapping" {
-    skip_if_cgroupsv1 "FIXME: #15025: run --uidmap fails on cgroups v1"
+    skip_if_cgroupsv1 "run --uidmap fails on cgroups v1 (issue 15025, wontfix)"
     skip_if_rootless "does not work rootless - rootful feature"
     random_pod_name=$(random_string 30)
     run_podman pod create --uidmap 0:200000:5000 --name=$random_pod_name
@@ -111,7 +111,7 @@ EOF
     echo ${secret_content} > ${secret_file}
     run_podman secret create ${test_name} ${secret_file}
     run_podman run --rm --secret=${test_name} --userns=auto:size=1000 $IMAGE cat /run/secrets/${test_name}
-    is ${output} ${secret_content} "Secrets should work with user namespace"
+    is "$output" "$secret_content" "Secrets should work with user namespace"
     run_podman secret rm ${test_name}
 }
 

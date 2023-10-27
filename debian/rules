@@ -12,15 +12,9 @@ export GO111MODULE=off
 
 export DH_GOLANG_GO_GENERATE := 1
 
-export DH_GOLANG_INSTALL_EXTRA := testdata cni
+export DH_GOLANG_INSTALL_EXTRA := cni utils/testdata test/e2e/testdata pkg/trust/testdata
 
-# machine/qemu only works on amd64, arm64
-ifeq (,$(filter amd64 arm64,$(DEB_HOST_ARCH)))
-$(info excluding pkg/machine/qemu for $(DEB_HOST_ARCH))
-LOCAL_DH_GOLANG_EXTRA_EXCLUDES := pkg/machine/qemu
-endif
-
-export DH_GOLANG_EXCLUDES := $(LOCAL_DH_GOLANG_EXTRA_EXCLUDES) \
+export DH_GOLANG_EXCLUDES := \
 	contrib/perftest \
 	dependencies \
 	hack/podman-registry-go \
@@ -41,10 +35,11 @@ endif
 
 
 export DH_GOLANG_TEST_EXCLUDES := $(DH_GOLANG_EXCLUDES) \
-	libpod/hack/podman-registry-go \
-	libpod/lock/file \
-	libpod/network/cni \
-	libpod/pkg/bindings/test \
+	hack \
+	lock/file \
+	network/cni \
+	pkg/bindings \
+	pkg/machine \
 	podman/cmd/podman/common
 
 
@@ -65,14 +60,16 @@ execute_after_dh_auto_clean:
 	$(MAKE) clean SHELL=/bin/bash
 
 override_dh_auto_build:
-	$(MAKE) docs docker-docs
+	$(MAKE) docs docker-docs GOMD2MAN=/usr/bin/go-md2man
 
 #	LDFLAGS_PODMAN="-X main.gitCommit=$(GIT_COMMIT)"
 #   upstream Makefile calls `go build ... -o bin/podman-remote ./cmd/podman`
 #   dont know how I get dh_auto_build to do that.
+	DH_GOLANG_BUILDPKG="github.com/containers/podman/cmd/podman" \
 	dh_auto_build -v  --builddirectory=_output -- -tags "$(BUILDTAGS_REMOTE)" \
           -ldflags "-X main.buildInfo=$(DEB_VERSION)"
 	mv _output/bin/podman _output/bin/podman-remote
+	DH_GOLANG_BUILDPKG="github.com/containers/podman/cmd/..." \
 	dh_auto_build -v  --builddirectory=_output -- -tags "$(BUILDTAGS)" \
           -ldflags "-X main.buildInfo=$(DEB_VERSION)"
 

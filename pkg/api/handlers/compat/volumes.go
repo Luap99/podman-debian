@@ -19,7 +19,6 @@ import (
 	"github.com/containers/podman/v4/pkg/util"
 	docker_api_types "github.com/docker/docker/api/types"
 	docker_api_types_volume "github.com/docker/docker/api/types/volume"
-	"github.com/gorilla/schema"
 )
 
 func ListVolumes(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +43,7 @@ func ListVolumes(w http.ResponseWriter, r *http.Request) {
 
 	volumeFilters := []libpod.VolumeFilter{}
 	for filter, filterValues := range *filtersMap {
-		filterFunc, err := filters.GenerateVolumeFilters(filter, filterValues)
+		filterFunc, err := filters.GenerateVolumeFilters(filter, filterValues, runtime)
 		if err != nil {
 			utils.InternalServerError(w, err)
 		}
@@ -85,7 +84,7 @@ func CreateVolume(w http.ResponseWriter, r *http.Request) {
 	var (
 		volumeOptions []libpod.VolumeCreateOption
 		runtime       = r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
-		decoder       = r.Context().Value(api.DecoderKey).(*schema.Decoder)
+		decoder       = utils.GetDecoder(r)
 	)
 	/* No query string data*/
 	query := struct{}{}
@@ -213,7 +212,7 @@ func InspectVolume(w http.ResponseWriter, r *http.Request) {
 func RemoveVolume(w http.ResponseWriter, r *http.Request) {
 	var (
 		runtime = r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
-		decoder = r.Context().Value(api.DecoderKey).(*schema.Decoder)
+		decoder = utils.GetDecoder(r)
 	)
 	query := struct {
 		Force   bool  `schema:"force"`
@@ -276,7 +275,7 @@ func PruneVolumes(w http.ResponseWriter, r *http.Request) {
 	f := (url.Values)(*filterMap)
 	filterFuncs := []libpod.VolumeFilter{}
 	for filter, filterValues := range f {
-		filterFunc, err := filters.GeneratePruneVolumeFilters(filter, filterValues)
+		filterFunc, err := filters.GeneratePruneVolumeFilters(filter, filterValues, runtime)
 		if err != nil {
 			utils.Error(w, http.StatusInternalServerError, fmt.Errorf("failed to parse filters for %s: %w", f.Encode(), err))
 			return

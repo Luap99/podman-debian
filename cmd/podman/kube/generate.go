@@ -81,6 +81,12 @@ func generateFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig) {
 	flags.Int32VarP(&generateOptions.Replicas, replicasFlagName, "r", 1, "Set the replicas number for Deployment kind")
 	_ = cmd.RegisterFlagCompletionFunc(replicasFlagName, completion.AutocompleteNone)
 
+	noTruncAnnotationsFlagName := "no-trunc"
+	flags.BoolVar(&generateOptions.UseLongAnnotations, noTruncAnnotationsFlagName, false, "Don't truncate annotations to Kubernetes length (63 chars)")
+
+	podmanOnlyFlagName := "podman-only"
+	flags.BoolVar(&generateOptions.PodmanOnly, podmanOnlyFlagName, false, "Add podman-only reserved annotations to the generated YAML file (Cannot be used by Kubernetes)")
+
 	flags.SetNormalizeFunc(utils.AliasFlags)
 }
 
