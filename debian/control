@@ -17,7 +17,7 @@ Build-Depends:
  golang-ginkgo-dev,
  golang-github-appc-cni-dev (>= 0.8),
  golang-github-buger-goterm-dev,
- golang-github-checkpoint-restore-go-criu-dev (>> 5.3),
+ golang-github-checkpoint-restore-go-criu-dev (>> 6),
  golang-github-container-orchestrated-devices-container-device-interface-dev,
  golang-github-containerd-cgroups-dev,
  golang-github-containers-buildah-dev (>= 1.32),
@@ -92,8 +92,6 @@ Build-Depends:
  libdevmapper-dev,
  libglib2.0-dev,
  libsubid-dev,
-Build-Conflicts:
- golang-github-checkpoint-restore-go-criu-dev (>> 6.0),
 Homepage: https://github.com/containers/podman
 Vcs-Browser: https://salsa.debian.org/debian/libpod
 Vcs-Git: https://salsa.debian.org/debian/libpod.git
