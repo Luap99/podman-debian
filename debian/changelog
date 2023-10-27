@@ -1,3 +1,13 @@
+libpod (4.7.1+ds4-4) unstable; urgency=medium
+
+  * Upload to unstable
+  * Build against golang-github-checkpoint-restore-go-criu-dev v6
+  * drop patches merged upstream
+  * drop disable-sigstore.patch
+  * avoid file conflicts with docker-compose (Closes: #1054460)
+
+ -- Reinhard Tartler <siretart@tauware.de>  Fri, 27 Oct 2023 14:01:53 -0400
+
 libpod (4.7.1+ds4-3) experimental; urgency=medium
 
   * align test invocation with upstream makefile to fix FTBFS
