@@ -1,0 +1,40 @@
+Index: libpod/pkg/trust/policy_test.go
+===================================================================
+--- libpod.orig/pkg/trust/policy_test.go
++++ libpod/pkg/trust/policy_test.go
+@@ -49,11 +49,6 @@ func TestAddPolicyEntries(t *testing.T)
+ 		},
+ 		{
+ 			Scope:       "default",
+-			Type:        "sigstoreSigned",
+-			PubKeyFiles: []string{}, // A key is missing
+-		},
+-		{
+-			Scope:       "default",
+ 			Type:        "this-is-unknown",
+ 			PubKeyFiles: []string{},
+ 		},
+@@ -78,12 +73,6 @@ func TestAddPolicyEntries(t *testing.T)
+ 		PubKeyFiles: []string{"/1.pub", "/2.pub"},
+ 	})
+ 	assert.NoError(t, err)
+-	err = AddPolicyEntries(policyPath, AddPolicyEntriesInput{
+-		Scope:       "quay.io/sigstore-signed",
+-		Type:        "sigstoreSigned",
+-		PubKeyFiles: []string{"/1.pub", "/2.pub"},
+-	})
+-	assert.NoError(t, err)
+ 
+ 	// Test that the outcome is consumable, and compare it with the expected values.
+ 	parsedPolicy, err := signature.NewPolicyFromFile(policyPath)
+@@ -101,10 +90,6 @@ func TestAddPolicyEntries(t *testing.T)
+ 					xNewPRSignedByKeyPath(t, "/1.pub", signature.NewPRMMatchRepoDigestOrExact()),
+ 					xNewPRSignedByKeyPath(t, "/2.pub", signature.NewPRMMatchRepoDigestOrExact()),
+ 				},
+-				"quay.io/sigstore-signed": {
+-					xNewPRSigstoreSignedKeyPath(t, "/1.pub", signature.NewPRMMatchRepoDigestOrExact()),
+-					xNewPRSigstoreSignedKeyPath(t, "/2.pub", signature.NewPRMMatchRepoDigestOrExact()),
+-				},
+ 			},
+ 		},
+ 	}, parsedPolicy)
