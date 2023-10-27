@@ -1,8 +1,4 @@
-test--skip-TestPostDeleteHooks.patch
 system-goimports.patch
 downgrade-checkpoint-restore-criu.patch
 revert-newer-docker.patch
 revert-newer-docker2.patch
-specgen-rootless-fix-mount-of-cgroup-without-a-netns.patch
-clamp-oom_score_adj.patch
-move-oom_score_adj-clamp-to-init.patch
