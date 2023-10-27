@@ -1,3 +1,9 @@
+libpod (4.7.1+ds4-5) unstable; urgency=medium
+
+  * avoid file conflict with podman-compose
+
+ -- Reinhard Tartler <siretart@tauware.de>  Fri, 27 Oct 2023 14:58:33 -0400
+
 libpod (4.7.1+ds4-4) unstable; urgency=medium
 
   * Upload to unstable
