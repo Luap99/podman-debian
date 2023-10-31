@@ -82,10 +82,6 @@ Files: vendor/github.com/docker/go-plugins-helpers/*
 Copyright: 2012-2015, Docker, Inc.
 License: Apache-2.0 or Expat
 
-Files: vendor/github.com/gorilla/schema/*
-Copyright: 2012, Rodrigo Moraes
-License: BSD-3-clause
-
 Files: vendor/github.com/moby/sys/*
 Copyright: 2014-2023, Moby contributors
 License: Apache-2.0

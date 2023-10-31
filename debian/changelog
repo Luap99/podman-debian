@@ -1,3 +1,9 @@
+libpod (4.7.1+ds4-6) UNRELEASED; urgency=medium
+
+  * Remove a superfluous stanza from d/copyright.
+
+ -- Faidon Liambotis <paravoid@debian.org>  Tue, 31 Oct 2023 14:32:44 +0200
+
 libpod (4.7.1+ds4-5) unstable; urgency=medium
 
   * avoid file conflict with podman-compose
