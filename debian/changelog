@@ -5,8 +5,11 @@ libpod (4.7.1+ds4-7) UNRELEASED; urgency=medium
     with rootless containers since Linux v5.13 and is now recommended.
   * Remove versioned Depends/Recommends/Breaks for versions that predate
     oldstable (bullseye).
+  * Ship the new podmansh login shell. See podmansh(1) for a detailed
+    description of this new tool. Note that this is still considered a
+    technology preview by upstream.
 
- -- Faidon Liambotis <paravoid@debian.org>  Tue, 31 Oct 2023 14:44:43 +0200
+ -- Faidon Liambotis <paravoid@debian.org>  Tue, 31 Oct 2023 16:18:27 +0200
 
 libpod (4.7.1+ds4-5) unstable; urgency=medium
 

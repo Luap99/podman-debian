@@ -107,10 +107,11 @@ override_dh_auto_install:
 execute_after_dh_installman:
 	# installed in the podman-remote package instead
 	rm -f --verbose $(CURDIR)/debian/podman/usr/share/man/man1/podman-remote.1*
-	# avoid file conflicts, cf. #1054460
+	# avoid file conflicts with the podman-compose/docker-compose packages, cf. #1054460
 	rm -f --verbose $(CURDIR)/debian/podman/usr/share/man/man1/podman-compose.1*
 	rm -f --verbose $(CURDIR)/debian/podman-docker/usr/share/man/man1/docker-compose.1*
-
+	# don't ship "dockersh": podmansh is a podman-specific function
+	rm -f --verbose $(CURDIR)/debian/podman-docker/usr/share/man/man1/dockersh.1*
 
 override_dh_installsystemd:
 	dh_installsystemd
