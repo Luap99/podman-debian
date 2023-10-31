@@ -122,7 +122,6 @@ Recommends:
 Suggests:
  containers-storage,
  docker-compose,
- fuse-overlayfs (>= 1.0.0~),
  iptables,
  ${misc:Suggests},
 Description: tool to manage containers and pods
