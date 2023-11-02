@@ -1,4 +1,4 @@
-libpod (4.7.2+ds1-1) UNRELEASED; urgency=medium
+libpod (4.7.2+ds1-1) experimental; urgency=medium
 
   [ Faidon Liambotis ]
   * Remove a superfluous stanza from d/copyright.
@@ -15,7 +15,7 @@ libpod (4.7.2+ds1-1) UNRELEASED; urgency=medium
   * Drop all vendored libraries, but a single file that is copied in.
     - Fixed https://github.com/moby/moby/security/advisories/GHSA-jq35-85cj-fj4p
 
- -- Reinhard Tartler <siretart@tauware.de>  Thu, 02 Nov 2023 08:35:46 -0400
+ -- Reinhard Tartler <siretart@tauware.de>  Thu, 02 Nov 2023 17:57:39 -0400
 
 libpod (4.7.1+ds4-5) unstable; urgency=medium
 
