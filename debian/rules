@@ -59,6 +59,10 @@ execute_after_dh_auto_clean:
 	# other things. Use bash, as there is a $(<.gitignore) bashism in there.
 	$(MAKE) clean SHELL=/bin/bash
 
+execute_after_dh_auto_configure:
+	# install extra source
+	install -D -t vendor/k8s.io/kubernetes/third_party/forked/golang/expansion/expand.go debian/expand.go
+
 override_dh_auto_build:
 	$(MAKE) docs docker-docs GOMD2MAN=/usr/bin/go-md2man
 

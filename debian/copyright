@@ -4,12 +4,6 @@ Source: https://github.com/containers/podman
 Files-Excluded:
  vendor
  test/tools/vendor
-Files-Included:
- vendor/github.com/checkpoint-restore
- vendor/github.com/coreos/stream-metadata-go
- vendor/github.com/docker/go-plugins-helpers
- vendor/github.com/moby/sys
- vendor/k8s.io
 
 Files: *
 Copyright: 2016-2023, Red Hat, Inc.
@@ -24,6 +18,10 @@ Copyright: 2023, Faidon Liambotis <paravoid@debian.org>
  2020-2023, Reinhard Tartler <siretart@tauware.de>
  2018-2020, Dmitry Smirnov <onlyjob@debian.org>
 License: Apache-2.0
+
+Files: debian/expand.go
+Copyright: 2009, The Go Authors.
+License: BSD-3-clause
 
 Files: hack/fork_exec_snoop.bt
 Copyright: 2023, Paul Wallrabe <pwallrab@redhat.com>
@@ -65,30 +63,6 @@ License: Expat
 Files: test/system/505-networking-pasta.bats
 Copyright: 2022, Red Hat GmbH
 License: Apache-2.0
-
-Files: vendor/github.com/checkpoint-restore/checkpointctl/*
-Copyright: 2021-2023, checkpointctl contributors
-License: Apache-2.0
-
-Files: vendor/github.com/checkpoint-restore/go-criu/*
-Copyright: 2021-2023, go-criu contributors
-License: Expat
-
-Files: vendor/github.com/coreos/stream-metadata-go/*
-Copyright: 2021-2023, Fedora CoreOS contributors
-License: Apache-2.0
-
-Files: vendor/github.com/docker/go-plugins-helpers/*
-Copyright: 2012-2015, Docker, Inc.
-License: Apache-2.0 or Expat
-
-Files: vendor/github.com/moby/sys/*
-Copyright: 2014-2023, Moby contributors
-License: Apache-2.0
-
-Files: vendor/k8s.io/kubernetes/third_party/forked/golang/*
-Copyright: 2009, The Go Authors.
-License: BSD-3-clause
 
 License: Apache-2.0
  Licensed under the Apache License, Version 2.0 (the "License");
