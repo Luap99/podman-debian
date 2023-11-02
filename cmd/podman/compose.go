@@ -17,6 +17,7 @@ import (
 
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/pkg/errorhandling"
 	"github.com/containers/podman/v4/pkg/machine"
 	"github.com/containers/podman/v4/pkg/machine/provider"
 	"github.com/sirupsen/logrus"
@@ -85,20 +86,19 @@ func composeProvider() (string, error) {
 		return "", errors.New("no compose provider specified, please refer to `man podman-compose` for details")
 	}
 
+	lookupErrors := make([]error, 0, len(candidates))
 	for _, candidate := range candidates {
 		path, err := exec.LookPath(os.ExpandEnv(candidate))
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				continue
-			}
-			return "", err
+		if err == nil {
+			// First specified provider "candidate" wins.
+			logrus.Debugf("Found compose provider %q", path)
+			return path, nil
 		}
-		// First specified provider "candidate" wins.
-		logrus.Debugf("Found compose provider %q", path)
-		return path, nil
+		logrus.Debugf("Error looking up compose provider %q: %v", path, err)
+		lookupErrors = append(lookupErrors, err)
 	}
 
-	return "", errors.New("no configured compose provider found on system, please refer to the documentation for details")
+	return "", fmt.Errorf("looking up compose provider failed\n%v", errorhandling.JoinErrors(lookupErrors))
 }
 
 // composeDockerHost returns the value to be set in the DOCKER_HOST environment
@@ -184,11 +184,17 @@ func composeDockerHost() (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("inspecting machine: %w", err)
 		}
-		if info.ConnectionInfo.PodmanSocket == nil {
-			return "", errors.New("socket of machine is not set")
-		}
 		if info.State != machine.Running {
 			return "", fmt.Errorf("machine %s is not running but in state %s", item.Name, info.State)
+		}
+		if machineProvider.VMType() == machine.WSLVirt {
+			if info.ConnectionInfo.PodmanPipe == nil {
+				return "", errors.New("pipe of machine is not set")
+			}
+			return strings.Replace(info.ConnectionInfo.PodmanPipe.Path, `\\.\pipe\`, "npipe:////./pipe/", 1), nil
+		}
+		if info.ConnectionInfo.PodmanSocket == nil {
+			return "", errors.New("socket of machine is not set")
 		}
 		return "unix://" + info.ConnectionInfo.PodmanSocket.Path, nil
 	}
