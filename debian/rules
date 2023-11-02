@@ -61,7 +61,7 @@ execute_after_dh_auto_clean:
 
 execute_after_dh_auto_configure:
 	# install extra source
-	install -D -t vendor/k8s.io/kubernetes/third_party/forked/golang/expansion/expand.go debian/expand.go
+	install -Dv -t _output/src/github.com/containers/podman/vendor/k8s.io/kubernetes/third_party/forked/golang/expansion debian/expand.go
 
 override_dh_auto_build:
 	$(MAKE) docs docker-docs GOMD2MAN=/usr/bin/go-md2man
