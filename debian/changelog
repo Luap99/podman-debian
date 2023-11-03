@@ -1,3 +1,9 @@
+libpod (4.7.2+ds1-2) unstable; urgency=medium
+
+  * upload to unstable
+
+ -- Reinhard Tartler <siretart@tauware.de>  Fri, 03 Nov 2023 06:16:15 -0400
+
 libpod (4.7.2+ds1-1) experimental; urgency=medium
 
   [ Faidon Liambotis ]
