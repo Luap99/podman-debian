@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/containers/buildah/pkg/cli"
 	"github.com/containers/common/pkg/auth"
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/image/v5/types"
@@ -135,8 +136,8 @@ func imagePull(cmd *cobra.Command, args []string) error {
 	if cmd.Flags().Changed("tls-verify") {
 		pullOptions.SkipTLSVerify = types.NewOptionalBool(!pullOptions.TLSVerifyCLI)
 	}
-	if pullOptions.Authfile != "" {
-		if _, err := os.Stat(pullOptions.Authfile); err != nil {
+	if cmd.Flags().Changed("authfile") {
+		if err := auth.CheckAuthFile(pullOptions.Authfile); err != nil {
 			return err
 		}
 	}
@@ -164,7 +165,7 @@ func imagePull(cmd *cobra.Command, args []string) error {
 		pullOptions.Password = creds.Password
 	}
 
-	decConfig, err := util.DecryptConfig(pullOptions.DecryptionKeys)
+	decConfig, err := cli.DecryptConfig(pullOptions.DecryptionKeys)
 	if err != nil {
 		return fmt.Errorf("unable to obtain decryption config: %w", err)
 	}

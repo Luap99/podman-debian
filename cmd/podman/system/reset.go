@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/containers/buildah/pkg/parse"
+	"github.com/containers/buildah/pkg/volumes"
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/podman/v4/cmd/podman/registry"
 	"github.com/containers/podman/v4/cmd/podman/validate"
@@ -21,7 +21,7 @@ import (
 )
 
 var (
-	systemResetDescription = `Reset podman storage back to default state"
+	systemResetDescription = `Reset podman storage back to default state
 
   All containers will be stopped and removed, and all images, volumes, networks and container content will be removed.
 `
@@ -66,6 +66,13 @@ func reset(cmd *cobra.Command, args []string) {
         - all machines
         - all volumes`)
 
+		info, _ := registry.ContainerEngine().Info(registry.Context())
+		// lets not hard fail in case of an error
+		if info != nil {
+			fmt.Printf("        - the graphRoot directory: %q\n", info.Store.GraphRoot)
+			fmt.Printf("        - the runRoot directory: %q\n", info.Store.RunRoot)
+		}
+
 		if len(listCtn) > 0 {
 			fmt.Println(`WARNING! The following external containers will be purged:`)
 			// print first 12 characters of ID and first configured name alias
@@ -90,7 +97,7 @@ func reset(cmd *cobra.Command, args []string) {
 		logrus.Error(err)
 	}
 	// Clean build cache if any
-	err = parse.CleanCacheMount()
+	err = volumes.CleanCacheMount()
 	if err != nil {
 		logrus.Error(err)
 	}

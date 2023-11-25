@@ -140,7 +140,9 @@ func DefineCreateFlags(cmd *cobra.Command, cf *entities.ContainerCreateOptions, 
 		if !registry.IsRemote() {
 			createFlags.BoolVar(
 				&cf.EnvHost,
-				"env-host", false, "Use all current host environment variables in container",
+				"env-host",
+				podmanConfig.ContainersConfDefaultsRO.Containers.EnvHost,
+				"Use all current host environment variables in container",
 			)
 		}
 
@@ -246,7 +248,7 @@ func DefineCreateFlags(cmd *cobra.Command, cf *entities.ContainerCreateOptions, 
 		initPathFlagName := "init-path"
 		createFlags.StringVar(
 			&cf.InitPath,
-			initPathFlagName, initPath(),
+			initPathFlagName, "",
 			// Do not use  the Value field for setting the default value to determine user input (i.e., non-empty string)
 			"Path to the container-init binary",
 		)
@@ -346,7 +348,7 @@ func DefineCreateFlags(cmd *cobra.Command, cf *entities.ContainerCreateOptions, 
 		_ = cmd.RegisterFlagCompletionFunc(podIDFileFlagName, completion.AutocompleteDefault)
 		createFlags.BoolVar(
 			&cf.Privileged,
-			"privileged", false,
+			"privileged", podmanConfig.ContainersConfDefaultsRO.Containers.Privileged,
 			"Give extended privileges to container",
 		)
 		createFlags.BoolVarP(
@@ -368,6 +370,14 @@ func DefineCreateFlags(cmd *cobra.Command, cf *entities.ContainerCreateOptions, 
 			"quiet", "q", false,
 			"Suppress output information when pulling images",
 		)
+		rdtClassFlagName := "rdt-class"
+		createFlags.StringVar(
+			&cf.IntelRdtClosID,
+			rdtClassFlagName, cf.IntelRdtClosID,
+			"Class of Service (COS) that the container should be assigned to",
+		)
+		_ = cmd.RegisterFlagCompletionFunc(rdtClassFlagName, AutocompletePullOption)
+
 		createFlags.BoolVar(
 			&cf.ReadOnly,
 			"read-only", podmanConfig.ContainersConfDefaultsRO.Containers.ReadOnly,
@@ -376,7 +386,7 @@ func DefineCreateFlags(cmd *cobra.Command, cf *entities.ContainerCreateOptions, 
 		createFlags.BoolVar(
 			&cf.ReadWriteTmpFS,
 			"read-only-tmpfs", cf.ReadWriteTmpFS,
-			"When running containers in read-only mode mount a read-write tmpfs on /run, /tmp and /var/tmp",
+			"When running --read-only containers mount read-write tmpfs on /dev, /dev/shm, /run, /tmp and /var/tmp",
 		)
 		requiresFlagName := "requires"
 		createFlags.StringSliceVar(
@@ -386,18 +396,10 @@ func DefineCreateFlags(cmd *cobra.Command, cf *entities.ContainerCreateOptions, 
 		)
 		_ = cmd.RegisterFlagCompletionFunc(requiresFlagName, AutocompleteContainers)
 
-		restartFlagName := "restart"
-		createFlags.StringVar(
-			&cf.Restart,
-			restartFlagName, "",
-			`Restart policy to apply when a container exits ("always"|"no"|"on-failure"|"unless-stopped")`,
-		)
-		_ = cmd.RegisterFlagCompletionFunc(restartFlagName, AutocompleteRestartOption)
-
 		createFlags.BoolVar(
 			&cf.Rm,
 			"rm", false,
-			"Remove container (and pod if created) after exit",
+			"Remove container and any anonymous unnamed volume associated with the container after exit",
 		)
 		createFlags.BoolVar(
 			&cf.RootFS,
@@ -635,6 +637,14 @@ func DefineCreateFlags(cmd *cobra.Command, cf *entities.ContainerCreateOptions, 
 		)
 	}
 	if mode == entities.InfraMode || (mode == entities.CreateMode) { // infra container flags, create should also pick these up
+		restartFlagName := "restart"
+		createFlags.StringVar(
+			&cf.Restart,
+			restartFlagName, "",
+			`Restart policy to apply when a container exits ("always"|"no"|"never"|"on-failure"|"unless-stopped")`,
+		)
+		_ = cmd.RegisterFlagCompletionFunc(restartFlagName, AutocompleteRestartOption)
+
 		shmSizeFlagName := "shm-size"
 		createFlags.String(
 			shmSizeFlagName, shmSize(),

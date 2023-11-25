@@ -19,7 +19,7 @@ var (
 		Use:               "inspect [options] [MACHINE...]",
 		Short:             "Inspect an existing machine",
 		Long:              "Provide details on a managed virtual machine",
-		PersistentPreRunE: rootlessOnly,
+		PersistentPreRunE: machinePreRunE,
 		RunE:              inspect,
 		Example:           `podman machine inspect myvm`,
 		ValidArgsFunction: autocompleteMachine,
@@ -51,7 +51,7 @@ func inspect(cmd *cobra.Command, args []string) error {
 		args = append(args, defaultMachineName)
 	}
 	vms := make([]machine.InspectInfo, 0, len(args))
-	provider := GetSystemDefaultProvider()
+
 	for _, vmName := range args {
 		vm, err := provider.LoadVMByName(vmName)
 		if err != nil {

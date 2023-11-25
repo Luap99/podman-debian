@@ -84,7 +84,7 @@ func searchFlags(cmd *cobra.Command) {
 	flags := cmd.Flags()
 
 	filterFlagName := "filter"
-	flags.StringSliceVarP(&searchOptions.Filters, filterFlagName, "f", []string{}, "Filter output based on conditions provided (default [])")
+	flags.StringArrayVarP(&searchOptions.Filters, filterFlagName, "f", []string{}, "Filter output based on conditions provided (default [])")
 	_ = cmd.RegisterFlagCompletionFunc(filterFlagName, common.AutocompleteImageSearchFilters)
 
 	formatFlagName := "format"
@@ -138,8 +138,8 @@ func imageSearch(cmd *cobra.Command, args []string) error {
 		searchOptions.SkipTLSVerify = types.NewOptionalBool(!searchOptions.TLSVerifyCLI)
 	}
 
-	if searchOptions.Authfile != "" {
-		if _, err := os.Stat(searchOptions.Authfile); err != nil {
+	if cmd.Flags().Changed("authfile") {
+		if err := auth.CheckAuthFile(searchOptions.Authfile); err != nil {
 			return err
 		}
 	}
@@ -182,7 +182,11 @@ func imageSearch(cmd *cobra.Command, args []string) error {
 			listTagsEntries := buildListTagsJSON(searchReport)
 			return printArbitraryJSON(listTagsEntries)
 		}
-		rpt, err = rpt.Parse(report.OriginPodman, "{{range .}}{{.Name}}\t{{.Tag}}\n{{end -}}")
+		if cmd.Flags().Changed("format") {
+			rpt, err = rpt.Parse(report.OriginUser, searchOptions.Format)
+		} else {
+			rpt, err = rpt.Parse(report.OriginPodman, "{{range .}}{{.Name}}\t{{.Tag}}\n{{end -}}")
+		}
 	case isJSON:
 		return printArbitraryJSON(searchReport)
 	case cmd.Flags().Changed("format"):

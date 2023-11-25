@@ -10,44 +10,24 @@ import (
 
 	"github.com/containers/common/pkg/config"
 	. "github.com/containers/podman/v4/test/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gbytes"
 	. "github.com/onsi/gomega/gexec"
 )
 
+func setupEmptyContainersConf() {
+	// make sure connections are not written to real user config on host
+	file := filepath.Join(podmanTest.TempDir, "containersconf")
+	f, err := os.Create(file)
+	Expect(err).ToNot(HaveOccurred())
+	f.Close()
+	os.Setenv("CONTAINERS_CONF", file)
+}
+
 var _ = Describe("podman system connection", func() {
-	ConfPath := struct {
-		Value string
-		IsSet bool
-	}{}
 
-	var podmanTest *PodmanTestIntegration
-
-	BeforeEach(func() {
-		ConfPath.Value, ConfPath.IsSet = os.LookupEnv("CONTAINERS_CONF")
-		conf, err := os.CreateTemp("", "containersconf")
-		Expect(err).ToNot(HaveOccurred())
-		os.Setenv("CONTAINERS_CONF", conf.Name())
-
-		tempdir, err := CreateTempDirInTempDir()
-		Expect(err).ToNot(HaveOccurred())
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		os.Remove(os.Getenv("CONTAINERS_CONF"))
-		if ConfPath.IsSet {
-			os.Setenv("CONTAINERS_CONF", ConfPath.Value)
-		} else {
-			os.Unsetenv("CONTAINERS_CONF")
-		}
-
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-	})
+	BeforeEach(setupEmptyContainersConf)
 
 	Context("without running API service", func() {
 		It("add ssh://", func() {
@@ -59,7 +39,7 @@ var _ = Describe("podman system connection", func() {
 			}
 			session := podmanTest.Podman(cmd)
 			session.WaitWithDefaultTimeout()
-			Expect(session).Should(Exit(0))
+			Expect(session).Should(ExitCleanly())
 			Expect(session.Out.Contents()).Should(BeEmpty())
 
 			cfg, err := config.ReadCustomConfig()
@@ -77,7 +57,7 @@ var _ = Describe("podman system connection", func() {
 			}
 			session = podmanTest.Podman(cmd)
 			session.WaitWithDefaultTimeout()
-			Expect(session).Should(Exit(0))
+			Expect(session).Should(ExitCleanly())
 
 			Expect(config.ReadCustomConfig()).Should(HaveActiveService("QE"))
 		})
@@ -91,6 +71,8 @@ var _ = Describe("podman system connection", func() {
 			session.WaitWithDefaultTimeout()
 			Expect(session).Should(Exit(0))
 			Expect(session.Out.Contents()).Should(BeEmpty())
+			// stderr will probably warn (ENOENT or EACCESS) about socket
+			// but it's too unreliable to test for.
 
 			Expect(config.ReadCustomConfig()).Should(VerifyService(
 				"QA-UDS",
@@ -123,7 +105,7 @@ var _ = Describe("podman system connection", func() {
 			}
 			session := podmanTest.Podman(cmd)
 			session.WaitWithDefaultTimeout()
-			Expect(session).Should(Exit(0))
+			Expect(session).Should(ExitCleanly())
 			Expect(session.Out.Contents()).Should(BeEmpty())
 
 			Expect(config.ReadCustomConfig()).Should(VerifyService(
@@ -131,6 +113,109 @@ var _ = Describe("podman system connection", func() {
 				"tcp://localhost:8888",
 				"",
 			))
+		})
+
+		It("add to new farm", func() {
+			cfg, err := config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg.Farms.List).Should(BeEmpty())
+
+			cmd := []string{"system", "connection", "add",
+				"--default",
+				"--identity", "~/.ssh/id_rsa",
+				"--farm", "farm1",
+				"QA",
+				"ssh://root@podman.test:2222/run/podman/podman.sock",
+			}
+			session := podmanTest.Podman(cmd)
+			session.WaitWithDefaultTimeout()
+			Expect(session).Should(ExitCleanly())
+			Expect(session.Out.Contents()).Should(BeEmpty())
+
+			cfg, err = config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg).Should(HaveActiveService("QA"))
+			Expect(cfg).Should(VerifyService(
+				"QA",
+				"ssh://root@podman.test:2222/run/podman/podman.sock",
+				"~/.ssh/id_rsa",
+			))
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("farm1", []string{"QA"}))
+		})
+
+		It("add to existing farm", func() {
+			// create empty farm
+			cmd := []string{"farm", "create", "empty-farm"}
+			session := podmanTest.Podman(cmd)
+			session.WaitWithDefaultTimeout()
+			Expect(session).Should(ExitCleanly())
+			Expect(session.Out.Contents()).Should(ContainSubstring("Farm \"empty-farm\" created"))
+
+			cfg, err := config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("empty-farm", []string{}))
+
+			cmd = []string{"system", "connection", "add",
+				"--default",
+				"--identity", "~/.ssh/id_rsa",
+				"--farm", "empty-farm",
+				"QA",
+				"ssh://root@podman.test:2222/run/podman/podman.sock",
+			}
+			session = podmanTest.Podman(cmd)
+			session.WaitWithDefaultTimeout()
+			Expect(session).Should(ExitCleanly())
+			Expect(session.Out.Contents()).Should(BeEmpty())
+
+			cfg, err = config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg).Should(HaveActiveService("QA"))
+			Expect(cfg).Should(VerifyService(
+				"QA",
+				"ssh://root@podman.test:2222/run/podman/podman.sock",
+				"~/.ssh/id_rsa",
+			))
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("empty-farm", []string{"QA"}))
+		})
+
+		It("removing connection should remove from farm also", func() {
+			cfg, err := config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg.Farms.List).Should(BeEmpty())
+
+			cmd := []string{"system", "connection", "add",
+				"--default",
+				"--identity", "~/.ssh/id_rsa",
+				"--farm", "farm1",
+				"QA",
+				"ssh://root@podman.test:2222/run/podman/podman.sock",
+			}
+			session := podmanTest.Podman(cmd)
+			session.WaitWithDefaultTimeout()
+			Expect(session).Should(ExitCleanly())
+			Expect(session.Out.Contents()).Should(BeEmpty())
+
+			cfg, err = config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg).Should(HaveActiveService("QA"))
+			Expect(cfg).Should(VerifyService(
+				"QA",
+				"ssh://root@podman.test:2222/run/podman/podman.sock",
+				"~/.ssh/id_rsa",
+			))
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("farm1", []string{"QA"}))
+
+			// Remove the QA connection
+			session = podmanTest.Podman([]string{"system", "connection", "remove", "QA"})
+			session.WaitWithDefaultTimeout()
+			Expect(session).Should(ExitCleanly())
+			Expect(session.Out.Contents()).Should(BeEmpty())
+
+			cfg, err = config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg.Engine.ActiveService).Should(BeEmpty())
+			Expect(cfg.Engine.ServiceDestinations).Should(BeEmpty())
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("farm1", []string{}))
 		})
 
 		It("remove", func() {
@@ -141,13 +226,13 @@ var _ = Describe("podman system connection", func() {
 				"ssh://root@podman.test:2222/run/podman/podman.sock",
 			})
 			session.WaitWithDefaultTimeout()
-			Expect(session).Should(Exit(0))
+			Expect(session).Should(ExitCleanly())
 
 			// two passes to test that removing non-existent connection is not an error
 			for i := 0; i < 2; i++ {
 				session = podmanTest.Podman([]string{"system", "connection", "remove", "QA"})
 				session.WaitWithDefaultTimeout()
-				Expect(session).Should(Exit(0))
+				Expect(session).Should(ExitCleanly())
 				Expect(session.Out.Contents()).Should(BeEmpty())
 
 				cfg, err := config.ReadCustomConfig()
@@ -165,17 +250,17 @@ var _ = Describe("podman system connection", func() {
 				"ssh://root@podman.test:2222/run/podman/podman.sock",
 			})
 			session.WaitWithDefaultTimeout()
-			Expect(session).Should(Exit(0))
+			Expect(session).Should(ExitCleanly())
 
 			session = podmanTest.Podman([]string{"system", "connection", "remove", "--all"})
 			session.WaitWithDefaultTimeout()
-			Expect(session).Should(Exit(0))
+			Expect(session).Should(ExitCleanly())
 			Expect(session.Out.Contents()).Should(BeEmpty())
 			Expect(session.Err.Contents()).Should(BeEmpty())
 
 			session = podmanTest.Podman([]string{"system", "connection", "list"})
 			session.WaitWithDefaultTimeout()
-			Expect(session).Should(Exit(0))
+			Expect(session).Should(ExitCleanly())
 		})
 
 		It("default", func() {
@@ -188,13 +273,13 @@ var _ = Describe("podman system connection", func() {
 				}
 				session := podmanTest.Podman(cmd)
 				session.WaitWithDefaultTimeout()
-				Expect(session).Should(Exit(0))
+				Expect(session).Should(ExitCleanly())
 			}
 
 			cmd := []string{"system", "connection", "default", "devl"}
 			session := podmanTest.Podman(cmd)
 			session.WaitWithDefaultTimeout()
-			Expect(session).Should(Exit(0))
+			Expect(session).Should(ExitCleanly())
 			Expect(session.Out.Contents()).Should(BeEmpty())
 
 			Expect(config.ReadCustomConfig()).Should(HaveActiveService("devl"))
@@ -202,13 +287,13 @@ var _ = Describe("podman system connection", func() {
 			cmd = []string{"system", "connection", "list"}
 			session = podmanTest.Podman(cmd)
 			session.WaitWithDefaultTimeout()
-			Expect(session).Should(Exit(0))
+			Expect(session).Should(ExitCleanly())
 			Expect(session.Out).Should(Say("Name *URI *Identity *Default"))
 
 			cmd = []string{"system", "connection", "list", "--format", "{{.Name}}"}
 			session = podmanTest.Podman(cmd)
 			session.WaitWithDefaultTimeout()
-			Expect(session).Should(Exit(0))
+			Expect(session).Should(ExitCleanly())
 			Expect(session.OutputToString()).Should(Equal("devl qe"))
 		})
 
@@ -216,7 +301,7 @@ var _ = Describe("podman system connection", func() {
 			cmd := []string{"system", "connection", "default", "devl"}
 			session := podmanTest.Podman(cmd)
 			session.WaitWithDefaultTimeout()
-			Expect(session).ShouldNot(Exit(0))
+			Expect(session).ShouldNot(ExitCleanly())
 			Expect(session.Err).Should(Say("destination is not defined"))
 		})
 
@@ -224,7 +309,7 @@ var _ = Describe("podman system connection", func() {
 			cmd := []string{"system", "connection", "rename", "devl", "QE"}
 			session := podmanTest.Podman(cmd)
 			session.WaitWithDefaultTimeout()
-			Expect(session).ShouldNot(Exit(0))
+			Expect(session).ShouldNot(ExitCleanly())
 			Expect(session.Err).Should(Say("destination is not defined"))
 		})
 
@@ -232,7 +317,7 @@ var _ = Describe("podman system connection", func() {
 			cmd := []string{"system", "connection", "list"}
 			session := podmanTest.Podman(cmd)
 			session.WaitWithDefaultTimeout()
-			Expect(session).Should(Exit(0))
+			Expect(session).Should(ExitCleanly())
 			Expect(session.OutputToStringArray()).Should(HaveLen(1))
 			Expect(session.Err.Contents()).Should(BeEmpty())
 		})

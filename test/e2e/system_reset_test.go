@@ -1,37 +1,13 @@
 package integration
 
 import (
-	"fmt"
-	"os"
-
 	. "github.com/containers/podman/v4/test/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	. "github.com/onsi/gomega/gexec"
 )
 
-var _ = Describe("podman system reset", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
-
-	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		timedResult := fmt.Sprintf("Test: %s completed in %f seconds", f.TestText, f.Duration.Seconds())
-		_, _ = GinkgoWriter.Write([]byte(timedResult))
-	})
+// system reset must run serial: https://github.com/containers/podman/issues/17903
+var _ = Describe("podman system reset", Serial, func() {
 
 	It("podman system reset", func() {
 		SkipIfRemote("system reset not supported on podman --remote")
@@ -40,51 +16,51 @@ var _ = Describe("podman system reset", func() {
 
 		session := podmanTest.Podman([]string{"rmi", "--force", "--all"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 
 		session = podmanTest.Podman([]string{"images", "-n"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 		l := len(session.OutputToStringArray())
 
 		podmanTest.AddImageToRWStore(ALPINE)
 		session = podmanTest.Podman([]string{"volume", "create", "data"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 
 		session = podmanTest.Podman([]string{"create", "-v", "data:/data", ALPINE, "echo", "hello"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 
 		session = podmanTest.Podman([]string{"network", "create"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 
 		session = podmanTest.Podman([]string{"system", "reset", "-f"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 
 		Expect(session.ErrorToString()).To(Not(ContainSubstring("Failed to add pause process")))
 		Expect(session.ErrorToString()).To(Not(ContainSubstring("/usr/share/containers/storage.conf")))
 
 		session = podmanTest.Podman([]string{"images", "-n"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 		Expect(session.OutputToStringArray()).To(HaveLen(l))
 
 		session = podmanTest.Podman([]string{"volume", "ls"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 		Expect(session.OutputToStringArray()).To(BeEmpty())
 
 		session = podmanTest.Podman([]string{"container", "ls", "-q"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 		Expect(session.OutputToStringArray()).To(BeEmpty())
 
 		session = podmanTest.Podman([]string{"network", "ls", "-q"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 		// default network should exists
 		Expect(session.OutputToStringArray()).To(HaveLen(1))
 
@@ -94,7 +70,7 @@ var _ = Describe("podman system reset", func() {
 		if isRootless() {
 			session = podmanTest.Podman([]string{"machine", "list", "-q"})
 			session.WaitWithDefaultTimeout()
-			Expect(session).Should(Exit(0))
+			Expect(session).Should(ExitCleanly())
 			Expect(session.OutputToStringArray()).To(BeEmpty())
 		}
 	})

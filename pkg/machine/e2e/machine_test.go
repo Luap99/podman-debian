@@ -12,8 +12,11 @@ import (
 	"time"
 
 	"github.com/containers/podman/v4/pkg/machine"
-	"github.com/containers/podman/v4/pkg/machine/qemu"
-	. "github.com/onsi/ginkgo"
+	"github.com/containers/podman/v4/pkg/machine/compression"
+	"github.com/containers/podman/v4/pkg/machine/define"
+	"github.com/containers/podman/v4/pkg/machine/provider"
+	"github.com/containers/podman/v4/utils"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 
@@ -22,11 +25,11 @@ func TestMain(m *testing.M) {
 }
 
 const (
-	defaultStream machine.FCOSStream = machine.Testing
+	defaultStream = machine.Testing
 )
 
 var (
-	tmpDir         = "/var/tmp"
+	tmpDir         = os.TempDir()
 	fqImageName    string
 	suiteImageName string
 )
@@ -43,26 +46,45 @@ func TestMachine(t *testing.T) {
 	RunSpecs(t, "Podman Machine tests")
 }
 
+var testProvider machine.VirtProvider
+
 var _ = BeforeSuite(func() {
-	qemuVP := qemu.GetVirtualizationProvider()
-	fcd, err := machine.GetFCOSDownload(qemuVP, defaultStream)
+	var err error
+	testProvider, err = provider.Get()
 	if err != nil {
-		Fail("unable to get virtual machine image")
+		Fail("unable to create testProvider")
 	}
-	suiteImageName = strings.TrimSuffix(path.Base(fcd.Location), ".xz")
+
+	downloadLocation := os.Getenv("MACHINE_IMAGE")
+
+	if len(downloadLocation) < 1 {
+		downloadLocation = getDownloadLocation(testProvider)
+		// we cannot simply use OS here because hyperv uses fcos; so WSL is just
+		// special here
+		if testProvider.VMType() != machine.WSLVirt {
+			downloadLocation = getDownloadLocation(testProvider)
+		}
+	}
+
+	compressionExtension := fmt.Sprintf(".%s", testProvider.Compression().String())
+	suiteImageName = strings.TrimSuffix(path.Base(downloadLocation), compressionExtension)
 	fqImageName = filepath.Join(tmpDir, suiteImageName)
 	if _, err := os.Stat(fqImageName); err != nil {
 		if os.IsNotExist(err) {
-			getMe, err := url2.Parse(fcd.Location)
+			getMe, err := url2.Parse(downloadLocation)
 			if err != nil {
 				Fail(fmt.Sprintf("unable to create url for download: %q", err))
 			}
 			now := time.Now()
-			if err := machine.DownloadVMImage(getMe, suiteImageName, fqImageName+".xz"); err != nil {
+			if err := machine.DownloadVMImage(getMe, suiteImageName, fqImageName+compressionExtension); err != nil {
 				Fail(fmt.Sprintf("unable to download machine image: %q", err))
 			}
-			fmt.Println("Download took: ", time.Since(now).String())
-			if err := machine.Decompress(fqImageName+".xz", fqImageName); err != nil {
+			GinkgoWriter.Println("Download took: ", time.Since(now).String())
+			diskImage, err := define.NewMachineFile(fqImageName+compressionExtension, nil)
+			if err != nil {
+				Fail(fmt.Sprintf("unable to create vmfile %q: %v", fqImageName+compressionExtension, err))
+			}
+			if err := compression.Decompress(diskImage, fqImageName); err != nil {
 				Fail(fmt.Sprintf("unable to decompress image file: %q", err))
 			}
 		} else {
@@ -71,10 +93,7 @@ var _ = BeforeSuite(func() {
 	}
 })
 
-var _ = SynchronizedAfterSuite(func() {},
-	func() {
-		fmt.Println("After")
-	})
+var _ = SynchronizedAfterSuite(func() {}, func() {})
 
 func setup() (string, *machineTestBuilder) {
 	// Set TMPDIR if this needs a new directory
@@ -120,6 +139,9 @@ func setup() (string, *machineTestBuilder) {
 	if _, err := io.Copy(n, f); err != nil {
 		Fail(fmt.Sprintf("failed to copy %ss to %s: %q", fqImageName, mb.imagePath, err))
 	}
+	if err := n.Close(); err != nil {
+		Fail(fmt.Sprintf("failed to close image copy handler: %q", err))
+	}
 	return homeDir, mb
 }
 
@@ -127,10 +149,10 @@ func teardown(origHomeDir string, testDir string, mb *machineTestBuilder) {
 	r := new(rmMachine)
 	for _, name := range mb.names {
 		if _, err := mb.setName(name).setCmd(r.withForce()).run(); err != nil {
-			fmt.Printf("error occurred rm'ing machine: %q\n", err)
+			GinkgoWriter.Printf("error occurred rm'ing machine: %q\n", err)
 		}
 	}
-	if err := machine.GuardedRemoveAll(testDir); err != nil {
+	if err := utils.GuardedRemoveAll(testDir); err != nil {
 		Fail(fmt.Sprintf("failed to remove test dir: %q", err))
 	}
 	// this needs to be last in teardown

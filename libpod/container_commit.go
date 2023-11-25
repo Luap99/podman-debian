@@ -1,3 +1,6 @@
+//go:build !remote
+// +build !remote
+
 package libpod
 
 import (
@@ -68,6 +71,7 @@ func (c *Container) Commit(ctx context.Context, destImage string, options Contai
 		PreferredManifestType: options.PreferredManifestType,
 	}
 	importBuilder, err := buildah.ImportBuilder(ctx, c.runtime.store, builderOptions)
+	importBuilder.Format = options.PreferredManifestType
 	if err != nil {
 		return nil, err
 	}

@@ -1,7 +1,7 @@
 % podman-pod-ps 1
 
 ## NAME
-podman\-pod\-ps - Prints out information about pods
+podman\-pod\-ps - Print out information about pods
 
 ## SYNOPSIS
 **podman pod ps** [*options*]
@@ -48,18 +48,18 @@ The *filters* argument format is of `key=value`. If there is more than one *filt
 
 Supported filters:
 
-|   Filter    |   Description                                                                                      |
-| ----------  | -------------------------------------------------------------------------------------------------- |
-| *ctr-ids*   | Filter by container ID within the pod.                                                             |
-| *ctr-names* | Filter by container name within the pod.                                                           |
-| *ctr-number*| Filter by number of containers in the pod.                                                         |
-| *ctr-status*| Filter by container status within the pod.                                                         |
-| *id*        | Filter by pod ID.                                                                                  |
-| *label*     | Filter by container with (or without, in the case of label!=[...] is used) the specified labels.   |
-| *name*      | Filter by pod name.                                                                                |
-| *network*   | Filter by network name or full ID of network.                                                      |
-| *status*    | Filter by pod status.                                                                              |
-| *until*     | Filter by pods created before given timestamp.                                                     |
+| Filter     | Description                                                                                      |
+|------------|--------------------------------------------------------------------------------------------------|
+| ctr-ids    | Filter by container ID within the pod. (CID prefix match by default; accepts regex)              |
+| ctr-names  | Filter by container name within the pod.                                                         |
+| ctr-number | Filter by number of containers in the pod.                                                       |
+| ctr-status | Filter by container status within the pod.                                                       |
+| id         | Filter by pod ID. (Prefix match by default; accepts regex)                                       |
+| label      | Filter by container with (or without, in the case of label!=[...] is used) the specified labels. |
+| name       | Filter by pod name.                                                                              |
+| network    | Filter by network name or full ID of network.                                                    |
+| status     | Filter by pod status.                                                                            |
+| until      | Filter by pods created before given timestamp.                                                   |
 
 The `ctr-ids`, `ctr-names`, `id`, `name` filters accept `regex` format.
 
@@ -77,20 +77,21 @@ Pretty-print containers to JSON or using a Go template
 
 Valid placeholders for the Go template are listed below:
 
-| **Placeholder**     | **Description**                                    |
-|---------------------|----------------------------------------------------|
-| .Cgroup             | Cgroup path of pod                                 |
-| .ContainerIds       | Comma-separated list of container IDs in the pod   |
-| .ContainerNames     | Comma-separated list of container names in the pod |
-| .ContainerStatuses  | Comma-separated list of container statuses         |
-| .Created            | Creation time of pod                               |
-| .ID                 | Container ID                                       |
-| .InfraID            | Pod infra container ID                             |
-| .Labels             | All the labels assigned to the pod                 |
-| .Name               | Name of pod                                        |
-| .Networks           | Show all networks connected to the infra container |
-| .NumberOfContainers | Show the number of containers attached to pod      |
-| .Status             | Status of pod                                      |
+| **Placeholder**     | **Description**                                      |
+|---------------------|------------------------------------------------------|
+| .Cgroup             | Cgroup path of pod                                   |
+| .ContainerIds       | Comma-separated list of container IDs in the pod     |
+| .ContainerNames     | Comma-separated list of container names in the pod   |
+| .ContainerStatuses  | Comma-separated list of container statuses           |
+| .Created            | Creation time of pod                                 |
+| .ID                 | Container ID                                         |
+| .InfraID            | Pod infra container ID                               |
+| .Labels             | All the labels assigned to the pod                   |
+| .Name               | Name of pod                                          |
+| .Networks           | Show all networks connected to the infra container   |
+| .NumberOfContainers | Show the number of containers attached to pod        |
+| .Restarts           | Show the total number of container restarts in a pod |
+| .Status             | Status of pod                                        |
 
 #### **--help**, **-h**
 

@@ -21,6 +21,7 @@ import (
 	"github.com/docker/docker/api/types/registry"
 	"github.com/docker/docker/api/types/swarm"
 	"github.com/google/uuid"
+	"github.com/opencontainers/selinux/go-selinux"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -61,8 +62,6 @@ func GetInfo(w http.ResponseWriter, r *http.Request) {
 			CPUSet:             sysInfo.Cpuset,
 			CPUShares:          sysInfo.CPUShares,
 			CgroupDriver:       configInfo.Engine.CgroupManager,
-			ClusterAdvertise:   "",
-			ClusterStore:       "",
 			ContainerdCommit:   docker.Commit{},
 			Containers:         infoData.Store.ContainerStore.Number,
 			ContainersPaused:   stateInfo[define.ContainerStatePaused],
@@ -181,6 +180,13 @@ func getSecOpts(sysInfo *sysinfo.SysInfo) []string {
 		// FIXME: get profile name...
 		secOpts = append(secOpts, fmt.Sprintf("name=seccomp,profile=%s", "default"))
 	}
+	if rootless.IsRootless() {
+		secOpts = append(secOpts, "name=rootless")
+	}
+	if selinux.GetEnabled() {
+		secOpts = append(secOpts, "name=selinux")
+	}
+
 	return secOpts
 }
 

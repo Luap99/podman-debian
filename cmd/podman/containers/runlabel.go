@@ -2,7 +2,6 @@ package containers
 
 import (
 	"context"
-	"os"
 	"strings"
 
 	"github.com/containers/common/pkg/auth"
@@ -91,8 +90,8 @@ func runlabel(cmd *cobra.Command, args []string) error {
 	if cmd.Flags().Changed("tls-verify") {
 		runlabelOptions.SkipTLSVerify = types.NewOptionalBool(!runlabelOptions.TLSVerifyCLI)
 	}
-	if runlabelOptions.Authfile != "" {
-		if _, err := os.Stat(runlabelOptions.Authfile); err != nil {
+	if cmd.Flags().Changed("authfile") {
+		if err := auth.CheckAuthFile(runlabelOptions.Authfile); err != nil {
 			return err
 		}
 	}

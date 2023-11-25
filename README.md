@@ -1,15 +1,16 @@
 ![PODMAN logo](https://raw.githubusercontent.com/containers/common/main/logos/podman-logo-full-vert.png)
 
 # Podman: A tool for managing OCI containers and pods
+![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)
+![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/containers/podman)
+[![Go Report Card](https://goreportcard.com/badge/github.com/containers/libpod)](https://goreportcard.com/report/github.com/containers/libpod)
+
+<br/>
 
 Podman (the POD MANager) is a tool for managing containers and images, volumes mounted into those containers, and pods made from groups of containers.
 Podman runs containers on Linux, but can also be used on Mac and Windows systems using a Podman-managed virtual machine.
 Podman is based on libpod, a library for container lifecycle management that is also contained in this repository. The libpod library provides APIs for managing containers, pods, container images, and volumes.
 
-* [Latest Version: 4.4.0](https://github.com/containers/podman/releases/tag/v4.4.0)
-  * Latest Remote client for Windows
-  * Latest Remote client for macOS
-  * Latest Static Remote client for Linux
 
 All releases are GPG signed. Public keys of members of the team approved to make releases are located [here](https://github.com/containers/release-keys/tree/main/podman).
 
@@ -98,7 +99,7 @@ For blogs, release announcements and more, please checkout the [podman.io](https
 **[Installation notes](install.md)**
 Information on how to install Podman in your environment.
 
-**[OCI Hooks Support](pkg/hooks/README.md)**
+**[OCI Hooks Support](https://github.com/containers/common/blob/main/pkg/hooks/README.md)**
 Information on how Podman configures [OCI Hooks][spec-hooks] to run when launching a container.
 
 **[Podman API](https://docs.podman.io/en/latest/_static/api.html)**
@@ -170,7 +171,7 @@ you to manage and maintain those images and containers in a production environme
 familiar container cli commands.  For more details, see the
 [Container Tools Guide](https://github.com/containers/buildah/tree/main/docs/containertools).
 
-## [Podman Hello](https://podman.io/images/podman-hello.jpg)
+## Podman Hello
 ```
 $ podman run quay.io/podman/hello
 Trying to pull quay.io/podman/hello:latest...

@@ -1,3 +1,6 @@
+//go:build !remote
+// +build !remote
+
 package libpod
 
 import (
@@ -5,7 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/rand"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -116,13 +119,6 @@ type Runtime struct {
 	noStore bool
 	// secretsManager manages secrets
 	secretsManager *secrets.SecretsManager
-}
-
-func init() {
-	// generateName calls namesgenerator.GetRandomName which the
-	// global RNG from math/rand. Seed it here to make sure we
-	// don't get the same name every time.
-	rand.Seed(time.Now().UnixNano())
 }
 
 // SetXdgDirs ensures the XDG_RUNTIME_DIR env and XDG_CONFIG_HOME variables are set.
@@ -302,6 +298,48 @@ func getLockManager(runtime *Runtime) (lock.Manager, error) {
 	return manager, nil
 }
 
+func getDBState(runtime *Runtime) (State, error) {
+	// TODO - if we further break out the state implementation into
+	// libpod/state, the config could take care of the code below.  It
+	// would further allow to move the types and consts into a coherent
+	// package.
+	backend, err := config.ParseDBBackend(runtime.config.Engine.DBBackend)
+	if err != nil {
+		return nil, err
+	}
+
+	// get default boltdb path
+	baseDir := runtime.config.Engine.StaticDir
+	if runtime.storageConfig.TransientStore {
+		baseDir = runtime.config.Engine.TmpDir
+	}
+	boltDBPath := filepath.Join(baseDir, "bolt_state.db")
+
+	switch backend {
+	case config.DBBackendDefault:
+		// for backwards compatibility check if boltdb exists, if it does not we use sqlite
+		if _, err := os.Stat(boltDBPath); err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				// need to set DBBackend string so podman info will show the backend name correctly
+				runtime.config.Engine.DBBackend = config.DBBackendSQLite.String()
+				return NewSqliteState(runtime)
+			}
+			// Return error here some other problem with the boltdb file, rather than silently
+			// switch to sqlite which would be hard to debug for the user return the error back
+			// as this likely a real bug.
+			return nil, err
+		}
+		runtime.config.Engine.DBBackend = config.DBBackendBoltDB.String()
+		fallthrough
+	case config.DBBackendBoltDB:
+		return NewBoltState(boltDBPath, runtime)
+	case config.DBBackendSQLite:
+		return NewSqliteState(runtime)
+	default:
+		return nil, fmt.Errorf("unrecognized database backend passed (%q): %w", backend.String(), define.ErrInvalidArg)
+	}
+}
+
 // Make a new runtime based on the given configuration
 // Sets up containers/storage, state store, OCI runtime
 func makeRuntime(runtime *Runtime) (retErr error) {
@@ -319,11 +357,21 @@ func makeRuntime(runtime *Runtime) (retErr error) {
 		return fmt.Errorf("cannot perform system reset while renumbering locks: %w", define.ErrInvalidArg)
 	}
 
+	if runtime.config.Engine.StaticDir == "" {
+		runtime.config.Engine.StaticDir = filepath.Join(runtime.storageConfig.GraphRoot, "libpod")
+		runtime.storageSet.StaticDirSet = true
+	}
+
+	if runtime.config.Engine.VolumePath == "" {
+		runtime.config.Engine.VolumePath = filepath.Join(runtime.storageConfig.GraphRoot, "volumes")
+		runtime.storageSet.VolumePathSet = true
+	}
+
 	// Make the static files directory if it does not exist
 	if err := os.MkdirAll(runtime.config.Engine.StaticDir, 0700); err != nil {
 		// The directory is allowed to exist
 		if !errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("creating runtime static files directory: %w", err)
+			return fmt.Errorf("creating runtime static files directory %q: %w", runtime.config.Engine.StaticDir, err)
 		}
 	}
 
@@ -333,39 +381,9 @@ func makeRuntime(runtime *Runtime) (retErr error) {
 	}
 
 	// Set up the state.
-	//
-	// TODO: We probably need a "default" type that will select BoltDB if
-	// a DB exists already, and SQLite otherwise.
-	//
-	// TODO - if we further break out the state implementation into
-	// libpod/state, the config could take care of the code below.  It
-	// would further allow to move the types and consts into a coherent
-	// package.
-	backend, err := config.ParseDBBackend(runtime.config.Engine.DBBackend)
+	runtime.state, err = getDBState(runtime)
 	if err != nil {
 		return err
-	}
-	switch backend {
-	case config.DBBackendBoltDB:
-		baseDir := runtime.config.Engine.StaticDir
-		if runtime.storageConfig.TransientStore {
-			baseDir = runtime.config.Engine.TmpDir
-		}
-		dbPath := filepath.Join(baseDir, "bolt_state.db")
-
-		state, err := NewBoltState(dbPath, runtime)
-		if err != nil {
-			return err
-		}
-		runtime.state = state
-	case config.DBBackendSQLite:
-		state, err := NewSqliteState(runtime)
-		if err != nil {
-			return err
-		}
-		runtime.state = state
-	default:
-		return fmt.Errorf("unrecognized state type passed (%v): %w", runtime.config.Engine.StateType, define.ErrInvalidArg)
 	}
 
 	// Grab config from the database so we can reset some defaults
@@ -1195,4 +1213,69 @@ func (r *Runtime) RemoteURI() string {
 // SetRemoteURI records the API server URI
 func (r *Runtime) SetRemoteURI(uri string) {
 	r.config.Engine.RemoteURI = uri
+}
+
+// Get information on potential lock conflicts.
+// Returns a map of lock number to object(s) using the lock, formatted as
+// "container <id>" or "volume <id>" or "pod <id>", and an array of locks that
+// are currently being held, formatted as []uint32.
+// If the map returned is not empty, you should immediately renumber locks on
+// the runtime, because you have a deadlock waiting to happen.
+func (r *Runtime) LockConflicts() (map[uint32][]string, []uint32, error) {
+	// Make an internal map to store what lock is associated with what
+	locksInUse := make(map[uint32][]string)
+
+	ctrs, err := r.state.AllContainers(false)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, ctr := range ctrs {
+		lockNum := ctr.lock.ID()
+		ctrString := fmt.Sprintf("container %s", ctr.ID())
+		locksInUse[lockNum] = append(locksInUse[lockNum], ctrString)
+	}
+
+	pods, err := r.state.AllPods()
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, pod := range pods {
+		lockNum := pod.lock.ID()
+		podString := fmt.Sprintf("pod %s", pod.ID())
+		locksInUse[lockNum] = append(locksInUse[lockNum], podString)
+	}
+
+	volumes, err := r.state.AllVolumes()
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, vol := range volumes {
+		lockNum := vol.lock.ID()
+		volString := fmt.Sprintf("volume %s", vol.Name())
+		locksInUse[lockNum] = append(locksInUse[lockNum], volString)
+	}
+
+	// Now go through and find any entries with >1 item associated
+	toReturn := make(map[uint32][]string)
+	for lockNum, objects := range locksInUse {
+		// If debug logging is requested, just spit out *every* lock in
+		// use.
+		logrus.Debugf("Lock number %d is in use by %v", lockNum, objects)
+
+		if len(objects) > 1 {
+			toReturn[lockNum] = objects
+		}
+	}
+
+	locksHeld, err := r.lockManager.LocksHeld()
+	if err != nil {
+		if errors.Is(err, define.ErrNotImplemented) {
+			logrus.Warnf("Could not retrieve currently taken locks as the lock backend does not support this operation")
+			return toReturn, []uint32{}, nil
+		}
+
+		return nil, nil, err
+	}
+
+	return toReturn, locksHeld, nil
 }

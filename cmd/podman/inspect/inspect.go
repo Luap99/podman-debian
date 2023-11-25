@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/report"
 	"github.com/containers/podman/v4/cmd/podman/common"
 	"github.com/containers/podman/v4/cmd/podman/registry"
@@ -28,7 +27,7 @@ func AddInspectFlagSet(cmd *cobra.Command) *entities.InspectOptions {
 
 	formatFlagName := "format"
 	flags.StringVarP(&opts.Format, formatFlagName, "f", "json", "Format the output to a Go template or json")
-	_ = cmd.RegisterFlagCompletionFunc(formatFlagName, completion.AutocompleteNone)
+	_ = cmd.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteFormat(nil)) // passing nil as the type selection logic is in AutocompleteFormat function
 
 	typeFlagName := "type"
 	flags.StringVarP(&opts.Type, typeFlagName, "t", common.AllType, "Specify inspect-object type")
@@ -185,16 +184,16 @@ func (i *inspector) inspect(namesOrIDs []string) error {
 		err = rpt.Execute(data)
 	}
 	if err != nil {
-		errs = append(errs, fmt.Errorf("printing inspect output: %w", err))
+		errs = append(errs, err)
 	}
 
 	if len(errs) > 0 {
 		if len(errs) > 1 {
 			for _, err := range errs[1:] {
-				fmt.Fprintf(os.Stderr, "error inspecting object: %v\n", err)
+				fmt.Fprintf(os.Stderr, "%v\n", err)
 			}
 		}
-		return fmt.Errorf("inspecting object: %w", errs[0])
+		return errs[0]
 	}
 	return nil
 }

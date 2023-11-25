@@ -5,8 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/user"
 	"path"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"unicode"
 
@@ -31,6 +34,10 @@ var (
 	versionFlag bool // True if -version is used
 )
 
+const (
+	SystemUserDirLevel = 5
+)
+
 var (
 	// data saved between logToKmsg calls
 	noKmsg   = false
@@ -38,12 +45,15 @@ var (
 )
 
 var (
-	void                struct{}
-	supportedExtensions = map[string]struct{}{
-		".container": void,
-		".volume":    void,
-		".kube":      void,
-		".network":   void,
+	void struct{}
+	// Key: Extension
+	// Value: Processing order for resource naming dependencies
+	supportedExtensions = map[string]int{
+		".container": 3,
+		".volume":    2,
+		".kube":      3,
+		".network":   2,
+		".image":     1,
 	}
 )
 
@@ -63,7 +73,7 @@ func logToKmsg(s string) bool {
 		kmsgFile = f
 	}
 
-	if _, err := kmsgFile.Write([]byte(s)); err != nil {
+	if _, err := kmsgFile.WriteString(s); err != nil {
 		kmsgFile.Close()
 		kmsgFile = nil
 		return false
@@ -76,8 +86,7 @@ func Logf(format string, a ...interface{}) {
 	s := fmt.Sprintf(format, a...)
 	line := fmt.Sprintf("quadlet-generator[%d]: %s", os.Getpid(), s)
 
-	if !logToKmsg(line) {
-		// If we can't log, print to stderr
+	if !logToKmsg(line) || dryRunFlag {
 		fmt.Fprintf(os.Stderr, "%s\n", line)
 		os.Stderr.Sync()
 	}
@@ -98,24 +107,97 @@ func Debugf(format string, a ...interface{}) {
 // This returns the directories where we read quadlet .container and .volumes from
 // For system generators these are in /usr/share/containers/systemd (for distro files)
 // and /etc/containers/systemd (for sysadmin files).
-// For user generators these live in $XDG_CONFIG_HOME/containers/systemd
-func getUnitDirs(user bool) []string {
-	// Allow overdiding source dir, this is mainly for the CI tests
+// For user generators these can live in /etc/containers/systemd/users, /etc/containers/systemd/users/$UID, and $XDG_CONFIG_HOME/containers/systemd
+func getUnitDirs(rootless bool) []string {
+	// Allow overriding source dir, this is mainly for the CI tests
 	unitDirsEnv := os.Getenv("QUADLET_UNIT_DIRS")
+	dirs := make([]string, 0)
+
 	if len(unitDirsEnv) > 0 {
-		return strings.Split(unitDirsEnv, ":")
+		for _, eachUnitDir := range strings.Split(unitDirsEnv, ":") {
+			if !filepath.IsAbs(eachUnitDir) {
+				Logf("%s not a valid file path", eachUnitDir)
+				return nil
+			}
+			dirs = appendSubPaths(dirs, eachUnitDir, false, nil)
+		}
+		return dirs
 	}
 
-	dirs := make([]string, 0)
-	if user {
-		if configDir, err := os.UserConfigDir(); err == nil {
-			dirs = append(dirs, path.Join(configDir, "containers/systemd"))
+	if rootless {
+		configDir, err := os.UserConfigDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: %v", err)
+			return nil
 		}
-	} else {
-		dirs = append(dirs, quadlet.UnitDirAdmin)
-		dirs = append(dirs, quadlet.UnitDirDistro)
+		dirs = appendSubPaths(dirs, path.Join(configDir, "containers/systemd"), false, nil)
+		u, err := user.Current()
+		if err == nil {
+			dirs = appendSubPaths(dirs, filepath.Join(quadlet.UnitDirAdmin, "users"), true, nonNumericFilter)
+			dirs = appendSubPaths(dirs, filepath.Join(quadlet.UnitDirAdmin, "users", u.Uid), true, userLevelFilter)
+		} else {
+			fmt.Fprintf(os.Stderr, "Warning: %v", err)
+		}
+		return append(dirs, filepath.Join(quadlet.UnitDirAdmin, "users"))
+	}
+
+	dirs = appendSubPaths(dirs, quadlet.UnitDirAdmin, false, userLevelFilter)
+	return appendSubPaths(dirs, quadlet.UnitDirDistro, false, nil)
+}
+
+func appendSubPaths(dirs []string, path string, isUserFlag bool, filterPtr func(string, bool) bool) []string {
+	resolvedPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		Debugf("Error occurred resolving path %q: %s", path, err)
+		// Despite the failure add the path to the list for logging purposes
+		// This is the equivalent of adding the path when info==nil below
+		dirs = append(dirs, path)
+		return dirs
+	}
+
+	err = filepath.WalkDir(resolvedPath, func(_path string, info os.DirEntry, err error) error {
+		if info == nil || info.IsDir() {
+			if filterPtr == nil || filterPtr(_path, isUserFlag) {
+				dirs = append(dirs, _path)
+			}
+		}
+		return err
+	})
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			Debugf("Error occurred walking sub directories %q: %s", path, err)
+		}
 	}
 	return dirs
+}
+
+func nonNumericFilter(_path string, isUserFlag bool) bool {
+	// when running in rootless, recursive walk directories that are non numeric
+	// ignore sub dirs under the `users` directory which correspond to a user id
+	if strings.Contains(_path, filepath.Join(quadlet.UnitDirAdmin, "users")) {
+		listDirUserPathLevels := strings.Split(_path, string(os.PathSeparator))
+		if len(listDirUserPathLevels) > SystemUserDirLevel {
+			if !(regexp.MustCompile(`^[0-9]*$`).MatchString(listDirUserPathLevels[SystemUserDirLevel])) {
+				return true
+			}
+		}
+	} else {
+		return true
+	}
+	return false
+}
+
+func userLevelFilter(_path string, isUserFlag bool) bool {
+	// if quadlet generator is run rootless, do not recurse other user sub dirs
+	// if quadlet generator is run as root, ignore users sub dirs
+	if strings.Contains(_path, filepath.Join(quadlet.UnitDirAdmin, "users")) {
+		if isUserFlag {
+			return true
+		}
+	} else {
+		return true
+	}
+	return false
 }
 
 func isExtSupported(filename string) bool {
@@ -124,33 +206,44 @@ func isExtSupported(filename string) bool {
 	return ok
 }
 
-func loadUnitsFromDir(sourcePath string, units map[string]*parser.UnitFile) {
+var seen = make(map[string]struct{})
+
+func loadUnitsFromDir(sourcePath string) ([]*parser.UnitFile, error) {
+	var prevError error
 	files, err := os.ReadDir(sourcePath)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
-			Logf("Can't read \"%s\": %s", sourcePath, err)
+			return nil, err
 		}
-		return
+		return []*parser.UnitFile{}, nil
 	}
+
+	var units []*parser.UnitFile
 
 	for _, file := range files {
 		name := file.Name()
-		if units[name] == nil && isExtSupported(name) {
+		if _, ok := seen[name]; !ok && isExtSupported(name) {
 			path := path.Join(sourcePath, name)
 
 			Debugf("Loading source unit file %s", path)
 
 			if f, err := parser.ParseUnitFile(path); err != nil {
-				Logf("Error loading '%s', ignoring: %s", path, err)
+				err = fmt.Errorf("error loading %q, %w", path, err)
+				if prevError != nil {
+					prevError = fmt.Errorf("%s\n%s", prevError, err)
+				}
 			} else {
-				units[name] = f
+				seen[name] = void
+				units = append(units, f)
 			}
 		}
 	}
+
+	return units, prevError
 }
 
 func generateServiceFile(service *parser.UnitFile) error {
-	Debugf("writing '%s'", service.Path)
+	Debugf("writing %q", service.Path)
 
 	service.PrependComment("",
 		fmt.Sprintf("Automatically generated by %s", os.Args[0]),
@@ -283,18 +376,30 @@ func isUnambiguousName(imageName string) bool {
 //
 // We implement a simple version of this from scratch here to avoid
 // a huge dependency in the generator just for a warning.
-func warnIfAmbiguousName(container *parser.UnitFile) {
-	imageName, ok := container.Lookup(quadlet.ContainerGroup, quadlet.KeyImage)
+func warnIfAmbiguousName(unit *parser.UnitFile, group string) {
+	imageName, ok := unit.Lookup(group, quadlet.KeyImage)
 	if !ok {
 		return
 	}
+	if strings.HasSuffix(imageName, ".image") {
+		return
+	}
 	if !isUnambiguousName(imageName) {
-		Logf("Warning: %s specifies the image \"%s\" which not a fully qualified image name. This is not ideal for performance and security reasons. See the podman-pull manpage discussion of short-name-aliases.conf for details.", container.Filename, imageName)
+		Logf("Warning: %s specifies the image \"%s\" which not a fully qualified image name. This is not ideal for performance and security reasons. See the podman-pull manpage discussion of short-name-aliases.conf for details.", unit.Filename, imageName)
 	}
 }
 
 func main() {
-	exitCode := 0
+	if err := process(); err != nil {
+		Logf("%s", err.Error())
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
+func process() error {
+	var prevError error
+
 	prgname := path.Base(os.Args[0])
 	isUserFlag = strings.Contains(prgname, "user")
 
@@ -302,7 +407,7 @@ func main() {
 
 	if versionFlag {
 		fmt.Printf("%s\n", rawversion.RawVersion)
-		return
+		return prevError
 	}
 
 	if verboseFlag || dryRunFlag {
@@ -313,9 +418,16 @@ func main() {
 		noKmsg = true
 	}
 
+	reportError := func(err error) {
+		if prevError != nil {
+			err = fmt.Errorf("%s\n%s", prevError, err)
+		}
+		prevError = err
+	}
+
 	if !dryRunFlag && flag.NArg() < 1 {
-		Logf("Missing output directory argument")
-		os.Exit(1)
+		reportError(errors.New("missing output directory argument"))
+		return prevError
 	}
 
 	var outputPath string
@@ -328,68 +440,96 @@ func main() {
 
 	sourcePaths := getUnitDirs(isUserFlag)
 
-	units := make(map[string]*parser.UnitFile)
+	var units []*parser.UnitFile
 	for _, d := range sourcePaths {
-		loadUnitsFromDir(d, units)
+		if result, err := loadUnitsFromDir(d); err != nil {
+			reportError(err)
+		} else {
+			units = append(units, result...)
+		}
 	}
 
 	if len(units) == 0 {
 		// containers/podman/issues/17374: exit cleanly but log that we
 		// had nothing to do
-		Debugf("No files to parse from %s", sourcePaths)
-		os.Exit(0)
+		Debugf("No files parsed from %s", sourcePaths)
+		return prevError
 	}
 
 	if !dryRunFlag {
 		err := os.MkdirAll(outputPath, os.ModePerm)
 		if err != nil {
-			Logf("Can't create dir %s: %s", outputPath, err)
-			os.Exit(1)
+			reportError(err)
+			return prevError
 		}
 	}
 
-	for name, unit := range units {
+	// Sort unit files according to potential inter-dependencies, with Volume and Network units
+	// taking precedence over all others.
+	sort.Slice(units, func(i, j int) bool {
+		getOrder := func(i int) int {
+			ext := filepath.Ext(units[i].Filename)
+			order, ok := supportedExtensions[ext]
+			if !ok {
+				return 0
+			}
+			return order
+		}
+		return getOrder(i) < getOrder(j)
+	})
+
+	// A map of network/volume unit file-names, against their calculated names, as needed by Podman.
+	var resourceNames = make(map[string]string)
+
+	for _, unit := range units {
 		var service *parser.UnitFile
+		var name string
 		var err error
 
 		switch {
-		case strings.HasSuffix(name, ".container"):
-			warnIfAmbiguousName(unit)
-			service, err = quadlet.ConvertContainer(unit, isUserFlag)
-		case strings.HasSuffix(name, ".volume"):
-			service, err = quadlet.ConvertVolume(unit, name)
-		case strings.HasSuffix(name, ".kube"):
-			service, err = quadlet.ConvertKube(unit, isUserFlag)
-		case strings.HasSuffix(name, ".network"):
-			service, err = quadlet.ConvertNetwork(unit, name)
+		case strings.HasSuffix(unit.Filename, ".container"):
+			warnIfAmbiguousName(unit, quadlet.ContainerGroup)
+			service, err = quadlet.ConvertContainer(unit, resourceNames, isUserFlag)
+		case strings.HasSuffix(unit.Filename, ".volume"):
+			warnIfAmbiguousName(unit, quadlet.VolumeGroup)
+			service, name, err = quadlet.ConvertVolume(unit, unit.Filename, resourceNames)
+		case strings.HasSuffix(unit.Filename, ".kube"):
+			service, err = quadlet.ConvertKube(unit, resourceNames, isUserFlag)
+		case strings.HasSuffix(unit.Filename, ".network"):
+			service, name, err = quadlet.ConvertNetwork(unit, unit.Filename)
+		case strings.HasSuffix(unit.Filename, ".image"):
+			warnIfAmbiguousName(unit, quadlet.ImageGroup)
+			service, name, err = quadlet.ConvertImage(unit)
 		default:
-			Logf("Unsupported file type '%s'", name)
+			Logf("Unsupported file type %q", unit.Filename)
 			continue
 		}
 
 		if err != nil {
-			Logf("Error converting '%s', ignoring: %s", name, err)
-		} else {
-			service.Path = path.Join(outputPath, service.Filename)
-
-			if dryRunFlag {
-				data, err := service.ToString()
-				if err != nil {
-					Debugf("Error parsing %s\n---\n", service.Path)
-					exitCode = 1
-				} else {
-					fmt.Printf("---%s---\n%s\n", service.Path, data)
-				}
-			} else {
-				if err := generateServiceFile(service); err != nil {
-					Logf("Error writing '%s'o: %s", service.Path, err)
-				}
-				enableServiceFile(outputPath, service)
-			}
+			reportError(fmt.Errorf("converting %q: %w", unit.Filename, err))
+			continue
 		}
-	}
 
-	os.Exit(exitCode)
+		if name != "" {
+			resourceNames[unit.Filename] = name
+		}
+		service.Path = path.Join(outputPath, service.Filename)
+
+		if dryRunFlag {
+			data, err := service.ToString()
+			if err != nil {
+				reportError(fmt.Errorf("parsing %s: %w", service.Path, err))
+				continue
+			}
+			fmt.Printf("---%s---\n%s\n", service.Path, data)
+			continue
+		}
+		if err := generateServiceFile(service); err != nil {
+			reportError(fmt.Errorf("generating service file %s: %w", service.Path, err))
+		}
+		enableServiceFile(outputPath, service)
+	}
+	return prevError
 }
 
 func init() {

@@ -1,20 +1,22 @@
 package containers
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 
+	"github.com/containers/common/pkg/auth"
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/podman/v4/cmd/podman/common"
 	"github.com/containers/podman/v4/cmd/podman/registry"
 	"github.com/containers/podman/v4/cmd/podman/utils"
 	"github.com/containers/podman/v4/libpod/define"
 	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/containers/podman/v4/pkg/errorhandling"
 	"github.com/containers/podman/v4/pkg/rootless"
 	"github.com/containers/podman/v4/pkg/specgen"
 	"github.com/containers/podman/v4/pkg/specgenutil"
+	"github.com/containers/storage/types"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -48,12 +50,8 @@ var (
 )
 
 var (
-	runOpts = entities.ContainerRunOptions{
-		OutputStream: os.Stdout,
-		InputStream:  os.Stdin,
-		ErrorStream:  os.Stderr,
-	}
-	runRmi bool
+	runOpts entities.ContainerRunOptions
+	runRmi  bool
 )
 
 func runFlags(cmd *cobra.Command) {
@@ -66,7 +64,7 @@ func runFlags(cmd *cobra.Command) {
 
 	flags.SetNormalizeFunc(utils.AliasFlags)
 	flags.BoolVar(&runOpts.SigProxy, "sig-proxy", true, "Proxy received signals to the process")
-	flags.BoolVar(&runRmi, "rmi", false, "Remove container image unless used by other containers")
+	flags.BoolVar(&runRmi, "rmi", false, "Remove image unless used by other containers, implies --rm")
 
 	preserveFdsFlagName := "preserve-fds"
 	flags.UintVar(&runOpts.PreserveFDs, "preserve-fds", 0, "Pass a number of additional file descriptors into the container")
@@ -113,13 +111,19 @@ func run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if runRmi {
+		if cmd.Flags().Changed("rm") && !cliVals.Rm {
+			return errors.New("the --rmi option does not work without --rm")
+		}
+		cliVals.Rm = true
+	}
 	// TODO: Breaking change should be made fatal in next major Release
 	if cliVals.TTY && cliVals.Interactive && !term.IsTerminal(int(os.Stdin.Fd())) {
 		logrus.Warnf("The input device is not a TTY. The --tty and --interactive flags might not work properly")
 	}
 
-	if af := cliVals.Authfile; len(af) > 0 {
-		if _, err := os.Stat(af); err != nil {
+	if cmd.Flags().Changed("authfile") {
+		if err := auth.CheckAuthFile(cliVals.Authfile); err != nil {
 			return err
 		}
 	}
@@ -153,6 +157,11 @@ func run(cmd *cobra.Command, args []string) error {
 			return err
 		}
 	}
+
+	// First set the default streams before they get modified by any flags.
+	runOpts.OutputStream = os.Stdout
+	runOpts.InputStream = os.Stdin
+	runOpts.ErrorStream = os.Stderr
 
 	// If -i is not set, clear stdin
 	if !cliVals.Interactive {
@@ -217,8 +226,12 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 	if runRmi {
 		_, rmErrors := registry.ImageEngine().Remove(registry.GetContext(), []string{imageName}, entities.ImageRemoveOptions{})
-		if len(rmErrors) > 0 {
-			logrus.Errorf("%s", errorhandling.JoinErrors(rmErrors))
+		for _, err := range rmErrors {
+			// ImageUnknown would be a super-unlikely race
+			if !errors.Is(err, types.ErrImageUnknown) {
+				// Typical case: ErrImageUsedByContainer
+				logrus.Warn(err)
+			}
 		}
 	}
 	if cmd.Flag("gpus").Changed {

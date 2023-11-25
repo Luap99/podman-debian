@@ -1,3 +1,6 @@
+//go:build !remote
+// +build !remote
+
 package generate
 
 import (
@@ -144,6 +147,10 @@ func generateContainerInfo(ctr *libpod.Container, options entities.GenerateSyste
 	}
 
 	config := ctr.Config()
+	if len(config.InitContainerType) > 0 {
+		return nil, fmt.Errorf("unsupported container %s: cannot generate systemd units for init containers", ctr.ID())
+	}
+
 	conmonPidFile := config.ConmonPidFile
 	if conmonPidFile == "" {
 		return nil, errors.New("conmon PID file path is empty, try to recreate the container with --conmon-pidfile flag")
@@ -496,7 +503,7 @@ func executeContainerTemplate(info *containerInfo, options entities.GenerateSyst
 	}
 
 	if info.GenerateTimestamp {
-		info.TimeStamp = fmt.Sprintf("%v", time.Now().Format(time.UnixDate))
+		info.TimeStamp = time.Now().Format(time.UnixDate)
 	}
 	// Sort the slices to assure a deterministic output.
 	sort.Strings(info.BoundToServices)

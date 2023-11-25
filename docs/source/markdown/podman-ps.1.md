@@ -1,7 +1,7 @@
 % podman-ps 1
 
 ## NAME
-podman\-ps - Prints out information about containers
+podman\-ps - Print out information about containers
 
 ## SYNOPSIS
 **podman ps** [*options*]
@@ -45,20 +45,22 @@ Filters with the same key work inclusive with the only exception being
 
 Valid filters are listed below:
 
-| **Filter**      | **Description**                                                                  |
-| --------------- | -------------------------------------------------------------------------------- |
-| id              | [ID] Container's ID (accepts regex)                                              |
-| name            | [Name] Container's name (accepts regex)                                          |
-| label           | [Key] or [Key=Value] Label assigned to a container                               |
-| exited          | [Int] Container's exit code                                                      |
-| status          | [Status] Container's status: 'created', 'exited', 'paused', 'running', 'unknown' |
-| ancestor        | [ImageName] Image or descendant used to create container (accepts regex)         |
-| before          | [ID] or [Name] Containers created before this container                          |
-| since           | [ID] or [Name] Containers created since this container                           |
-| volume          | [VolumeName] or [MountpointDestination] Volume mounted in container              |
-| health          | [Status] healthy or unhealthy                                                    |
-| pod             | [Pod] name or full or partial ID of pod                                          |
-| network         | [Network] name or full ID of network                                             |
+| **Filter** | **Description**                                                                  |
+|------------|----------------------------------------------------------------------------------|
+| id         | [ID] Container's ID (CID prefix match by default; accepts regex)                 |
+| name       | [Name] Container's name (accepts regex)                                          |
+| label      | [Key] or [Key=Value] Label assigned to a container                               |
+| label!     | [Key] or [Key=Value] Label NOT assigned to a container                           |
+| exited     | [Int] Container's exit code                                                      |
+| status     | [Status] Container's status: 'created', 'exited', 'paused', 'running', 'unknown' |
+| ancestor   | [ImageName] Image or descendant used to create container (accepts regex)         |
+| before     | [ID] or [Name] Containers created before this container                          |
+| since      | [ID] or [Name] Containers created since this container                           |
+| volume     | [VolumeName] or [MountpointDestination] Volume mounted in container              |
+| health     | [Status] healthy or unhealthy                                                    |
+| pod        | [Pod] name or full or partial ID of pod                                          |
+| network    | [Network] name or full ID of network                                             |
+| until      | [DateTime] container created before the given duration or time.                  |
 
 
 #### **--format**=*format*
@@ -69,7 +71,8 @@ Valid placeholders for the Go template are listed below:
 
 | **Placeholder**    | **Description**                              |
 |--------------------|----------------------------------------------|
-| .AutoRemove        | If true, container will be removed on exit   |
+| .AutoRemove        | If true, containers are removed on exit      |
+| .CIDFile           | Container ID File                            |
 | .Command           | Quoted command used                          |
 | .Created           | Creation time for container, Y-M-D H:M:S     |
 | .CreatedAt         | Creation time for container (same as above)  |
@@ -89,6 +92,7 @@ Valid placeholders for the Go template are listed below:
 | .Pod               | Pod the container is associated with (SHA)   |
 | .PodName           | Seems to be empty no matter what             |
 | .Ports             | Exposed ports                                |
+| .Restarts          | Display the container restart count          |
 | .RunningFor        | Time elapsed since container was started     |
 | .Size              | Size of container                            |
 | .StartedAt         | Time (epoch seconds) the container started   |
@@ -134,13 +138,13 @@ Display the total file size
 #### **--sort**=*created*
 
 Sort by command, created, id, image, names, runningfor, size, or status",
-Note: Choosing size will sort by size of rootFs, not alphabetically like the rest of the options
+Note: Choosing size sorts by size of rootFs, not alphabetically like the rest of the options
 
 #### **--sync**
 
 Force a sync of container state with the OCI runtime.
 In some cases, a container's state in the runtime can become out of sync with Podman's state.
-This will update Podman's state based on what the OCI runtime reports.
+This updates Podman's state based on what the OCI runtime reports.
 Forcibly syncing is much slower, but can resolve inconsistent state issues.
 
 #### **--watch**, **-w**

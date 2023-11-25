@@ -42,7 +42,9 @@ host.conmon.path          | $expr_path
 host.conmon.package       | .*conmon.*
 host.cgroupManager        | \\\(systemd\\\|cgroupfs\\\)
 host.cgroupVersion        | v[12]
+host.networkBackendInfo   | .*dns.*package.*
 host.ociRuntime.path      | $expr_path
+host.pasta                | .*executable.*package.*
 store.configFile          | $expr_path
 store.graphDriverName     | [a-z0-9]\\\+\\\$
 store.graphRoot           | $expr_path
@@ -94,7 +96,11 @@ host.slirp4netns.executable | $expr_path
 }
 
 @test "podman info - confirm desired database" {
-    skip "FIXME: no way yet (2023-03-16) to override DB in system tests"
+    # Always run this and preserve its value. We will check again in 999-*.bats
+    run_podman info --format '{{.Host.DatabaseBackend}}'
+    db_backend="$output"
+    echo "$db_backend" > $BATS_SUITE_TMPDIR/db-backend
+
     if [[ -z "$CI_DESIRED_DATABASE" ]]; then
         # When running in Cirrus, CI_DESIRED_DATABASE *must* be defined
         # in .cirrus.yml so we can double-check that all CI VMs are
@@ -108,10 +114,25 @@ host.slirp4netns.executable | $expr_path
         skip "CI_DESIRED_DATABASE is unset--OK, because we're not in Cirrus"
     fi
 
-    run_podman info --format '{{.Host.DatabaseBackend}}'
-    is "$output" "$CI_DESIRED_DATABASE" "CI_DESIRED_DATABASE (from .cirrus.yml)"
+    is "$db_backend" "$CI_DESIRED_DATABASE" "CI_DESIRED_DATABASE (from .cirrus.yml)"
 }
 
+@test "podman info - confirm desired storage driver" {
+    if [[ -z "$CI_DESIRED_STORAGE" ]]; then
+        # When running in Cirrus, CI_DESIRED_STORAGE *must* be defined
+        # in .cirrus.yml so we can double-check that all CI VMs are
+        # using overlay or vfs as desired.
+        if [[ -n "$CIRRUS_CI" ]]; then
+            die "CIRRUS_CI is set, but CI_DESIRED_STORAGE is not! See #20161"
+        fi
+
+        # Not running under Cirrus (e.g., gating tests, or dev laptop).
+        # Totally OK to skip this test.
+        skip "CI_DESIRED_STORAGE is unset--OK, because we're not in Cirrus"
+    fi
+
+    is "$(podman_storage_driver)" "$CI_DESIRED_STORAGE" "podman storage driver is not CI_DESIRED_STORAGE (from .cirrus.yml)"
+}
 
 # 2021-04-06 discussed in watercooler: RHEL must never use crun, even if
 # using cgroups v2.
@@ -158,7 +179,7 @@ host.slirp4netns.executable | $expr_path
 @test "podman --root PATH info - basic output" {
     if ! is_remote; then
         run_podman --storage-driver=vfs --root ${PODMAN_TMPDIR}/nothing-here-move-along info --format '{{ .Store.GraphOptions }}'
-        is "$output" "map\[\]" "'podman --root should reset Graphoptions to []"
+        is "$output" "map\[\]" "'podman --root should reset GraphOptions to []"
     fi
 }
 
@@ -170,42 +191,49 @@ host.slirp4netns.executable | $expr_path
     fi
 }
 
-@test "podman --db-backend info - basic output" {
-    # TODO: this tests needs to change once sqlite is being tested in the system tests
-    skip_if_remote "--db-backend does not work on a remote client"
-    for backend in boltdb sqlite; do
-        run_podman --db-backend=$backend info --format "{{ .Host.DatabaseBackend }}"
-        is "$output" "$backend"
-    done
-
-    run_podman 125 --db-backend=bogus info --format "{{ .Host.DatabaseBackend }}"
-    is "$output" "Error: unsupported database backend: \"bogus\""
-}
-
 @test "CONTAINERS_CONF_OVERRIDE" {
     skip_if_remote "remote does not support CONTAINERS_CONF*"
 
+    # Need to include runtime because it's runc in debian CI,
+    # and crun 1.11.1 barfs with "read from sync socket"
     containersConf=$PODMAN_TMPDIR/containers.conf
     cat >$containersConf <<EOF
 [engine]
-database_backend = "boltdb"
+runtime="$(podman_runtime)"
+
+[containers]
+env = [ "CONF1=conf1" ]
+
+[engine.volume_plugins]
+volplugin1  = "This is not actually used or seen anywhere"
 EOF
 
     overrideConf=$PODMAN_TMPDIR/override.conf
     cat >$overrideConf <<EOF
-[engine]
-database_backend = "sqlite"
+[containers]
+env = [ "CONF2=conf2" ]
+
+[engine.volume_plugins]
+volplugin2  = "This is not actually used or seen anywhere, either"
 EOF
 
-    CONTAINERS_CONF="$containersConf" run_podman info --format "{{ .Host.DatabaseBackend }}"
-    is "$output" "boltdb"
+    CONTAINERS_CONF="$containersConf" run_podman 1 run --rm $IMAGE printenv CONF1 CONF2
+    is "$output" "conf1" "with CONTAINERS_CONF only"
 
-    CONTAINERS_CONF_OVERRIDE=$overrideConf run_podman info --format "{{ .Host.DatabaseBackend }}"
-    is "$output" "sqlite"
+    CONTAINERS_CONF_OVERRIDE=$overrideConf run_podman 1 run --rm $IMAGE printenv CONF1 CONF2
+    is "$output" "conf2" "with CONTAINERS_CONF_OVERRIDE only"
 
-    # CONTAINERS_CONF will be overridden by _OVERRIDE
-    CONTAINERS_CONF=$containersConf CONTAINERS_CONF_OVERRIDE=$overrideConf run_podman info --format "{{ .Host.DatabaseBackend }}"
-    is "$output" "sqlite"
+    # CONTAINERS_CONF will be overridden by _OVERRIDE. env is overridden, not merged.
+    CONTAINERS_CONF=$containersConf CONTAINERS_CONF_OVERRIDE=$overrideConf run_podman 1 run --rm $IMAGE printenv CONF1 CONF2
+    is "$output" "conf2" "with both CONTAINERS_CONF and CONTAINERS_CONF_OVERRIDE"
+
+    # Merge test: each of those conf files defines a distinct volume plugin.
+    # Confirm that we see both. 'info' outputs in random order, so we need to
+    # do two tests.
+    CONTAINERS_CONF=$containersConf CONTAINERS_CONF_OVERRIDE=$overrideConf run_podman info --format '{{.Plugins.Volume}}'
+    assert "$output" =~ "volplugin1" "CONTAINERS_CONF_OVERRIDE does not clobber volume_plugins from CONTAINERS_CONF"
+    assert "$output" =~ "volplugin2" "volume_plugins seen from CONTAINERS_CONF_OVERRIDE"
+
 }
 
 # vim: filetype=sh

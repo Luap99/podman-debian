@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/signal"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/containers/podman/v4/pkg/namespaces"
 	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/containers/storage/pkg/idtools"
 	"github.com/containers/storage/types"
 	"github.com/sirupsen/logrus"
@@ -146,12 +148,16 @@ func getRuntime(ctx context.Context, fs *flag.FlagSet, opts *engineOpts) (*libpo
 
 	if fs.Changed("root") {
 		storageSet = true
-		storageOpts.GraphRoot = cfg.ContainersConf.Engine.StaticDir
+		storageOpts.GraphRoot = cfg.GraphRoot
 		storageOpts.GraphDriverOptions = []string{}
 	}
 	if fs.Changed("runroot") {
 		storageSet = true
 		storageOpts.RunRoot = cfg.Runroot
+	}
+	if fs.Changed("imagestore") {
+		storageOpts.ImageStore = cfg.ImageStore
+		options = append(options, libpod.WithImageStore(cfg.ImageStore))
 	}
 	if len(storageOpts.RunRoot) > 50 {
 		return nil, errors.New("the specified runroot is longer than 50 characters")
@@ -259,7 +265,7 @@ func getRuntime(ctx context.Context, fs *flag.FlagSet, opts *engineOpts) (*libpo
 		options = append(options, libpod.WithDefaultMountsFile(cfg.ContainersConf.Containers.DefaultMountsFile))
 	}
 	if fs.Changed("hooks-dir") {
-		options = append(options, libpod.WithHooksDir(cfg.ContainersConf.Engine.HooksDir...))
+		options = append(options, libpod.WithHooksDir(cfg.ContainersConf.Engine.HooksDir.Get()...))
 	}
 	if fs.Changed("registries-conf") {
 		options = append(options, libpod.WithRegistriesConf(cfg.RegistriesConf))
@@ -269,9 +275,12 @@ func getRuntime(ctx context.Context, fs *flag.FlagSet, opts *engineOpts) (*libpo
 		options = append(options, libpod.WithDatabaseBackend(cfg.ContainersConf.Engine.DBBackend))
 	}
 
-	// no need to handle the error, it will return false anyway
-	if syslog, _ := fs.GetBool("syslog"); syslog {
+	if cfg.Syslog {
 		options = append(options, libpod.WithSyslog())
+	}
+
+	if opts.config.ContainersConfDefaultsRO.Engine.StaticDir != "" {
+		options = append(options, libpod.WithStaticDir(opts.config.ContainersConfDefaultsRO.Engine.StaticDir))
 	}
 
 	// TODO flag to set CNI plugins dir?
@@ -329,11 +338,22 @@ func ParseIDMapping(mode namespaces.UsernsMode, uidMapSlice, gidMapSlice []strin
 		options.UIDMap = mappings.UIDs()
 		options.GIDMap = mappings.GIDs()
 	}
-	parsedUIDMap, err := idtools.ParseIDMap(uidMapSlice, "UID")
+
+	parentUIDMap, parentGIDMap, err := rootless.GetAvailableIDMaps()
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			// The kernel-provided files only exist if user namespaces are supported
+			logrus.Debugf("User or group ID mappings not available: %s", err)
+		} else {
+			return nil, err
+		}
+	}
+
+	parsedUIDMap, err := util.ParseIDMap(uidMapSlice, "UID", parentUIDMap)
 	if err != nil {
 		return nil, err
 	}
-	parsedGIDMap, err := idtools.ParseIDMap(gidMapSlice, "GID")
+	parsedGIDMap, err := util.ParseIDMap(gidMapSlice, "GID", parentGIDMap)
 	if err != nil {
 		return nil, err
 	}

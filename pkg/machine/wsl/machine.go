@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net/url"
 	"os"
 	"os/exec"
@@ -20,9 +19,12 @@ import (
 
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/podman/v4/pkg/machine"
+	"github.com/containers/podman/v4/pkg/machine/define"
+	"github.com/containers/podman/v4/pkg/machine/wsl/wutil"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/containers/podman/v4/utils"
 	"github.com/containers/storage/pkg/homedir"
-	"github.com/containers/storage/pkg/ioutils"
+	"github.com/containers/storage/pkg/lockfile"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
@@ -50,11 +52,14 @@ const registriesConf = `unqualified-search-registries=["docker.io"]
 
 const appendPort = `grep -q Port\ %d /etc/ssh/sshd_config || echo Port %d >> /etc/ssh/sshd_config`
 
+const changePort = `sed -E -i 's/^Port[[:space:]]+[0-9]+/Port %d/' /etc/ssh/sshd_config`
+
 const configServices = `ln -fs /usr/lib/systemd/system/sshd.service /etc/systemd/system/multi-user.target.wants/sshd.service
 ln -fs /usr/lib/systemd/system/podman.socket /etc/systemd/system/sockets.target.wants/podman.socket
 rm -f /etc/systemd/system/getty.target.wants/console-getty.service
 rm -f /etc/systemd/system/getty.target.wants/getty@tty1.service
 rm -f /etc/systemd/system/multi-user.target.wants/systemd-resolved.service
+rm -f /etc/systemd/system/sysinit.target.wants//systemd-resolved.service
 rm -f /etc/systemd/system/dbus-org.freedesktop.resolve1.service
 ln -fs /dev/null /etc/systemd/system/console-getty.service
 ln -fs /dev/null /etc/systemd/system/systemd-oomd.socket
@@ -115,6 +120,15 @@ const wslConf = `[user]
 default=[USER]
 `
 
+const wslConfUserNet = `
+[network]
+generateResolvConf = false
+`
+
+const resolvConfUserNet = `
+nameserver 192.168.127.1
+`
+
 // WSL kernel does not have sg and crypto_user modules
 const overrideSysusers = `[Service]
 LoadCredential=
@@ -128,9 +142,69 @@ Wants=network-online.target podman.socket
 ExecStart=/usr/bin/sleep infinity
 `
 
-const lingerSetup = `mkdir -p /home/[USER]/.config/systemd/[USER]/default.target.wants
-ln -fs /home/[USER]/.config/systemd/[USER]/linger-example.service \
-       /home/[USER]/.config/systemd/[USER]/default.target.wants/linger-example.service
+const lingerSetup = `mkdir -p /home/[USER]/.config/systemd/user/default.target.wants
+ln -fs /home/[USER]/.config/systemd/user/linger-example.service \
+       /home/[USER]/.config/systemd/user/default.target.wants/linger-example.service
+`
+
+const bindMountSystemService = `
+[Unit]
+Description=Bind mount for system podman sockets
+After=podman.socket
+
+[Service]
+RemainAfterExit=true
+Type=oneshot
+# Ensure user services can register sockets as well
+ExecStartPre=mkdir -p -m 777 /mnt/wsl/podman-sockets
+ExecStartPre=mkdir -p -m 777 /mnt/wsl/podman-sockets/%[1]s
+ExecStartPre=touch /mnt/wsl/podman-sockets/%[1]s/podman-root.sock
+ExecStart=mount --bind %%t/podman/podman.sock /mnt/wsl/podman-sockets/%[1]s/podman-root.sock
+ExecStop=umount /mnt/wsl/podman-sockets/%[1]s/podman-root.sock
+`
+
+const bindMountUserService = `
+[Unit]
+Description=Bind mount for user podman sockets
+After=podman.socket
+
+[Service]
+RemainAfterExit=true
+Type=oneshot
+# Consistency with system service (supports racing)
+ExecStartPre=mkdir -p -m 777 /mnt/wsl/podman-sockets
+ExecStartPre=mkdir -p -m 777 /mnt/wsl/podman-sockets/%[1]s
+ExecStartPre=touch /mnt/wsl/podman-sockets/%[1]s/podman-user.sock
+# Relies on /etc/fstab entry for user mounting
+ExecStart=mount /mnt/wsl/podman-sockets/%[1]s/podman-user.sock
+ExecStop=umount /mnt/wsl/podman-sockets/%[1]s/podman-user.sock
+`
+
+const bindMountFsTab = `/run/user/1000/podman/podman.sock /mnt/wsl/podman-sockets/%s/podman-user.sock none noauto,user,bind,defaults 0 0
+`
+const (
+	defaultTargetWants     = "default.target.wants"
+	userSystemdPath        = "/home/%[1]s/.config/systemd/user"
+	sysSystemdPath         = "/etc/systemd/system"
+	userSystemdWants       = userSystemdPath + "/" + defaultTargetWants
+	sysSystemdWants        = sysSystemdPath + "/" + defaultTargetWants
+	bindUnitFileName       = "podman-mnt-bindings.service"
+	bindUserUnitPath       = userSystemdPath + "/" + bindUnitFileName
+	bindUserUnitWant       = userSystemdWants + "/" + bindUnitFileName
+	bindSysUnitPath        = sysSystemdPath + "/" + bindUnitFileName
+	bindSysUnitWant        = sysSystemdWants + "/" + bindUnitFileName
+	podmanSocketDropin     = "podman.socket.d"
+	podmanSocketDropinPath = sysSystemdPath + "/" + podmanSocketDropin
+)
+
+const configBindServices = "mkdir -p " + userSystemdWants + " " + sysSystemdWants + " " + podmanSocketDropinPath + "\n" +
+	"ln -fs " + bindUserUnitPath + " " + bindUserUnitWant + "\n" +
+	"ln -fs " + bindSysUnitPath + " " + bindSysUnitWant + "\n"
+
+const overrideSocketGroup = `
+[Socket]
+SocketMode=0660
+SocketGroup=wheel
 `
 
 const proxyConfigSetup = `#!/bin/bash
@@ -198,29 +272,15 @@ http://docs.microsoft.com/en-us/windows/wsl/install\
 `
 
 const (
+	gvProxy        = "gvproxy.exe"
 	winSShProxy    = "win-sshproxy.exe"
 	winSshProxyTid = "win-sshproxy.tid"
 	pipePrefix     = "npipe:////./pipe/"
 	globalPipe     = "docker_engine"
+	userModeDist   = "podman-net-usermode"
+	rootfulSock    = "/run/podman/podman.sock"
+	rootlessSock   = "/run/user/1000/podman/podman.sock"
 )
-
-type Virtualization struct {
-	artifact    machine.Artifact
-	compression machine.ImageCompression
-	format      machine.ImageFormat
-}
-
-func (p *Virtualization) Artifact() machine.Artifact {
-	return p.artifact
-}
-
-func (p *Virtualization) Compression() machine.ImageCompression {
-	return p.compression
-}
-
-func (p *Virtualization) Format() machine.ImageFormat {
-	return p.format
-}
 
 type MachineVM struct {
 	// ConfigPath is the path to the configuration file
@@ -241,6 +301,10 @@ type MachineVM struct {
 	machine.SSHConfig
 	// machine version
 	Version int
+	// Whether to use user-mode networking
+	UserModeNetworking bool
+	// Used at runtime for serializing write operations
+	lock *lockfile.LockFile
 }
 
 type ExitCodeError struct {
@@ -249,41 +313,6 @@ type ExitCodeError struct {
 
 func (e *ExitCodeError) Error() string {
 	return fmt.Sprintf("Process failed with exit code: %d", e.code)
-}
-
-func GetWSLProvider() machine.VirtProvider {
-	return &Virtualization{
-		artifact:    machine.None,
-		compression: machine.Xz,
-		format:      machine.Tar,
-	}
-}
-
-// NewMachine initializes an instance of a wsl machine
-func (p *Virtualization) NewMachine(opts machine.InitOptions) (machine.VM, error) {
-	vm := new(MachineVM)
-	if len(opts.Name) > 0 {
-		vm.Name = opts.Name
-	}
-	configPath, err := getConfigPath(opts.Name)
-	if err != nil {
-		return vm, err
-	}
-
-	vm.ConfigPath = configPath
-	vm.ImagePath = opts.ImagePath
-	vm.RemoteUsername = opts.Username
-	vm.Created = time.Now()
-	vm.LastUp = vm.Created
-
-	// Add a random port for ssh
-	port, err := utils.GetRandomPort()
-	if err != nil {
-		return nil, err
-	}
-	vm.Port = port
-
-	return vm, nil
 }
 
 func getConfigPath(name string) (string, error) {
@@ -297,18 +326,6 @@ func getConfigPathExt(name string, extension string) (string, error) {
 	}
 
 	return filepath.Join(vmConfigDir, fmt.Sprintf("%s.%s", name, extension)), nil
-}
-
-// LoadByName reads a json file that describes a known qemu vm
-// and returns a vm instance
-func (p *Virtualization) LoadVMByName(name string) (machine.VM, error) {
-	configPath, err := getConfigPath(name)
-	if err != nil {
-		return nil, err
-	}
-
-	vm, err := readAndMigrate(configPath, name)
-	return vm, err
 }
 
 // readAndMigrate returns the content of the VM's
@@ -379,25 +396,47 @@ func getLegacyLastStart(vm *MachineVM) time.Time {
 // Init writes the json configuration file to the filesystem for
 // other verbs (start, stop)
 func (v *MachineVM) Init(opts machine.InitOptions) (bool, error) {
+	var (
+		err error
+	)
+	// cleanup half-baked files if init fails at any point
+	callbackFuncs := machine.InitCleanup()
+	defer callbackFuncs.CleanIfErr(&err)
+	go callbackFuncs.CleanOnSignal()
+
 	if cont, err := checkAndInstallWSL(opts); !cont {
 		appendOutputIfError(opts.ReExec, err)
 		return cont, err
 	}
 
 	_ = setupWslProxyEnv()
-	homeDir := homedir.Get()
-	sshDir := filepath.Join(homeDir, ".ssh")
-	v.IdentityPath = filepath.Join(sshDir, v.Name)
+	v.IdentityPath = util.GetIdentityPath(v.Name)
 	v.Rootful = opts.Rootful
 	v.Version = currentMachineVersion
 
-	if err := downloadDistro(v, opts); err != nil {
-		return false, err
+	if v.UserModeNetworking {
+		if err = verifyWSLUserModeCompat(); err != nil {
+			return false, err
+		}
 	}
 
-	dist, err := provisionWSLDist(v)
+	if err = downloadDistro(v, opts); err != nil {
+		return false, err
+	}
+	callbackFuncs.Add(v.removeMachineImage)
+
+	const prompt = "Importing operating system into WSL (this may take a few minutes on a new WSL install)..."
+	dist, err := provisionWSLDist(v.Name, v.ImagePath, prompt)
 	if err != nil {
 		return false, err
+	}
+	callbackFuncs.Add(v.unprovisionWSL)
+
+	if v.UserModeNetworking {
+		if err = installUserModeDist(dist, v.ImagePath); err != nil {
+			_ = unregisterDist(dist)
+			return false, err
+		}
 	}
 
 	fmt.Println("Configuring system...")
@@ -409,22 +448,60 @@ func (v *MachineVM) Init(opts machine.InitOptions) (bool, error) {
 		return false, err
 	}
 
-	if err = createKeys(v, dist, sshDir); err != nil {
+	if err = createKeys(v, dist); err != nil {
 		return false, err
 	}
+	callbackFuncs.Add(v.removeSSHKeys)
 
 	// Cycle so that user change goes into effect
 	_ = terminateDist(dist)
 
-	if err := v.writeConfig(); err != nil {
+	if err = v.writeConfig(); err != nil {
 		return false, err
 	}
+	callbackFuncs.Add(v.removeMachineConfig)
 
-	if err := setupConnections(v, opts, sshDir); err != nil {
+	if err = setupConnections(v, opts); err != nil {
 		return false, err
 	}
-
+	callbackFuncs.Add(v.removeSystemConnections)
 	return true, nil
+}
+
+func (v *MachineVM) unprovisionWSL() error {
+	if err := terminateDist(toDist(v.Name)); err != nil {
+		logrus.Error(err)
+	}
+	if err := unregisterDist(toDist(v.Name)); err != nil {
+		logrus.Error(err)
+	}
+
+	vmDataDir, err := machine.GetDataDir(vmtype)
+	if err != nil {
+		return err
+	}
+	distDir := filepath.Join(vmDataDir, "wsldist")
+	distTarget := filepath.Join(distDir, v.Name)
+	return utils.GuardedRemoveAll(distTarget)
+}
+
+func (v *MachineVM) removeMachineConfig() error {
+	return utils.GuardedRemoveAll(v.ConfigPath)
+}
+
+func (v *MachineVM) removeMachineImage() error {
+	return utils.GuardedRemoveAll(v.ImagePath)
+}
+
+func (v *MachineVM) removeSSHKeys() error {
+	if err := utils.GuardedRemoveAll(fmt.Sprintf("%s.pub", v.IdentityPath)); err != nil {
+		logrus.Error(err)
+	}
+	return utils.GuardedRemoveAll(v.IdentityPath)
+}
+
+func (v *MachineVM) removeSystemConnections() error {
+	return machine.RemoveConnections(v.Name, fmt.Sprintf("%s-root", v.Name))
 }
 
 func downloadDistro(v *MachineVM, opts machine.InitOptions) error {
@@ -433,7 +510,8 @@ func downloadDistro(v *MachineVM, opts machine.InitOptions) error {
 		err error
 	)
 
-	if _, e := strconv.Atoi(opts.ImagePath); e == nil {
+	// The default FCOS stream names are reserved indicators for the standard Fedora fetch
+	if machine.IsValidFCOSStreamString(opts.ImagePath) {
 		v.ImageStream = opts.ImagePath
 		dd, err = NewFedoraDownloader(vmtype, v.Name, opts.ImagePath)
 	} else {
@@ -449,37 +527,21 @@ func downloadDistro(v *MachineVM, opts machine.InitOptions) error {
 }
 
 func (v *MachineVM) writeConfig() error {
-	const format = "could not write machine json config: %w"
-	jsonFile := v.ConfigPath
-
-	opts := &ioutils.AtomicFileWriterOptions{ExplicitCommit: true}
-	w, err := ioutils.NewAtomicFileWriterWithOpts(jsonFile, 0644, opts)
-	if err != nil {
-		return fmt.Errorf(format, err)
-	}
-	defer w.Close()
-
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", " ")
-	if err := enc.Encode(v); err != nil {
-		return fmt.Errorf(format, err)
-	}
-
-	// Commit the changes to disk if no error has occurred
-	if err := w.Commit(); err != nil {
-		return fmt.Errorf(format, err)
-	}
-
-	return nil
+	return machine.WriteConfig(v.ConfigPath, v)
 }
 
-func setupConnections(v *MachineVM, opts machine.InitOptions, sshDir string) error {
-	uri := machine.SSHRemoteConnection.MakeSSHURL(machine.LocalhostIP, "/run/user/1000/podman/podman.sock", strconv.Itoa(v.Port), v.RemoteUsername)
-	uriRoot := machine.SSHRemoteConnection.MakeSSHURL(machine.LocalhostIP, "/run/podman/podman.sock", strconv.Itoa(v.Port), "root")
-	identity := filepath.Join(sshDir, v.Name)
+func constructSSHUris(v *MachineVM) ([]url.URL, []string) {
+	uri := machine.SSHRemoteConnection.MakeSSHURL(machine.LocalhostIP, rootlessSock, strconv.Itoa(v.Port), v.RemoteUsername)
+	uriRoot := machine.SSHRemoteConnection.MakeSSHURL(machine.LocalhostIP, rootfulSock, strconv.Itoa(v.Port), "root")
 
 	uris := []url.URL{uri, uriRoot}
 	names := []string{v.Name, v.Name + "-root"}
+
+	return uris, names
+}
+
+func setupConnections(v *MachineVM, opts machine.InitOptions) error {
+	uris, names := constructSSHUris(v)
 
 	// The first connection defined when connections is empty will become the default
 	// regardless of IsDefault, so order according to rootful
@@ -487,8 +549,16 @@ func setupConnections(v *MachineVM, opts machine.InitOptions, sshDir string) err
 		uris[0], names[0], uris[1], names[1] = uris[1], names[1], uris[0], names[0]
 	}
 
+	// We need to prevent racing connection updates to containers.conf globally
+	// across all backends to prevent connection overwrites
+	flock, err := obtainGlobalConfigLock()
+	if err != nil {
+		return fmt.Errorf("could not obtain global lock: %w", err)
+	}
+	defer flock.unlock()
+
 	for i := 0; i < 2; i++ {
-		if err := machine.AddConnection(&uris[i], names[i], identity, opts.IsDefault && i == 0); err != nil {
+		if err := machine.AddConnection(&uris[i], names[i], v.IdentityPath, opts.IsDefault && i == 0); err != nil {
 			return err
 		}
 	}
@@ -496,21 +566,21 @@ func setupConnections(v *MachineVM, opts machine.InitOptions, sshDir string) err
 	return nil
 }
 
-func provisionWSLDist(v *MachineVM) (string, error) {
+func provisionWSLDist(name string, imagePath string, prompt string) (string, error) {
 	vmDataDir, err := machine.GetDataDir(vmtype)
 	if err != nil {
 		return "", err
 	}
 
 	distDir := filepath.Join(vmDataDir, "wsldist")
-	distTarget := filepath.Join(distDir, v.Name)
+	distTarget := filepath.Join(distDir, name)
 	if err := os.MkdirAll(distDir, 0755); err != nil {
 		return "", fmt.Errorf("could not create wsldist directory: %w", err)
 	}
 
-	dist := toDist(v.Name)
-	fmt.Println("Importing operating system into WSL (this may take a few minutes on a new WSL install)...")
-	if err = runCmdPassThrough("wsl", "--import", dist, distTarget, v.ImagePath, "--version", "2"); err != nil {
+	dist := toDist(name)
+	fmt.Println(prompt)
+	if err = runCmdPassThrough("wsl", "--import", dist, distTarget, imagePath, "--version", "2"); err != nil {
 		return "", fmt.Errorf("the WSL import of guest OS failed: %w", err)
 	}
 
@@ -519,30 +589,17 @@ func provisionWSLDist(v *MachineVM) (string, error) {
 		return "", fmt.Errorf("package permissions restore of shadow-utils on guest OS failed: %w", err)
 	}
 
-	// Windows 11 (NT Version = 10, Build 22000) generates harmless but scary messages on every
-	// operation when mount was not present on the initial start. Force a cycle so that it won't
-	// repeatedly complain.
-	if winVersionAtLeast(10, 0, 22000) {
-		if err := terminateDist(dist); err != nil {
-			logrus.Warnf("could not cycle WSL dist: %s", err.Error())
-		}
-	}
-
 	return dist, nil
 }
 
-func createKeys(v *MachineVM, dist string, sshDir string) error {
+func createKeys(v *MachineVM, dist string) error {
 	user := v.RemoteUsername
-
-	if err := os.MkdirAll(sshDir, 0700); err != nil {
-		return fmt.Errorf("could not create ssh directory: %w", err)
-	}
 
 	if err := terminateDist(dist); err != nil {
 		return fmt.Errorf("could not cycle WSL dist: %w", err)
 	}
 
-	key, err := wslCreateKeys(sshDir, v.Name, dist)
+	key, err := wslCreateKeys(v.IdentityPath, dist)
 	if err != nil {
 		return fmt.Errorf("could not create ssh keys: %w", err)
 	}
@@ -602,12 +659,68 @@ func configureSystem(v *MachineVM, dist string) error {
 		return err
 	}
 
+	if err := v.setupPodmanDockerSock(dist, v.Rootful); err != nil {
+		return err
+	}
+
 	if err := wslInvoke(dist, "sh", "-c", "echo wsl > /etc/containers/podman-machine"); err != nil {
 		return fmt.Errorf("could not create podman-machine file for guest OS: %w", err)
 	}
 
-	if err := wslPipe(withUser(wslConf, user), dist, "sh", "-c", "cat > /etc/wsl.conf"); err != nil {
-		return fmt.Errorf("could not configure wsl config for guest OS: %w", err)
+	if err := configureBindMounts(dist, user); err != nil {
+		return err
+	}
+
+	return changeDistUserModeNetworking(dist, user, "", v.UserModeNetworking)
+}
+
+func configureBindMounts(dist string, user string) error {
+	if err := wslPipe(fmt.Sprintf(bindMountSystemService, dist), dist, "sh", "-c", "cat > /etc/systemd/system/podman-mnt-bindings.service"); err != nil {
+		return fmt.Errorf("could not create podman binding service file for guest OS: %w", err)
+	}
+
+	catUserService := "cat > " + getUserUnitPath(user)
+	if err := wslPipe(getBindMountUserService(dist), dist, "sh", "-c", catUserService); err != nil {
+		return fmt.Errorf("could not create podman binding user service file for guest OS: %w", err)
+	}
+
+	if err := wslPipe(getBindMountFsTab(dist), dist, "sh", "-c", "cat >> /etc/fstab"); err != nil {
+		return fmt.Errorf("could not create podman binding fstab entry for guest OS: %w", err)
+	}
+
+	if err := wslPipe(getConfigBindServicesScript(user), dist, "sh"); err != nil {
+		return fmt.Errorf("could not configure podman binding services for guest OS: %w", err)
+	}
+
+	catGroupDropin := fmt.Sprintf("cat > %s/%s", podmanSocketDropinPath, "10-group.conf")
+	if err := wslPipe(overrideSocketGroup, dist, "sh", "-c", catGroupDropin); err != nil {
+		return fmt.Errorf("could not configure podman socket group override: %w", err)
+	}
+
+	return nil
+}
+
+func getConfigBindServicesScript(user string) string {
+	return fmt.Sprintf(configBindServices, user)
+}
+
+func getBindMountUserService(dist string) string {
+	return fmt.Sprintf(bindMountUserService, dist)
+}
+
+func getUserUnitPath(user string) string {
+	return fmt.Sprintf(bindUserUnitPath, user)
+}
+
+func getBindMountFsTab(dist string) string {
+	return fmt.Sprintf(bindMountFsTab, dist)
+}
+
+func (v *MachineVM) setupPodmanDockerSock(dist string, rootful bool) error {
+	content := machine.GetPodmanDockerTmpConfig(1000, rootful, true)
+
+	if err := wslPipe(content, dist, "sh", "-c", "cat > "+machine.PodmanDockerTmpConfPath); err != nil {
+		return fmt.Errorf("could not create internal docker sock conf: %w", err)
 	}
 
 	return nil
@@ -694,8 +807,16 @@ func installScripts(dist string) error {
 	return nil
 }
 
+func writeWslConf(dist string, user string) error {
+	if err := wslPipe(withUser(wslConf, user), dist, "sh", "-c", "cat > /etc/wsl.conf"); err != nil {
+		return fmt.Errorf("could not configure wsl config for guest OS: %w", err)
+	}
+
+	return nil
+}
+
 func checkAndInstallWSL(opts machine.InitOptions) (bool, error) {
-	if IsWSLInstalled() {
+	if wutil.IsWSLInstalled() {
 		return true, nil
 	}
 
@@ -934,8 +1055,8 @@ func wslPipe(input string, dist string, arg ...string) error {
 	return pipeCmdPassThrough("wsl", input, newArgs...)
 }
 
-func wslCreateKeys(sshDir string, name string, dist string) (string, error) {
-	return machine.CreateSSHKeysPrefix(sshDir, name, true, true, "wsl", "-u", "root", "-d", dist)
+func wslCreateKeys(identityPath string, dist string) (string, error) {
+	return machine.CreateSSHKeysPrefix(identityPath, true, false, "wsl", "-u", "root", "-d", dist)
 }
 
 func runCmdPassThrough(name string, arg ...string) error {
@@ -993,11 +1114,17 @@ func (v *MachineVM) Set(_ string, opts machine.SetOptions) ([]error, error) {
 	// The setting(s) that failed to be applied will have its errors returned in setErrors
 	var setErrors []error
 
+	v.lock.Lock()
+	defer v.lock.Unlock()
+
 	if opts.Rootful != nil && v.Rootful != *opts.Rootful {
 		err := v.setRootful(*opts.Rootful)
 		if err != nil {
 			setErrors = append(setErrors, fmt.Errorf("setting rootful option: %w", err))
 		} else {
+			if v.isRunning() {
+				logrus.Warn("restart is necessary for rootful change to go into effect")
+			}
 			v.Rootful = *opts.Rootful
 		}
 	}
@@ -1008,24 +1135,70 @@ func (v *MachineVM) Set(_ string, opts machine.SetOptions) ([]error, error) {
 
 	if opts.Memory != nil {
 		setErrors = append(setErrors, errors.New("changing memory not supported for WSL machines"))
+	}
 
+	if opts.USBs != nil {
+		setErrors = append(setErrors, errors.New("changing USBs not supported for WSL machines"))
 	}
 
 	if opts.DiskSize != nil {
-		setErrors = append(setErrors, errors.New("changing Disk Size not supported for WSL machines"))
+		setErrors = append(setErrors, errors.New("changing disk size not supported for WSL machines"))
 	}
 
-	return setErrors, v.writeConfig()
+	if opts.UserModeNetworking != nil && *opts.UserModeNetworking != v.UserModeNetworking {
+		update := true
+		if v.isRunning() {
+			update = false
+			setErrors = append(setErrors, fmt.Errorf("user-mode networking can only be changed when the machine is not running"))
+		}
+
+		if update && *opts.UserModeNetworking {
+			dist := toDist(v.Name)
+
+			if err := changeDistUserModeNetworking(dist, v.RemoteUsername, v.ImagePath, *opts.UserModeNetworking); err != nil {
+				update = false
+				setErrors = append(setErrors, err)
+			}
+		}
+
+		if update {
+			v.UserModeNetworking = *opts.UserModeNetworking
+		}
+	}
+	err := v.writeConfig()
+	if err != nil {
+		setErrors = append(setErrors, err)
+	}
+
+	if len(setErrors) > 0 {
+		return setErrors, setErrors[0]
+	}
+	return setErrors, nil
 }
 
 func (v *MachineVM) Start(name string, opts machine.StartOptions) error {
+	v.lock.Lock()
+	defer v.lock.Unlock()
+
 	if v.isRunning() {
-		return fmt.Errorf("%q is already running", name)
+		return machine.ErrVMAlreadyRunning
 	}
 
 	dist := toDist(name)
 	useProxy := setupWslProxyEnv()
 	if err := configureProxy(dist, useProxy, opts.Quiet); err != nil {
+		return err
+	}
+
+	if !machine.IsLocalPortAvailable(v.Port) {
+		logrus.Warnf("SSH port conflict detected, reassigning a new port")
+		if err := v.reassignSshPort(); err != nil {
+			return err
+		}
+	}
+
+	// Startup user-mode networking if enabled
+	if err := v.startUserModeNetworking(); err != nil {
 		return err
 	}
 
@@ -1072,6 +1245,88 @@ func (v *MachineVM) Start(name string, opts machine.StartOptions) error {
 	return err
 }
 
+func obtainGlobalConfigLock() (*fileLock, error) {
+	lockDir, err := machine.GetGlobalDataDir()
+	if err != nil {
+		return nil, err
+	}
+
+	// Lock file needs to be above all backends
+	// TODO: This should be changed to a common.Config lock mechanism when available
+	return lockFile(filepath.Join(lockDir, "podman-config.lck"))
+}
+
+func (v *MachineVM) reassignSshPort() error {
+	dist := toDist(v.Name)
+	newPort, err := machine.AllocateMachinePort()
+	if err != nil {
+		return err
+	}
+
+	success := false
+	defer func() {
+		if !success {
+			if err := machine.ReleaseMachinePort(newPort); err != nil {
+				logrus.Warnf("could not release port allocation as part of failure rollback (%d): %w", newPort, err)
+			}
+		}
+	}()
+
+	// We need to prevent racing connection updates to containers.conf globally
+	// across all backends to prevent connection overwrites
+	flock, err := obtainGlobalConfigLock()
+	if err != nil {
+		return fmt.Errorf("could not obtain global lock: %w", err)
+	}
+	defer flock.unlock()
+
+	// Write a transient invalid port, to force a retry on failure
+	oldPort := v.Port
+	v.Port = 0
+	if err := v.writeConfig(); err != nil {
+		return err
+	}
+
+	if err := machine.ReleaseMachinePort(oldPort); err != nil {
+		logrus.Warnf("could not release current ssh port allocation (%d): %w", oldPort, err)
+	}
+
+	if err := wslInvoke(dist, "sh", "-c", fmt.Sprintf(changePort, newPort)); err != nil {
+		return fmt.Errorf("could not change SSH port for guest OS: %w", err)
+	}
+
+	v.Port = newPort
+	uris, names := constructSSHUris(v)
+	for i := 0; i < 2; i++ {
+		if err := machine.ChangeConnectionURI(names[i], &uris[i]); err != nil {
+			return err
+		}
+	}
+
+	// Write updated port back
+	if err := v.writeConfig(); err != nil {
+		return err
+	}
+
+	success = true
+
+	return nil
+}
+
+func findExecutablePeer(name string) (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+
+	exe, err = filepath.EvalSymlinks(exe)
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(filepath.Dir(exe), name), nil
+}
+
 func launchWinProxy(v *MachineVM) (bool, string, error) {
 	machinePipe := toDist(v.Name)
 	if !machine.PipeNameAvailable(machinePipe) {
@@ -1083,27 +1338,21 @@ func launchWinProxy(v *MachineVM) (bool, string, error) {
 		globalName = true
 	}
 
-	exe, err := os.Executable()
+	command, err := findExecutablePeer(winSShProxy)
 	if err != nil {
 		return globalName, "", err
 	}
 
-	exe, err = filepath.EvalSymlinks(exe)
-	if err != nil {
-		return globalName, "", err
-	}
-
-	command := filepath.Join(filepath.Dir(exe), winSShProxy)
 	stateDir, err := getWinProxyStateDir(v)
 	if err != nil {
 		return globalName, "", err
 	}
 
-	destSock := "/run/user/1000/podman/podman.sock"
+	destSock := rootlessSock
 	forwardUser := v.RemoteUsername
 
 	if v.Rootful {
-		destSock = "/run/podman/podman.sock"
+		destSock = rootfulSock
 		forwardUser = "root"
 	}
 
@@ -1143,59 +1392,54 @@ func getWinProxyStateDir(v *MachineVM) (string, error) {
 	return stateDir, nil
 }
 
-func IsWSLInstalled() bool {
-	cmd := SilentExecCmd("wsl", "--status")
-	out, err := cmd.StdoutPipe()
-	cmd.Stderr = nil
-	if err != nil {
-		return false
-	}
-	if err = cmd.Start(); err != nil {
-		return false
-	}
-	scanner := bufio.NewScanner(transform.NewReader(out, unicode.UTF16(unicode.LittleEndian, unicode.UseBOM).NewDecoder()))
-	result := true
-	for scanner.Scan() {
-		line := scanner.Text()
-		// Windows 11 does not set an error exit code when a kernel is not avail
-		if strings.Contains(line, "kernel file is not found") {
-			result = false
-			break
-		}
-	}
-	if err := cmd.Wait(); !result || err != nil {
-		return false
-	}
-
-	return true
-}
-
 func IsWSLFeatureEnabled() bool {
-	return SilentExec("wsl", "--set-default-version", "2") == nil
+	return wutil.SilentExec("wsl", "--set-default-version", "2") == nil
 }
 
 func isWSLRunning(dist string) (bool, error) {
-	cmd := exec.Command("wsl", "-l", "--running", "--quiet")
-	out, err := cmd.StdoutPipe()
+	return wslCheckExists(dist, true)
+}
+
+func isWSLExist(dist string) (bool, error) {
+	return wslCheckExists(dist, false)
+}
+
+func wslCheckExists(dist string, running bool) (bool, error) {
+	all, err := getAllWSLDistros(running)
 	if err != nil {
 		return false, err
 	}
-	if err = cmd.Start(); err != nil {
-		return false, err
+
+	_, exists := all[dist]
+	return exists, nil
+}
+
+func getAllWSLDistros(running bool) (map[string]struct{}, error) {
+	args := []string{"-l", "--quiet"}
+	if running {
+		args = append(args, "--running")
 	}
+	cmd := exec.Command("wsl", args...)
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err = cmd.Start(); err != nil {
+		return nil, err
+	}
+
+	all := make(map[string]struct{})
 	scanner := bufio.NewScanner(transform.NewReader(out, unicode.UTF16(unicode.LittleEndian, unicode.UseBOM).NewDecoder()))
-	result := false
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
-		if len(fields) > 0 && dist == fields[0] {
-			result = true
-			break
+		if len(fields) > 0 {
+			all[fields[0]] = struct{}{}
 		}
 	}
 
 	_ = cmd.Wait()
 
-	return result, nil
+	return all, nil
 }
 
 func isSystemdRunning(dist string) (bool, error) {
@@ -1224,6 +1468,9 @@ func isSystemdRunning(dist string) (bool, error) {
 }
 
 func (v *MachineVM) Stop(name string, _ machine.StopOptions) error {
+	v.lock.Lock()
+	defer v.lock.Unlock()
+
 	dist := toDist(v.Name)
 
 	wsl, err := isWSLRunning(dist)
@@ -1240,7 +1487,12 @@ func (v *MachineVM) Stop(name string, _ machine.StopOptions) error {
 	}
 
 	if !wsl || !sysd {
-		return fmt.Errorf("%q is not running", v.Name)
+		return nil
+	}
+
+	// Stop user-mode networking if enabled
+	if err := v.stopUserModeNetworking(dist); err != nil {
+		fmt.Fprintf(os.Stderr, "Could not cleanly stop user-mode networking: %s\n", err.Error())
 	}
 
 	_, _, _ = v.updateTimeStamps(true)
@@ -1269,6 +1521,11 @@ func (v *MachineVM) Stop(name string, _ machine.StopOptions) error {
 
 func terminateDist(dist string) error {
 	cmd := exec.Command("wsl", "--terminate", dist)
+	return cmd.Run()
+}
+
+func unregisterDist(dist string) error {
+	cmd := exec.Command("wsl", "--unregister", dist)
 	return cmd.Run()
 }
 
@@ -1337,8 +1594,16 @@ func readWinProxyTid(v *MachineVM) (uint32, uint32, string, error) {
 func (v *MachineVM) Remove(name string, opts machine.RemoveOptions) (string, func() error, error) {
 	var files []string
 
+	v.lock.Lock()
+	defer v.lock.Unlock()
+
 	if v.isRunning() {
-		return "", nil, fmt.Errorf("running vm %q cannot be destroyed", v.Name)
+		if !opts.Force {
+			return "", nil, &machine.ErrVMRunningCannotDestroyed{Name: v.Name}
+		}
+		if err := v.Stop(v.Name, machine.StopOptions{}); err != nil {
+			return "", nil, err
+		}
 	}
 
 	// Collect all the files that need to be destroyed
@@ -1368,20 +1633,21 @@ func (v *MachineVM) Remove(name string, opts machine.RemoveOptions) (string, fun
 
 	confirmationMessage += "\n"
 	return confirmationMessage, func() error {
-		if err := machine.RemoveConnection(v.Name); err != nil {
-			logrus.Error(err)
-		}
-		if err := machine.RemoveConnection(v.Name + "-root"); err != nil {
+		if err := machine.RemoveConnections(v.Name, v.Name+"-root"); err != nil {
 			logrus.Error(err)
 		}
 		if err := runCmdPassThrough("wsl", "--unregister", toDist(v.Name)); err != nil {
 			logrus.Error(err)
 		}
 		for _, f := range files {
-			if err := machine.GuardedRemoveAll(f); err != nil {
+			if err := utils.GuardedRemoveAll(f); err != nil {
 				logrus.Error(err)
 			}
 		}
+		if err := machine.ReleaseMachinePort(v.Port); err != nil {
+			logrus.Warnf("could not release port allocation as part of removal (%d): %w", v.Port, err)
+		}
+
 		return nil
 	}, nil
 }
@@ -1421,7 +1687,10 @@ func (v *MachineVM) SSH(name string, opts machine.SSHOptions) error {
 	sshDestination := username + "@localhost"
 	port := strconv.Itoa(v.Port)
 
-	args := []string{"-i", v.IdentityPath, "-p", port, sshDestination, "-o", "UserKnownHostsFile /dev/null", "-o", "StrictHostKeyChecking no"}
+	args := []string{"-i", v.IdentityPath, "-p", port, sshDestination,
+		"-o", "IdentitiesOnly yes",
+		"-o", "UserKnownHostsFile /dev/null",
+		"-o", "StrictHostKeyChecking no"}
 	if len(opts.Args) > 0 {
 		args = append(args, opts.Args...)
 	} else {
@@ -1438,60 +1707,14 @@ func (v *MachineVM) SSH(name string, opts machine.SSHOptions) error {
 	return cmd.Run()
 }
 
-// List lists all vm's that use qemu virtualization
-func (p *Virtualization) List(_ machine.ListOptions) ([]*machine.ListResponse, error) {
-	return GetVMInfos()
-}
-
-func GetVMInfos() ([]*machine.ListResponse, error) {
-	vmConfigDir, err := machine.GetConfDir(vmtype)
-	if err != nil {
-		return nil, err
-	}
-
-	var listed []*machine.ListResponse
-
-	if err = filepath.WalkDir(vmConfigDir, func(path string, d fs.DirEntry, err error) error {
-		if strings.HasSuffix(d.Name(), ".json") {
-			path := filepath.Join(vmConfigDir, d.Name())
-			vm, err := readAndMigrate(path, strings.TrimSuffix(d.Name(), ".json"))
-			if err != nil {
-				return err
-			}
-			listEntry := new(machine.ListResponse)
-
-			listEntry.Name = vm.Name
-			listEntry.Stream = vm.ImageStream
-			listEntry.VMType = "wsl"
-			listEntry.CPUs, _ = getCPUs(vm)
-			listEntry.Memory, _ = getMem(vm)
-			listEntry.DiskSize = getDiskSize(vm)
-			listEntry.RemoteUsername = vm.RemoteUsername
-			listEntry.Port = vm.Port
-			listEntry.IdentityPath = vm.IdentityPath
-			listEntry.Starting = false
-
-			running := vm.isRunning()
-			listEntry.CreatedAt, listEntry.LastUp, _ = vm.updateTimeStamps(running)
-			listEntry.Running = running
-
-			listed = append(listed, listEntry)
-		}
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-	return listed, err
-}
-
-func (vm *MachineVM) updateTimeStamps(updateLast bool) (time.Time, time.Time, error) {
+func (v *MachineVM) updateTimeStamps(updateLast bool) (time.Time, time.Time, error) {
 	var err error
 	if updateLast {
-		vm.LastUp = time.Now()
-		err = vm.writeConfig()
+		v.LastUp = time.Now()
+		err = v.writeConfig()
 	}
 
-	return vm.Created, vm.LastUp, err
+	return v.Created, v.LastUp, err
 }
 
 func getDiskSize(vm *MachineVM) uint64 {
@@ -1568,40 +1791,13 @@ func getMem(vm *MachineVM) (uint64, error) {
 	return total - available, err
 }
 
-func (p *Virtualization) IsValidVMName(name string) (bool, error) {
-	infos, err := GetVMInfos()
-	if err != nil {
-		return false, err
-	}
-	for _, vm := range infos {
-		if vm.Name == name {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func (p *Virtualization) CheckExclusiveActiveVM() (bool, string, error) {
-	return false, "", nil
-}
-
 func (v *MachineVM) setRootful(rootful bool) error {
-	changeCon, err := machine.AnyConnectionDefault(v.Name, v.Name+"-root")
-	if err != nil {
+	if err := machine.SetRootful(rootful, v.Name, v.Name+"-root"); err != nil {
 		return err
 	}
 
-	if changeCon {
-		newDefault := v.Name
-		if rootful {
-			newDefault += "-root"
-		}
-		err := machine.ChangeDefault(newDefault)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	dist := toDist(v.Name)
+	return v.setupPodmanDockerSock(dist, rootful)
 }
 
 // Inspect returns verbose detail about the machine
@@ -1613,22 +1809,24 @@ func (v *MachineVM) Inspect() (*machine.InspectInfo, error) {
 
 	connInfo := new(machine.ConnectionConfig)
 	machinePipe := toDist(v.Name)
-	connInfo.PodmanPipe = &machine.VMFile{Path: `\\.\pipe\` + machinePipe}
+	connInfo.PodmanPipe = &define.VMFile{Path: `\\.\pipe\` + machinePipe}
 
 	created, lastUp, _ := v.updateTimeStamps(state == machine.Running)
 	return &machine.InspectInfo{
-		ConfigPath:     machine.VMFile{Path: v.ConfigPath},
+		ConfigPath:     define.VMFile{Path: v.ConfigPath},
 		ConnectionInfo: *connInfo,
 		Created:        created,
 		Image: machine.ImageConfig{
-			ImagePath:   machine.VMFile{Path: v.ImagePath},
+			ImagePath:   define.VMFile{Path: v.ImagePath},
 			ImageStream: v.ImageStream,
 		},
-		LastUp:    lastUp,
-		Name:      v.Name,
-		Resources: v.getResources(),
-		SSHConfig: v.SSHConfig,
-		State:     state,
+		LastUp:             lastUp,
+		Name:               v.Name,
+		Resources:          v.getResources(),
+		SSHConfig:          v.SSHConfig,
+		State:              state,
+		UserModeNetworking: v.UserModeNetworking,
+		Rootful:            v.Rootful,
 	}, nil
 }
 
@@ -1637,84 +1835,4 @@ func (v *MachineVM) getResources() (resources machine.ResourceConfig) {
 	resources.Memory, _ = getMem(v)
 	resources.DiskSize = getDiskSize(v)
 	return
-}
-
-// RemoveAndCleanMachines removes all machine and cleans up any other files associated with podman machine
-func (p *Virtualization) RemoveAndCleanMachines() error {
-	var (
-		vm             machine.VM
-		listResponse   []*machine.ListResponse
-		opts           machine.ListOptions
-		destroyOptions machine.RemoveOptions
-	)
-	destroyOptions.Force = true
-	var prevErr error
-
-	listResponse, err := p.List(opts)
-	if err != nil {
-		return err
-	}
-
-	for _, mach := range listResponse {
-		vm, err = p.LoadVMByName(mach.Name)
-		if err != nil {
-			if prevErr != nil {
-				logrus.Error(prevErr)
-			}
-			prevErr = err
-		}
-		_, remove, err := vm.Remove(mach.Name, destroyOptions)
-		if err != nil {
-			if prevErr != nil {
-				logrus.Error(prevErr)
-			}
-			prevErr = err
-		} else {
-			if err := remove(); err != nil {
-				if prevErr != nil {
-					logrus.Error(prevErr)
-				}
-				prevErr = err
-			}
-		}
-	}
-
-	// Clean leftover files in data dir
-	dataDir, err := machine.DataDirPrefix()
-	if err != nil {
-		if prevErr != nil {
-			logrus.Error(prevErr)
-		}
-		prevErr = err
-	} else {
-		err := machine.GuardedRemoveAll(dataDir)
-		if err != nil {
-			if prevErr != nil {
-				logrus.Error(prevErr)
-			}
-			prevErr = err
-		}
-	}
-
-	// Clean leftover files in conf dir
-	confDir, err := machine.ConfDirPrefix()
-	if err != nil {
-		if prevErr != nil {
-			logrus.Error(prevErr)
-		}
-		prevErr = err
-	} else {
-		err := machine.GuardedRemoveAll(confDir)
-		if err != nil {
-			if prevErr != nil {
-				logrus.Error(prevErr)
-			}
-			prevErr = err
-		}
-	}
-	return prevErr
-}
-
-func (p *Virtualization) VMType() machine.VMType {
-	return vmtype
 }

@@ -26,7 +26,7 @@ load helpers.network
     run_podman network create $net3
 
     run_podman network ls --quiet
-    # just check the the order of the created networks is correct
+    # just check that the order of the created networks is correct
     # we cannot do an exact match since developer and CI systems could contain more networks
     is "$output" ".*$net1.*$net2.*$net3.*podman.*" "networks sorted alphabetically"
 
@@ -59,9 +59,9 @@ load helpers.network
     is "$output" "$random_2" "exec cat index2.txt"
 
     # Verify http contents: curl from localhost
-    run curl -s $SERVER/index.txt
+    run curl -s -S $SERVER/index.txt
     is "$output" "$random_1" "curl 127.0.0.1:/index.txt"
-    run curl -s $SERVER/index2.txt
+    run curl -s -S $SERVER/index2.txt
     is "$output" "$random_2" "curl 127.0.0.1:/index2.txt"
 
     # Verify http contents: wget from a second container
@@ -82,13 +82,12 @@ load helpers.network
     is "$output" 'Error: failed to find published port "99/tcp"'
 
     # Clean up
-    run_podman stop -t 1 myweb
-    run_podman rm myweb
+    run_podman rm -f -t0 myweb
 }
 
 # Issue #5466 - port-forwarding doesn't work with this option and -d
 @test "podman networking: port with --userns=keep-id for rootless or --uidmap=* for rootful" {
-    skip_if_cgroupsv1 "FIXME: #15025: run --uidmap fails on cgroups v1"
+    skip_if_cgroupsv1 "run --uidmap fails on cgroups v1 (issue 15025, wontfix)"
     for cidr in "" "$(random_rfc1918_subnet).0/24"; do
         myport=$(random_free_port 52000-52999)
         if [[ -z $cidr ]]; then
@@ -168,7 +167,7 @@ load helpers.network
     is "${lines[0]}" "$pod_name" "hostname is the pod hostname"
     is "${lines[1]}" "$pod_name" "/etc/hostname contains correct pod hostname"
 
-    run_podman pod rm $pod_name
+    run_podman pod rm -f -t0 $pod_name
     is "$output" "$pid" "Only ID in output (no extra errors)"
 
     # Clean up
@@ -304,7 +303,7 @@ load helpers.network
     mac1="$output"
 
     # Verify http contents: curl from localhost
-    run curl -s $SERVER/index.txt
+    run curl -s -S $SERVER/index.txt
     is "$output" "$random_1" "curl 127.0.0.1:/index.txt"
 
     # rootless cannot modify iptables
@@ -370,7 +369,7 @@ load helpers.network
     is "$output" "$mac2" "MAC address changed after podman network reload ($netname2)"
 
     # check that we can still curl
-    run curl -s $SERVER/index.txt
+    run curl -s -S $SERVER/index.txt
     is "$output" "$random_1" "curl 127.0.0.1:/index.txt"
 
     # clean up the container
@@ -449,6 +448,7 @@ load helpers.network
 }
 
 # Test for https://github.com/containers/podman/issues/10052
+# bats test_tags=distro-integration
 @test "podman network connect/disconnect with port forwarding" {
     random_1=$(random_string 30)
     HOST_PORT=$(random_free_port)
@@ -471,17 +471,20 @@ load helpers.network
     run_podman run -d --network $netname $IMAGE top
     background_cid=$output
 
+    local hostname=host-$(random_string 10)
     # Run a httpd container on first network with exposed port
     run_podman run -d -p "$HOST_PORT:80" \
+            --hostname $hostname \
             --network $netname \
             -v $INDEX1:/var/www/index.txt:Z \
             -w /var/www \
             $IMAGE /bin/busybox-extras httpd -f -p 80
     cid=$output
 
-    # Verify http contents: curl from localhost
-    run curl --max-time 3 -s $SERVER/index.txt
-    is "$output" "$random_1" "curl 127.0.0.1:/index.txt"
+    # Verify http contents: curl from localhost. This is the first time
+    # connecting, so, allow retries until httpd starts.
+    run curl --retry 2 --retry-connrefused -s $SERVER/index.txt
+    is "$output" "$random_1" "curl $SERVER/index.txt"
 
     run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname\").IPAddress}}"
     ip="$output"
@@ -490,7 +493,7 @@ load helpers.network
 
     # check network alias for container short id
     run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname\").Aliases}}"
-    is "$output" "[${cid:0:12}]" "short container id in network aliases"
+    is "$output" "[${cid:0:12} $hostname]" "short container id and hostname in network aliases"
 
     # check /etc/hosts for our entry
     run_podman exec $cid cat /etc/hosts
@@ -503,8 +506,9 @@ load helpers.network
     run_podman exec $cid cat /etc/hosts
     assert "$output" !~ "$ip" "IP ($ip) should no longer be in /etc/hosts"
 
-    # check that we cannot curl (timeout after 3 sec)
-    run curl --max-time 3 -s $SERVER/index.txt
+    # check that we cannot curl (timeout after 3 sec). Fails with inconsistent
+    # curl exit codes, so, just check for nonzero.
+    run curl --max-time 3 -s -S $SERVER/index.txt
     assert $status -ne 0 \
            "curl did not fail, it should have timed out or failed with non zero exit code"
 
@@ -512,7 +516,7 @@ load helpers.network
     is "$output" "" "Output should be empty (no errors)"
 
     # curl should work again
-    run curl --max-time 3 -s $SERVER/index.txt
+    run curl --max-time 3 -s -S $SERVER/index.txt
     is "$output" "$random_1" "curl 127.0.0.1:/index.txt should work again"
 
     # check that we have a new ip and mac
@@ -550,17 +554,17 @@ load helpers.network
 
     # check network2 alias for container short id
     run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname2\").Aliases}}"
-    is "$output" "[${cid:0:12}]" "short container id in network aliases"
+    is "$output" "[${cid:0:12} $hostname]" "short container id and hostname in network2 aliases"
 
     # curl should work
-    run curl --max-time 3 -s $SERVER/index.txt
+    run curl --max-time 3 -s -S $SERVER/index.txt
     is "$output" "$random_1" "curl 127.0.0.1:/index.txt should work"
 
     # disconnect the first network
     run_podman network disconnect $netname $cid
 
     # curl should still work
-    run curl --max-time 3 -s $SERVER/index.txt
+    run curl --max-time 3 -s -S $SERVER/index.txt
     is "$output" "$random_1" "curl 127.0.0.1:/index.txt should still work"
 
     # clean up
@@ -624,14 +628,26 @@ load helpers.network
 
         # Verify http contents again: curl from localhost
         # Use retry since it can take a moment until the new container is ready
-        run curl --retry 2 -s $SERVER/index.txt
-        is "$output" "$random_1" "curl 127.0.0.1:/index.txt after auto restart"
+        local curlcmd="curl --retry 2 --retry-connrefused -s $SERVER/index.txt"
+        echo "$_LOG_PROMPT $curlcmd"
+        run $curlcmd
+        echo "$output"
+        assert "$status" == 0 "curl exit status"
+        assert "$output" = "$random_1" "curl $SERVER/index.txt after auto restart"
 
-        run_podman restart $cid
+        run_podman 0+w restart -t1 $cid
+        if ! is_remote; then
+            require_warning "StopSignal SIGTERM failed to stop container .* in 1 seconds, resorting to SIGKILL" \
+                            "podman restart issues warning"
+        fi
+
         # Verify http contents again: curl from localhost
         # Use retry since it can take a moment until the new container is ready
-        run curl --retry 2 -s $SERVER/index.txt
-        is "$output" "$random_1" "curl 127.0.0.1:/index.txt after podman restart"
+        echo "$_LOG_PROMPT $curlcmd"
+        run $curlcmd
+        echo "$output"
+        assert "$status" == 0 "curl exit status"
+        assert "$output" = "$random_1" "curl $SERVER/index.txt after podman restart"
 
         run_podman rm -t 0 -f $cid
     done
@@ -769,7 +785,7 @@ EOF
 }
 
 @test "podman run /etc/* permissions" {
-    skip_if_cgroupsv1 "FIXME: #15025: run --uidmap fails on cgroups v1"
+    skip_if_cgroupsv1 "run --uidmap fails on cgroups v1 (issue 15025, wontfix)"
     userns="--userns=keep-id"
     if ! is_rootless; then
         userns="--uidmap=0:1111111:65536 --gidmap=0:1111111:65536"
@@ -787,7 +803,7 @@ EOF
 @test "podman network rm --force bogus" {
     run_podman 1 network rm bogus
     is "$output" "Error: unable to find network with name or ID bogus: network not found" "Should print error"
-    run_podman network rm --force bogus
+    run_podman network rm -t -1 --force bogus
     is "$output" "" "Should print no output"
 }
 
@@ -831,9 +847,17 @@ EOF
         run_podman create --network=$network $IMAGE
         cid=${output}
         run_podman inspect --format '{{ .NetworkSettings.Networks }}' $cid
-        is "$output" "map\[$network:.*" "NeworkSettincs should contain one network named $network"
+        is "$output" "map\[$network:.*" "NeworkSettings should contain one network named $network"
+        run_podman inspect --format '{{ .NetworkSettings.SandboxKey }}' $cid
+        assert "$output" == "" "SandboxKey for network=$network should be empty when not running"
         run_podman rm $cid
     done
+
+    run_podman run -d --network=none $IMAGE top
+    cid=${output}
+    run_podman inspect --format '{{ .NetworkSettings.SandboxKey }}' $cid
+    assert "$output" =~ "^/proc/[0-9]+/ns/net\$" "SandboxKey for network=none when running"
+    run_podman rm -f -t0 $cid
 
     # Check with ns:/PATH
     if ! is_rootless; then
@@ -845,6 +869,57 @@ EOF
         is "$output" 'map[]' "NeworkSettings should be empty"
         run_podman rm $cid
      fi
+}
+
+# Test for https://github.com/containers/podman/issues/18615
+@test "podman network cleanup --userns + --restart" {
+    skip_if_cgroupsv1 "run --uidmap fails on cgroups v1 (issue 15025, wontfix)"
+    userns="--userns=keep-id"
+    if ! is_rootless; then
+        userns="--uidmap=0:1111111:65536 --gidmap=0:1111111:65536"
+    fi
+
+    local net1=a-$(random_string 10)
+    # use /29 subnet to limt available ip space, a 29 gives 5 usable addresses (6 - 1 for the gw)
+    local subnet="$(random_rfc1918_subnet).0/29"
+    run_podman network create --subnet $subnet $net1
+    local cname=con-$(random_string 10)
+
+    local netns_count=
+    if ! is_rootless; then
+        netns_count=$(ls /run/netns | wc -l)
+    fi
+
+    # This will cause 7 containers runs with the restart policy (one more than the on failure limit)
+    # Since they run sequentially they should run fine without allocating all ips.
+    run_podman 1 run --name $cname --network $net1 --restart on-failure:6 --userns keep-id $IMAGE false
+
+    # Previously this would fail as the container would run out of ips after 5 restarts.
+    run_podman inspect --format "{{.RestartCount}}" $cname
+    assert "$output" == "6" "RestartCount for failing container"
+
+    # Now make sure we can still run a container with free ips.
+    run_podman run --rm --network $net1 $IMAGE true
+
+    if ! is_rootless; then
+        # This is racy if other programs modify /run/netns while the test is running.
+        # However I think the risk is minimal and I think checking for this is important.
+        assert "$(ls /run/netns | wc -l)" == "$netns_count" "/run/netns has no leaked netns files"
+    fi
+
+    run_podman rm -f -t0 $cname
+    run_podman network rm $net1
+}
+
+# Issue #20448 - /etc/hostname with --uts=host must show "uname -n"
+@test "podman --uts=host must use 'uname -n' for /etc/hostname" {
+    run_podman info --format '{{.Host.Hostname}}'
+    hostname="$output"
+    run_podman run --rm --uts=host $IMAGE cat /etc/hostname
+    assert "$output" = $hostname "/etc/hostname with --uts=host must be equal to 'uname -n'"
+
+    run_podman run --rm --net=host --uts=host $IMAGE cat /etc/hostname
+    assert "$output" = $hostname "/etc/hostname with --uts=host --net=host must be equal to 'uname -n'"
 }
 
 # vim: filetype=sh

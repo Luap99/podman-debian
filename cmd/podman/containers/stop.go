@@ -2,6 +2,7 @@ package containers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -53,7 +54,7 @@ var (
 		Filters: make(map[string][]string),
 	}
 	stopCidFiles = []string{}
-	stopTimeout  uint
+	stopTimeout  int
 )
 
 func stopFlags(cmd *cobra.Command) {
@@ -67,11 +68,11 @@ func stopFlags(cmd *cobra.Command) {
 	_ = cmd.RegisterFlagCompletionFunc(cidfileFlagName, completion.AutocompleteDefault)
 
 	timeFlagName := "time"
-	flags.UintVarP(&stopTimeout, timeFlagName, "t", containerConfig.Engine.StopTimeout, "Seconds to wait for stop before killing the container")
+	flags.IntVarP(&stopTimeout, timeFlagName, "t", int(containerConfig.Engine.StopTimeout), "Seconds to wait for stop before killing the container")
 	_ = cmd.RegisterFlagCompletionFunc(timeFlagName, completion.AutocompleteNone)
 
 	filterFlagName := "filter"
-	flags.StringSliceVarP(&filters, filterFlagName, "f", []string{}, "Filter output based on conditions given")
+	flags.StringArrayVarP(&filters, filterFlagName, "f", []string{}, "Filter output based on conditions given")
 	_ = cmd.RegisterFlagCompletionFunc(filterFlagName, common.AutocompletePsFilters)
 
 	if registry.IsRemote() {
@@ -104,11 +105,15 @@ func stop(cmd *cobra.Command, args []string) error {
 	args = utils.RemoveSlash(args)
 
 	if cmd.Flag("time").Changed {
-		stopOptions.Timeout = &stopTimeout
+		timeout := uint(stopTimeout)
+		stopOptions.Timeout = &timeout
 	}
 	for _, cidFile := range stopCidFiles {
 		content, err := os.ReadFile(cidFile)
 		if err != nil {
+			if stopOptions.Ignore && errors.Is(err, os.ErrNotExist) {
+				continue
+			}
 			return fmt.Errorf("reading CIDFile: %w", err)
 		}
 		id := strings.Split(string(content), "\n")[0]

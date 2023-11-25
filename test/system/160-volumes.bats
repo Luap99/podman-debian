@@ -258,6 +258,34 @@ EOF
     run_podman volume rm my_vol2
 }
 
+# stdout with NULs is easier to test here than in ginkgo
+@test "podman volume export to stdout" {
+    skip_if_remote "N/A on podman-remote"
+
+    local volname="myvol_$(random_string 10)"
+    local mountpoint="/data$(random_string 8)"
+
+    run_podman volume create $volname
+    assert "$output" == "$volname" "volume create emits the name it was given"
+
+    local content="mycontent-$(random_string 20)-the-end"
+    run_podman run --rm --volume "$volname:$mountpoint" $IMAGE \
+               sh -c "echo $content >$mountpoint/testfile"
+    assert "$output" = ""
+
+    # We can't use run_podman because bash can't handle NUL characters.
+    # Can't even store them in variables, so we need immediate redirection
+    # The "-v" is only for debugging: tar will emit the filename to stderr.
+    # If this test ever fails, that may give a clue.
+    echo "$_LOG_PROMPT $PODMAN volume export $volname | tar -x ..."
+    tar_output="$($PODMAN volume export $volname | tar -x -v --to-stdout)"
+    echo "$tar_output"
+    assert "$tar_output" == "$content" "extracted content"
+
+    # Clean up
+    run_podman volume rm $volname
+}
+
 # Podman volume user test
 @test "podman volume user test" {
     is_rootless || skip "only meaningful when run rootless"
@@ -299,15 +327,31 @@ EOF
     mkdir $myvoldir
     touch $myvoldir/myfile
 
+    containersconf=${PODMAN_TMPDIR}/containers.conf
+    cat >$containersconf <<EOF
+[containers]
+userns="keep-id"
+EOF
+
     # With keep-id
     run_podman run --rm -v $myvoldir:/vol:z --userns=keep-id $IMAGE \
-               stat -c "%u:%s" /vol/myfile
-    is "$output" "$(id -u):0" "with keep-id: stat(file in container) == my uid"
+               stat -c "%u:%g:%s" /vol/myfile
+    is "$output" "$(id -u):$(id -g):0" "with keep-id: stat(file in container) == my uid"
 
     # Without
     run_podman run --rm -v $myvoldir:/vol:z $IMAGE \
-               stat -c "%u:%s" /vol/myfile
-    is "$output" "0:0" "w/o keep-id: stat(file in container) == root"
+               stat -c "%u:%g:%s" /vol/myfile
+    is "$output" "0:0:0" "w/o keep-id: stat(file in container) == root"
+
+    # With keep-id from containers.conf
+    CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm -v $myvoldir:/vol:z $IMAGE \
+               stat -c "%u:%g:%s" /vol/myfile
+    is "$output" "$(id -u):$(id -g):0" "with keep-id from containers.conf: stat(file in container) == my uid"
+
+    # With keep-id from containers.conf overridden with --userns=nomap
+    CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm -v $myvoldir:/vol:z --userns=nomap $IMAGE \
+               stat -c "%u:%g:%s" /vol/myfile
+    is "$output" "65534:65534:0" "w/o overridden containers.conf keep-id->nomap: stat(file in container) == root"
 }
 
 
@@ -367,6 +411,7 @@ EOF
     is "$output"  "" "no more volumes to prune"
 }
 
+# bats test_tags=distro-integration
 @test "podman volume type=bind" {
     myvoldir=${PODMAN_TMPDIR}/volume_$(random_string)
     mkdir $myvoldir
@@ -386,11 +431,14 @@ EOF
 
 @test "podman volume type=tmpfs" {
     myvolume=myvol$(random_string)
-    run_podman volume create -o type=tmpfs -o device=tmpfs $myvolume
+    run_podman volume create -o type=tmpfs -o o=size=2M -o device=tmpfs $myvolume
     is "$output" "$myvolume" "should successfully create myvolume"
 
     run_podman run --rm -v $myvolume:/vol $IMAGE stat -f -c "%T" /vol
     is "$output" "tmpfs" "volume should be tmpfs"
+
+    run_podman run --rm -v $myvolume:/vol $IMAGE sh -c "mount| grep /vol"
+    is "$output" "tmpfs on /vol type tmpfs.*size=2048k.*" "size should be set to 2048k"
 }
 
 # Named volumes copyup
@@ -430,7 +478,7 @@ NeedsChown    | true
     test -e "$mountpoint/passwd"
 
     # Clean up
-    run_podman volume rm $myvolume
+    run_podman volume rm -t -1 --force $myvolume
 }
 
 @test "podman volume mount" {
@@ -529,5 +577,30 @@ EOF
     run_podman volume rm myvol --force
 }
 
+@test "podman volume create --ignore - do not chown" {
+    local user_id=2000
+    local group_id=2000
+    local volume_name=$(random_string)
+
+    # Create a volume and get its mount point
+    run_podman volume create --ignore ${volume_name}
+    run_podman volume inspect --format '{{.Mountpoint}}' $volume_name
+    mountpoint="$output"
+
+    # Run a container with the volume mounted
+    run_podman run --rm --user ${group_id}:${user_id} -v ${volume_name}:/vol $IMAGE
+
+    # Podman chowns the mount point according to the user used in the previous command
+    local original_owner=$(stat --format %g:%u ${mountpoint})
+
+    # Creating an existing volume with ignore should be a noop
+    run_podman volume create --ignore ${volume_name}
+
+    # Verify that the mountpoint was not chowned
+    owner=$(stat --format %g:%u ${mountpoint})
+    is "$owner" "${original_owner}" "The volume was chowned by podman volume create"
+
+    run_podman volume rm $volume_name --force
+}
 
 # vim: filetype=sh

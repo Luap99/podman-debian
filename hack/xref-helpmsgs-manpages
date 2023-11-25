@@ -95,6 +95,21 @@ my %Format_Option_Is_Special = map { $_ => 1 } (
     'inspect',                                  # ambiguous (container/image)
  );
 
+# Hardcoded list of existing duplicate-except-for-case format codes,
+# with their associated subcommands. Let's not add any more.
+my %Format_Option_Dup_Allowed = (
+    'podman-images' => { '.id'     => 1 },
+    'podman-stats'  => { '.avgcpu' => 1, '.pids' => 1 },
+);
+
+# Do not cross-reference these.
+my %Skip_Subcommand = map { $_ => 1 } (
+    "help",                     # has no man page
+    "completion",               # internal (hidden) subcommand
+    "compose",                  # external tool, outside of our control
+    "farm",                # hidden subcommand till it is fully implemented - remove this once done
+);
+
 # END   user-customizable section
 ###############################################################################
 
@@ -188,6 +203,13 @@ sub xref_by_help {
 
   OPTION:
     for my $k (sort keys %$help) {
+        if (! ref($man)) {
+            # Super-unlikely but I've seen it
+            warn "$ME: 'podman @subcommand' is not documented in man pages!\n";
+            ++$Errs;
+            next OPTION;
+        }
+
         if (exists $man->{$k}) {
             if (ref $help->{$k}) {
                 # This happens when 'podman foo --format' offers
@@ -196,8 +218,7 @@ sub xref_by_help {
                 if ($k eq '--format' && ! ref($man->{$k})) {
                     warn "$ME: 'podman @subcommand': --format options are available through autocomplete, but are not documented in $man->{_path}\n";
 
-                    # FIXME: don't make this an error... yet.
-                    # ++$Errs;
+                    ++$Errs   unless "@subcommand" eq "inspect";
                     next OPTION;
                 }
 
@@ -219,7 +240,11 @@ sub xref_by_help {
 
             # Nope, it's not that case.
             my $man = $man->{_path} || 'man';
-            warn "$ME: 'podman @subcommand --help' lists '$k', which is not in $man\n";
+            # The usual case is "podman ... --help"...
+            my $what = '--help';
+            # ...but for *options* (e.g. --filter), we're checking command completion
+            $what = '<TAB>' if $subcommand[-1] =~ /^--/;
+            warn "$ME: 'podman @subcommand $what' lists '$k', which is not in $man\n";
             ++$Errs;
         }
     }
@@ -279,10 +304,13 @@ sub xref_by_man {
 
             next if "@subcommand" eq 'system' && $k eq 'service';
 
-            # Special case: podman completion is a hidden command
-            next if $k eq 'completion';
+            # Special case for hidden or external commands
+            next if $Skip_Subcommand{$k};
 
-            warn "$ME: 'podman @subcommand': $k in $man, but not --help\n";
+            # It's not always --help, sometimes we check <TAB> completion
+            my $what = '--help';
+            $what = 'command completion' if $subcommand[-1] =~ /^--/;
+            warn "$ME: 'podman @subcommand': '$k' in $man, but not in $what\n";
             ++$Errs;
         }
     }
@@ -346,7 +374,7 @@ sub podman_help {
                 }
 
                 $help{$subcommand} = podman_help(@_, $subcommand)
-                    unless $subcommand eq 'help';       # 'help' not in man
+                    unless $Skip_Subcommand{$subcommand};
             }
         }
         elsif ($section eq 'options') {
@@ -406,7 +434,17 @@ sub podman_help {
                         ++$Errs;
                     }
                 }
-           }
+            }
+            # Same thing, for --filter
+            elsif ($opt eq '--filter') {
+                my @completions = _completions(@_, '--filter=');
+                for my $c (@completions) {
+                    if ($c =~ /^(\S+)=/) {
+                        $help{$opt} = {} if ! ref($help{$opt});
+                        $help{$opt}{$1} = 1;
+                    }
+                }
+            }
         }
     }
     close $fh
@@ -433,9 +471,11 @@ sub podman_man {
     my $previous_subcmd = '';
     my $previous_flag = '';
     my $previous_format = '';
+    my $previous_filter = '';
+  LINE:
     while (my $line = <$fh>) {
         chomp $line;
-        next unless $line;		# skip empty lines
+        next LINE unless $line;		# skip empty lines
 
         # First line (page title) must match the command name.
         if ($line =~ /^%\s+/) {
@@ -484,6 +524,10 @@ sub podman_man {
                     warn "$ME: $subpath:$.: '$previous_subcmd' and '$subcmd' are out of order\n";
                     ++$Errs;
                 }
+                if ($previous_subcmd eq $subcmd) {
+                    warn "$ME: $subpath:$.: duplicate subcommand '$subcmd'\n";
+                    ++$Errs;
+                }
                 $previous_subcmd = $subcmd;
                 $man{$subcmd} = podman_man($link_name);
 
@@ -522,6 +566,10 @@ sub podman_man {
                         warn "$ME: $subpath:$.: $flag should precede $previous_flag\n";
                         ++$Errs;
                     }
+                    if ($flag eq $previous_flag) {
+                        warn "$ME: $subpath:$.: flag '$flag' is a dup\n";
+                        ++$Errs;
+                    }
                     $previous_flag = $flag if $is_first;
                     push @most_recent_flags, $flag;
 
@@ -539,7 +587,7 @@ sub podman_man {
                 }
 
                 # Options with no '=whatever'
-                next if !$line;
+                next LINE if !$line;
 
                 # Anything remaining *must* be of the form '=<possibilities>'
                 if ($line !~ /^=/) {
@@ -600,11 +648,67 @@ sub podman_man {
                     # too many subformats to document individually.
                     $man{$previous_flag}{$format} = $etc || 1;
 
+                    # Sort order check, case-insensitive
                     if (lc($format) lt lc($previous_format)) {
                         warn "$ME: $subpath:$.: format specifier '$format' should precede '$previous_format'\n";
                         ++$Errs;
                     }
+
+                    # Dup check, would've caught #19462.
+                    if (lc($format) eq lc($previous_format)) {
+                        # Sigh. Allow preexisting exceptions, but no new ones.
+                        unless ($Format_Option_Dup_Allowed{$command}{lc $format}) {
+                            warn "$ME: $subpath:$.: format specifier '$format' is a dup\n";
+                            ++$Errs;
+                        }
+                    }
                     $previous_format = $format;
+                }
+            }
+            # Same as above, but with --filter
+            elsif ($previous_flag eq '--filter') {
+                if ($line =~ /^\|\s+(\S+)\s+\|/) {
+                    my $filter = $1;
+
+                    # (Garbage: these are just table column titles & dividers)
+                    next LINE if $filter =~ /^\**Filter\**$/;
+                    next LINE if $filter =~ /---+/;
+
+                    # Special case: treat slash-separated options
+                    # ("after/since") as identical, and require that
+                    # each be documented.
+                    for my $f (split '/', $filter) {
+                        # Special case for negated options ("label!="): allow,
+                        # but only immediately after the positive case.
+                        if ($f =~ s/!$//) {
+                            if ($f ne $previous_filter) {
+                                warn "$ME: $subpath:$.: filter '$f!' only allowed immediately after its positive\n";
+                                ++$Errs;
+                            }
+                            next LINE;
+                        }
+
+                        if (! ref($man{$previous_flag})) {
+                            $man{$previous_flag} = { _path => $subpath };
+                        }
+                        $man{$previous_flag}{$f} = 1;
+                    }
+
+                    # Sort order check, case-insensitive
+                    # FIXME FIXME! Disabled for now because it would make
+                    # this PR completely impossible to review (as opposed to
+                    # only mostly-impossible)
+                    #if (lc($filter) lt lc($previous_filter)) {
+                    #  warn "$ME: $subpath:$.: filter specifier '$filter' should precede '$previous_filter'\n";
+                    #  ++$Errs;
+                    #}
+
+                    # Dup check. Yes, it happens.
+                    if (lc($filter) eq lc($previous_filter)) {
+                        warn "$ME: $subpath:$.: filter specifier '$filter' is a dup\n";
+                        ++$Errs;
+                    }
+                    $previous_filter = $filter;
                 }
             }
         }

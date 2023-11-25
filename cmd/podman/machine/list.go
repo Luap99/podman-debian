@@ -28,7 +28,7 @@ var (
 		Aliases:           []string{"ls"},
 		Short:             "List machines",
 		Long:              "List managed virtual machines.",
-		PersistentPreRunE: rootlessOnly,
+		PersistentPreRunE: machinePreRunE,
 		RunE:              list,
 		Args:              validate.NoArgs,
 		ValidArgsFunction: completion.AutocompleteNone,
@@ -66,7 +66,6 @@ func list(cmd *cobra.Command, args []string) error {
 		err          error
 	)
 
-	provider := GetSystemDefaultProvider()
 	listResponse, err = provider.List(opts)
 	if err != nil {
 		return fmt.Errorf("listing vms: %w", err)
@@ -178,6 +177,7 @@ func toMachineFormat(vms []*machine.ListResponse) ([]*entities.ListReporter, err
 		response.RemoteUsername = vm.RemoteUsername
 		response.IdentityPath = vm.IdentityPath
 		response.Starting = vm.Starting
+		response.UserModeNetworking = vm.UserModeNetworking
 
 		machineResponses = append(machineResponses, response)
 	}
@@ -200,20 +200,22 @@ func toHumanFormat(vms []*machine.ListResponse) ([]*entities.ListReporter, error
 			response.Name = vm.Name
 		}
 		switch {
-		case vm.Running:
-			response.LastUp = "Currently running"
-			response.Running = true
 		case vm.Starting:
 			response.LastUp = "Currently starting"
 			response.Starting = true
+		case vm.Running:
+			response.LastUp = "Currently running"
+			response.Running = true
+		case vm.LastUp.IsZero():
+			response.LastUp = "Never"
 		default:
 			response.LastUp = units.HumanDuration(time.Since(vm.LastUp)) + " ago"
 		}
 		response.Created = units.HumanDuration(time.Since(vm.CreatedAt)) + " ago"
 		response.VMType = vm.VMType
 		response.CPUs = vm.CPUs
-		response.Memory = units.HumanSize(float64(vm.Memory))
-		response.DiskSize = units.HumanSize(float64(vm.DiskSize))
+		response.Memory = units.BytesSize(float64(vm.Memory))
+		response.DiskSize = units.BytesSize(float64(vm.DiskSize))
 
 		humanResponses = append(humanResponses, response)
 	}

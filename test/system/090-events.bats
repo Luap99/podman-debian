@@ -5,6 +5,7 @@
 
 load helpers
 
+# bats test_tags=distro-integration
 @test "events with a filter by label" {
     cname=test-$(random_string 30 | tr A-Z a-z)
     labelname=$(random_string 10)
@@ -76,8 +77,8 @@ load helpers
 .*image tag $imageID $tag
 .*image untag $imageID $tag:latest
 .*image tag $imageID $tag
-.*image untag $imageID $IMAGE
 .*image untag $imageID $tag:latest
+.*image untag $imageID $IMAGE
 .*image remove $imageID $imageID" \
        "podman events"
 
@@ -89,8 +90,8 @@ load helpers
                      "tag--$tag"
                      "untag--$tag:latest"
                      "tag--$tag"
-                     "untag--$IMAGE"
                      "untag--$tag:latest"
+                     "untag--$IMAGE"
                      "remove--$imageID"
                      "loadfromarchive--$tarball"
                     )
@@ -141,6 +142,7 @@ function _events_disjunctive_filters() {
     _events_disjunctive_filters ""
 }
 
+# bats test_tags=distro-integration
 @test "events with events_logfile_path in containers.conf" {
     skip_if_remote "remote does not support --events-backend"
     events_file=$PODMAN_TMPDIR/events.log
@@ -162,6 +164,7 @@ function _populate_events_file() {
     done
 }
 
+# bats test_tags=distro-integration
 @test "events log-file rotation" {
     skip_if_remote "setting CONTAINERS_CONF_OVERRIDE logger options does not affect remote client"
 
@@ -381,4 +384,19 @@ EOF
         --filter=status=die     \
         --stream=false
     is "${lines[0]}" ".* container died .* (image=$IMAGE, name=$cname, .*)"
+}
+
+@test "events - volume events" {
+    local vname=v$(random_string 10)
+    run_podman volume create $vname
+    run_podman volume rm $vname
+
+    run_podman events --since=1m --stream=false --filter volume=$vname
+    notrunc_results="$output"
+    assert "${lines[0]}" =~ ".* volume create $vname"
+    assert "${lines[1]}" =~ ".* volume remove $vname"
+
+    # Prefix test
+    run_podman events --since=1m --stream=false --filter volume=${vname:0:5}
+    assert "$output" = "$notrunc_results"
 }

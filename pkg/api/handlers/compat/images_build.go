@@ -22,12 +22,12 @@ import (
 	"github.com/containers/podman/v4/pkg/api/handlers/utils"
 	api "github.com/containers/podman/v4/pkg/api/types"
 	"github.com/containers/podman/v4/pkg/auth"
+	"github.com/containers/podman/v4/pkg/bindings/images"
 	"github.com/containers/podman/v4/pkg/channel"
 	"github.com/containers/podman/v4/pkg/rootless"
 	"github.com/containers/podman/v4/pkg/util"
 	"github.com/containers/storage/pkg/archive"
 	"github.com/docker/docker/pkg/jsonmessage"
-	"github.com/gorilla/schema"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
 )
@@ -109,6 +109,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		Jobs                    int      `schema:"jobs"`
 		LabelOpts               string   `schema:"labelopts"`
 		Labels                  string   `schema:"labels"`
+		LayerLabels             []string `schema:"layerLabel"`
 		Layers                  bool     `schema:"layers"`
 		LogRusage               bool     `schema:"rusage"`
 		Manifest                string   `schema:"manifest"`
@@ -140,6 +141,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		Timestamp               int64    `schema:"timestamp"`
 		Ulimits                 string   `schema:"ulimits"`
 		UnsetEnvs               []string `schema:"unsetenv"`
+		UnsetLabels             []string `schema:"unsetlabel"`
 		Volumes                 []string `schema:"volume"`
 	}{
 		Dockerfile:       "Dockerfile",
@@ -151,7 +153,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		SkipUnusedStages: true,
 	}
 
-	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
+	decoder := utils.GetDecoder(r)
 	if err := decoder.Decode(&query, r.URL.Query()); err != nil {
 		utils.Error(w, http.StatusBadRequest, err)
 		return
@@ -221,9 +223,17 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 			var m = []string{}
 			if err := json.Unmarshal([]byte(query.Dockerfile), &m); err != nil {
 				// it's not json, assume just a string
-				m = []string{filepath.Join(contextDirectory, query.Dockerfile)}
+				m = []string{query.Dockerfile}
 			}
-			containerFiles = m
+
+			for _, containerfile := range m {
+				// Add path to containerfile iff it is not URL
+				if !(strings.HasPrefix(containerfile, "http://") || strings.HasPrefix(containerfile, "https://")) {
+					containerfile = filepath.Join(contextDirectory,
+						filepath.Clean(filepath.FromSlash(containerfile)))
+				}
+				containerFiles = append(containerFiles, containerfile)
+			}
 			dockerFileSet = true
 		}
 	}
@@ -685,6 +695,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		Isolation:                      isolation,
 		Jobs:                           &jobs,
 		Labels:                         labels,
+		LayerLabels:                    query.LayerLabels,
 		Layers:                         query.Layers,
 		LogRusage:                      query.LogRusage,
 		Manifest:                       query.Manifest,
@@ -708,6 +719,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		SystemContext:                  systemContext,
 		Target:                         query.Target,
 		UnsetEnvs:                      query.UnsetEnvs,
+		UnsetLabels:                    query.UnsetLabels,
 	}
 
 	for _, platformSpec := range query.Platform {
@@ -770,14 +782,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	var stepErrors []string
 
 	for {
-		type BuildResponse struct {
-			Stream string                 `json:"stream,omitempty"`
-			Error  *jsonmessage.JSONError `json:"errorDetail,omitempty"`
-			// NOTE: `error` is being deprecated check https://github.com/moby/moby/blob/master/pkg/jsonmessage/jsonmessage.go#L148
-			ErrorMessage string          `json:"error,omitempty"` // deprecate this slowly
-			Aux          json.RawMessage `json:"aux,omitempty"`
-		}
-		m := BuildResponse{}
+		m := images.BuildResponse{}
 
 		select {
 		case e := <-stdout.Chan():
@@ -807,7 +812,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 			// output all step errors irrespective of quiet
 			// flag.
 			for _, stepError := range stepErrors {
-				t := BuildResponse{}
+				t := images.BuildResponse{}
 				t.Stream = stepError
 				if err := enc.Encode(t); err != nil {
 					stderr.Write([]byte(err.Error()))
@@ -816,7 +821,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 			}
 			m.ErrorMessage = string(e)
 			m.Error = &jsonmessage.JSONError{
-				Message: m.ErrorMessage,
+				Message: string(e),
 			}
 			if err := enc.Encode(m); err != nil {
 				logrus.Warnf("Failed to json encode error %v", err)

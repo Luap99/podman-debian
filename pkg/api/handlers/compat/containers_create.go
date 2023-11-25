@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/containers/buildah/pkg/parse"
+	"github.com/containers/common/libimage"
 	"github.com/containers/common/libnetwork/types"
 	"github.com/containers/common/pkg/cgroups"
 	"github.com/containers/common/pkg/config"
@@ -26,14 +28,14 @@ import (
 	"github.com/containers/podman/v4/pkg/specgenutil"
 	"github.com/containers/storage"
 	"github.com/docker/docker/api/types/mount"
-	"github.com/gorilla/schema"
 )
 
 func CreateContainer(w http.ResponseWriter, r *http.Request) {
 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
-	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
+	decoder := utils.GetDecoder(r)
 	query := struct {
-		Name string `schema:"name"`
+		Name     string `schema:"name"`
+		Platform string `schema:"platform"`
 	}{
 		// override any golang type defaults
 	}
@@ -69,7 +71,16 @@ func CreateContainer(w http.ResponseWriter, r *http.Request) {
 	}
 	body.Config.Image = imageName
 
-	newImage, resolvedName, err := runtime.LibimageRuntime().LookupImage(body.Config.Image, nil)
+	lookupImageOptions := libimage.LookupImageOptions{}
+	if query.Platform != "" {
+		var err error
+		lookupImageOptions.OS, lookupImageOptions.Architecture, lookupImageOptions.Variant, err = parse.Platform(query.Platform)
+		if err != nil {
+			utils.Error(w, http.StatusBadRequest, fmt.Errorf("parsing platform: %w", err))
+			return
+		}
+	}
+	newImage, resolvedName, err := runtime.LibimageRuntime().LookupImage(body.Config.Image, &lookupImageOptions)
 	if err != nil {
 		if errors.Is(err, storage.ErrImageUnknown) {
 			utils.Error(w, http.StatusNotFound, fmt.Errorf("no such image: %w", err))
@@ -402,7 +413,7 @@ func cliOpts(cc handlers.CreateContainerConfig, rtc *config.Config) (*entities.C
 		Expose:            expose,
 		GroupAdd:          cc.HostConfig.GroupAdd,
 		Hostname:          cc.Config.Hostname,
-		ImageVolume:       "bind",
+		ImageVolume:       define.TypeBind,
 		Init:              init,
 		Interactive:       cc.Config.OpenStdin,
 		IPC:               string(cc.HostConfig.IpcMode),
@@ -424,6 +435,7 @@ func cliOpts(cc handlers.CreateContainerConfig, rtc *config.Config) (*entities.C
 		Rm:                cc.HostConfig.AutoRemove,
 		SecurityOpt:       cc.HostConfig.SecurityOpt,
 		StopSignal:        cc.Config.StopSignal,
+		StopTimeout:       rtc.Engine.StopTimeout, // podman default
 		StorageOpts:       stringMaptoArray(cc.HostConfig.StorageOpt),
 		Sysctl:            stringMaptoArray(cc.HostConfig.Sysctls),
 		Systemd:           "true", // podman default

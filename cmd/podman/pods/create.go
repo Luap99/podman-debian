@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -63,6 +62,10 @@ func init() {
 	flags := createCommand.Flags()
 	flags.SetInterspersed(false)
 	common.DefineCreateDefaults(&infraOptions)
+	// these settings are not applicable to pod create since they are per-container
+	// and they will end up being duplicated for each container in the pod.
+	infraOptions.Volume = nil
+	infraOptions.Mount = nil
 	common.DefineCreateFlags(createCommand, &infraOptions, entities.InfraMode)
 	common.DefineNetFlags(createCommand)
 
@@ -155,6 +158,15 @@ func create(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("cannot set share(%s) namespaces without an infra container", cmd.Flag("share").Value)
 		}
 		createOptions.Share = nil
+
+		infraOptions, err = containers.CreateInit(cmd, infraOptions, true)
+		if err != nil {
+			return err
+		}
+		err = common.ContainerToPodOptions(&infraOptions, &createOptions)
+		if err != nil {
+			return err
+		}
 	} else {
 		// reassign certain options for lbpod api, these need to be populated in spec
 		flags := cmd.Flags()
@@ -207,16 +219,13 @@ func create(cmd *cobra.Command, args []string) error {
 	}
 
 	numCPU := sysinfo.NumCPU()
-	if numCPU == 0 {
-		numCPU = runtime.NumCPU()
-	}
 	if createOptions.Cpus > float64(numCPU) {
 		createOptions.Cpus = float64(numCPU)
 	}
 	copy := infraOptions.CPUSetCPUs
 	cpuSet := infraOptions.CPUS
 	if cpuSet == 0 {
-		cpuSet = float64(sysinfo.NumCPU())
+		cpuSet = float64(numCPU)
 	}
 	ret, err := parsers.ParseUintList(copy)
 	copy = ""
@@ -263,6 +272,7 @@ func create(cmd *cobra.Command, args []string) error {
 		podSpec.InfraContainerSpec = specgen.NewSpecGenerator(imageName, false)
 		podSpec.InfraContainerSpec.RawImageName = rawImageName
 		podSpec.InfraContainerSpec.NetworkOptions = podSpec.NetworkOptions
+		podSpec.InfraContainerSpec.RestartPolicy = podSpec.RestartPolicy
 		err = specgenutil.FillOutSpecGen(podSpec.InfraContainerSpec, &infraOptions, []string{})
 		if err != nil {
 			return err
@@ -283,6 +293,21 @@ func create(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		podSpec.Name = podName
+	} else {
+		ctrSpec := specgen.NewSpecGenerator("", false)
+		err = specgenutil.FillOutSpecGen(ctrSpec, &infraOptions, []string{})
+		if err != nil {
+			return err
+		}
+		// Marshall and Unmarshal the spec in order to map similar entities
+		wrapped, err := json.Marshal(ctrSpec)
+		if err != nil {
+			return err
+		}
+		err = json.Unmarshal(wrapped, podSpec)
+		if err != nil {
+			return err
+		}
 	}
 	PodSpec := entities.PodSpec{PodSpecGen: *podSpec}
 	response, err := registry.ContainerEngine().PodCreate(context.Background(), PodSpec)

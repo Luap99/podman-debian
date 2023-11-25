@@ -1,5 +1,6 @@
-//go:build linux && !remote
-// +build linux,!remote
+//go:build (linux || freebsd) && !remote
+// +build linux freebsd
+// +build !remote
 
 package system
 
@@ -17,7 +18,6 @@ import (
 	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/containers/podman/v4/pkg/domain/infra"
 	"github.com/containers/podman/v4/pkg/rootless"
-	"github.com/containers/podman/v4/pkg/servicereaper"
 	"github.com/containers/podman/v4/utils"
 	"github.com/coreos/go-systemd/v22/activation"
 	"github.com/sirupsen/logrus"
@@ -81,6 +81,12 @@ func restService(flags *pflag.FlagSet, cfg *entities.PodmanConfig, opts entities
 				}
 			}
 		case "tcp":
+			// We want to check if the user is requesting a TCP address.
+			// If so, warn that this is insecure.
+			// Ignore errors here, the actual backend code will handle them
+			// better than we can here.
+			logrus.Warnf("Using the Podman API service with TCP sockets is not recommended, please see `podman system service` manpage for details")
+
 			host := uri.Host
 			if host == "" {
 				// For backward compatibility, support "tcp:<host>:<port>" and "tcp://<host>:<port>"
@@ -91,9 +97,21 @@ func restService(flags *pflag.FlagSet, cfg *entities.PodmanConfig, opts entities
 				return fmt.Errorf("unable to create socket %v: %w", host, err)
 			}
 		default:
-			return fmt.Errorf("API Service endpoint scheme %q is not supported. Try tcp://%s or unix:/%s", uri.Scheme, opts.URI, opts.URI)
+			return fmt.Errorf("API Service endpoint scheme %q is not supported. Try tcp://%s or unix://%s", uri.Scheme, opts.URI, opts.URI)
 		}
 		libpodRuntime.SetRemoteURI(uri.String())
+	}
+
+	// bugzilla.redhat.com/show_bug.cgi?id=2180483:
+	//
+	// Disable leaking the LISTEN_* into containers which
+	// are observed to be passed by systemd even without
+	// being socket activated as described in
+	// https://access.redhat.com/solutions/6512011.
+	for _, val := range []string{"LISTEN_FDS", "LISTEN_PID", "LISTEN_FDNAMES"} {
+		if err := os.Unsetenv(val); err != nil {
+			return fmt.Errorf("unsetting %s: %v", val, err)
+		}
 	}
 
 	// Set stdin to /dev/null, so shortnames will not prompt
@@ -119,7 +137,7 @@ func restService(flags *pflag.FlagSet, cfg *entities.PodmanConfig, opts entities
 		logrus.Debugf("Could not move to subcgroup: %v", err)
 	}
 
-	servicereaper.Start()
+	maybeStartServiceReaper()
 	infra.StartWatcher(libpodRuntime)
 	server, err := api.NewServerWithSettings(libpodRuntime, listener, opts)
 	if err != nil {

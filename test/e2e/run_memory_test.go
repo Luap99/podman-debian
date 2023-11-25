@@ -2,37 +2,16 @@ package integration
 
 import (
 	"fmt"
-	"os"
 
 	. "github.com/containers/podman/v4/test/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	. "github.com/onsi/gomega/gexec"
 )
 
 var _ = Describe("Podman run memory", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
 
 	BeforeEach(func() {
 		SkipIfRootlessCgroupsV1("Setting Memory not supported on cgroupv1 for rootless users")
-
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-
 	})
 
 	It("podman run memory test", func() {
@@ -44,15 +23,11 @@ var _ = Describe("Podman run memory", func() {
 			session = podmanTest.Podman([]string{"run", "--memory=40m", ALPINE, "cat", "/sys/fs/cgroup/memory/memory.limit_in_bytes"})
 		}
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 		Expect(session.OutputToString()).To(Equal("41943040"))
 	})
 
 	It("podman run memory-reservation test", func() {
-		if podmanTest.Host.Distribution == "ubuntu" {
-			Skip("Unable to perform test on Ubuntu distributions due to memory management")
-		}
-
 		var session *PodmanSessionIntegration
 
 		if CGROUPSV2 {
@@ -62,7 +37,7 @@ var _ = Describe("Podman run memory", func() {
 		}
 
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 		Expect(session.OutputToString()).To(Equal("41943040"))
 	})
 
@@ -80,7 +55,7 @@ var _ = Describe("Podman run memory", func() {
 			expect = "31457280"
 		}
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 		Expect(session.OutputToString()).To(Equal(expect))
 	})
 
@@ -91,7 +66,7 @@ var _ = Describe("Podman run memory", func() {
 			SkipIfCgroupV2("memory-swappiness not supported on cgroupV2")
 			session := podmanTest.Podman([]string{"run", fmt.Sprintf("--memory-swappiness=%s", limit), ALPINE, "cat", "/sys/fs/cgroup/memory/memory.swappiness"})
 			session.WaitWithDefaultTimeout()
-			Expect(session).Should(Exit(0))
+			Expect(session).Should(ExitCleanly())
 			Expect(session.OutputToString()).To(Equal(limit))
 		})
 	}

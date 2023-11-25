@@ -17,10 +17,10 @@ var (
 		Use:               "start [options] [MACHINE]",
 		Short:             "Start an existing machine",
 		Long:              "Start a managed virtual machine ",
-		PersistentPreRunE: rootlessOnly,
+		PersistentPreRunE: machinePreRunE,
 		RunE:              start,
 		Args:              cobra.MaximumNArgs(1),
-		Example:           `podman machine start myvm`,
+		Example:           `podman machine start podman-machine-default`,
 		ValidArgsFunction: autocompleteMachine,
 	}
 	startOpts = machine.StartOptions{}
@@ -53,7 +53,6 @@ func start(_ *cobra.Command, args []string) error {
 		vmName = args[0]
 	}
 
-	provider := GetSystemDefaultProvider()
 	vm, err = provider.LoadVMByName(vmName)
 	if err != nil {
 		return err

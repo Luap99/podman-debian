@@ -11,19 +11,21 @@ import (
 	"strings"
 
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/ssh"
 	"github.com/containers/podman/v4/cmd/podman/common"
 	"github.com/containers/podman/v4/cmd/podman/registry"
 	"github.com/containers/podman/v4/cmd/podman/validate"
 	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/bindings"
 	"github.com/containers/podman/v4/pkg/checkpoint/crutils"
 	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/containers/podman/v4/pkg/parallel"
 	"github.com/containers/podman/v4/version"
+	"github.com/containers/storage"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"sigs.k8s.io/yaml"
 )
 
 // HelpTemplate is the help template for podman commands
@@ -76,19 +78,25 @@ var (
 	dockerConfig    = ""
 	debug           bool
 
-	useSyslog      bool
 	requireCleanup = true
-	noOut          = false
+
+	// Defaults for capturing/redirecting the command output since (the) cobra is
+	// global-hungry and doesn't allow you to attach anything that allows us to
+	// transform the noStdout BoolVar to a string that we can assign to useStdout.
+	noStdout  = false
+	useStdout = ""
 )
 
 func init() {
-	// Hooks are called before PersistentPreRunE()
+	// Hooks are called before PersistentPreRunE(). These hooks affect global
+	// state and are executed after processing the command-line, but before
+	// actually running the command.
 	cobra.OnInitialize(
+		stdOutHook, // Caution, this hook redirects stdout and output from any following hooks may be affected.
 		loggingHook,
 		syslogHook,
 		earlyInitHook,
 		configHook,
-		noOutHook,
 	)
 
 	rootFlags(rootCmd, registry.PodmanConfig())
@@ -109,7 +117,7 @@ func Execute() {
 			registry.SetExitCode(define.ExecErrorCodeGeneric)
 		}
 		if registry.IsRemote() {
-			if strings.Contains(err.Error(), "unable to connect to Podman") {
+			if errors.As(err, &bindings.ConnectError{}) {
 				fmt.Fprintln(os.Stderr, "Cannot connect to Podman. Please verify your connection to the Linux system using `podman system connection list`, or try `podman machine init` and `podman machine start` to manage a new Linux VM")
 			}
 		}
@@ -134,6 +142,81 @@ func Execute() {
 	os.Exit(registry.GetExitCode())
 }
 
+// readRemoteCliFlags reads cli flags related to operating podman remotely
+func readRemoteCliFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig) (err error) {
+	conf := podmanConfig.ContainersConfDefaultsRO
+	contextConn, host := cmd.Root().LocalFlags().Lookup("context"), cmd.Root().LocalFlags().Lookup("host")
+	conn, url := cmd.Root().LocalFlags().Lookup("connection"), cmd.Root().LocalFlags().Lookup("url")
+
+	switch {
+	case conn != nil && conn.Changed:
+		if contextConn != nil && contextConn.Changed {
+			err = fmt.Errorf("use of --connection and --context at the same time is not allowed")
+			return
+		}
+		if dest, ok := conf.Engine.ServiceDestinations[conn.Value.String()]; ok {
+			podmanConfig.URI = dest.URI
+			podmanConfig.Identity = dest.Identity
+			podmanConfig.MachineMode = dest.IsMachine
+			return
+		}
+		err = fmt.Errorf("connection %q not found", conn.Value.String())
+		return
+	case url.Changed:
+		podmanConfig.URI = url.Value.String()
+		return
+	case contextConn != nil && contextConn.Changed:
+		service := contextConn.Value.String()
+		if service != "default" {
+			if dest, ok := conf.Engine.ServiceDestinations[contextConn.Value.String()]; ok {
+				podmanConfig.URI = dest.URI
+				podmanConfig.Identity = dest.Identity
+				podmanConfig.MachineMode = dest.IsMachine
+				return
+			}
+			return fmt.Errorf("connection %q not found", service)
+		}
+	case host.Changed:
+		podmanConfig.URI = host.Value.String()
+	}
+	return
+}
+
+// setupRemoteConnection returns information about the active service destination
+// The order of priority is:
+// 1. cli flags (--connection ,--url ,--context ,--host);
+// 2. Env variables (CONTAINER_HOST and CONTAINER_CONNECTION);
+// 3. ActiveService from containers.conf;
+// 4. RemoteURI;
+func setupRemoteConnection(podmanConfig *entities.PodmanConfig) error {
+	conf := podmanConfig.ContainersConfDefaultsRO
+	connEnv, hostEnv, sshkeyEnv := os.Getenv("CONTAINER_CONNECTION"), os.Getenv("CONTAINER_HOST"), os.Getenv("CONTAINER_SSHKEY")
+	dest, destFound := conf.Engine.ServiceDestinations[conf.Engine.ActiveService]
+
+	switch {
+	case connEnv != "":
+		if ConnEnvDest, ok := conf.Engine.ServiceDestinations[connEnv]; ok {
+			podmanConfig.URI = ConnEnvDest.URI
+			podmanConfig.Identity = ConnEnvDest.Identity
+			podmanConfig.MachineMode = ConnEnvDest.IsMachine
+			return nil
+		}
+		return fmt.Errorf("connection %q not found", connEnv)
+	case hostEnv != "":
+		if sshkeyEnv != "" {
+			podmanConfig.Identity = sshkeyEnv
+		}
+		podmanConfig.URI = hostEnv
+	case destFound:
+		podmanConfig.URI = dest.URI
+		podmanConfig.Identity = dest.Identity
+		podmanConfig.MachineMode = dest.IsMachine
+	default:
+		podmanConfig.URI = registry.DefaultAPIAddress()
+	}
+	return nil
+}
+
 func persistentPreRunE(cmd *cobra.Command, args []string) error {
 	logrus.Debugf("Called %s.PersistentPreRunE(%s)", cmd.Name(), strings.Join(os.Args, " "))
 
@@ -146,93 +229,62 @@ func persistentPreRunE(cmd *cobra.Command, args []string) error {
 
 	podmanConfig := registry.PodmanConfig()
 
-	// Currently it is only possible to restore a container with the same runtime
-	// as used for checkpointing. It should be possible to make crun and runc
-	// compatible to restore a container with another runtime then checkpointed.
-	// Currently that does not work.
-	// To make it easier for users we will look into the checkpoint archive and
-	// set the runtime to the one used during checkpointing.
-	if !registry.IsRemote() && cmd.Name() == "restore" {
-		if cmd.Flag("import").Changed {
-			runtime, err := crutils.CRGetRuntimeFromArchive(cmd.Flag("import").Value.String())
-			if err != nil {
-				return fmt.Errorf(
-					"failed extracting runtime information from %s: %w",
-					cmd.Flag("import").Value.String(), err,
-				)
-			}
+	if !registry.IsRemote() {
+		if cmd.Flag("hooks-dir").Changed {
+			podmanConfig.ContainersConf.Engine.HooksDir.Set(podmanConfig.HooksDir)
+		}
 
-			runtimeFlag := cmd.Root().Flag("runtime")
-			if runtimeFlag == nil {
-				return errors.New("failed to load --runtime flag")
-			}
-
-			if !runtimeFlag.Changed {
-				// If the user did not select a runtime, this takes the one from
-				// the checkpoint archives and tells Podman to use it for the restore.
-				if err := runtimeFlag.Value.Set(*runtime); err != nil {
-					return err
+		// Currently it is only possible to restore a container with the same runtime
+		// as used for checkpointing. It should be possible to make crun and runc
+		// compatible to restore a container with another runtime then checkpointed.
+		// Currently that does not work.
+		// To make it easier for users we will look into the checkpoint archive and
+		// set the runtime to the one used during checkpointing.
+		if cmd.Name() == "restore" {
+			if cmd.Flag("import").Changed {
+				runtime, err := crutils.CRGetRuntimeFromArchive(cmd.Flag("import").Value.String())
+				if err != nil {
+					return fmt.Errorf(
+						"failed extracting runtime information from %s: %w",
+						cmd.Flag("import").Value.String(), err,
+					)
 				}
-				runtimeFlag.Changed = true
-				logrus.Debugf("Checkpoint was created using '%s'. Restore will use the same runtime", *runtime)
-			} else if podmanConfig.RuntimePath != *runtime {
-				// If the user selected a runtime on the command-line this checks if
-				// it is the same then during checkpointing and errors out if not.
-				return fmt.Errorf(
-					"checkpoint archive %s was created with runtime '%s' and cannot be restored with runtime '%s'",
-					cmd.Flag("import").Value.String(),
-					*runtime,
-					podmanConfig.RuntimePath,
-				)
+
+				runtimeFlag := cmd.Root().Flag("runtime")
+				if runtimeFlag == nil {
+					return errors.New("failed to load --runtime flag")
+				}
+
+				if !runtimeFlag.Changed {
+					// If the user did not select a runtime, this takes the one from
+					// the checkpoint archives and tells Podman to use it for the restore.
+					if err := runtimeFlag.Value.Set(*runtime); err != nil {
+						return err
+					}
+					runtimeFlag.Changed = true
+					logrus.Debugf("Checkpoint was created using '%s'. Restore will use the same runtime", *runtime)
+				} else if podmanConfig.RuntimePath != *runtime {
+					// If the user selected a runtime on the command-line this checks if
+					// it is the same then during checkpointing and errors out if not.
+					return fmt.Errorf(
+						"checkpoint archive %s was created with runtime '%s' and cannot be restored with runtime '%s'",
+						cmd.Flag("import").Value.String(),
+						*runtime,
+						podmanConfig.RuntimePath,
+					)
+				}
 			}
 		}
 	}
 
-	setupConnection := func() error {
-		var err error
-		podmanConfig.URI, podmanConfig.Identity, podmanConfig.MachineMode, err = podmanConfig.ContainersConf.ActiveDestination()
-		if err != nil {
-			return fmt.Errorf("failed to resolve active destination: %w", err)
-		}
-
-		if err := cmd.Root().LocalFlags().Set("url", podmanConfig.URI); err != nil {
-			return fmt.Errorf("failed to override --url flag: %w", err)
-		}
-
-		if err := cmd.Root().LocalFlags().Set("identity", podmanConfig.Identity); err != nil {
-			return fmt.Errorf("failed to override --identity flag: %w", err)
-		}
-		return nil
-	}
-
-	// --connection is not as "special" as --remote so we can wait and process it here
-	contextConn := cmd.Root().LocalFlags().Lookup("context")
-	conn := cmd.Root().LocalFlags().Lookup("connection")
-	if conn != nil && conn.Changed {
-		if contextConn != nil && contextConn.Changed {
-			return fmt.Errorf("use of --connection and --context at the same time is not allowed")
-		}
-		// need to give our blank containers.conf all of the service destinations if we are using one.
-		podmanConfig.ContainersConf.Engine.ServiceDestinations = podmanConfig.ContainersConfDefaultsRO.Engine.ServiceDestinations
-		podmanConfig.ContainersConf.Engine.ActiveService = conn.Value.String()
-		if err := setupConnection(); err != nil {
-			return err
-		}
-	}
-	if contextConn != nil && contextConn.Changed {
-		service := contextConn.Value.String()
-		if service != "default" {
-			podmanConfig.ContainersConf.Engine.ActiveService = service
-			if err := setupConnection(); err != nil {
-				return err
-			}
-		}
+	if err := readRemoteCliFlags(cmd, podmanConfig); err != nil {
+		return fmt.Errorf("read cli flags: %w", err)
 	}
 
 	// Special case if command is hidden completion command ("__complete","__completeNoDesc")
 	// Since __completeNoDesc is an alias the cm.Name is always __complete
 	if cmd.Name() == cobra.ShellCompRequestCmd {
-		// Parse the cli arguments after the the completion cmd (always called as second argument)
+		// Parse the cli arguments after the completion cmd (always called as second argument)
 		// This ensures that the --url, --identity and --connection flags are properly set
 		compCmd, _, err := cmd.Root().Traverse(os.Args[2:])
 		if err != nil {
@@ -252,6 +304,15 @@ func persistentPreRunE(cmd *cobra.Command, args []string) error {
 
 	// Prep the engines
 	if _, err := registry.NewImageEngine(cmd, args); err != nil {
+		// Note: this is gross, but it is the hand we are dealt
+		if registry.IsRemote() && errors.As(err, &bindings.ConnectError{}) && cmd.Name() == "info" && cmd.Parent() == cmd.Root() {
+			clientDesc, err := getClientInfo()
+			// we eat the error here. if this fails, they just don't any client info
+			if err == nil {
+				b, _ := yaml.Marshal(clientDesc)
+				fmt.Println(string(b))
+			}
+		}
 		return err
 	}
 	if _, err := registry.NewContainerEngine(cmd, args); err != nil {
@@ -375,33 +436,44 @@ func loggingHook() {
 	}
 }
 
-func noOutHook() {
-	if noOut {
-		null, _ := os.Open(os.DevNull)
-		os.Stdout = null
+// used for capturing podman's formatted output to some file as per the -out and -noout flags.
+func stdOutHook() {
+	// if noStdOut was specified, then assign /dev/null as the standard file for output.
+	if noStdout {
+		useStdout = os.DevNull
+	}
+	// if we were given a filename for output, then open that and use it. we end up leaking
+	// the file since it's intended to be in scope as long as our process is running.
+	if useStdout != "" {
+		if fd, err := os.OpenFile(useStdout, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.ModePerm); err == nil {
+			os.Stdout = fd
+
+			// if we couldn't open the file for write, then just bail with an error.
+		} else {
+			fmt.Fprintf(os.Stderr, "unable to open file for standard output: %s\n", err.Error())
+			os.Exit(1)
+		}
 	}
 }
 
 func rootFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig) {
-	srv, uri, ident, machine := resolveDestination()
-
+	if err := setupRemoteConnection(podmanConfig); err != nil {
+		return
+	}
 	lFlags := cmd.Flags()
-
-	// non configurable option to help ssh dialing
-	podmanConfig.MachineMode = machine
 
 	sshFlagName := "ssh"
 	lFlags.StringVar(&podmanConfig.SSHMode, sshFlagName, string(ssh.GolangMode), "define the ssh mode")
 	_ = cmd.RegisterFlagCompletionFunc(sshFlagName, common.AutocompleteSSH)
 
 	connectionFlagName := "connection"
-	lFlags.StringP(connectionFlagName, "c", srv, "Connection to use for remote Podman service")
+	lFlags.StringP(connectionFlagName, "c", podmanConfig.ContainersConfDefaultsRO.Engine.ActiveService, "Connection to use for remote Podman service")
 	_ = cmd.RegisterFlagCompletionFunc(connectionFlagName, common.AutocompleteSystemConnections)
 
 	urlFlagName := "url"
-	lFlags.StringVar(&podmanConfig.URI, urlFlagName, uri, "URL to access Podman service (CONTAINER_HOST)")
+	lFlags.StringVar(&podmanConfig.URI, urlFlagName, podmanConfig.URI, "URL to access Podman service (CONTAINER_HOST)")
 	_ = cmd.RegisterFlagCompletionFunc(urlFlagName, completion.AutocompleteDefault)
-	lFlags.StringVarP(&podmanConfig.URI, "host", "H", uri, "Used for Docker compatibility")
+	lFlags.StringVarP(&podmanConfig.URI, "host", "H", podmanConfig.URI, "Used for Docker compatibility")
 	_ = lFlags.MarkHidden("host")
 
 	lFlags.StringVar(&dockerConfig, "config", "", "Ignored for Docker compatibility")
@@ -411,10 +483,17 @@ func rootFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig) {
 	_ = lFlags.MarkHidden("context")
 
 	identityFlagName := "identity"
-	lFlags.StringVar(&podmanConfig.Identity, identityFlagName, ident, "path to SSH identity file, (CONTAINER_SSHKEY)")
+	lFlags.StringVar(&podmanConfig.Identity, identityFlagName, podmanConfig.Identity, "path to SSH identity file, (CONTAINER_SSHKEY)")
 	_ = cmd.RegisterFlagCompletionFunc(identityFlagName, completion.AutocompleteDefault)
 
-	lFlags.BoolVar(&noOut, "noout", false, "do not output to stdout")
+	// Flags that control or influence any kind of output.
+	outFlagName := "out"
+	lFlags.StringVar(&useStdout, outFlagName, "", "Send output (stdout) from podman to a file")
+	_ = cmd.RegisterFlagCompletionFunc(outFlagName, completion.AutocompleteDefault)
+
+	lFlags.BoolVar(&noStdout, "noout", false, "do not output to stdout")
+	_ = lFlags.MarkHidden("noout") // Superseded by --out
+
 	lFlags.BoolVarP(&podmanConfig.Remote, "remote", "r", registry.IsRemote(), "Access remote Podman service")
 	pFlags := cmd.PersistentFlags()
 	if registry.IsRemote() {
@@ -423,6 +502,14 @@ func rootFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig) {
 		}
 		podmanConfig.Remote = true
 	} else {
+		// The --module's are actually used and parsed in
+		// `registry.PodmanConfig()`.  But we also need to expose them
+		// as a flag here to a) make sure that rootflags are aware of
+		// this flag and b) to have shell completions.
+		moduleFlagName := "module"
+		lFlags.StringSlice(moduleFlagName, nil, "Load the containers.conf(5) module")
+		_ = cmd.RegisterFlagCompletionFunc(moduleFlagName, common.AutocompleteContainersConfModules)
+
 		// A *hidden* flag to change the database backend.
 		pFlags.StringVar(&podmanConfig.ContainersConf.Engine.DBBackend, "db-backend", podmanConfig.ContainersConfDefaultsRO.Engine.DBBackend, "Database backend to use")
 
@@ -437,6 +524,8 @@ func rootFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig) {
 		pFlags.StringVar(&podmanConfig.ConmonPath, conmonFlagName, "", "Path of the conmon binary")
 		_ = cmd.RegisterFlagCompletionFunc(conmonFlagName, completion.AutocompleteDefault)
 
+		// TODO (5.0): --network-cmd-path is deprecated, remove this option with the next major release
+		// We need to find all the places that use r.config.Engine.NetworkCmdPath and remove it
 		networkCmdPathFlagName := "network-cmd-path"
 		pFlags.StringVar(&podmanConfig.ContainersConf.Engine.NetworkCmdPath, networkCmdPathFlagName, podmanConfig.ContainersConfDefaultsRO.Engine.NetworkCmdPath, "Path to the command for configuring the network")
 		_ = cmd.RegisterFlagCompletionFunc(networkCmdPathFlagName, completion.AutocompleteDefault)
@@ -452,7 +541,7 @@ func rootFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig) {
 		_ = cmd.RegisterFlagCompletionFunc(eventsBackendFlagName, common.AutocompleteEventBackend)
 
 		hooksDirFlagName := "hooks-dir"
-		pFlags.StringSliceVar(&podmanConfig.ContainersConf.Engine.HooksDir, hooksDirFlagName, podmanConfig.ContainersConfDefaultsRO.Engine.HooksDir, "Set the OCI hooks directory path (may be set multiple times)")
+		pFlags.StringSliceVar(&podmanConfig.HooksDir, hooksDirFlagName, podmanConfig.ContainersConfDefaultsRO.Engine.HooksDir.Get(), "Set the OCI hooks directory path (may be set multiple times)")
 		_ = cmd.RegisterFlagCompletionFunc(hooksDirFlagName, completion.AutocompleteDefault)
 
 		pFlags.IntVar(&podmanConfig.MaxWorks, "max-workers", (runtime.NumCPU()*3)+1, "The maximum number of workers for parallel operations")
@@ -468,7 +557,7 @@ func rootFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig) {
 		_ = pFlags.MarkHidden(networkBackendFlagName)
 
 		rootFlagName := "root"
-		pFlags.StringVar(&podmanConfig.ContainersConf.Engine.StaticDir, rootFlagName, podmanConfig.ContainersConfDefaultsRO.Engine.StaticDir, "Path to the root directory in which data, including images, is stored")
+		pFlags.StringVar(&podmanConfig.GraphRoot, rootFlagName, "", "Path to the graph root directory where images, containers, etc. are stored")
 		_ = cmd.RegisterFlagCompletionFunc(rootFlagName, completion.AutocompleteDefault)
 
 		pFlags.StringVar(&podmanConfig.RegistriesConf, "registries-conf", "", "Path to a registries.conf to use for image processing")
@@ -476,6 +565,10 @@ func rootFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig) {
 		runrootFlagName := "runroot"
 		pFlags.StringVar(&podmanConfig.Runroot, runrootFlagName, "", "Path to the 'run directory' where all state information is stored")
 		_ = cmd.RegisterFlagCompletionFunc(runrootFlagName, completion.AutocompleteDefault)
+
+		imageStoreFlagName := "imagestore"
+		pFlags.StringVar(&podmanConfig.ImageStore, imageStoreFlagName, "", "Path to the 'image store', different from 'graph root', use this to split storing the image into a separate 'image store', see 'man containers-storage.conf' for details")
+		_ = cmd.RegisterFlagCompletionFunc(imageStoreFlagName, completion.AutocompleteDefault)
 
 		pFlags.BoolVar(&podmanConfig.TransientStore, "transient-store", false, "Enable transient container storage")
 
@@ -534,37 +627,14 @@ func rootFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig) {
 		pFlags.StringArrayVar(&podmanConfig.RuntimeFlags, runtimeflagFlagName, []string{}, "add global flags for the container runtime")
 		_ = rootCmd.RegisterFlagCompletionFunc(runtimeflagFlagName, completion.AutocompleteNone)
 
-		pFlags.BoolVar(&useSyslog, "syslog", false, "Output logging information to syslog as well as the console (default false)")
+		pFlags.BoolVar(&podmanConfig.Syslog, "syslog", false, "Output logging information to syslog as well as the console (default false)")
 	}
-}
-
-func resolveDestination() (string, string, string, bool) {
-	if uri, found := os.LookupEnv("CONTAINER_HOST"); found {
-		var ident string
-		if v, found := os.LookupEnv("CONTAINER_SSHKEY"); found {
-			ident = v
-		}
-		return "", uri, ident, false
-	}
-
-	// FIXME: Why are we not using the Default() one?
-	//        Why are we ignoring errors?
-	podmanConfig, err := config.ReadCustomConfig()
-	if err != nil {
-		logrus.Warning(fmt.Errorf("unable to read local containers.conf: %w", err))
-		return "", registry.DefaultAPIAddress(), "", false
-	}
-
-	uri, ident, machine, err := podmanConfig.ActiveDestination()
-	if err != nil {
-		return "", registry.DefaultAPIAddress(), "", false
-	}
-	return podmanConfig.Engine.ActiveService, uri, ident, machine
 }
 
 func formatError(err error) string {
 	var message string
-	if errors.Is(err, define.ErrOCIRuntime) {
+	switch {
+	case errors.Is(err, define.ErrOCIRuntime):
 		// OCIRuntimeErrors include the reason for the failure in the
 		// second to last message in the error chain.
 		message = fmt.Sprintf(
@@ -572,7 +642,9 @@ func formatError(err error) string {
 			define.ErrOCIRuntime.Error(),
 			strings.TrimSuffix(err.Error(), ": "+define.ErrOCIRuntime.Error()),
 		)
-	} else {
+	case errors.Is(err, storage.ErrDuplicateName):
+		message = fmt.Sprintf("Error: %s, or use --replace to instruct Podman to do so.", err.Error())
+	default:
 		if logrus.IsLevelEnabled(logrus.TraceLevel) {
 			message = fmt.Sprintf("Error: %+v", err)
 		} else {

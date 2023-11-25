@@ -4,10 +4,13 @@
 package system
 
 import (
-	cmdMach "github.com/containers/podman/v4/cmd/podman/machine"
+	p "github.com/containers/podman/v4/pkg/machine/provider"
 )
 
 func resetMachine() error {
-	provider := cmdMach.GetSystemDefaultProvider()
+	provider, err := p.Get()
+	if err != nil {
+		return err
+	}
 	return provider.RemoveAndCleanMachines()
 }

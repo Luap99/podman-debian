@@ -11,12 +11,12 @@ import (
 	api "github.com/containers/podman/v4/pkg/api/types"
 	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/containers/podman/v4/pkg/domain/infra/abi"
-	"github.com/gorilla/schema"
+	"github.com/containers/podman/v4/pkg/util"
 )
 
 func StopContainer(w http.ResponseWriter, r *http.Request) {
 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
-	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
+	decoder := utils.GetDecoder(r)
 	// Now use the ABI implementation to prevent us from having duplicate
 	// code.
 	containerEngine := abi.ContainerEngine{Libpod: runtime}
@@ -24,7 +24,7 @@ func StopContainer(w http.ResponseWriter, r *http.Request) {
 	// /{version}/containers/(name)/stop
 	query := struct {
 		Ignore        bool `schema:"ignore"`
-		DockerTimeout uint `schema:"t"`
+		DockerTimeout int  `schema:"t"`
 		LibpodTimeout uint `schema:"timeout"`
 	}{
 		// override any golang type defaults
@@ -43,7 +43,9 @@ func StopContainer(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		if _, found := r.URL.Query()["t"]; found {
-			options.Timeout = &query.DockerTimeout
+			// -1 is allowed in Docker API, meaning wait infinite long, translate -1 to math.MaxInt value seconds to wait.
+			timeout := util.ConvertTimeout(query.DockerTimeout)
+			options.Timeout = &timeout
 		}
 	}
 	con, err := runtime.LookupContainer(name)

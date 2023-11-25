@@ -66,7 +66,7 @@ func rmFlags(cmd *cobra.Command) {
 	flags.BoolVarP(&rmOptions.Force, "force", "f", false, "Force removal of a running or unusable container")
 	flags.BoolVar(&rmOptions.Depend, "depend", false, "Remove container and all containers that depend on the selected container")
 	timeFlagName := "time"
-	flags.UintVarP(&stopTimeout, timeFlagName, "t", containerConfig.Engine.StopTimeout, "Seconds to wait for stop before killing the container")
+	flags.IntVarP(&stopTimeout, timeFlagName, "t", int(containerConfig.Engine.StopTimeout), "Seconds to wait for stop before killing the container")
 	_ = cmd.RegisterFlagCompletionFunc(timeFlagName, completion.AutocompleteNone)
 	flags.BoolVarP(&rmOptions.Volumes, "volumes", "v", false, "Remove anonymous volumes associated with the container")
 
@@ -75,7 +75,7 @@ func rmFlags(cmd *cobra.Command) {
 	_ = cmd.RegisterFlagCompletionFunc(cidfileFlagName, completion.AutocompleteDefault)
 
 	filterFlagName := "filter"
-	flags.StringSliceVar(&filters, filterFlagName, []string{}, "Filter output based on conditions given")
+	flags.StringArrayVar(&filters, filterFlagName, []string{}, "Filter output based on conditions given")
 	_ = cmd.RegisterFlagCompletionFunc(filterFlagName, common.AutocompletePsFilters)
 
 	if !registry.IsRemote() {
@@ -105,7 +105,8 @@ func rm(cmd *cobra.Command, args []string) error {
 		if !rmOptions.Force {
 			return errors.New("--force option must be specified to use the --time option")
 		}
-		rmOptions.Timeout = &stopTimeout
+		timeout := uint(stopTimeout)
+		rmOptions.Timeout = &timeout
 	}
 	for _, cidFile := range rmCidFiles {
 		content, err := os.ReadFile(cidFile)
@@ -132,14 +133,14 @@ func rm(cmd *cobra.Command, args []string) error {
 		rmOptions.Depend = true
 	}
 
-	return removeContainers(utils.RemoveSlash(args), rmOptions, true)
+	return removeContainers(utils.RemoveSlash(args), rmOptions, true, false)
 }
 
 // removeContainers will remove the specified containers (names or IDs).
 // Allows for sharing removal logic across commands. If setExit is set,
 // removeContainers will set the exit code according to the `podman-rm` man
 // page.
-func removeContainers(namesOrIDs []string, rmOptions entities.RmOptions, setExit bool) error {
+func removeContainers(namesOrIDs []string, rmOptions entities.RmOptions, setExit bool, quiet bool) error {
 	var errs utils.OutputErrors
 	responses, err := registry.ContainerEngine().ContainerRm(context.Background(), namesOrIDs, rmOptions)
 	if err != nil {
@@ -165,9 +166,13 @@ func removeContainers(namesOrIDs []string, rmOptions entities.RmOptions, setExit
 			}
 			errs = append(errs, r.Err)
 		case r.RawInput != "":
-			fmt.Println(r.RawInput)
+			if !quiet {
+				fmt.Println(r.RawInput)
+			}
 		default:
-			fmt.Println(r.Id)
+			if !quiet {
+				fmt.Println(r.Id)
+			}
 		}
 	}
 	return errs.PrintErrors()

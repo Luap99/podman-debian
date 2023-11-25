@@ -13,7 +13,7 @@ import (
 	"github.com/containers/podman/v4/pkg/errorhandling"
 	"github.com/containers/podman/v4/pkg/specgen"
 	"github.com/containers/podman/v4/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
 )
@@ -49,7 +49,7 @@ var _ = Describe("Podman pods", func() {
 		code, _ := bindings.CheckResponseCode(err)
 		Expect(code).To(BeNumerically("==", http.StatusNotFound))
 
-		// Inspect an valid pod name
+		// Inspect a valid pod name
 		response, err := pods.Inspect(bt.conn, newpod, nil)
 		Expect(err).ToNot(HaveOccurred())
 		Expect(response.Name).To(Equal(newpod))
@@ -76,7 +76,7 @@ var _ = Describe("Podman pods", func() {
 		Expect(podSummary[0].Containers).To(HaveLen(2))
 
 		// Add multiple pods and verify them by name and size.
-		var newpod2 string = "newpod2"
+		var newpod2 = "newpod2"
 		bt.Podcreate(&newpod2)
 		podSummary, err = pods.List(bt.conn, nil)
 		Expect(err).ToNot(HaveOccurred(), "Error from pods.List")
@@ -218,7 +218,7 @@ var _ = Describe("Podman pods", func() {
 		Expect(err).ToNot(HaveOccurred())
 
 		portPublish := fmt.Sprintf("%d:%d", randomport, randomport)
-		var podwithport string = "newpodwithport"
+		var podwithport = "newpodwithport"
 		bt.PodcreateAndExpose(&podwithport, &portPublish)
 
 		// Start pod and expose port 12345
@@ -226,7 +226,7 @@ var _ = Describe("Podman pods", func() {
 		Expect(err).ToNot(HaveOccurred())
 
 		// Start another pod and expose same port 12345
-		var podwithport2 string = "newpodwithport2"
+		var podwithport2 = "newpodwithport2"
 		bt.PodcreateAndExpose(&podwithport2, &portPublish)
 
 		_, err = pods.Start(bt.conn, podwithport2, nil)
@@ -298,7 +298,7 @@ var _ = Describe("Podman pods", func() {
 	// Test to validate all the pods in the stopped/exited state are pruned successfully.
 	It("prune pod", func() {
 		// Add a new pod
-		var newpod2 string = "newpod2"
+		var newpod2 = "newpod2"
 		bt.Podcreate(&newpod2)
 		// No pods pruned since no pod in exited state
 		pruneResponse, err := pods.Prune(bt.conn, nil)
@@ -376,7 +376,7 @@ var _ = Describe("Podman pods", func() {
 
 	// Test validates the pod top bindings
 	It("pod top", func() {
-		var name string = "podA"
+		var name = "podA"
 
 		bt.Podcreate(&name)
 		_, err := pods.Start(bt.conn, name, nil)

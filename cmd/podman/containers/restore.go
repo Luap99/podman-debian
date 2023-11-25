@@ -23,7 +23,7 @@ var (
 `
 	restoreCommand = &cobra.Command{
 		Use:   "restore [options] CONTAINER|IMAGE [CONTAINER|IMAGE...]",
-		Short: "Restores one or more containers from a checkpoint",
+		Short: "Restore one or more containers from a checkpoint",
 		Long:  restoreDescription,
 		RunE:  restore,
 		Args: func(cmd *cobra.Command, args []string) error {
@@ -123,7 +123,7 @@ func restore(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	notImport := (!restoreOptions.CheckpointImage && restoreOptions.Import == "")
+	notImport := !restoreOptions.CheckpointImage && restoreOptions.Import == ""
 
 	if notImport && restoreOptions.ImportPrevious != "" {
 		return fmt.Errorf("--import-previous can only be used with image or --import")

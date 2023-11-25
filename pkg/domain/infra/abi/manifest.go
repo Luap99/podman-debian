@@ -106,6 +106,10 @@ func (ir *ImageEngine) ManifestInspect(ctx context.Context, name string, opts en
 func (ir *ImageEngine) remoteManifestInspect(ctx context.Context, name string, opts entities.ManifestInspectOptions) ([]byte, error) {
 	sys := ir.Libpod.SystemContext()
 
+	if opts.Authfile != "" {
+		sys.AuthFilePath = opts.Authfile
+	}
+
 	sys.DockerInsecureSkipTLSVerify = opts.SkipTLSVerify
 	if opts.SkipTLSVerify == types.OptionalBoolTrue {
 		sys.OCIInsecureSkipTLSVerify = true
@@ -340,6 +344,9 @@ func (ir *ImageEngine) ManifestPush(ctx context.Context, name, destination strin
 	pushOptions.SignSigstorePrivateKeyPassphrase = opts.SignSigstorePrivateKeyPassphrase
 	pushOptions.InsecureSkipTLSVerify = opts.SkipTLSVerify
 	pushOptions.Writer = opts.Writer
+	pushOptions.CompressionLevel = opts.CompressionLevel
+	pushOptions.AddCompression = opts.AddCompression
+	pushOptions.ForceCompressionFormat = opts.ForceCompressionFormat
 
 	compressionFormat := opts.CompressionFormat
 	if compressionFormat == "" {
@@ -355,6 +362,13 @@ func (ir *ImageEngine) ManifestPush(ctx context.Context, name, destination strin
 			return "", err
 		}
 		pushOptions.CompressionFormat = &algo
+	}
+	if pushOptions.CompressionLevel == nil {
+		config, err := ir.Libpod.GetConfigNoCopy()
+		if err != nil {
+			return "", err
+		}
+		pushOptions.CompressionLevel = config.Engine.CompressionLevel
 	}
 
 	if opts.All {
@@ -377,4 +391,25 @@ func (ir *ImageEngine) ManifestPush(ctx context.Context, name, destination strin
 	}
 
 	return manDigest.String(), err
+}
+
+// ManifestListClear clears out all instances from the manifest list
+func (ir *ImageEngine) ManifestListClear(ctx context.Context, name string) (string, error) {
+	manifestList, err := ir.Libpod.LibimageRuntime().LookupManifestList(name)
+	if err != nil {
+		return "", err
+	}
+
+	listContents, err := manifestList.Inspect()
+	if err != nil {
+		return "", err
+	}
+
+	for _, instance := range listContents.Manifests {
+		if err := manifestList.RemoveInstance(instance.Digest); err != nil {
+			return "", err
+		}
+	}
+
+	return manifestList.ID(), nil
 }

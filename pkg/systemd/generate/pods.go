@@ -1,3 +1,6 @@
+//go:build !remote
+// +build !remote
+
 package generate
 
 import (
@@ -170,6 +173,7 @@ func PodUnits(pod *libpod.Pod, options entities.GenerateSystemdOptions) (map[str
 		if ctr.ID() == infraID {
 			continue
 		}
+
 		ctrInfo, err := generateContainerInfo(ctr, options)
 		if err != nil {
 			return nil, err
@@ -383,7 +387,7 @@ func executePodTemplate(info *podInfo, options entities.GenerateSystemdOptions) 
 	}
 
 	if info.GenerateTimestamp {
-		info.TimeStamp = fmt.Sprintf("%v", time.Now().Format(time.UnixDate))
+		info.TimeStamp = time.Now().Format(time.UnixDate)
 	}
 
 	// Sort the slices to assure a deterministic output.

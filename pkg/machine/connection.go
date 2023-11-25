@@ -6,8 +6,10 @@ package machine
 import (
 	"errors"
 	"fmt"
+	"os"
 
 	"github.com/containers/common/pkg/config"
+	"github.com/sirupsen/logrus"
 )
 
 const LocalhostIP = "127.0.0.1"
@@ -56,6 +58,21 @@ func AnyConnectionDefault(name ...string) (bool, error) {
 	return false, nil
 }
 
+func ChangeConnectionURI(name string, uri fmt.Stringer) error {
+	cfg, err := config.ReadCustomConfig()
+	if err != nil {
+		return err
+	}
+	dst, ok := cfg.Engine.ServiceDestinations[name]
+	if !ok {
+		return errors.New("connection not found")
+	}
+	dst.URI = uri.String()
+	cfg.Engine.ServiceDestinations[name] = dst
+
+	return cfg.Write()
+}
+
 func ChangeDefault(name string) error {
 	cfg, err := config.ReadCustomConfig()
 	if err != nil {
@@ -67,15 +84,37 @@ func ChangeDefault(name string) error {
 	return cfg.Write()
 }
 
-func RemoveConnection(name string) error {
+func RemoveConnections(names ...string) error {
 	cfg, err := config.ReadCustomConfig()
 	if err != nil {
 		return err
 	}
-	if _, ok := cfg.Engine.ServiceDestinations[name]; ok {
-		delete(cfg.Engine.ServiceDestinations, name)
-	} else {
-		return fmt.Errorf("unable to find connection named %q", name)
+	for _, name := range names {
+		if _, ok := cfg.Engine.ServiceDestinations[name]; ok {
+			delete(cfg.Engine.ServiceDestinations, name)
+		} else {
+			return fmt.Errorf("unable to find connection named %q", name)
+		}
+
+		if cfg.Engine.ActiveService == name {
+			cfg.Engine.ActiveService = ""
+			for service := range cfg.Engine.ServiceDestinations {
+				cfg.Engine.ActiveService = service
+				break
+			}
+		}
 	}
 	return cfg.Write()
+}
+
+// removeFilesAndConnections removes any files and connections with the given names
+func RemoveFilesAndConnections(files []string, names ...string) {
+	for _, f := range files {
+		if err := os.Remove(f); err != nil && !errors.Is(err, os.ErrNotExist) {
+			logrus.Error(err)
+		}
+	}
+	if err := RemoveConnections(names...); err != nil {
+		logrus.Error(err)
+	}
 }

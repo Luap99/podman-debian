@@ -10,7 +10,7 @@ podman\-secret\-inspect - Display detailed information on one or more secrets
 
 Inspects the specified secret.
 
-By default, this renders all results in a JSON array. If a format is specified, the given template will be executed for each result.
+By default, this renders all results in a JSON array. If a format is specified, the given template is executed for each result.
 Secrets can be queried individually by providing their full name or a unique partial name.
 
 ## OPTIONS
@@ -23,6 +23,7 @@ Format secret output using Go template.
 |--------------------------|-------------------------------------------------------------------|
 | .CreatedAt               | When secret was created (relative timestamp, human-readable)      |
 | .ID                      | ID of secret                                                      |
+| .SecretData              | Secret Data (Displayed only with --showsecret option)		       |
 | .Spec ...                | Details of secret                                                 |
 | .Spec.Driver             | Driver info                                                       |
 | .Spec.Driver.Name        | Driver name (string)                                              |
@@ -39,12 +40,16 @@ Print usage statement.
 
 Print inspect output in human-readable format
 
+#### **--showsecret**
+
+Display secret data
 
 ## EXAMPLES
 
 ```
 $ podman secret inspect mysecret
 $ podman secret inspect --format "{{.Name} {{.Scope}}" mysecret
+$ podman secret inspect --showsecret --format "{{.Name} {{.SecretData}}" mysecret
 ```
 
 ## SEE ALSO

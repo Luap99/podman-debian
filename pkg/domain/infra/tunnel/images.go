@@ -9,17 +9,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containers/common/libimage"
+	bdefine "github.com/containers/buildah/define"
+	"github.com/containers/common/libimage/filter"
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/ssh"
 	"github.com/containers/image/v5/docker/reference"
 	"github.com/containers/image/v5/types"
+	"github.com/containers/podman/v4/libpod/define"
 	"github.com/containers/podman/v4/pkg/bindings/images"
 	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/containers/podman/v4/pkg/domain/entities/reports"
 	"github.com/containers/podman/v4/pkg/domain/utils"
 	"github.com/containers/podman/v4/pkg/errorhandling"
-	utils2 "github.com/containers/podman/v4/utils"
+	"github.com/containers/storage/pkg/archive"
 )
 
 func (ir *ImageEngine) Exists(_ context.Context, nameOrID string) (*entities.BoolReport, error) {
@@ -243,16 +245,20 @@ func (ir *ImageEngine) Import(ctx context.Context, opts entities.ImageImportOpti
 	return images.Import(ir.ClientCtx, f, options)
 }
 
-func (ir *ImageEngine) Push(ctx context.Context, source string, destination string, opts entities.ImagePushOptions) error {
+func (ir *ImageEngine) Push(ctx context.Context, source string, destination string, opts entities.ImagePushOptions) (*entities.ImagePushReport, error) {
 	if opts.Signers != nil {
-		return fmt.Errorf("forwarding Signers is not supported for remote clients")
+		return nil, fmt.Errorf("forwarding Signers is not supported for remote clients")
 	}
 	if opts.OciEncryptConfig != nil {
-		return fmt.Errorf("encryption is not supported for remote clients")
+		return nil, fmt.Errorf("encryption is not supported for remote clients")
 	}
 
 	options := new(images.PushOptions)
-	options.WithAll(opts.All).WithCompress(opts.Compress).WithUsername(opts.Username).WithPassword(opts.Password).WithAuthfile(opts.Authfile).WithFormat(opts.Format).WithRemoveSignatures(opts.RemoveSignatures).WithQuiet(opts.Quiet).WithCompressionFormat(opts.CompressionFormat).WithProgressWriter(opts.Writer)
+	options.WithAll(opts.All).WithCompress(opts.Compress).WithUsername(opts.Username).WithPassword(opts.Password).WithAuthfile(opts.Authfile).WithFormat(opts.Format).WithRemoveSignatures(opts.RemoveSignatures).WithQuiet(opts.Quiet).WithCompressionFormat(opts.CompressionFormat).WithProgressWriter(opts.Writer).WithForceCompressionFormat(opts.ForceCompressionFormat)
+
+	if opts.CompressionLevel != nil {
+		options.WithCompressionLevel(*opts.CompressionLevel)
+	}
 
 	if s := opts.SkipTLSVerify; s != types.OptionalBoolUndefined {
 		if s == types.OptionalBoolTrue {
@@ -261,7 +267,10 @@ func (ir *ImageEngine) Push(ctx context.Context, source string, destination stri
 			options.WithSkipTLSVerify(false)
 		}
 	}
-	return images.Push(ir.ClientCtx, source, destination, options)
+	if err := images.Push(ir.ClientCtx, source, destination, options); err != nil {
+		return nil, err
+	}
+	return &entities.ImagePushReport{ManifestDigest: options.GetManifestDigest()}, nil
 }
 
 func (ir *ImageEngine) Save(ctx context.Context, nameOrID string, tags []string, opts entities.ImageSaveOptions) error {
@@ -326,12 +335,13 @@ func (ir *ImageEngine) Save(ctx context.Context, nameOrID string, tags []string,
 	default:
 		return err
 	}
-	return utils2.UntarToFileSystem(opts.Output, f, nil)
+
+	return archive.Untar(f, opts.Output, nil)
 }
 
 func (ir *ImageEngine) Search(ctx context.Context, term string, opts entities.ImageSearchOptions) ([]entities.ImageSearchReport, error) {
 	mappedFilters := make(map[string][]string)
-	filters, err := libimage.ParseSearchFilter(opts.Filters)
+	filters, err := filter.ParseSearchFilter(opts.Filters)
 	if err != nil {
 		return nil, err
 	}
@@ -368,6 +378,10 @@ func (ir *ImageEngine) Build(_ context.Context, containerFiles []string, opts en
 	report, err := images.Build(ir.ClientCtx, containerFiles, opts)
 	if err != nil {
 		return nil, err
+	}
+	report.SaveFormat = define.OCIArchive
+	if opts.OutputFormat == bdefine.Dockerv2ImageManifest {
+		report.SaveFormat = define.V2s2Archive
 	}
 	return report, nil
 }

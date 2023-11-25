@@ -1,21 +1,15 @@
 package integration
 
 import (
-	"os"
 	"path/filepath"
 
 	. "github.com/containers/podman/v4/test/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	. "github.com/onsi/gomega/gexec"
 )
 
 var _ = Describe("Podman run with volumes", func() {
 	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-
 		containerStorageDir    string
 		dbDir                  string
 		runContainerStorageDir string
@@ -23,29 +17,16 @@ var _ = Describe("Podman run with volumes", func() {
 	)
 
 	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-
 		containerStorageDir = filepath.Join(podmanTest.Root, podmanTest.ImageCacheFS+"-containers")
 		dbDir = filepath.Join(podmanTest.Root, "libpod")
 		runContainerStorageDir = filepath.Join(podmanTest.RunRoot, podmanTest.ImageCacheFS+"-containers")
 		runDBDir = tempdir
 	})
 
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-	})
-
 	It("podman run with no transient-store", func() {
 		session := podmanTest.Podman([]string{"run", ALPINE, "true"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 
 		_ = SystemExec("ls", []string{"-l", containerStorageDir})
 
@@ -67,7 +48,7 @@ var _ = Describe("Podman run with volumes", func() {
 	It("podman run --rm with no transient-store", func() {
 		session := podmanTest.Podman([]string{"run", "--rm", ALPINE, "true"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 
 		// All files should not be in permanent store, not volatile
 		Expect(filepath.Join(containerStorageDir, "containers.json")).Should(Not(BeAnExistingFile()))
@@ -88,7 +69,7 @@ var _ = Describe("Podman run with volumes", func() {
 		SkipIfRemote("Can't change store options remotely")
 		session := podmanTest.Podman([]string{"run", "--transient-store", ALPINE, "true"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 
 		// All files should be in runroot store, volatile
 		Expect(filepath.Join(containerStorageDir, "containers.json")).Should(Not(BeAnExistingFile()))

@@ -20,9 +20,9 @@ var (
 		Use:               "ssh [options] [NAME] [COMMAND [ARG ...]]",
 		Short:             "SSH into an existing machine",
 		Long:              "SSH into a managed virtual machine ",
-		PersistentPreRunE: rootlessOnly,
+		PersistentPreRunE: machinePreRunE,
 		RunE:              ssh,
-		Example: `podman machine ssh myvm
+		Example: `podman machine ssh podman-machine-default
   podman machine ssh myvm echo hello`,
 		ValidArgsFunction: autocompleteMachineSSH,
 	}
@@ -53,7 +53,6 @@ func ssh(cmd *cobra.Command, args []string) error {
 
 	// Set the VM to default
 	vmName := defaultMachineName
-	provider := GetSystemDefaultProvider()
 
 	// If len is greater than 0, it means we may have been
 	// provided the VM name.  If so, we check.  The VM name,
@@ -101,10 +100,7 @@ func remoteConnectionUsername() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dest, _, _, err := cfg.ActiveDestination()
-	if err != nil {
-		return "", err
-	}
+	dest := cfg.Engine.ServiceDestinations[cfg.Engine.ActiveService].URI
 	uri, err := url.Parse(dest)
 	if err != nil {
 		return "", err

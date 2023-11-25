@@ -6,8 +6,8 @@ ifeq ($(ARCH), aarch64)
 else
 	GOARCH:=$(ARCH)
 endif
-GVPROXY_VERSION ?= 0.5.0
-QEMU_VERSION ?= 7.2.0-1
+GVPROXY_VERSION ?= 0.7.1
+QEMU_VERSION ?= 8.0.0-1
 GVPROXY_RELEASE_URL ?= https://github.com/containers/gvisor-tap-vsock/releases/download/v$(GVPROXY_VERSION)/gvproxy-darwin
 QEMU_RELEASE_URL ?= https://github.com/containers/podman-machine-qemu/releases/download/v$(QEMU_VERSION)/podman-machine-qemu-$(ARCH)-$(QEMU_VERSION).tar.xz
 PACKAGE_DIR ?= out/packaging

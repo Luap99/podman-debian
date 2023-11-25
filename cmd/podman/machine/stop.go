@@ -17,10 +17,10 @@ var (
 		Use:               "stop [MACHINE]",
 		Short:             "Stop an existing machine",
 		Long:              "Stop a managed virtual machine ",
-		PersistentPreRunE: rootlessOnly,
+		PersistentPreRunE: machinePreRunE,
 		RunE:              stop,
 		Args:              cobra.MaximumNArgs(1),
-		Example:           `podman machine stop myvm`,
+		Example:           `podman machine stop podman-machine-default`,
 		ValidArgsFunction: autocompleteMachine,
 	}
 )
@@ -38,11 +38,12 @@ func stop(cmd *cobra.Command, args []string) error {
 		err error
 		vm  machine.VM
 	)
+
 	vmName := defaultMachineName
 	if len(args) > 0 && len(args[0]) > 0 {
 		vmName = args[0]
 	}
-	provider := GetSystemDefaultProvider()
+
 	vm, err = provider.LoadVMByName(vmName)
 	if err != nil {
 		return err

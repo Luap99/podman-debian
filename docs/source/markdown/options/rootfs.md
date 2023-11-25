@@ -15,14 +15,16 @@ of the container is assumed to be managed externally.
 storage using the `overlay file system`. The container processes
 can modify content within the mount point which is stored in the
 container storage in a separate directory. In overlay terms, the source
-directory will be the lower, and the container storage directory will be the
+directory is the lower, and the container storage directory is the
 upper. Modifications to the mount point are destroyed when the container
 finishes executing, similar to a tmpfs mount point being unmounted.
 
 Note: On **SELinux** systems, the rootfs needs the correct label, which is by default
 **unconfined_u:object_r:container_file_t:s0**.
 
-    The `idmap` option if specified, creates an idmapped mount to the target user
+  `idmap`
+
+If `idmap` is specified, create an idmapped mount to the target user
 namespace in the container.
 The idmap option supports a custom mapping that can be different than the user
 namespace used by the container.  The mapping can be specified after the idmap

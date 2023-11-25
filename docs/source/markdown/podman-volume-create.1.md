@@ -23,9 +23,9 @@ There are two drivers supported by Podman itself: **local** and **image**.
 The **local** driver uses a directory on disk as the backend by default, but can also use the **mount(8)** command to mount a filesystem as the volume if **--opt** is specified.
 
 The **image** driver uses an image as the backing store of for the volume.
-An overlay filesystem will be created, which allows changes to the volume to be committed as a new layer on top of the image.
+An overlay filesystem is created, which allows changes to the volume to be committed as a new layer on top of the image.
 
-Using a value other than **local** or **image**, Podman will attempt to create the volume using a volume plugin with the given name.
+Using a value other than **local** or **image**, Podman attempts to create the volume using a volume plugin with the given name.
 Such plugins must be defined in the **volume_plugins** section of the **[containers.conf(5)](https://github.com/containers/common/blob/main/docs/containers.conf.5.md)** configuration file.
 
 #### **--help**
@@ -55,7 +55,10 @@ The `o` option sets options for the mount, and is equivalent to the filesystem
 options (also `-o`) passed to **mount(8)** with the following exceptions:
 
   - The `o` option supports `uid` and `gid` options to set the UID and GID of the created volume that are not normally supported by **mount(8)**.
-  - The `o` option supports the `size` option to set the maximum size of the created volume, the `inodes` option to set the maximum number of inodes for the volume and `noquota` to completely disable quota support even for tracking of disk usage. Currently these flags are only supported on "xfs" file system mounted with the `prjquota` flag described in the **xfs_quota(8)** man page.
+  - The `o` option supports the `size` option to set the maximum size of the created volume, the `inodes` option to set the maximum number of inodes for the volume, and `noquota` to completely disable quota support even for tracking of disk usage.
+  The `size` option is supported on the "tmpfs" and "xfs[note]" file systems.
+  The `inodes` option is supported on the "xfs[note]" file systems.
+  Note: xfs filesystems must be mounted with the `prjquota` flag described in the **xfs_quota(8)** man page. Podman will throw an error if they're not.
   - The `o` option supports using volume options other than the UID/GID options with the **local** driver and requires root privileges.
   - The `o` options supports the `timeout` option which allows users to set a driver specific timeout in seconds before volume creation fails. For example, **--opt=o=timeout=10** sets a driver timeout of 10 seconds.
 
@@ -75,7 +78,7 @@ $ podman volume create
 
 $ podman volume create --label foo=bar myvol
 
-# podman volume create --opt device=tmpfs --opt type=tmpfs --opt o=nodev,noexec myvol
+# podman volume create --opt device=tmpfs --opt type=tmpfs --opt o=size=2M,nodev,noexec myvol
 
 # podman volume create --opt device=tmpfs --opt type=tmpfs --opt o=uid=1000,gid=1000 testvol
 
@@ -84,7 +87,7 @@ $ podman volume create --label foo=bar myvol
 
 ## QUOTAS
 
-podman volume create uses `XFS project quota controls` for controlling the size and the number of inodes of builtin volumes. The directory used to store the volumes must be an`XFS` file system and be mounted with the `pquota` option.
+podman volume create uses `XFS project quota controls` for controlling the size and the number of inodes of builtin volumes. The directory used to store the volumes must be an `XFS` file system and be mounted with the `pquota` option.
 
 Example /etc/fstab entry:
 ```
@@ -106,7 +109,7 @@ xfs_quota -x -c 'project -s storage volumes' /<xfs mount point>
 
 In the example above we are configuring the overlay storage driver for newly
 created containers as well as volumes to use project IDs with a **start offset**.
-All containers will be assigned larger project IDs (e.g. >= 100000).
+All containers are assigned larger project IDs (e.g. >= 100000).
 All volume assigned project IDs larger project IDs starting with 200000.
 This prevents xfs_quota management conflicts with containers/storage.
 

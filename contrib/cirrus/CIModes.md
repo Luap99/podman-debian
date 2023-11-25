@@ -49,6 +49,7 @@ of this document, it's not possible to override the behavior of `$CIRRUS_PR`.
 + swagger
 + *alt_build*
 + osx_alt_build
++ freebsd_alt_build
 + docker-py_test
 + *unit_test*
 + apiv2_test
@@ -79,30 +80,24 @@ of this document, it's not possible to override the behavior of `$CIRRUS_PR`.
 + meta
 + success
 
-### Intended `[CI:COPR]` PR Tasks:
-+ *build*
-+ validate
-+ swagger
-+ meta
-+ success
-
 ### Intended `[CI:BUILD]` PR Tasks:
 + *build*
 + validate
 + *alt_build*
 + osx_alt_build
++ freebsd_alt_build
 + test_image_build
 + meta
 + success
 + artifacts
 
-### Intended `[CI:NVAV=update]` or `[CI:NVAV=main]` behavior:
+### Intended `[CI:NEXT]` behavior:
 
-If and only if the PR is in **draft-mode**, either update Fedora CI VMs to the
-latest Netavark/Aardvark-dns RPMs ("update" keyword), or install the most
-recent package builds from their `main` branch ("main" keyword).  These are
-**runtime changes** only, and will not persist or impact other PRs
-in any way.
+If and only if the PR is in **draft-mode**, update Fedora CI VMs at runtime
+to the latest packages available in the podman-next COPR repo.  These packages
+represent primary podman dependencies, and are regularly built from their
+upstream repos.  These are **runtime changes** only, and will not persist
+or impact other PRs in any way.
 
 The intent is to temporarily support testing of updates with the latest podman
 code & tests.  To help prevent accidents, when the PR is not in draft-mode, the
@@ -113,11 +108,12 @@ is removed.
 commit-change before Cirrus-CI will notice the draft-status update (i.e.
 pressing the re-run button **is not** good enough).
 
-### Intended Branch tasks (and Cirrus-cron jobs, except "multiarch"):
+### Intended Branch tasks (and Cirrus-cron jobs):
 + *build*
 + swagger
 + *alt_build*
 + osx_alt_build
++ freebsd_alt_build
 + *local_system_test*
 + *remote_system_test*
 + *rootless_remote_system_test*
@@ -126,16 +122,12 @@ pressing the re-run button **is not** good enough).
 + success
 + artifacts
 
-### Intended for "multiarch" Cirrus-Cron (always a branch):
-+ image_build
-+ meta
-+ success
-
 ### Intended for new Tag tasks:
 + *build*
 + swagger
 + *alt_build*
 + osx_alt_build
++ freebsd_alt_build
 + meta
 + success
 + artifacts

@@ -1,3 +1,6 @@
+//go:build !remote
+// +build !remote
+
 package ps
 
 import (
@@ -145,6 +148,7 @@ func ListContainerBatch(rt *libpod.Runtime, ctr *libpod.Container, opts entities
 		portMappings                            []libnetworkTypes.PortMapping
 		networks                                []string
 		healthStatus                            string
+		restartCount                            uint
 	)
 
 	batchErr := ctr.Batch(func(c *libpod.Container) error {
@@ -193,6 +197,11 @@ func ListContainerBatch(rt *libpod.Runtime, ctr *libpod.Container, opts entities
 			return err
 		}
 
+		restartCount, err = c.RestartCount()
+		if err != nil {
+			return err
+		}
+
 		if !opts.Size && !opts.Namespace {
 			return nil
 		}
@@ -231,10 +240,11 @@ func ListContainerBatch(rt *libpod.Runtime, ctr *libpod.Container, opts entities
 
 	ps := entities.ListContainer{
 		AutoRemove: ctr.AutoRemove(),
+		CIDFile:    conConfig.Spec.Annotations[define.InspectAnnotationCIDFile],
 		Command:    conConfig.Command,
 		Created:    conConfig.CreatedTime,
-		Exited:     exited,
 		ExitCode:   exitCode,
+		Exited:     exited,
 		ExitedAt:   exitedTime.Unix(),
 		ID:         conConfig.ID,
 		Image:      conConfig.RootfsImageName,
@@ -247,6 +257,7 @@ func ListContainerBatch(rt *libpod.Runtime, ctr *libpod.Container, opts entities
 		Pid:        pid,
 		Pod:        conConfig.Pod,
 		Ports:      portMappings,
+		Restarts:   restartCount,
 		Size:       size,
 		StartedAt:  startedTime.Unix(),
 		State:      conState.String(),

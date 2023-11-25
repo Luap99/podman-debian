@@ -76,16 +76,12 @@ function service_cleanup() {
 # These tests can fail in dev. environment because of SELinux.
 # quick fix: chcon -t container_runtime_exec_t ./bin/podman
 @test "podman generate - systemd - basic" {
-    # Flakes with "ActiveState=failed (expected =inactive)"
-    if is_ubuntu; then
-        skip "FIXME: 2022-09-01: requires conmon-2.1.4, ubuntu has 2.1.3"
-    fi
-
     # Warn when a custom restart policy is used without --new (see #15284)
     run_podman create --restart=always $IMAGE
     cid="$output"
-    run_podman generate systemd $cid
-    is "$output" ".*Container $cid has restart policy .*always.* which can lead to issues on shutdown.*" "generate systemd emits warning"
+    run_podman 0+w generate systemd $cid
+    require_warning "Container $cid has restart policy .*always.* which can lead to issues on shutdown" \
+                    "generate systemd emits warning"
     run_podman rm -f $cid
 
     cname=$(random_string)
@@ -448,9 +444,6 @@ $name stderr" "logs work with passthrough"
     is "$output" ".*$service_name,.* (test_pod-b),$IMAGE,false,registry.*" "container-specified auto-update policy gets applied"
 
     # Kill the pod and make sure the service is not running.
-    # The restart policy is set to "never" since there is no
-    # design yet for propagating exit codes up to the service
-    # container.
     run_podman pod kill test_pod
     for i in {0..20}; do
         run systemctl is-active $service_name
@@ -459,8 +452,7 @@ $name stderr" "logs work with passthrough"
         fi
         sleep 0.5
     done
-    # The service is marked as failed as the service container exits non-zero.
-    is "$output" "failed" "systemd service transitioned to 'inactive' state: $service_name"
+    is "$output" "inactive" "systemd service transitioned to 'inactive' state: $service_name"
 
     # Now stop and start the service again.
     systemctl stop $service_name
@@ -477,4 +469,14 @@ $name stderr" "logs work with passthrough"
     rm -f $UNIT_DIR/$unit_name
 }
 
+@test "podman generate - systemd - DEPRECATED" {
+    run_podman generate systemd --help
+    is "$output" ".*[DEPRECATED] command:"
+    is "$output" ".*\[DEPRECATED\] Generate systemd units.*"
+    run_podman create --name test $IMAGE
+    run_podman generate systemd test >/dev/null
+    is "$output" ".*[DEPRECATED] command:"
+    run_podman generate --help
+    is "$output" ".*\[DEPRECATED\] Generate systemd units"
+}
 # vim: filetype=sh

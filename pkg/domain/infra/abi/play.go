@@ -13,10 +13,12 @@ import (
 	"sync"
 
 	buildahDefine "github.com/containers/buildah/define"
+	bparse "github.com/containers/buildah/pkg/parse"
 	"github.com/containers/common/libimage"
 	nettypes "github.com/containers/common/libnetwork/types"
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/secrets"
+	"github.com/containers/image/v5/docker/reference"
 	"github.com/containers/image/v5/types"
 	"github.com/containers/podman/v4/cmd/podman/parse"
 	"github.com/containers/podman/v4/libpod"
@@ -24,6 +26,7 @@ import (
 	"github.com/containers/podman/v4/pkg/domain/entities"
 	v1apps "github.com/containers/podman/v4/pkg/k8s.io/api/apps/v1"
 	v1 "github.com/containers/podman/v4/pkg/k8s.io/api/core/v1"
+	metav1 "github.com/containers/podman/v4/pkg/k8s.io/apimachinery/pkg/apis/meta/v1"
 	"github.com/containers/podman/v4/pkg/specgen"
 	"github.com/containers/podman/v4/pkg/specgen/generate"
 	"github.com/containers/podman/v4/pkg/specgen/generate/kube"
@@ -36,6 +39,7 @@ import (
 	"github.com/opencontainers/selinux/go-selinux"
 	"github.com/sirupsen/logrus"
 	yamlv3 "gopkg.in/yaml.v3"
+	"k8s.io/kubernetes/third_party/forked/golang/expansion"
 	"sigs.k8s.io/yaml"
 )
 
@@ -64,15 +68,20 @@ func (ic *ContainerEngine) createServiceContainer(ctx context.Context, name stri
 		return nil, fmt.Errorf("image for service container: %w", err)
 	}
 
+	rtc, err := ic.Libpod.GetConfigNoCopy()
+	if err != nil {
+		return nil, err
+	}
 	ctrOpts := entities.ContainerCreateOptions{
 		// Inherited from infra containers
-		ImageVolume:      "bind",
+		ImageVolume:      define.TypeBind,
 		IsInfra:          false,
 		MemorySwappiness: -1,
 		ReadOnly:         true,
 		ReadWriteTmpFS:   false,
 		// No need to spin up slirp etc.
-		Net: &entities.NetOptions{Network: specgen.Namespace{NSMode: specgen.NoNetwork}},
+		Net:         &entities.NetOptions{Network: specgen.Namespace{NSMode: specgen.NoNetwork}},
+		StopTimeout: rtc.Engine.StopTimeout,
 	}
 
 	// Create and fill out the runtime spec.
@@ -82,17 +91,29 @@ func (ic *ContainerEngine) createServiceContainer(ctx context.Context, name stri
 	}
 	s.Name = name
 
+	expandForKube(s)
 	runtimeSpec, spec, opts, err := generate.MakeContainer(ctx, ic.Libpod, s, false, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating runtime spec for service container: %w", err)
 	}
-	opts = append(opts, libpod.WithIsService())
+
+	ecp, err := define.ParseKubeExitCodePropagation(options.ExitCodePropagation)
+	if err != nil {
+		return nil, err
+	}
+	opts = append(opts, libpod.WithIsService(ecp))
 
 	// Set the sd-notify mode to "ignore".  Podman is responsible for
 	// sending the notify messages when all containers are ready.
 	// The mode for individual containers or entire pods can be configured
 	// via the `sdNotifyAnnotation` annotation in the K8s YAML.
 	opts = append(opts, libpod.WithSdNotifyMode(define.SdNotifyModeIgnore))
+
+	if options.Replace {
+		if _, err := ic.ContainerRm(ctx, []string{spec.Name}, entities.RmOptions{Force: true, Ignore: true}); err != nil {
+			return nil, err
+		}
+	}
 
 	// Create a new libpod container based on the spec.
 	ctr, err := ic.Libpod.NewContainer(ctx, runtimeSpec, spec, false, opts...)
@@ -224,8 +245,8 @@ func (ic *ContainerEngine) PlayKube(ctx context.Context, body io.Reader, options
 			podTemplateSpec.ObjectMeta = podYAML.ObjectMeta
 			podTemplateSpec.Spec = podYAML.Spec
 			for name, val := range podYAML.Annotations {
-				if len(val) > define.MaxKubeAnnotation {
-					return nil, fmt.Errorf("invalid annotation %q=%q value length exceeds Kubernetetes max %d", name, val, define.MaxKubeAnnotation)
+				if len(val) > define.MaxKubeAnnotation && !options.UseLongAnnotations {
+					return nil, fmt.Errorf("annotation %q=%q value length exceeds Kubernetes max %d", name, val, define.MaxKubeAnnotation)
 				}
 			}
 			for name, val := range options.Annotations {
@@ -236,6 +257,22 @@ func (ic *ContainerEngine) PlayKube(ctx context.Context, body io.Reader, options
 			}
 
 			r, proxies, err := ic.playKubePod(ctx, podTemplateSpec.ObjectMeta.Name, &podTemplateSpec, options, &ipIndex, podYAML.Annotations, configMaps, serviceContainer)
+			if err != nil {
+				return nil, err
+			}
+			notifyProxies = append(notifyProxies, proxies...)
+
+			report.Pods = append(report.Pods, r.Pods...)
+			validKinds++
+			ranContainers = true
+		case "DaemonSet":
+			var daemonSetYAML v1apps.DaemonSet
+
+			if err := yaml.Unmarshal(document, &daemonSetYAML); err != nil {
+				return nil, fmt.Errorf("unable to read YAML as Kube DaemonSet: %w", err)
+			}
+
+			r, proxies, err := ic.playKubeDaemonSet(ctx, &daemonSetYAML, options, &ipIndex, configMaps, serviceContainer)
 			if err != nil {
 				return nil, err
 			}
@@ -348,15 +385,40 @@ func (ic *ContainerEngine) PlayKube(ctx context.Context, body io.Reader, options
 			if err := notifyproxy.SendMessage("", message); err != nil {
 				return nil, err
 			}
-			if _, err := serviceContainer.Wait(ctx); err != nil {
+			exitCode, err := serviceContainer.Wait(ctx)
+			if err != nil {
 				return nil, fmt.Errorf("waiting for service container: %w", err)
 			}
+			report.ExitCode = &exitCode
 		}
 
 		report.ServiceContainerID = serviceContainer.ID()
 	}
 
 	return report, nil
+}
+
+func (ic *ContainerEngine) playKubeDaemonSet(ctx context.Context, daemonSetYAML *v1apps.DaemonSet, options entities.PlayKubeOptions, ipIndex *int, configMaps []v1.ConfigMap, serviceContainer *libpod.Container) (*entities.PlayKubeReport, []*notifyproxy.NotifyProxy, error) {
+	var (
+		daemonSetName string
+		podSpec       v1.PodTemplateSpec
+		report        entities.PlayKubeReport
+	)
+
+	daemonSetName = daemonSetYAML.ObjectMeta.Name
+	if daemonSetName == "" {
+		return nil, nil, errors.New("daemonSet does not have a name")
+	}
+	podSpec = daemonSetYAML.Spec.Template
+
+	podName := fmt.Sprintf("%s-pod", daemonSetName)
+	podReport, proxies, err := ic.playKubePod(ctx, podName, &podSpec, options, ipIndex, daemonSetYAML.Annotations, configMaps, serviceContainer)
+	if err != nil {
+		return nil, nil, fmt.Errorf("encountered while bringing up pod %s: %w", podName, err)
+	}
+	report.Pods = podReport.Pods
+
+	return &report, proxies, nil
 }
 
 func (ic *ContainerEngine) playKubeDeployment(ctx context.Context, deploymentYAML *v1apps.Deployment, options entities.PlayKubeOptions, ipIndex *int, configMaps []v1.ConfigMap, serviceContainer *libpod.Container) (*entities.PlayKubeReport, []*notifyproxy.NotifyProxy, error) {
@@ -418,7 +480,7 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 		Net:        &entities.NetOptions{NoHosts: options.NoHosts},
 		ExitPolicy: string(config.PodExitPolicyStop),
 	}
-	podOpt, err = kube.ToPodOpt(ctx, podName, podOpt, podYAML)
+	podOpt, err = kube.ToPodOpt(ctx, podName, podOpt, options.PublishAllPorts, podYAML)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -524,16 +586,18 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 		}
 		defer f.Close()
 
-		cm, err := readConfigMapFromFile(f)
+		cms, err := readConfigMapFromFile(f)
 		if err != nil {
 			return nil, nil, fmt.Errorf("%q: %w", p, err)
 		}
 
-		if _, present := configMapIndex[cm.Name]; present {
-			return nil, nil, fmt.Errorf("ambiguous configuration: the same config map %s is present in YAML and in --configmaps %s file", cm.Name, p)
-		}
+		for _, cm := range cms {
+			if _, present := configMapIndex[cm.Name]; present {
+				return nil, nil, fmt.Errorf("ambiguous configuration: the same config map %s is present in YAML and in --configmaps %s file", cm.Name, p)
+			}
 
-		configMaps = append(configMaps, cm)
+			configMaps = append(configMaps, cm)
+		}
 	}
 
 	mountLabel, err := getMountLabel(podYAML.Spec.SecurityContext)
@@ -571,6 +635,7 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 			if err != nil || mountPoint == "" {
 				return nil, nil, fmt.Errorf("unable to get mountpoint of volume %q: %w", vol.Name(), err)
 			}
+			defaultMode := v.DefaultMode
 			// Create files and add data to the volume mountpoint based on the Items in the volume
 			for k, v := range v.Items {
 				dataPath := filepath.Join(mountPoint, k)
@@ -583,6 +648,10 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 				if err != nil {
 					return nil, nil, err
 				}
+				// Set file permissions
+				if err := os.Chmod(f.Name(), os.FileMode(defaultMode)); err != nil {
+					return nil, nil, err
+				}
 			}
 		}
 	}
@@ -592,16 +661,16 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 		return nil, nil, err
 	}
 
-	var ctrRestartPolicy string
+	// Set the restart policy from the kube yaml at the pod level in podman
 	switch podYAML.Spec.RestartPolicy {
 	case v1.RestartPolicyAlways:
-		ctrRestartPolicy = define.RestartPolicyAlways
+		podSpec.PodSpecGen.RestartPolicy = define.RestartPolicyAlways
 	case v1.RestartPolicyOnFailure:
-		ctrRestartPolicy = define.RestartPolicyOnFailure
+		podSpec.PodSpecGen.RestartPolicy = define.RestartPolicyOnFailure
 	case v1.RestartPolicyNever:
-		ctrRestartPolicy = define.RestartPolicyNo
+		podSpec.PodSpecGen.RestartPolicy = define.RestartPolicyNo
 	default: // Default to Always
-		ctrRestartPolicy = define.RestartPolicyAlways
+		podSpec.PodSpecGen.RestartPolicy = define.RestartPolicyAlways
 	}
 
 	if podOpt.Infra {
@@ -616,6 +685,11 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 		podSpec.PodSpecGen.InfraContainerSpec = specgen.NewSpecGenerator(infraImage, false)
 		podSpec.PodSpecGen.InfraContainerSpec.NetworkOptions = p.NetworkOptions
 		podSpec.PodSpecGen.InfraContainerSpec.SdNotifyMode = define.SdNotifyModeIgnore
+		// If the infraNameAnnotation is set in the yaml, use that as the infra container name
+		// If not, fall back to the default infra container name
+		if v, ok := podYAML.Annotations[define.InfraNameAnnotation]; ok {
+			podSpec.PodSpecGen.InfraContainerSpec.Name = v
+		}
 
 		err = specgenutil.FillOutSpecGen(podSpec.PodSpecGen.InfraContainerSpec, &infraOptions, []string{})
 		if err != nil {
@@ -623,7 +697,7 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 		}
 	}
 
-	// Add the the original container names from the kube yaml as aliases for it. This will allow network to work with
+	// Add the original container names from the kube yaml as aliases for it. This will allow network to work with
 	// both just containerName as well as containerName-podName.
 	// In the future, we want to extend this to the CLI as well, where the name of the container created will not have
 	// the podName appended to it, but this is a breaking change and will be done in podman 5.0
@@ -722,17 +796,35 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 			SecretsManager:     secretsManager,
 			UserNSIsHost:       p.Userns.IsHost(),
 			Volumes:            volumes,
+			UtsNSIsHost:        p.UtsNs.IsHost(),
 		}
 		specGen, err := kube.ToSpecGen(ctx, &specgenOpts)
 		if err != nil {
 			return nil, nil, err
 		}
+
+		// ensure the environment is setup for initContainers as well: https://github.com/containers/podman/issues/18384
+		warn, err := generate.CompleteSpec(ctx, ic.Libpod, specGen)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, w := range warn {
+			logrus.Warn(w)
+		}
+
 		specGen.SdNotifyMode = define.SdNotifyModeIgnore
+		expandForKube(specGen)
 		rtSpec, spec, opts, err := generate.MakeContainer(ctx, ic.Libpod, specGen, false, nil)
 		if err != nil {
 			return nil, nil, err
 		}
 		opts = append(opts, libpod.WithSdNotifyMode(define.SdNotifyModeIgnore))
+		if options.Replace {
+			if _, err := ic.ContainerRm(ctx, []string{spec.Name}, entities.RmOptions{Force: true, Ignore: true}); err != nil {
+				return nil, nil, err
+			}
+		}
+
 		ctr, err := generate.ExecuteCreate(ctx, ic.Libpod, rtSpec, spec, false, opts...)
 		if err != nil {
 			return nil, nil, err
@@ -741,7 +833,8 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 		initContainers = append(initContainers, ctr)
 	}
 
-	var sdNotifyProxies []*notifyproxy.NotifyProxy // containers' sd-notify proxies
+	// Callers are expected to close the proxies
+	var sdNotifyProxies []*notifyproxy.NotifyProxy
 
 	for _, container := range podYAML.Spec.Containers {
 		// Error out if the same name is used for more than one container
@@ -775,11 +868,15 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 			PodName:            podName,
 			PodSecurityContext: podYAML.Spec.SecurityContext,
 			ReadOnly:           readOnly,
-			RestartPolicy:      ctrRestartPolicy,
 			SeccompPaths:       seccompPaths,
 			SecretsManager:     secretsManager,
 			UserNSIsHost:       p.Userns.IsHost(),
 			Volumes:            volumes,
+			UtsNSIsHost:        p.UtsNs.IsHost(),
+		}
+
+		if podYAML.Spec.TerminationGracePeriodSeconds != nil {
+			specgenOpts.TerminationGracePeriodSeconds = podYAML.Spec.TerminationGracePeriodSeconds
 		}
 
 		specGen, err := kube.ToSpecGen(ctx, &specgenOpts)
@@ -793,10 +890,11 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 			return nil, nil, err
 		}
 		for _, w := range warn {
-			fmt.Fprintf(os.Stderr, "%s\n", w)
+			logrus.Warn(w)
 		}
 
 		specGen.RawImageName = container.Image
+		expandForKube(specGen)
 		rtSpec, spec, opts, err := generate.MakeContainer(ctx, ic.Libpod, specGen, false, nil)
 		if err != nil {
 			return nil, nil, err
@@ -827,6 +925,12 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 			opts = append(opts, libpod.WithSdNotifySocket(proxy.SocketPath()))
 		}
 
+		if options.Replace {
+			if _, err := ic.ContainerRm(ctx, []string{spec.Name}, entities.RmOptions{Force: true, Ignore: true}); err != nil {
+				return nil, nil, err
+			}
+		}
+
 		ctr, err := generate.ExecuteCreate(ctx, ic.Libpod, rtSpec, spec, false, opts...)
 		if err != nil {
 			return nil, nil, err
@@ -854,11 +958,6 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 		errors := make([]error, len(sdNotifyProxies))
 		for i := range sdNotifyProxies {
 			wg.Add(1)
-			defer func() {
-				if err := sdNotifyProxies[i].Close(); err != nil {
-					logrus.Errorf("Closing sdnotify proxy %q: %v", sdNotifyProxies[i].SocketPath(), err)
-				}
-			}()
 			go func(i int) {
 				err := sdNotifyProxies[i].Wait()
 				if err != nil {
@@ -911,7 +1010,11 @@ func (ic *ContainerEngine) getImageAndLabelInfo(ctx context.Context, cwd string,
 		buildOpts := new(buildahDefine.BuildOptions)
 		commonOpts := new(buildahDefine.CommonBuildOptions)
 		buildOpts.ConfigureNetwork = buildahDefine.NetworkDefault
-		buildOpts.Isolation = buildahDefine.IsolationChroot
+		isolation, err := bparse.IsolationOption("")
+		if err != nil {
+			return nil, nil, err
+		}
+		buildOpts.Isolation = isolation
 		buildOpts.CommonBuildOpts = commonOpts
 		buildOpts.Output = container.Image
 		buildOpts.ContextDirectory = filepath.Dir(buildFile)
@@ -924,12 +1027,7 @@ func (ic *ContainerEngine) getImageAndLabelInfo(ctx context.Context, cwd string,
 		}
 		pulledImage = i
 	} else {
-		// NOTE: set the pull policy to "newer".  This will cover cases
-		// where the "latest" tag requires a pull and will also
-		// transparently handle "localhost/" prefixed files which *may*
-		// refer to a locally built image OR an image running a
-		// registry on localhost.
-		pullPolicy := config.PullPolicyNewer
+		pullPolicy := config.PullPolicyMissing
 		if len(container.ImagePullPolicy) > 0 {
 			// Make sure to lower the strings since K8s pull policy
 			// may be capitalized (see bugzilla.redhat.com/show_bug.cgi?id=1985905).
@@ -937,6 +1035,14 @@ func (ic *ContainerEngine) getImageAndLabelInfo(ctx context.Context, cwd string,
 			pullPolicy, err = config.ParsePullPolicy(strings.ToLower(rawPolicy))
 			if err != nil {
 				return nil, nil, err
+			}
+		} else {
+			if named, err := reference.ParseNamed(container.Image); err == nil {
+				tagged, isTagged := named.(reference.NamedTagged)
+				if isTagged && tagged.Tag() == "latest" {
+					// Make sure to always pull the latest image in case it got updated.
+					pullPolicy = config.PullPolicyNewer
+				}
 			}
 		}
 		// This ensures the image is the image store
@@ -1132,7 +1238,7 @@ func (ic *ContainerEngine) importVolume(ctx context.Context, vol *libpod.Volume,
 	// Check if volume is using `local` driver and has mount options type other than tmpfs
 	if len(driver) == 0 || driver == define.VolumeDriverLocal {
 		if mountOptionType, ok := volumeOptions["type"]; ok {
-			if mountOptionType != "tmpfs" && !volumeMountStatus.Value {
+			if mountOptionType != define.TypeTmpfs && !volumeMountStatus.Value {
 				return fmt.Errorf("volume is using a driver %s and volume is not mounted on %s", driver, mountPoint)
 			}
 		}
@@ -1143,23 +1249,38 @@ func (ic *ContainerEngine) importVolume(ctx context.Context, vol *libpod.Volume,
 }
 
 // readConfigMapFromFile returns a kubernetes configMap obtained from --configmap flag
-func readConfigMapFromFile(r io.Reader) (v1.ConfigMap, error) {
-	var cm v1.ConfigMap
+func readConfigMapFromFile(r io.Reader) ([]v1.ConfigMap, error) {
+	configMaps := make([]v1.ConfigMap, 0)
 
 	content, err := io.ReadAll(r)
 	if err != nil {
-		return cm, fmt.Errorf("unable to read ConfigMap YAML content: %w", err)
+		return nil, fmt.Errorf("unable to read ConfigMap YAML content: %w", err)
 	}
 
-	if err := yaml.Unmarshal(content, &cm); err != nil {
-		return cm, fmt.Errorf("unable to read YAML as Kube ConfigMap: %w", err)
+	// split yaml document
+	documentList, err := splitMultiDocYAML(content)
+	if err != nil {
+		return nil, fmt.Errorf("unable to read as kube YAML: %w", err)
 	}
 
-	if cm.Kind != "ConfigMap" {
-		return cm, fmt.Errorf("invalid YAML kind: %q. [ConfigMap] is the only supported by --configmap", cm.Kind)
+	for _, document := range documentList {
+		kind, err := getKubeKind(document)
+		if err != nil {
+			return nil, fmt.Errorf("unable to read as kube YAML: %w", err)
+		}
+
+		if kind != "ConfigMap" {
+			return nil, fmt.Errorf("invalid YAML kind: %q. [ConfigMap] is the only supported by --configmap", kind)
+		}
+
+		var configMap v1.ConfigMap
+		if err := yaml.Unmarshal(document, &configMap); err != nil {
+			return nil, fmt.Errorf("unable to read YAML as Kube ConfigMap: %w", err)
+		}
+		configMaps = append(configMaps, configMap)
 	}
 
-	return cm, nil
+	return configMaps, nil
 }
 
 // splitMultiDocYAML reads multiple documents in a YAML file and
@@ -1179,13 +1300,37 @@ func splitMultiDocYAML(yamlContent []byte) ([][]byte, error) {
 			return nil, fmt.Errorf("multi doc yaml could not be split: %w", err)
 		}
 
-		if o != nil {
-			// back to bytes
-			document, err := yamlv3.Marshal(o)
-			if err != nil {
-				return nil, fmt.Errorf("individual doc yaml could not be marshalled: %w", err)
-			}
+		if o == nil {
+			continue
+		}
 
+		// back to bytes
+		document, err := yamlv3.Marshal(o)
+		if err != nil {
+			return nil, fmt.Errorf("individual doc yaml could not be marshalled: %w", err)
+		}
+
+		kind, err := getKubeKind(document)
+		if err != nil {
+			return nil, fmt.Errorf("couldn't get object kind: %w", err)
+		}
+
+		// The items in a document of kind "List" are fully qualified resources
+		// So, they can be treated as separate documents
+		if kind == "List" {
+			var kubeList metav1.List
+			if err := yaml.Unmarshal(document, &kubeList); err != nil {
+				return nil, err
+			}
+			for _, item := range kubeList.Items {
+				itemDocument, err := yamlv3.Marshal(item)
+				if err != nil {
+					return nil, fmt.Errorf("individual doc yaml could not be marshalled: %w", err)
+				}
+
+				documentList = append(documentList, itemDocument)
+			}
+		} else {
 			documentList = append(documentList, document)
 		}
 	}
@@ -1216,7 +1361,7 @@ func sortKubeKinds(documentList [][]byte) ([][]byte, error) {
 		}
 
 		switch kind {
-		case "Pod", "Deployment":
+		case "Pod", "Deployment", "DaemonSet":
 			sortedDocumentList = append(sortedDocumentList, document)
 		default:
 			sortedDocumentList = append([][]byte{document}, sortedDocumentList...)
@@ -1310,6 +1455,26 @@ func (ic *ContainerEngine) PlayKubeDown(ctx context.Context, body io.Reader, opt
 				return nil, fmt.Errorf("unable to read YAML as Kube Pod: %w", err)
 			}
 			podNames = append(podNames, podYAML.ObjectMeta.Name)
+
+			for _, vol := range podYAML.Spec.Volumes {
+				switch vs := vol.VolumeSource; {
+				case vs.PersistentVolumeClaim != nil:
+					volumeNames = append(volumeNames, vs.PersistentVolumeClaim.ClaimName)
+				case vs.ConfigMap != nil:
+					volumeNames = append(volumeNames, vs.ConfigMap.Name)
+				case vs.Secret != nil:
+					volumeNames = append(volumeNames, vs.Secret.SecretName)
+				}
+			}
+		case "DaemonSet":
+			var daemonSetYAML v1apps.DaemonSet
+
+			if err := yaml.Unmarshal(document, &daemonSetYAML); err != nil {
+				return nil, fmt.Errorf("unable to read YAML as Kube DaemonSet: %w", err)
+			}
+
+			podName := fmt.Sprintf("%s-pod", daemonSetYAML.Name)
+			podNames = append(podNames, podName)
 		case "Deployment":
 			var deploymentYAML v1apps.Deployment
 
@@ -1348,6 +1513,9 @@ func (ic *ContainerEngine) PlayKubeDown(ctx context.Context, body io.Reader, opt
 	for _, name := range podNames {
 		pod, err := ic.Libpod.LookupPod(name)
 		if err != nil {
+			if errors.Is(err, define.ErrNoSuchPod) {
+				continue
+			}
 			return nil, err
 		}
 		ctr, err := pod.ServiceContainer()
@@ -1361,23 +1529,23 @@ func (ic *ContainerEngine) PlayKubeDown(ctx context.Context, body io.Reader, opt
 	}
 
 	// Add the reports
-	reports.StopReport, err = ic.PodStop(ctx, podNames, entities.PodStopOptions{})
+	reports.StopReport, err = ic.PodStop(ctx, podNames, entities.PodStopOptions{Ignore: true})
 	if err != nil {
 		return nil, err
 	}
 
-	reports.RmReport, err = ic.PodRm(ctx, podNames, entities.PodRmOptions{})
+	reports.RmReport, err = ic.PodRm(ctx, podNames, entities.PodRmOptions{Ignore: true, Force: true})
 	if err != nil {
 		return nil, err
 	}
 
-	reports.SecretRmReport, err = ic.SecretRm(ctx, secretNames, entities.SecretRmOptions{})
+	reports.SecretRmReport, err = ic.SecretRm(ctx, secretNames, entities.SecretRmOptions{Ignore: true})
 	if err != nil {
 		return nil, err
 	}
 
 	if options.Force {
-		reports.VolumeRmReport, err = ic.VolumeRm(ctx, volumeNames, entities.VolumeRmOptions{})
+		reports.VolumeRmReport, err = ic.VolumeRm(ctx, volumeNames, entities.VolumeRmOptions{Ignore: true})
 		if err != nil {
 			return nil, err
 		}
@@ -1481,4 +1649,14 @@ func getMountLabel(securityContext *v1.PodSecurityContext) (string, error) {
 		con["type"] = seopt.FileType
 	}
 	return con.Get(), nil
+}
+
+func expandForKube(s *specgen.SpecGenerator) {
+	mapping := expansion.MappingFuncFor(s.Env)
+	for i, subCmd := range s.Entrypoint {
+		s.Entrypoint[i] = expansion.Expand(subCmd, mapping)
+	}
+	for i, subCmd := range s.Command {
+		s.Command[i] = expansion.Expand(subCmd, mapping)
+	}
 }

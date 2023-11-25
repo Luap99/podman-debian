@@ -382,13 +382,17 @@ func copyToContainer(container string, containerPath string, hostPath string) er
 		if err != nil {
 			return err
 		}
+		defer os.Remove(tmpFile.Name())
+
 		_, err = io.Copy(tmpFile, os.Stdin)
 		if err != nil {
+			_ = tmpFile.Close()
 			return err
 		}
 		if err = tmpFile.Close(); err != nil {
 			return err
 		}
+
 		if !archive.IsArchivePath(tmpFile.Name()) {
 			return errors.New("source must be a (compressed) tar archive when copying from stdin")
 		}
