@@ -6,6 +6,7 @@ package hyperv
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/containers/libhvee/pkg/hypervctl"
 	"github.com/containers/podman/v4/pkg/machine"
+	"github.com/containers/podman/v4/pkg/machine/compression"
+	"github.com/containers/podman/v4/pkg/machine/define"
 	"github.com/docker/go-units"
 	"github.com/sirupsen/logrus"
 )
@@ -23,7 +26,7 @@ type HyperVVirtualization struct {
 
 func VirtualizationProvider() machine.VirtProvider {
 	return &HyperVVirtualization{
-		machine.NewVirtualization(machine.HyperV, machine.Zip, machine.Vhdx, vmtype),
+		machine.NewVirtualization(define.HyperV, compression.Zip, define.Vhdx, vmtype),
 	}
 }
 
@@ -44,20 +47,23 @@ func (v HyperVVirtualization) CheckExclusiveActiveVM() (bool, string, error) {
 }
 
 func (v HyperVVirtualization) IsValidVMName(name string) (bool, error) {
-	// We check both the local filesystem and hyperv for the valid name
-	mm := HyperVMachine{Name: name}
-	configDir, err := machine.GetConfDir(v.VMType())
+	var found bool
+	vms, err := v.loadFromLocalJson()
 	if err != nil {
 		return false, err
 	}
-	if err := mm.loadHyperVMachineFromJSON(configDir); err != nil {
-		return false, err
+	for _, vm := range vms {
+		if vm.Name == name {
+			found = true
+			break
+		}
 	}
-	// The name is valid for the local filesystem
+	if !found {
+		return false, nil
+	}
 	if _, err := hypervctl.NewVirtualMachineManager().GetMachine(name); err != nil {
 		return false, err
 	}
-	// The lookup in hyperv worked, so it is also valid there
 	return true, nil
 }
 
@@ -80,7 +86,7 @@ func (v HyperVVirtualization) List(opts machine.ListOptions) ([]*machine.ListRes
 			CreatedAt:      mm.Created,
 			LastUp:         mm.LastUp,
 			Running:        vm.State() == hypervctl.Enabled,
-			Starting:       vm.IsStarting(),
+			Starting:       mm.isStarting(),
 			Stream:         mm.ImageStream,
 			VMType:         machine.HyperVVirt.String(),
 			CPUs:           mm.CPUs,
@@ -105,6 +111,9 @@ func (v HyperVVirtualization) NewMachine(opts machine.InitOptions) (machine.VM, 
 	if len(opts.ImagePath) < 1 {
 		return nil, errors.New("must define --image-path for hyperv support")
 	}
+	if len(opts.USBs) > 0 {
+		return nil, fmt.Errorf("USB host passtrough not supported for hyperv machines")
+	}
 
 	m.RemoteUsername = opts.Username
 
@@ -113,18 +122,16 @@ func (v HyperVVirtualization) NewMachine(opts machine.InitOptions) (machine.VM, 
 		return nil, err
 	}
 
-	configPath, err := machine.NewMachineFile(getVMConfigPath(configDir, opts.Name), nil)
+	configPath, err := define.NewMachineFile(getVMConfigPath(configDir, opts.Name), nil)
 	if err != nil {
 		return nil, err
 	}
 
 	m.ConfigPath = *configPath
 
-	ignitionPath, err := machine.NewMachineFile(filepath.Join(configDir, m.Name)+".ign", nil)
-	if err != nil {
+	if err := machine.SetIgnitionFile(&m.IgnitionFile, vmtype, m.Name); err != nil {
 		return nil, err
 	}
-	m.IgnitionFile = *ignitionPath
 
 	// Set creation time
 	m.Created = time.Now()
@@ -135,7 +142,7 @@ func (v HyperVVirtualization) NewMachine(opts machine.InitOptions) (machine.VM, 
 	}
 
 	// Set the proxy pid file
-	gvProxyPid, err := machine.NewMachineFile(filepath.Join(dataDir, "gvproxy.pid"), nil)
+	gvProxyPid, err := define.NewMachineFile(filepath.Join(dataDir, "gvproxy.pid"), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +166,7 @@ func (v HyperVVirtualization) NewMachine(opts machine.InitOptions) (machine.VM, 
 		CPUs:     uint16(opts.CPUS),
 		DiskPath: imagePath.GetPath(),
 		DiskSize: opts.DiskSize,
-		Memory:   int32(opts.Memory),
+		Memory:   opts.Memory,
 	}
 
 	// Write the json configuration file which will be loaded by
@@ -208,11 +215,8 @@ func (v HyperVVirtualization) RemoveAndCleanMachines() error {
 			prevErr = handlePrevError(err, prevErr)
 		}
 
-		// If the VM is not stopped, we need to stop it
-		// TODO stop might not be enough if the state is dorked. we may need
-		// something like forceoff hard switch
 		if vm.State() != hypervctl.Disabled {
-			if err := vm.Stop(); err != nil {
+			if err := vm.StopWithForce(); err != nil {
 				prevErr = handlePrevError(err, prevErr)
 			}
 		}
@@ -280,4 +284,16 @@ func handlePrevError(e, prevErr error) error {
 		logrus.Error(e)
 	}
 	return e
+}
+
+func stateConversion(s hypervctl.EnabledState) (machine.Status, error) {
+	switch s {
+	case hypervctl.Enabled:
+		return machine.Running, nil
+	case hypervctl.Disabled:
+		return machine.Stopped, nil
+	case hypervctl.Starting:
+		return machine.Starting, nil
+	}
+	return machine.Unknown, fmt.Errorf("unknown state: %q", s.String())
 }

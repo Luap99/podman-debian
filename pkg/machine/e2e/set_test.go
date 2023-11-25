@@ -1,9 +1,11 @@
 package e2e_test
 
 import (
+	"runtime"
 	"strconv"
 	"strings"
 
+	"github.com/containers/podman/v4/pkg/machine"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -23,6 +25,7 @@ var _ = Describe("podman machine set", func() {
 	})
 
 	It("set machine cpus, disk, memory", func() {
+		skipIfWSL("WSL cannot change set properties of disk, processor, or memory")
 		name := randomString()
 		i := new(initMachine)
 		session, err := mb.setName(name).setCmd(i.withImagePath(mb.imagePath)).run()
@@ -71,7 +74,33 @@ var _ = Describe("podman machine set", func() {
 		Expect(runner).To(Exit(125))
 	})
 
+	It("wsl cannot change disk, memory, processor", func() {
+		skipIfNotVmtype(machine.WSLVirt, "tests are only for WSL provider")
+		name := randomString()
+		i := new(initMachine)
+		session, err := mb.setName(name).setCmd(i.withImagePath(mb.imagePath)).run()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(session).To(Exit(0))
+
+		setMem := setMachine{}
+		setMemSession, err := mb.setName(name).setCmd(setMem.withMemory(4096)).run()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(setMemSession).To(Exit(125))
+		Expect(setMemSession.errorToString()).To(ContainSubstring("changing memory not supported for WSL machines"))
+
+		setProc := setMachine{}
+		setProcSession, err := mb.setName(name).setCmd(setProc.withCPUs(2)).run()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(setProcSession.errorToString()).To(ContainSubstring("changing CPUs not supported for WSL machines"))
+
+		setDisk := setMachine{}
+		setDiskSession, err := mb.setName(name).setCmd(setDisk.withDiskSize(102)).run()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(setDiskSession.errorToString()).To(ContainSubstring("changing disk size not supported for WSL machines"))
+	})
+
 	It("no settings should change if no flags", func() {
+		skipIfWSL("WSL cannot change set properties of disk, processor, or memory")
 		name := randomString()
 		i := new(initMachine)
 		session, err := mb.setName(name).setCmd(i.withImagePath(mb.imagePath)).run()
@@ -89,10 +118,14 @@ var _ = Describe("podman machine set", func() {
 		Expect(startSession).To(Exit(0))
 
 		ssh2 := sshMachine{}
+		cpus := runtime.NumCPU() / 2
+		if cpus == 0 {
+			cpus = 1
+		}
 		sshSession2, err := mb.setName(name).setCmd(ssh2.withSSHCommand([]string{"lscpu", "|", "grep", "\"CPU(s):\"", "|", "head", "-1"})).run()
 		Expect(err).ToNot(HaveOccurred())
 		Expect(sshSession2).To(Exit(0))
-		Expect(sshSession2.outputToString()).To(ContainSubstring("1"))
+		Expect(sshSession2.outputToString()).To(ContainSubstring(strconv.Itoa(cpus)))
 
 		ssh3 := sshMachine{}
 		sshSession3, err := mb.setName(name).setCmd(ssh3.withSSHCommand([]string{"sudo", "fdisk", "-l", "|", "grep", "Disk"})).run()
@@ -134,8 +167,9 @@ var _ = Describe("podman machine set", func() {
 	})
 
 	It("set user mode networking", func() {
-		SkipIfNotWindows("Setting user mode networking is only honored on Windows")
-
+		if testProvider.VMType() != machine.WSLVirt {
+			Skip("Test is only for WSL")
+		}
 		name := randomString()
 		i := new(initMachine)
 		session, err := mb.setName(name).setCmd(i.withImagePath(mb.imagePath)).run()

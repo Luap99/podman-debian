@@ -93,6 +93,10 @@ EOF
 annotations=['module=$random_data']
 EOF
 
+    run_podman 125 create --module=$conf_tmp -q $IMAGE
+    is "$output" "Error: unknown flag: --module
+See 'podman create --help'" "--module must be specified before the command"
+
     run_podman --module=$conf_tmp create -q $IMAGE
     cid="$output"
     run_podman container inspect $cid --format '{{index .Config.Annotations "module"}}'
@@ -105,6 +109,37 @@ EOF
     run_podman 1 --module=$nonesuch sdfsdfdsf
     is "$output" "Failed to obtain podman configuration: could not resolve module \"$nonesuch\": stat $nonesuch: no such file or directory" \
        "--module=ENOENT"
+}
+
+@test "podman --module - append arrays" {
+    skip_if_remote "--module is not supported for remote clients"
+
+    random_data="expected_annotation_$(random_string 15)"
+    conf1_tmp="$PODMAN_TMPDIR/test1.conf"
+    conf2_tmp="$PODMAN_TMPDIR/test2.conf"
+    conf2_off_tmp="$PODMAN_TMPDIR/test2_off.conf"
+    cat > $conf1_tmp <<EOF
+[containers]
+env=["A=CONF1",{append=true}]
+EOF
+    cat > $conf2_tmp <<EOF
+[containers]
+env=["B=CONF2"]
+EOF
+
+    cat > $conf2_off_tmp <<EOF
+[containers]
+env=["B=CONF2_OFF",{append=false}]
+EOF
+
+    # Once append is set, all subsequent loads (and the current) will be appended.
+    run_podman --module=$conf1_tmp --module=$conf2_tmp run --rm $IMAGE printenv A B
+    assert "$output" = "CONF1
+CONF2"
+
+    # When explicitly turned off, values are replaced/overridden again.
+    run_podman 1 --module=$conf1_tmp --module=$conf2_off_tmp run --rm $IMAGE printenv A B
+    assert "$output" = "CONF2_OFF"
 }
 
 @test "podman --module - XDG_CONFIG_HOME" {
@@ -175,6 +210,61 @@ EOF
     # Even if there are modules in /etc or elsewhere, these will be first
     assert "${lines[0]}" = "$m1" "completion finds module 1"
     assert "${lines[1]}" = "$m2" "completion finds module 2"
+}
+
+@test "podman --module - supported fields" {
+    skip_if_remote "--module is not supported for remote clients"
+
+    conf_tmp="$PODMAN_TMPDIR/test.conf"
+    cat > $conf_tmp <<EOF
+[containers]
+env_host=true
+privileged=true
+EOF
+
+    random_env_var="expected_env_var_$(random_string 15)"
+    FOO="$random_env_var" run_podman --module=$conf_tmp run -d --name=$cname $IMAGE top
+    cname="$output"
+
+    # Make sure `env_host` is read
+    run_podman container inspect $cname --format "{{.Config.Env}}"
+    assert "$output" =~ "FOO=$random_env_var" "--module should yield injecting host env vars into the container"
+
+    # Make sure `privileged` is read during container creation
+    run_podman container inspect $cname --format "{{.HostConfig.Privileged}}"
+    assert "$output" = "true" "--module should enable a privileged container"
+
+    run_podman rm -f -t0 $cname
+
+    # Make sure `privileged` is read during exec, which requires running a
+    # non-privileged container.
+    run_podman run -d $IMAGE top
+    cname="$output"
+
+    run_podman container exec $cname grep CapBnd /proc/self/status
+    non_privileged_caps="$output"
+    run_podman --module=$conf_tmp container exec $cname grep CapBnd /proc/self/status
+    assert "$output" != "$non_privileged_caps" "--module should enable a prvileged exec session"
+
+    run_podman rm -f -t0 $cname
+}
+
+@test "podman push CONTAINERS_CONF" {
+    skip_if_remote "containers.conf does not effect client side of --remote"
+
+    CONTAINERS_CONF=/dev/null run_podman push --help
+    assert "$output" =~ "--compression-format string.*compression format to use \(default \"gzip\"\)" "containers.conf should set default to gzip"
+    assert "$output" !~ "compression level to use \(default" "containers.conf should not set default compressionlevel"
+
+    conf_tmp="$PODMAN_TMPDIR/containers.conf"
+    cat >$conf_tmp <<EOF
+[engine]
+compression_format="zstd:chunked"
+compression_level=1
+EOF
+    CONTAINERS_CONF="$conf_tmp" run_podman push --help
+    assert "$output" =~ "--compression-format string.*compression format to use \(default \"zstd:chunked\"\)" "containers.conf should set default to zstd:chunked"
+    assert "$output" =~ "--compression-level int.*compression level to use \(default 1\)" "containers.conf should set default compressionlevel to 1"
 }
 
 # vim: filetype=sh

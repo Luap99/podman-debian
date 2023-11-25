@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	. "github.com/containers/podman/v4/test/utils"
@@ -30,31 +31,43 @@ var _ = Describe("Podman create", func() {
 	})
 
 	It("podman create container based on a remote image", func() {
-		session := podmanTest.Podman([]string{"create", "-q", BB_GLIBC, "ls"})
+		session := podmanTest.Podman([]string{"create", BB_GLIBC, "ls"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(ExitCleanly())
+		Expect(session).Should(Exit(0))
+		Expect(session.ErrorToString()).To(ContainSubstring("Trying to pull " + BB_GLIBC))
+		Expect(session.ErrorToString()).To(ContainSubstring("Writing manifest to image destination"))
+
 		Expect(podmanTest.NumberOfContainers()).To(Equal(1))
 	})
 
-	It("podman container create container based on a remote image", func() {
-		containerCreate := podmanTest.Podman([]string{"container", "create", "-q", BB_GLIBC, "ls"})
-		containerCreate.WaitWithDefaultTimeout()
-		Expect(containerCreate).Should(ExitCleanly())
-
-		lock := GetPortLock("5000")
+	It("podman container create --tls-verify", func() {
+		port := "5040"
+		lock := GetPortLock(port)
 		defer lock.Unlock()
-		session := podmanTest.Podman([]string{"run", "-d", "--name", "registry", "-p", "5000:5000", REGISTRY_IMAGE, "/entrypoint.sh", "/etc/docker/registry/config.yml"})
+		session := podmanTest.Podman([]string{"run", "-d", "--name", "registry", "-p", port + ":5000", REGISTRY_IMAGE, "/entrypoint.sh", "/etc/docker/registry/config.yml"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(ExitCleanly())
 
 		if !WaitContainerReady(podmanTest, "registry", "listening on", 20, 1) {
-			Skip("Cannot start docker registry.")
+			Fail("Cannot start docker registry.")
 		}
 
-		create := podmanTest.Podman([]string{"container", "create", "--tls-verify=false", ALPINE})
+		pushedImage := "localhost:" + port + "/pushed" + strings.ToLower(RandomString(5)) + ":" + RandomString(8)
+		push := podmanTest.Podman([]string{"push", "--tls-verify=false", ALPINE, pushedImage})
+		push.WaitWithDefaultTimeout()
+		Expect(push).To(Exit(0))
+		Expect(push.ErrorToString()).To(ContainSubstring("Writing manifest to image destination"))
+
+		create := podmanTest.Podman([]string{"container", "create", pushedImage})
 		create.WaitWithDefaultTimeout()
-		Expect(create).Should(ExitCleanly())
-		Expect(podmanTest.NumberOfContainers()).To(Equal(3))
+		Expect(create).Should(Exit(125))
+		Expect(create.ErrorToString()).To(ContainSubstring("pinging container registry localhost:" + port))
+		Expect(create.ErrorToString()).To(ContainSubstring("http: server gave HTTP response to HTTPS client"))
+
+		create = podmanTest.Podman([]string{"create", "--tls-verify=false", pushedImage, "echo", "got here"})
+		create.WaitWithDefaultTimeout()
+		Expect(create).Should(Exit(0))
+		Expect(create.ErrorToString()).To(ContainSubstring("Trying to pull " + pushedImage))
 	})
 
 	It("podman create using short options", func() {
@@ -73,6 +86,18 @@ var _ = Describe("Podman create", func() {
 		session = podmanTest.Podman([]string{"create", "--name=foo", ALPINE, "ls"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(125))
+	})
+
+	It("podman create adds rdt-class", func() {
+		session := podmanTest.Podman([]string{"create", "--rdt-class", "COS1", "--name", "rdt_test", ALPINE, "ls"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(ExitCleanly())
+		Expect(podmanTest.NumberOfContainers()).To(Equal(1))
+
+		check := podmanTest.Podman([]string{"inspect", "rdt_test"})
+		check.WaitWithDefaultTimeout()
+		data := check.InspectContainerToJSON()
+		Expect(data[0].HostConfig.IntelRdtClosID).To(Equal("COS1"))
 	})
 
 	It("podman create adds annotation", func() {
@@ -421,7 +446,7 @@ var _ = Describe("Podman create", func() {
 		numCpus := 5
 		nanoCPUs := numCpus * 1000000000
 		ctrName := "testCtr"
-		session := podmanTest.Podman([]string{"create", "-t", "--cpus", fmt.Sprintf("%d", numCpus), "--name", ctrName, ALPINE, "/bin/sh"})
+		session := podmanTest.Podman([]string{"create", "-t", "--cpus", strconv.Itoa(numCpus), "--name", ctrName, ALPINE, "/bin/sh"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(ExitCleanly())
 

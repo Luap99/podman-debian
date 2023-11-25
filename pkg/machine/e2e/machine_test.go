@@ -12,7 +12,10 @@ import (
 	"time"
 
 	"github.com/containers/podman/v4/pkg/machine"
+	"github.com/containers/podman/v4/pkg/machine/compression"
+	"github.com/containers/podman/v4/pkg/machine/define"
 	"github.com/containers/podman/v4/pkg/machine/provider"
+	"github.com/containers/podman/v4/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -22,7 +25,7 @@ func TestMain(m *testing.M) {
 }
 
 const (
-	defaultStream machine.FCOSStream = machine.Testing
+	defaultStream = machine.Testing
 )
 
 var (
@@ -43,25 +46,26 @@ func TestMachine(t *testing.T) {
 	RunSpecs(t, "Podman Machine tests")
 }
 
+var testProvider machine.VirtProvider
+
 var _ = BeforeSuite(func() {
-	testProvider, err := provider.Get()
+	var err error
+	testProvider, err = provider.Get()
 	if err != nil {
 		Fail("unable to create testProvider")
 	}
 
 	downloadLocation := os.Getenv("MACHINE_IMAGE")
 
-	dd, err := testProvider.NewDownload("")
-	if err != nil {
-		Fail("unable to create new download")
-	}
 	if len(downloadLocation) < 1 {
-		fcd, err := dd.GetFCOSDownload(defaultStream)
-		if err != nil {
-			Fail("unable to get virtual machine image")
+		downloadLocation = getDownloadLocation(testProvider)
+		// we cannot simply use OS here because hyperv uses fcos; so WSL is just
+		// special here
+		if testProvider.VMType() != machine.WSLVirt {
+			downloadLocation = getDownloadLocation(testProvider)
 		}
-		downloadLocation = fcd.Location
 	}
+
 	compressionExtension := fmt.Sprintf(".%s", testProvider.Compression().String())
 	suiteImageName = strings.TrimSuffix(path.Base(downloadLocation), compressionExtension)
 	fqImageName = filepath.Join(tmpDir, suiteImageName)
@@ -76,7 +80,11 @@ var _ = BeforeSuite(func() {
 				Fail(fmt.Sprintf("unable to download machine image: %q", err))
 			}
 			GinkgoWriter.Println("Download took: ", time.Since(now).String())
-			if err := machine.Decompress(fqImageName+compressionExtension, fqImageName); err != nil {
+			diskImage, err := define.NewMachineFile(fqImageName+compressionExtension, nil)
+			if err != nil {
+				Fail(fmt.Sprintf("unable to create vmfile %q: %v", fqImageName+compressionExtension, err))
+			}
+			if err := compression.Decompress(diskImage, fqImageName); err != nil {
 				Fail(fmt.Sprintf("unable to decompress image file: %q", err))
 			}
 		} else {
@@ -131,6 +139,9 @@ func setup() (string, *machineTestBuilder) {
 	if _, err := io.Copy(n, f); err != nil {
 		Fail(fmt.Sprintf("failed to copy %ss to %s: %q", fqImageName, mb.imagePath, err))
 	}
+	if err := n.Close(); err != nil {
+		Fail(fmt.Sprintf("failed to close image copy handler: %q", err))
+	}
 	return homeDir, mb
 }
 
@@ -141,7 +152,7 @@ func teardown(origHomeDir string, testDir string, mb *machineTestBuilder) {
 			GinkgoWriter.Printf("error occurred rm'ing machine: %q\n", err)
 		}
 	}
-	if err := machine.GuardedRemoveAll(testDir); err != nil {
+	if err := utils.GuardedRemoveAll(testDir); err != nil {
 		Fail(fmt.Sprintf("failed to remove test dir: %q", err))
 	}
 	// this needs to be last in teardown

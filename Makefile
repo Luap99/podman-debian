@@ -53,7 +53,6 @@ BUILDTAGS ?= \
 	$(shell hack/apparmor_tag.sh) \
 	$(shell hack/btrfs_installed_tag.sh) \
 	$(shell hack/btrfs_tag.sh) \
-	$(shell hack/selinux_tag.sh) \
 	$(shell hack/systemd_tag.sh) \
 	$(shell hack/libsubid_tag.sh) \
 	exclude_graphdriver_devicemapper \
@@ -61,7 +60,7 @@ BUILDTAGS ?= \
 # N/B: This value is managed by Renovate, manual changes are
 # possible, as long as they don't disturb the formatting
 # (i.e. DO NOT ADD A 'v' prefix!)
-GOLANGCI_LINT_VERSION := 1.54.2
+GOLANGCI_LINT_VERSION := 1.55.2
 PYTHON ?= $(shell command -v python3 python|head -n1)
 PKG_MANAGER ?= $(shell command -v dnf yum|head -n1)
 # ~/.local/bin is not in PATH on all systems
@@ -135,6 +134,10 @@ GINKGO ?= ./test/tools/build/ginkgo
 # ginkgo json output is only useful in CI, not on developer runs
 GINKGO_JSON ?= $(if $(CI),--json-report ginkgo-e2e.json,)
 
+# Allow control over some Ginkgo parameters
+GINKGO_FLAKE_ATTEMPTS ?= 3
+GINKGO_NO_COLOR ?= y
+
 # Conditional required to produce empty-output if binary not built yet.
 RELEASE_VERSION = $(shell if test -x test/version/version; then test/version/version; fi)
 RELEASE_NUMBER = $(shell echo "$(call err_if_empty,RELEASE_VERSION)" | sed -e 's/^v\(.*\)/\1/')
@@ -149,6 +152,11 @@ export PATH := $(shell $(GO) env GOPATH)/bin:$(PATH)
 
 GOMD2MAN ?= ./test/tools/build/go-md2man
 
+# There are many possibly unexpected places where podman is used.  For example
+# by OpenWRT for routers and other similar small "edge" devices.  Testing builds
+# for otherwise non-mainstream architectures ensures we catch platform-specific
+# toolchain shenanigans early, for example:
+# https://github.com/containers/podman/issues/8782
 CROSS_BUILD_TARGETS := \
 	bin/podman.cross.linux.amd64 \
 	bin/podman.cross.linux.ppc64le \
@@ -204,12 +212,9 @@ ifdef HOMEBREW_PREFIX
 endif
 endif
 
-# win-sshproxy is checked out manually to keep from pulling in gvisor and it's transitive
-# dependencies. This is only used for the Windows client archives, which must
-# include this lightweight helper binary.
-#
-GV_GITURL=https://github.com/containers/gvisor-tap-vsock.git
-GV_SHA=db608827124caa71ba411cec8ea959bb942984fe
+# gvisor-tap-vsock version for gvproxy.exe and win-sshproxy.exe downloads
+# the upstream project ships pre-built binaries since version 0.7.1
+GV_VERSION=v0.7.1
 
 ###
 ### Primary entry-point targets
@@ -595,7 +600,8 @@ test: localunit localintegration remoteintegration localsystem remotesystem  ## 
 .PHONY: ginkgo-run
 ginkgo-run: .install.ginkgo
 	$(GINKGO) version
-	$(GINKGO) -vv $(TESTFLAGS) --tags "$(TAGS) remote" $(GINKGOTIMEOUT) --flake-attempts 3 --trace --no-color \
+	$(GINKGO) -vv $(TESTFLAGS) --tags "$(TAGS) remote" $(GINKGOTIMEOUT) --flake-attempts $(GINKGO_FLAKE_ATTEMPTS) \
+		--trace $(if $(findstring y,$(GINKGO_NO_COLOR)),--no-color,) \
 		$(GINKGO_JSON) $(if $(findstring y,$(GINKGO_PARALLEL)),-p,) $(if $(FOCUS),--focus "$(FOCUS)",) \
 		$(if $(FOCUS_FILE),--focus-file "$(FOCUS_FILE)",) $(GINKGOWHAT) $(HACK)
 
@@ -637,7 +643,7 @@ remotesystem:
 	rc=0;\
 	if timeout -v 1 true; then \
 		SOCK_FILE=$(shell mktemp --dry-run --tmpdir podman_tmp_XXXX);\
-		export PODMAN_SOCKET=unix:$$SOCK_FILE; \
+		export PODMAN_SOCKET=unix://$$SOCK_FILE; \
 		./bin/podman system service --timeout=0 $$PODMAN_SOCKET > $(if $(PODMAN_SERVER_LOG),$(PODMAN_SERVER_LOG),/dev/null) 2>&1 & \
 		retry=5;\
 		while [ $$retry -ge 0 ]; do\
@@ -775,16 +781,9 @@ podman-remote-release-%.zip: test/version/version ## Build podman-remote for %=$
 # Checks out and builds win-sshproxy helper. See comment on GV_GITURL declaration
 .PHONY: win-gvproxy
 win-gvproxy: test/version/version
-	rm -rf tmp-gv; mkdir tmp-gv
-	(cd tmp-gv; \
-         git init; \
-         git remote add origin $(GV_GITURL); \
-         git fetch --depth 1 origin $(GV_SHA); \
-         git checkout FETCH_HEAD; make win-gvproxy win-sshproxy)
 	mkdir -p bin/windows/
-	cp tmp-gv/bin/win-sshproxy.exe bin/windows/
-	cp tmp-gv/bin/gvproxy.exe bin/windows/
-	rm -rf tmp-gv
+	curl -sSL -o bin/windows/gvproxy.exe --retry 5 https://github.com/containers/gvisor-tap-vsock/releases/download/$(GV_VERSION)/gvproxy-windowsgui.exe
+	curl -sSL -o bin/windows/win-sshproxy.exe --retry 5 https://github.com/containers/gvisor-tap-vsock/releases/download/$(GV_VERSION)/win-sshproxy.exe
 
 .PHONY: rpm
 rpm:  ## Build rpm packages

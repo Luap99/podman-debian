@@ -14,6 +14,7 @@ import (
 
 	"github.com/containers/common/libnetwork/etchosts"
 	"github.com/containers/common/pkg/config"
+	"github.com/containers/podman/v4/pkg/machine/define"
 	"github.com/sirupsen/logrus"
 )
 
@@ -127,8 +128,11 @@ func (ign *DynamicIgnition) GenerateIgnitionConfig() error {
 				User:      GetNodeUsr("root"),
 			},
 			LinkEmbedded1: LinkEmbedded1{
-				Hard:   BoolToPtr(false),
-				Target: filepath.Join("/usr/share/zoneinfo", tz),
+				Hard: BoolToPtr(false),
+				// We always want this value in unix form (/path/to/something) because this is being
+				// set in the machine OS (always Linux).  However, filepath.join on windows will use a "\\"
+				// separator; therefore we use ToSlash to convert the path to unix style
+				Target: filepath.ToSlash(filepath.Join("/usr/share/zoneinfo", tz)),
 			},
 		}
 		ignStorage.Links = append(ignStorage.Links, tzLink)
@@ -206,6 +210,12 @@ WantedBy=sysinit.target
 				Enabled:  BoolToPtr(true),
 				Name:     "remove-moby.service",
 				Contents: &deMoby,
+			},
+			{
+				// Disable auto-updating of fcos images
+				// https://github.com/containers/podman/issues/20122
+				Enabled: BoolToPtr(false),
+				Name:    "zincati.service",
 			},
 		}}
 
@@ -684,4 +694,66 @@ func GetPodmanDockerTmpConfig(uid int, rootful bool, newline bool) string {
 	}
 
 	return fmt.Sprintf("L+  /run/docker.sock   -    -    -     -   %s%s", podmanSock, suffix)
+}
+
+// SetIgnitionFile creates a new Machine File for the machine's ignition file
+// and assignes the handle to `loc`
+func SetIgnitionFile(loc *define.VMFile, vmtype VMType, vmName string) error {
+	vmConfigDir, err := GetConfDir(vmtype)
+	if err != nil {
+		return err
+	}
+
+	ignitionFile, err := define.NewMachineFile(filepath.Join(vmConfigDir, vmName+".ign"), nil)
+	if err != nil {
+		return err
+	}
+
+	*loc = *ignitionFile
+	return nil
+}
+
+type IgnitionBuilder struct {
+	dynamicIgnition DynamicIgnition
+	units           []Unit
+}
+
+// NewIgnitionBuilder generates a new IgnitionBuilder type using the
+// base `DynamicIgnition` object
+func NewIgnitionBuilder(dynamicIgnition DynamicIgnition) IgnitionBuilder {
+	return IgnitionBuilder{
+		dynamicIgnition,
+		[]Unit{},
+	}
+}
+
+// GenerateIgnitionConfig generates the ignition config
+func (i *IgnitionBuilder) GenerateIgnitionConfig() error {
+	return i.dynamicIgnition.GenerateIgnitionConfig()
+}
+
+// WithUnit adds systemd units to the internal `DynamicIgnition` config
+func (i *IgnitionBuilder) WithUnit(units ...Unit) {
+	i.dynamicIgnition.Cfg.Systemd.Units = append(i.dynamicIgnition.Cfg.Systemd.Units, units...)
+}
+
+// WithFile adds storage files to the internal `DynamicIgnition` config
+func (i *IgnitionBuilder) WithFile(files ...File) {
+	i.dynamicIgnition.Cfg.Storage.Files = append(i.dynamicIgnition.Cfg.Storage.Files, files...)
+}
+
+// BuildWithIgnitionFile copies the provided ignition file into the internal
+// `DynamicIgnition` write path
+func (i *IgnitionBuilder) BuildWithIgnitionFile(ignPath string) error {
+	inputIgnition, err := os.ReadFile(ignPath)
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(i.dynamicIgnition.WritePath, inputIgnition, 0644)
+}
+
+// Build writes the internal `DynamicIgnition` config to its write path
+func (i *IgnitionBuilder) Build() error {
+	return i.dynamicIgnition.Write()
 }

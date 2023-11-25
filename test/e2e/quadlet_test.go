@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"encoding/csv"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/containers/podman/v4/pkg/systemd/parser"
+	. "github.com/containers/podman/v4/test/utils"
 	"github.com/containers/podman/v4/version"
 	"github.com/mattn/go-shellwords"
 
@@ -35,6 +37,8 @@ func loadQuadletTestcase(path string) *quadletTestcase {
 		service += "-volume"
 	case ".network":
 		service += "-network"
+	case ".image":
+		service += "-image"
 	}
 	service += ".service"
 
@@ -165,25 +169,46 @@ func (t *quadletTestcase) assertKeyContains(args []string, unit *parser.UnitFile
 	return ok && strings.Contains(realValue, value)
 }
 
-func (t *quadletTestcase) assertPodmanArgs(args []string, unit *parser.UnitFile, key string) bool {
+func (t *quadletTestcase) assertPodmanArgs(args []string, unit *parser.UnitFile, key string, allowRegex, globalOnly bool) bool {
 	podmanArgs, _ := unit.LookupLastArgs("Service", key)
-	return findSublist(podmanArgs, args) != -1
-}
+	if globalOnly {
+		podmanCmdLocation := findSublist(podmanArgs, []string{args[0]})
+		if podmanCmdLocation == -1 {
+			return false
+		}
 
-func (t *quadletTestcase) assertPodmanArgsRegex(args []string, unit *parser.UnitFile, key string) bool {
-	podmanArgs, _ := unit.LookupLastArgs("Service", key)
-	return findSublistRegex(podmanArgs, args) != -1
-}
-
-func keyValueStringToMap(keyValueString, separator string) map[string]string {
-	keyValMap := make(map[string]string)
-	keyVarList := strings.Split(keyValueString, separator)
-	for _, param := range keyVarList {
-		kv := strings.Split(param, "=")
-		keyValMap[kv[0]] = kv[1]
+		podmanArgs = podmanArgs[:podmanCmdLocation]
+		args = args[1:]
 	}
 
-	return keyValMap
+	var location int
+	if allowRegex {
+		location = findSublistRegex(podmanArgs, args)
+	} else {
+		location = findSublist(podmanArgs, args)
+	}
+
+	return location != -1
+}
+
+func keyValueStringToMap(keyValueString, separator string) (map[string]string, error) {
+	keyValMap := make(map[string]string)
+	csvReader := csv.NewReader(strings.NewReader(keyValueString))
+	csvReader.Comma = []rune(separator)[0]
+	keyVarList, err := csvReader.ReadAll()
+	if err != nil {
+		return nil, err
+	}
+	for _, param := range keyVarList[0] {
+		val := ""
+		kv := strings.SplitN(param, "=", 2)
+		if len(kv) == 2 {
+			val = kv[1]
+		}
+		keyValMap[kv[0]] = val
+	}
+
+	return keyValMap, nil
 }
 
 func keyValMapEqualRegex(expectedKeyValMap, actualKeyValMap map[string]string) bool {
@@ -203,10 +228,23 @@ func keyValMapEqualRegex(expectedKeyValMap, actualKeyValMap map[string]string) b
 	return true
 }
 
-func (t *quadletTestcase) assertPodmanArgsKeyVal(args []string, unit *parser.UnitFile, key string, allowRegex bool) bool {
+func (t *quadletTestcase) assertPodmanArgsKeyVal(args []string, unit *parser.UnitFile, key string, allowRegex, globalOnly bool) bool {
 	podmanArgs, _ := unit.LookupLastArgs("Service", key)
 
-	expectedKeyValMap := keyValueStringToMap(args[2], args[1])
+	if globalOnly {
+		podmanCmdLocation := findSublist(podmanArgs, []string{args[0]})
+		if podmanCmdLocation == -1 {
+			return false
+		}
+
+		podmanArgs = podmanArgs[:podmanCmdLocation]
+		args = args[1:]
+	}
+
+	expectedKeyValMap, err := keyValueStringToMap(args[2], args[1])
+	if err != nil {
+		return false
+	}
 	argKeyLocation := 0
 	for {
 		subListLocation := findSublist(podmanArgs[argKeyLocation:], []string{args[0]})
@@ -215,7 +253,10 @@ func (t *quadletTestcase) assertPodmanArgsKeyVal(args []string, unit *parser.Uni
 		}
 
 		argKeyLocation += subListLocation
-		actualKeyValMap := keyValueStringToMap(podmanArgs[argKeyLocation+1], args[1])
+		actualKeyValMap, err := keyValueStringToMap(podmanArgs[argKeyLocation+1], args[1])
+		if err != nil {
+			break
+		}
 		if allowRegex {
 			if keyValMapEqualRegex(expectedKeyValMap, actualKeyValMap) {
 				return true
@@ -251,19 +292,35 @@ func (t *quadletTestcase) assertPodmanFinalArgsRegex(args []string, unit *parser
 }
 
 func (t *quadletTestcase) assertStartPodmanArgs(args []string, unit *parser.UnitFile) bool {
-	return t.assertPodmanArgs(args, unit, "ExecStart")
+	return t.assertPodmanArgs(args, unit, "ExecStart", false, false)
 }
 
 func (t *quadletTestcase) assertStartPodmanArgsRegex(args []string, unit *parser.UnitFile) bool {
-	return t.assertPodmanArgsRegex(args, unit, "ExecStart")
+	return t.assertPodmanArgs(args, unit, "ExecStart", true, false)
+}
+
+func (t *quadletTestcase) assertStartPodmanGlobalArgs(args []string, unit *parser.UnitFile) bool {
+	return t.assertPodmanArgs(args, unit, "ExecStart", false, true)
+}
+
+func (t *quadletTestcase) assertStartPodmanGlobalArgsRegex(args []string, unit *parser.UnitFile) bool {
+	return t.assertPodmanArgs(args, unit, "ExecStart", true, true)
 }
 
 func (t *quadletTestcase) assertStartPodmanArgsKeyVal(args []string, unit *parser.UnitFile) bool {
-	return t.assertPodmanArgsKeyVal(args, unit, "ExecStart", false)
+	return t.assertPodmanArgsKeyVal(args, unit, "ExecStart", false, false)
 }
 
 func (t *quadletTestcase) assertStartPodmanArgsKeyValRegex(args []string, unit *parser.UnitFile) bool {
-	return t.assertPodmanArgsKeyVal(args, unit, "ExecStart", true)
+	return t.assertPodmanArgsKeyVal(args, unit, "ExecStart", true, false)
+}
+
+func (t *quadletTestcase) assertStartPodmanGlobalArgsKeyVal(args []string, unit *parser.UnitFile) bool {
+	return t.assertPodmanArgsKeyVal(args, unit, "ExecStart", false, true)
+}
+
+func (t *quadletTestcase) assertStartPodmanGlobalArgsKeyValRegex(args []string, unit *parser.UnitFile) bool {
+	return t.assertPodmanArgsKeyVal(args, unit, "ExecStart", true, true)
 }
 
 func (t *quadletTestcase) assertStartPodmanFinalArgs(args []string, unit *parser.UnitFile) bool {
@@ -275,7 +332,11 @@ func (t *quadletTestcase) assertStartPodmanFinalArgsRegex(args []string, unit *p
 }
 
 func (t *quadletTestcase) assertStopPodmanArgs(args []string, unit *parser.UnitFile) bool {
-	return t.assertPodmanArgs(args, unit, "ExecStop")
+	return t.assertPodmanArgs(args, unit, "ExecStop", false, false)
+}
+
+func (t *quadletTestcase) assertStopPodmanGlobalArgs(args []string, unit *parser.UnitFile) bool {
+	return t.assertPodmanArgs(args, unit, "ExecStop", false, true)
 }
 
 func (t *quadletTestcase) assertStopPodmanFinalArgs(args []string, unit *parser.UnitFile) bool {
@@ -286,8 +347,20 @@ func (t *quadletTestcase) assertStopPodmanFinalArgsRegex(args []string, unit *pa
 	return t.assertPodmanFinalArgsRegex(args, unit, "ExecStop")
 }
 
+func (t *quadletTestcase) assertStopPodmanArgsKeyVal(args []string, unit *parser.UnitFile) bool {
+	return t.assertPodmanArgsKeyVal(args, unit, "ExecStop", false, false)
+}
+
+func (t *quadletTestcase) assertStopPodmanArgsKeyValRegex(args []string, unit *parser.UnitFile) bool {
+	return t.assertPodmanArgsKeyVal(args, unit, "ExecStop", true, false)
+}
+
 func (t *quadletTestcase) assertStopPostPodmanArgs(args []string, unit *parser.UnitFile) bool {
-	return t.assertPodmanArgs(args, unit, "ExecStopPost")
+	return t.assertPodmanArgs(args, unit, "ExecStopPost", false, false)
+}
+
+func (t *quadletTestcase) assertStopPostPodmanGlobalArgs(args []string, unit *parser.UnitFile) bool {
+	return t.assertPodmanArgs(args, unit, "ExecStopPost", false, true)
 }
 
 func (t *quadletTestcase) assertStopPostPodmanFinalArgs(args []string, unit *parser.UnitFile) bool {
@@ -296,6 +369,14 @@ func (t *quadletTestcase) assertStopPostPodmanFinalArgs(args []string, unit *par
 
 func (t *quadletTestcase) assertStopPostPodmanFinalArgsRegex(args []string, unit *parser.UnitFile) bool {
 	return t.assertPodmanFinalArgsRegex(args, unit, "ExecStopPost")
+}
+
+func (t *quadletTestcase) assertStopPostPodmanArgsKeyVal(args []string, unit *parser.UnitFile) bool {
+	return t.assertPodmanArgsKeyVal(args, unit, "ExecStopPost", false, false)
+}
+
+func (t *quadletTestcase) assertStopPostPodmanArgsKeyValRegex(args []string, unit *parser.UnitFile) bool {
+	return t.assertPodmanArgsKeyVal(args, unit, "ExecStopPost", true, false)
 }
 
 func (t *quadletTestcase) assertSymlink(args []string, unit *parser.UnitFile) bool {
@@ -347,6 +428,14 @@ func (t *quadletTestcase) doAssert(check []string, unit *parser.UnitFile, sessio
 		ok = t.assertStartPodmanArgsKeyVal(args, unit)
 	case "assert-podman-args-key-val-regex":
 		ok = t.assertStartPodmanArgsKeyValRegex(args, unit)
+	case "assert-podman-global-args":
+		ok = t.assertStartPodmanGlobalArgs(args, unit)
+	case "assert-podman-global-args-regex":
+		ok = t.assertStartPodmanGlobalArgsRegex(args, unit)
+	case "assert-podman-global-args-key-val":
+		ok = t.assertStartPodmanGlobalArgsKeyVal(args, unit)
+	case "assert-podman-global-args-key-val-regex":
+		ok = t.assertStartPodmanGlobalArgsKeyValRegex(args, unit)
 	case "assert-podman-final-args":
 		ok = t.assertStartPodmanFinalArgs(args, unit)
 	case "assert-podman-final-args-regex":
@@ -355,16 +444,28 @@ func (t *quadletTestcase) doAssert(check []string, unit *parser.UnitFile, sessio
 		ok = t.assertSymlink(args, unit)
 	case "assert-podman-stop-args":
 		ok = t.assertStopPodmanArgs(args, unit)
+	case "assert-podman-stop-global-args":
+		ok = t.assertStopPodmanGlobalArgs(args, unit)
 	case "assert-podman-stop-final-args":
 		ok = t.assertStopPodmanFinalArgs(args, unit)
 	case "assert-podman-stop-final-args-regex":
 		ok = t.assertStopPodmanFinalArgsRegex(args, unit)
+	case "assert-podman-stop-args-key-val":
+		ok = t.assertStopPodmanArgsKeyVal(args, unit)
+	case "assert-podman-stop-args-key-val-regex":
+		ok = t.assertStopPodmanArgsKeyValRegex(args, unit)
 	case "assert-podman-stop-post-args":
 		ok = t.assertStopPostPodmanArgs(args, unit)
+	case "assert-podman-stop-post-global-args":
+		ok = t.assertStopPostPodmanGlobalArgs(args, unit)
 	case "assert-podman-stop-post-final-args":
 		ok = t.assertStopPostPodmanFinalArgs(args, unit)
 	case "assert-podman-stop-post-final-args-regex":
 		ok = t.assertStopPostPodmanFinalArgsRegex(args, unit)
+	case "assert-podman-stop-post-args-key-val":
+		ok = t.assertStopPostPodmanArgsKeyVal(args, unit)
+	case "assert-podman-stop-post-args-key-val-regex":
+		ok = t.assertStopPostPodmanArgsKeyValRegex(args, unit)
 
 	default:
 		return fmt.Errorf("Unsupported assertion %s", op)
@@ -432,7 +533,7 @@ var _ = Describe("quadlet system generator", func() {
 		It("Should print correct version", func() {
 			session := podmanTest.Quadlet([]string{"-version"}, "/something")
 			session.WaitWithDefaultTimeout()
-			Expect(session).Should(Exit(0))
+			Expect(session).Should(ExitCleanly())
 			Expect(session.OutputToString()).To(Equal(version.Version.String()))
 		})
 	})
@@ -453,7 +554,14 @@ var _ = Describe("quadlet system generator", func() {
 			current := session.ErrorToStringArray()
 			expected := "No files parsed from [/something]"
 
-			Expect(current[0]).To(ContainSubstring(expected))
+			found := false
+			for _, line := range current {
+				if strings.Contains(line, expected) {
+					found = true
+					break
+				}
+			}
+			Expect(found).To(BeTrue())
 		})
 
 		It("Should fail on bad quadlet", func() {
@@ -510,6 +618,7 @@ BOGUS=foo
 			session := podmanTest.Quadlet([]string{"-dryrun"}, quadletDir)
 			session.WaitWithDefaultTimeout()
 			Expect(session).Should(Exit(0))
+			Expect(session.ErrorToString()).To(ContainSubstring("Loading source unit file "))
 
 			current := session.OutputToStringArray()
 			expected := []string{
@@ -588,6 +697,8 @@ BOGUS=foo
 		Entry("exec.container", "exec.container", 0, ""),
 		Entry("health.container", "health.container", 0, ""),
 		Entry("hostname.container", "hostname.container", 0, ""),
+		Entry("idmapping.container", "idmapping.container", 0, ""),
+		Entry("idmapping-with-remap.container", "idmapping-with-remap.container", 1, "converting \"idmapping-with-remap.container\": deprecated Remap keys are set along with explicit mapping keys"),
 		Entry("image.container", "image.container", 0, ""),
 		Entry("install.container", "install.container", 0, ""),
 		Entry("ip.container", "ip.container", 0, ""),
@@ -607,9 +718,12 @@ BOGUS=foo
 		Entry("ports.container", "ports.container", 0, ""),
 		Entry("ports_ipv6.container", "ports_ipv6.container", 0, ""),
 		Entry("pull.container", "pull.container", 0, ""),
+		Entry("readonly.container", "readonly.container", 0, ""),
+		Entry("readonly-tmpfs.container", "readonly-tmpfs.container", 0, ""),
 		Entry("readonly-notmpfs.container", "readonly-notmpfs.container", 0, ""),
 		Entry("readwrite-notmpfs.container", "readwrite-notmpfs.container", 0, ""),
-		Entry("readwrite.container", "readwrite.container", 0, ""),
+		Entry("volatiletmp-readwrite.container", "volatiletmp-readwrite.container", 0, ""),
+		Entry("volatiletmp-readonly.container", "volatiletmp-readonly.container", 0, ""),
 		Entry("remap-auto.container", "remap-auto.container", 0, ""),
 		Entry("remap-auto2.container", "remap-auto2.container", 0, ""),
 		Entry("remap-keep-id.container", "remap-keep-id.container", 0, ""),
@@ -621,12 +735,18 @@ BOGUS=foo
 		Entry("selinux.container", "selinux.container", 0, ""),
 		Entry("shmsize.container", "shmsize.container", 0, ""),
 		Entry("shortname.container", "shortname.container", 0, "Warning: shortname.container specifies the image \"shortname\" which not a fully qualified image name. This is not ideal for performance and security reasons. See the podman-pull manpage discussion of short-name-aliases.conf for details."),
+		Entry("subidmapping.container", "subidmapping.container", 0, ""),
+		Entry("subidmapping-with-remap.container", "subidmapping-with-remap.container", 1, "converting \"subidmapping-with-remap.container\": deprecated Remap keys are set along with explicit mapping keys"),
 		Entry("sysctl.container", "sysctl.container", 0, ""),
 		Entry("timezone.container", "timezone.container", 0, ""),
 		Entry("unmask.container", "unmask.container", 0, ""),
 		Entry("user.container", "user.container", 0, ""),
+		Entry("userns.container", "userns.container", 0, ""),
+		Entry("userns-with-remap.container", "userns-with-remap.container", 1, "converting \"userns-with-remap.container\": deprecated Remap keys are set along with explicit mapping keys"),
 		Entry("volume.container", "volume.container", 0, ""),
 		Entry("workingdir.container", "workingdir.container", 0, ""),
+		Entry("Container - global args", "globalargs.container", 0, ""),
+		Entry("Container - Containers Conf Modules", "containersconfmodule.container", 0, ""),
 
 		Entry("basic.volume", "basic.volume", 0, ""),
 		Entry("device-copy.volume", "device-copy.volume", 0, ""),
@@ -635,6 +755,10 @@ BOGUS=foo
 		Entry("name.volume", "name.volume", 0, ""),
 		Entry("podmanargs.volume", "podmanargs.volume", 0, ""),
 		Entry("uid.volume", "uid.volume", 0, ""),
+		Entry("image.volume", "image.volume", 0, ""),
+		Entry("image-no-image.volume", "image-no-image.volume", 1, "converting \"image-no-image.volume\": the key Image is mandatory when using the image driver"),
+		Entry("Volume - global args", "globalargs.volume", 0, ""),
+		Entry("Volume - Containers Conf Modules", "containersconfmodule.volume", 0, ""),
 
 		Entry("Absolute Path", "absolute.path.kube", 0, ""),
 		Entry("Basic kube", "basic.kube", 0, ""),
@@ -654,6 +778,10 @@ BOGUS=foo
 		Entry("Kube - Working Directory YAML Relative Path", "workingdir-yaml-rel.kube", 0, ""),
 		Entry("Kube - Working Directory Unit", "workingdir-unit.kube", 0, ""),
 		Entry("Kube - Working Directory already in Service", "workingdir-service.kube", 0, ""),
+		Entry("Kube - global args", "globalargs.kube", 0, ""),
+		Entry("Kube - Containers Conf Modules", "containersconfmodule.kube", 0, ""),
+		Entry("Kube - Service Type=oneshot", "oneshot.kube", 0, ""),
+		Entry("Kube - Down force", "downforce.kube", 0, ""),
 
 		Entry("Network - Basic", "basic.network", 0, ""),
 		Entry("Network - Disable DNS", "disable-dns.network", 0, ""),
@@ -676,6 +804,23 @@ BOGUS=foo
 		Entry("Network - Subnets", "subnets.network", 0, ""),
 		Entry("Network - multiple subnet, gateway and range", "subnet-trio.multiple.network", 0, ""),
 		Entry("Network - subnet, gateway and range", "subnet-trio.network", 0, ""),
+		Entry("Network - global args", "globalargs.network", 0, ""),
+		Entry("Network - Containers Conf Modules", "containersconfmodule.network", 0, ""),
+
+		Entry("Image - Basic", "basic.image", 0, ""),
+		Entry("Image - No Image", "no-image.image", 1, "converting \"no-image.image\": no Image key specified"),
+		Entry("Image - Architecture", "arch.image", 0, ""),
+		Entry("Image - Auth File", "auth.image", 0, ""),
+		Entry("Image - Certificates", "certs.image", 0, ""),
+		Entry("Image - Credentials", "creds.image", 0, ""),
+		Entry("Image - Decryption Key", "decrypt.image", 0, ""),
+		Entry("Image - OS Key", "os.image", 0, ""),
+		Entry("Image - Variant Key", "variant.image", 0, ""),
+		Entry("Image - All Tags", "all-tags.image", 0, ""),
+		Entry("Image - TLS Verify", "tls-verify.image", 0, ""),
+		Entry("Image - Arch and OS", "arch-os.image", 0, ""),
+		Entry("Image - global args", "globalargs.image", 0, ""),
+		Entry("Image - Containers Conf Modules", "containersconfmodule.image", 0, ""),
 	)
 
 })

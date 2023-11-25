@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/containers/podman/v4/pkg/machine"
+	"github.com/containers/podman/v4/pkg/machine/compression"
+	"github.com/containers/podman/v4/pkg/machine/define"
 	vfConfig "github.com/crc-org/vfkit/pkg/config"
 	"github.com/docker/go-units"
 	"golang.org/x/sys/unix"
@@ -34,7 +36,7 @@ type MMHardwareConfig struct {
 
 func VirtualizationProvider() machine.VirtProvider {
 	return &AppleHVVirtualization{
-		machine.NewVirtualization(machine.AppleHV, machine.Xz, machine.Raw, vmtype),
+		machine.NewVirtualization(define.AppleHV, compression.Xz, define.Raw, vmtype),
 	}
 }
 
@@ -53,12 +55,11 @@ func (v AppleHVVirtualization) CheckExclusiveActiveVM() (bool, string, error) {
 }
 
 func (v AppleHVVirtualization) IsValidVMName(name string) (bool, error) {
-	mm := MacMachine{Name: name}
 	configDir, err := machine.GetConfDir(machine.AppleHvVirt)
 	if err != nil {
 		return false, err
 	}
-	if err := loadMacMachineFromJSON(configDir, &mm); err != nil {
+	if _, err := loadMacMachineFromJSON(configDir); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -112,12 +113,16 @@ func (v AppleHVVirtualization) LoadVMByName(name string) (machine.VM, error) {
 func (v AppleHVVirtualization) NewMachine(opts machine.InitOptions) (machine.VM, error) {
 	m := MacMachine{Name: opts.Name}
 
+	if len(opts.USBs) > 0 {
+		return nil, fmt.Errorf("USB host passtrough not supported for applehv machines")
+	}
+
 	configDir, err := machine.GetConfDir(machine.AppleHvVirt)
 	if err != nil {
 		return nil, err
 	}
 
-	configPath, err := machine.NewMachineFile(getVMConfigPath(configDir, opts.Name), nil)
+	configPath, err := define.NewMachineFile(getVMConfigPath(configDir, opts.Name), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -128,11 +133,9 @@ func (v AppleHVVirtualization) NewMachine(opts machine.InitOptions) (machine.VM,
 		return nil, err
 	}
 
-	ignitionPath, err := machine.NewMachineFile(filepath.Join(configDir, m.Name)+".ign", nil)
-	if err != nil {
+	if err := machine.SetIgnitionFile(&m.IgnitionFile, vmtype, m.Name); err != nil {
 		return nil, err
 	}
-	m.IgnitionFile = *ignitionPath
 
 	// Set creation time
 	m.Created = time.Now()
@@ -183,14 +186,14 @@ func (v AppleHVVirtualization) loadFromLocalJson() ([]*MacMachine, error) {
 	}
 
 	for _, jsonFile := range jsonFiles {
-		mm := MacMachine{}
-		if err := loadMacMachineFromJSON(jsonFile, &mm); err != nil {
+		mm, err := loadMacMachineFromJSON(jsonFile)
+		if err != nil {
 			return nil, err
 		}
 		if err != nil {
 			return nil, err
 		}
-		mms = append(mms, &mm)
+		mms = append(mms, mm)
 	}
 	return mms, nil
 }

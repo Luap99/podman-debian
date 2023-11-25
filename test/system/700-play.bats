@@ -411,6 +411,27 @@ _EOF
     run_podman rmi -f userimage:latest
 }
 
+# Occasionally a remnant storage container is left behind which causes
+# podman play kube --replace to fail. This tests created a conflicting
+# storage container name using buildah to make sure --replace, still
+# functions proplery by removing the storage container.
+@test "podman kube play --replace external storage" {
+    TESTDIR=$PODMAN_TMPDIR/testdir
+    mkdir -p $TESTDIR
+    echo "$testYaml" | sed "s|TESTDIR|${TESTDIR}|g" > $PODMAN_TMPDIR/test.yaml
+    run_podman play kube $PODMAN_TMPDIR/test.yaml
+    # Force removal of container
+    run_podman rm --force -t0 test_pod-test
+    # Create external container using buildah with same name
+    buildah from --name test_pod-test $IMAGE
+    # --replace deletes the buildah container and replace it with new one
+    run_podman play kube --replace $PODMAN_TMPDIR/test.yaml
+
+    run_podman stop -a -t 0
+    run_podman pod rm -t 0 -f test_pod
+    run_podman rmi -f userimage:latest
+}
+
 @test "podman kube --annotation" {
     TESTDIR=$PODMAN_TMPDIR/testdir
     RANDOMSTRING=$(random_string 15)
@@ -485,9 +506,10 @@ _EOF
     SERVER=http://127.0.0.1:$HOST_PORT
 
     run_podman run -d --name myyaml -p "$HOST_PORT:80" \
-    -v $PODMAN_TMPDIR/test.yaml:/var/www/testpod.yaml:Z \
-    -w /var/www \
-    $IMAGE /bin/busybox-extras httpd -f -p 80
+               -v $PODMAN_TMPDIR/test.yaml:/var/www/testpod.yaml:Z \
+               -w /var/www \
+               $IMAGE /bin/busybox-extras httpd -f -p 80
+    wait_for_port 127.0.0.1 $HOST_PORT
 
     run_podman kube play $SERVER/testpod.yaml
     run_podman inspect test_pod-test --format "{{.State.Running}}"
@@ -532,7 +554,7 @@ EOF
       image: $IMAGE
       ports:
         - name: hostp
-          containerPort: $HOST_PORT
+          hostPort: $HOST_PORT
 EOF
 
     run_podman kube play $PODMAN_TMPDIR/test.yaml
@@ -734,7 +756,7 @@ spec:
     bogus=$PODMAN_TMPDIR/bogus-authfile
 
     run_podman 125 kube play --authfile=$bogus - < $PODMAN_TMPDIR/test.yaml
-    is "$output" "Error: checking authfile: stat $bogus: no such file or directory" "$command should fail with not such file"
+    is "$output" "Error: credential file is not accessible: stat $bogus: no such file or directory" "$command should fail with not such file"
 }
 
 @test "podman kube play with umask from containers.conf" {

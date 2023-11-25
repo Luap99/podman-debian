@@ -6,7 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,7 +23,7 @@ import (
 var originalHomeDir = os.Getenv("HOME")
 
 const (
-	defaultTimeout time.Duration = 90 * time.Second
+	defaultTimeout = 90 * time.Second
 )
 
 type machineCommand interface {
@@ -31,7 +31,7 @@ type machineCommand interface {
 }
 
 type MachineTestBuilder interface {
-	setName(string) *MachineTestBuilder
+	setName(name string) *MachineTestBuilder
 	setCmd(mc machineCommand) *MachineTestBuilder
 	setTimeout(duration time.Duration) *MachineTestBuilder
 	run() (*machineSession, error)
@@ -100,6 +100,13 @@ func newMB() (*machineTestBuilder, error) {
 	mb.podmanBinary = filepath.Join(cwd, podmanBinary)
 	if os.Getenv("PODMAN_BINARY") != "" {
 		mb.podmanBinary = os.Getenv("PODMAN_BINARY")
+	}
+	if os.Getenv("MACHINE_TEST_TIMEOUT") != "" {
+		seconds, err := strconv.Atoi(os.Getenv("MACHINE_TEST_TIMEOUT"))
+		if err != nil {
+			return nil, err
+		}
+		mb.timeout = time.Duration(seconds) * time.Second
 	}
 	return &mb, nil
 }
@@ -203,15 +210,27 @@ func (matcher *ValidJSONMatcher) NegatedFailureMessage(actual interface{}) (mess
 	return format.Message(actual, "to _not_ be valid JSON")
 }
 
-func checkReason(reason string) {
-	if len(reason) < 5 {
-		panic("Test must specify a reason to skip")
+func skipIfVmtype(vmType machine.VMType, message string) {
+	if isVmtype(vmType) {
+		Skip(message)
 	}
 }
 
-func SkipIfNotWindows(reason string) {
-	checkReason(reason)
-	if runtime.GOOS != "windows" {
-		Skip("[not windows]: " + reason)
+func skipIfNotVmtype(vmType machine.VMType, message string) {
+	if !isVmtype(vmType) {
+		Skip(message)
 	}
+}
+
+func skipIfWSL(message string) {
+	skipIfVmtype(machine.WSLVirt, message)
+}
+
+func isVmtype(vmType machine.VMType) bool {
+	return testProvider.VMType() == vmType
+}
+
+// isWSL is a simple wrapper to determine if the testprovider is WSL
+func isWSL() bool {
+	return isVmtype(machine.WSLVirt)
 }

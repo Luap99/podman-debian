@@ -10,15 +10,21 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/Microsoft/go-winio"
 	"github.com/containers/common/pkg/config"
+	gvproxy "github.com/containers/gvisor-tap-vsock/pkg/types"
 	"github.com/containers/libhvee/pkg/hypervctl"
 	"github.com/containers/podman/v4/pkg/machine"
+	"github.com/containers/podman/v4/pkg/machine/define"
+	"github.com/containers/podman/v4/pkg/strongunits"
 	"github.com/containers/podman/v4/pkg/util"
 	"github.com/containers/podman/v4/utils"
-	"github.com/docker/go-units"
+	"github.com/containers/storage/pkg/lockfile"
 	"github.com/sirupsen/logrus"
 )
 
@@ -37,9 +43,61 @@ const (
 	apiUpTimeout         = 20 * time.Second
 )
 
+// hyperVReadyUnit is a unit file that sets up the virtual serial device
+// where when the VM is done configuring, it will send an ack
+// so a listening host knows it can begin interacting with it
+//
+// VSOCK-CONNECT:2 <- shortcut to connect to the hostvm
+const hyperVReadyUnit = `[Unit]
+After=remove-moby.service sshd.socket sshd.service
+After=systemd-user-sessions.service
+OnFailure=emergency.target
+OnFailureJobMode=isolate
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c '/usr/bin/echo Ready | socat - VSOCK-CONNECT:2:%d'
+[Install]
+RequiredBy=default.target
+`
+
+// hyperVVsockNetUnit is a systemd unit file that calls the vm helper utility
+// needed to take traffic from a network vsock0 device to the actual vsock
+// and onto the host
+const hyperVVsockNetUnit = `
+[Unit]
+Description=vsock_network
+After=NetworkManager.service
+
+[Service]
+ExecStart=/usr/libexec/podman/gvforwarder -preexisting -iface vsock0 -url vsock://2:%d/connect
+ExecStartPost=/usr/bin/nmcli c up vsock0
+
+[Install]
+WantedBy=multi-user.target
+`
+
+const hyperVVsockNMConnection = `
+[connection]
+id=vsock0
+type=tun
+interface-name=vsock0
+
+[tun]
+mode=2
+
+[802-3-ethernet]
+cloned-mac-address=5A:94:EF:E4:0C:EE
+
+[ipv4]
+method=auto
+
+[proxy]
+`
+
 type HyperVMachine struct {
 	// ConfigPath is the fully qualified path to the configuration file
-	ConfigPath machine.VMFile
+	ConfigPath define.VMFile
 	// HostUser contains info about host user
 	machine.HostUser
 	// ImageConfig describes the bootable image
@@ -63,7 +121,12 @@ type HyperVMachine struct {
 	// LastUp contains the last recorded uptime
 	LastUp time.Time
 	// GVProxy will write its PID here
-	GvProxyPid machine.VMFile
+	GvProxyPid define.VMFile
+	// MountVsocks contains the currently-active vsocks, mapped to the
+	// directory they should be mounted on.
+	MountVsocks map[string]uint64
+	// Used at runtime for serializing write operations
+	lock *lockfile.LockFile
 }
 
 // addNetworkAndReadySocketsToRegistry adds the Network and Ready sockets to the
@@ -80,103 +143,6 @@ func (m *HyperVMachine) addNetworkAndReadySocketsToRegistry() error {
 	m.NetworkHVSock = *networkHVSock
 	m.ReadyHVSock = *eventHVSocket
 	return nil
-}
-
-// writeIgnitionConfigFile generates the ignition config and writes it to the
-// filesystem
-func (m *HyperVMachine) writeIgnitionConfigFile(opts machine.InitOptions, user, key string) error {
-	ign := machine.DynamicIgnition{
-		Name:      user,
-		Key:       key,
-		VMName:    m.Name,
-		VMType:    machine.HyperVVirt,
-		TimeZone:  opts.TimeZone,
-		WritePath: m.IgnitionFile.GetPath(),
-		UID:       m.UID,
-	}
-
-	if err := ign.GenerateIgnitionConfig(); err != nil {
-		return err
-	}
-
-	// ready is a unit file that sets up the virtual serial device
-	// where when the VM is done configuring, it will send an ack
-	// so a listening host knows it can being interacting with it
-	//
-	// VSOCK-CONNECT:2 <- shortcut to connect to the hostvm
-	ready := `[Unit]
-After=remove-moby.service sshd.socket sshd.service
-After=systemd-user-sessions.service
-OnFailure=emergency.target
-OnFailureJobMode=isolate
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/bin/sh -c '/usr/bin/echo Ready | socat - VSOCK-CONNECT:2:%d'
-[Install]
-RequiredBy=default.target
-`
-	readyUnit := machine.Unit{
-		Enabled:  machine.BoolToPtr(true),
-		Name:     "ready.service",
-		Contents: machine.StrToPtr(fmt.Sprintf(ready, m.ReadyHVSock.Port)),
-	}
-
-	// userNetwork is a systemd unit file that calls the vm helpoer utility
-	// needed to take traffic from a network vsock0 device to the actual vsock
-	// and onto the host
-	userNetwork := `
-[Unit]
-Description=vsock_network
-After=NetworkManager.service
-
-[Service]
-ExecStart=/usr/libexec/podman/gvforwarder -preexisting -iface vsock0 -url vsock://2:%d/connect
-ExecStartPost=/usr/bin/nmcli c up vsock0
-
-[Install]
-WantedBy=multi-user.target
-`
-	vsockNetUnit := machine.Unit{
-		Contents: machine.StrToPtr(fmt.Sprintf(userNetwork, m.NetworkHVSock.Port)),
-		Enabled:  machine.BoolToPtr(true),
-		Name:     "vsock-network.service",
-	}
-
-	ign.Cfg.Systemd.Units = append(ign.Cfg.Systemd.Units, readyUnit, vsockNetUnit)
-
-	vSockNMConnection := `
-[connection]
-id=vsock0
-type=tun
-interface-name=vsock0
-
-[tun]
-mode=2
-
-[802-3-ethernet]
-cloned-mac-address=5A:94:EF:E4:0C:EE
-
-[ipv4]
-method=auto
-
-[proxy]
-`
-
-	ign.Cfg.Storage.Files = append(ign.Cfg.Storage.Files, machine.File{
-		Node: machine.Node{
-			Path: "/etc/NetworkManager/system-connections/vsock0.nmconnection",
-		},
-		FileEmbedded1: machine.FileEmbedded1{
-			Append: nil,
-			Contents: machine.Resource{
-				Source: machine.EncodeDataURLPtr(vSockNMConnection),
-			},
-			Mode: machine.IntToPtr(0600),
-		},
-	})
-
-	return ign.Write()
 }
 
 // readAndSplitIgnition reads the ignition file and splits it into key:value pairs
@@ -197,11 +163,50 @@ func (m *HyperVMachine) readAndSplitIgnition() error {
 func (m *HyperVMachine) Init(opts machine.InitOptions) (bool, error) {
 	var (
 		key string
+		err error
 	)
 
-	if err := m.addNetworkAndReadySocketsToRegistry(); err != nil {
+	// cleanup half-baked files if init fails at any point
+	callbackFuncs := machine.InitCleanup()
+	defer callbackFuncs.CleanIfErr(&err)
+	go callbackFuncs.CleanOnSignal()
+
+	callbackFuncs.Add(m.ImagePath.Delete)
+	callbackFuncs.Add(m.ConfigPath.Delete)
+	callbackFuncs.Add(m.unregisterMachine)
+
+	// Parsing here is confusing.
+	// Basically, we have two paths: a source path, on the Windows machine,
+	// with all that entails (drive letter, backslash separator, etc) and a
+	// dest path, in the Linux machine, normal Unix semantics. They are
+	// separated by a : character, with source path first, dest path second.
+	// So we split on :, first two parts are guaranteed to be Windows (the
+	// drive letter and file path), next one is Linux. Options, when we get
+	// around to those, would be another : after that.
+	// TODO: Need to support options here
+	for _, mount := range opts.Volumes {
+		newMount := machine.Mount{}
+
+		splitMount := strings.Split(mount, ":")
+		if len(splitMount) < 3 {
+			return false, fmt.Errorf("volumes must be specified as source:destination and must be absolute")
+		}
+		newMount.Target = splitMount[2]
+		newMount.Source = strings.Join(splitMount[:2], ":")
+		if len(splitMount) > 3 {
+			return false, fmt.Errorf("volume options are not presently supported on Hyper-V")
+		}
+
+		m.Mounts = append(m.Mounts, newMount)
+	}
+
+	if err = m.addNetworkAndReadySocketsToRegistry(); err != nil {
 		return false, err
 	}
+	callbackFuncs.Add(func() error {
+		m.removeNetworkAndReadySocketsFromRegistry()
+		return nil
+	})
 
 	m.IdentityPath = util.GetIdentityPath(m.Name)
 
@@ -227,13 +232,14 @@ func (m *HyperVMachine) Init(opts machine.InitOptions) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	callbackFuncs.Add(m.removeSystemConnections)
 
 	if len(opts.IgnitionPath) < 1 {
-		var err error
 		key, err = machine.CreateSSHKeys(m.IdentityPath)
 		if err != nil {
 			return false, err
 		}
+		callbackFuncs.Add(m.removeSSHKeys)
 	}
 
 	m.ResourceConfig = machine.ResourceConfig{
@@ -241,30 +247,90 @@ func (m *HyperVMachine) Init(opts machine.InitOptions) (bool, error) {
 		DiskSize: opts.DiskSize,
 		Memory:   opts.Memory,
 	}
+	m.Rootful = opts.Rootful
+
+	builder := machine.NewIgnitionBuilder(machine.DynamicIgnition{
+		Name:      m.RemoteUsername,
+		Key:       key,
+		VMName:    m.Name,
+		VMType:    machine.HyperVVirt,
+		TimeZone:  opts.TimeZone,
+		WritePath: m.IgnitionFile.GetPath(),
+		UID:       m.UID,
+		Rootful:   m.Rootful,
+	})
 
 	// If the user provides an ignition file, we need to
 	// copy it into the conf dir
 	if len(opts.IgnitionPath) > 0 {
-		inputIgnition, err := os.ReadFile(opts.IgnitionPath)
-		if err != nil {
-			return false, err
-		}
-		return false, os.WriteFile(m.IgnitionFile.GetPath(), inputIgnition, 0644)
+		return false, builder.BuildWithIgnitionFile(opts.IgnitionPath)
 	}
+	callbackFuncs.Add(m.IgnitionFile.Delete)
 
-	// Write the JSON file for the second time.  First time was in NewMachine
 	if err := m.writeConfig(); err != nil {
 		return false, err
 	}
 
-	// Write the ignition file
-	if err := m.writeIgnitionConfigFile(opts, m.RemoteUsername, key); err != nil {
+	if err := builder.GenerateIgnitionConfig(); err != nil {
+		return false, err
+	}
+
+	builder.WithUnit(machine.Unit{
+		Enabled:  machine.BoolToPtr(true),
+		Name:     "ready.service",
+		Contents: machine.StrToPtr(fmt.Sprintf(hyperVReadyUnit, m.ReadyHVSock.Port)),
+	})
+
+	builder.WithUnit(machine.Unit{
+		Contents: machine.StrToPtr(fmt.Sprintf(hyperVVsockNetUnit, m.NetworkHVSock.Port)),
+		Enabled:  machine.BoolToPtr(true),
+		Name:     "vsock-network.service",
+	})
+
+	builder.WithFile(machine.File{
+		Node: machine.Node{
+			Path: "/etc/NetworkManager/system-connections/vsock0.nmconnection",
+		},
+		FileEmbedded1: machine.FileEmbedded1{
+			Append: nil,
+			Contents: machine.Resource{
+				Source: machine.EncodeDataURLPtr(hyperVVsockNMConnection),
+			},
+			Mode: machine.IntToPtr(0600),
+		},
+	})
+
+	if err := builder.Build(); err != nil {
+		return false, err
+	}
+
+	if err = m.resizeDisk(strongunits.GiB(opts.DiskSize)); err != nil {
 		return false, err
 	}
 	// The ignition file has been written. We now need to
 	// read it so that we can put it into key-value pairs
 	err = m.readAndSplitIgnition()
 	return err == nil, err
+}
+
+func (m *HyperVMachine) unregisterMachine() error {
+	vmm := hypervctl.NewVirtualMachineManager()
+	vm, err := vmm.GetMachine(m.Name)
+	if err != nil {
+		logrus.Error(err)
+	}
+	return vm.Remove("")
+}
+
+func (m *HyperVMachine) removeSSHKeys() error {
+	if err := os.Remove(fmt.Sprintf("%s.pub", m.IdentityPath)); err != nil {
+		logrus.Error(err)
+	}
+	return os.Remove(m.IdentityPath)
+}
+
+func (m *HyperVMachine) removeSystemConnections() error {
+	return machine.RemoveConnections(m.Name, fmt.Sprintf("%s-root", m.Name))
 }
 
 func (m *HyperVMachine) Inspect() (*machine.InspectInfo, error) {
@@ -278,24 +344,36 @@ func (m *HyperVMachine) Inspect() (*machine.InspectInfo, error) {
 		return nil, err
 	}
 
+	vmState, err := stateConversion(vm.State())
+	if err != nil {
+		return nil, err
+	}
+
+	podmanSocket, err := m.forwardSocketPath()
+	if err != nil {
+		return nil, err
+	}
+
 	return &machine.InspectInfo{
-		ConfigPath:     m.ConfigPath,
-		ConnectionInfo: machine.ConnectionConfig{},
-		Created:        m.Created,
+		ConfigPath: m.ConfigPath,
+		ConnectionInfo: machine.ConnectionConfig{
+			PodmanSocket: podmanSocket,
+		},
+		Created: m.Created,
 		Image: machine.ImageConfig{
-			IgnitionFile: machine.VMFile{},
+			IgnitionFile: m.IgnitionFile,
 			ImageStream:  "",
-			ImagePath:    machine.VMFile{},
+			ImagePath:    m.ImagePath,
 		},
 		LastUp: m.LastUp,
 		Name:   m.Name,
 		Resources: machine.ResourceConfig{
 			CPUs:     uint64(cfg.Hardware.CPUs),
 			DiskSize: 0,
-			Memory:   uint64(cfg.Hardware.Memory),
+			Memory:   cfg.Hardware.Memory,
 		},
 		SSHConfig: m.SSHConfig,
-		State:     vm.State().String(),
+		State:     string(vmState),
 		Rootful:   m.Rootful,
 	}, nil
 }
@@ -339,24 +417,34 @@ func (m *HyperVMachine) Remove(_ string, opts machine.RemoveOptions) (string, fu
 		files    []string
 		diskPath string
 	)
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
 	vmm := hypervctl.NewVirtualMachineManager()
 	vm, err := vmm.GetMachine(m.Name)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("getting virtual machine: %w", err)
 	}
 	// In hyperv, they call running 'enabled'
 	if vm.State() == hypervctl.Enabled {
 		if !opts.Force {
-			return "", nil, hypervctl.ErrMachineStateInvalid
+			return "", nil, &machine.ErrVMRunningCannotDestroyed{Name: m.Name}
 		}
-		if err := vm.Stop(); err != nil {
-			return "", nil, err
+		// force stop bc we are destroying
+		if err := vm.StopWithForce(); err != nil {
+			return "", nil, fmt.Errorf("stopping virtual machine: %w", err)
+		}
+
+		// Update state on the VM by pulling its info again
+		vm, err = vmm.GetMachine(m.Name)
+		if err != nil {
+			return "", nil, fmt.Errorf("getting VM: %w", err)
 		}
 	}
 
-	vm, err = vmm.GetMachine(m.Name)
-	if err != nil {
-		return "", nil, err
+	// Tear down vsocks
+	if err := m.removeShares(); err != nil {
+		logrus.Errorf("Error removing vsock: %w", err)
 	}
 
 	// Collect all the files that need to be destroyed
@@ -371,7 +459,10 @@ func (m *HyperVMachine) Remove(_ string, opts machine.RemoveOptions) (string, fu
 	return confirmationMessage, func() error {
 		machine.RemoveFilesAndConnections(files, m.Name, m.Name+"-root")
 		m.removeNetworkAndReadySocketsFromRegistry()
-		return vm.Remove("")
+		if err := vm.Remove(""); err != nil {
+			return fmt.Errorf("removing virtual machine: %w", err)
+		}
+		return nil
 	}, nil
 }
 
@@ -380,11 +471,15 @@ func (m *HyperVMachine) Set(name string, opts machine.SetOptions) ([]error, erro
 		cpuChanged, memoryChanged bool
 		setErrors                 []error
 	)
+
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
 	vmm := hypervctl.NewVirtualMachineManager()
 	// Considering this a hard return if we cannot lookup the machine
 	vm, err := vmm.GetMachine(m.Name)
 	if err != nil {
-		return setErrors, err
+		return setErrors, fmt.Errorf("getting machine: %w", err)
 	}
 	if vm.State() != hypervctl.Disabled {
 		return nil, errors.New("unable to change settings unless vm is stopped")
@@ -398,7 +493,10 @@ func (m *HyperVMachine) Set(name string, opts machine.SetOptions) ([]error, erro
 		}
 	}
 	if opts.DiskSize != nil && m.DiskSize != *opts.DiskSize {
-		setErrors = append(setErrors, hypervctl.ErrNotImplemented)
+		newDiskSize := strongunits.GiB(*opts.DiskSize)
+		if err := m.resizeDisk(newDiskSize); err != nil {
+			setErrors = append(setErrors, err)
+		}
 	}
 	if opts.CPUs != nil && m.CPUs != *opts.CPUs {
 		m.CPUs = *opts.CPUs
@@ -407,6 +505,10 @@ func (m *HyperVMachine) Set(name string, opts machine.SetOptions) ([]error, erro
 	if opts.Memory != nil && m.Memory != *opts.Memory {
 		m.Memory = *opts.Memory
 		memoryChanged = true
+	}
+
+	if opts.USBs != nil {
+		setErrors = append(setErrors, errors.New("changing USBs not supported for hyperv machines"))
 	}
 
 	if cpuChanged || memoryChanged {
@@ -423,7 +525,7 @@ func (m *HyperVMachine) Set(name string, opts machine.SetOptions) ([]error, erro
 			}
 		})
 		if err != nil {
-			setErrors = append(setErrors, err)
+			setErrors = append(setErrors, fmt.Errorf("setting CPU and Memory for VM: %w", err))
 		}
 	}
 
@@ -453,6 +555,19 @@ func (m *HyperVMachine) SSH(name string, opts machine.SSHOptions) error {
 }
 
 func (m *HyperVMachine) Start(name string, opts machine.StartOptions) error {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	// Start 9p shares
+	shares, err := m.createShares()
+	if err != nil {
+		return err
+	}
+	m.MountVsocks = shares
+	if err := m.writeConfig(); err != nil {
+		return err
+	}
+
 	vmm := hypervctl.NewVirtualMachineManager()
 	vm, err := vmm.GetMachine(m.Name)
 	if err != nil {
@@ -465,6 +580,14 @@ func (m *HyperVMachine) Start(name string, opts machine.StartOptions) error {
 	if err != nil {
 		return fmt.Errorf("unable to start host networking: %q", err)
 	}
+
+	// The "starting" status from hyper v is a very small windows and not really
+	// the same as what we want.  so modeling starting behaviour after qemu
+	m.Starting = true
+	if err := m.writeConfig(); err != nil {
+		return fmt.Errorf("writing JSON file: %w", err)
+	}
+
 	if err := vm.Start(); err != nil {
 		return err
 	}
@@ -473,16 +596,22 @@ func (m *HyperVMachine) Start(name string, opts machine.StartOptions) error {
 		return err
 	}
 
+	// set starting back false now that we are running
+	m.Starting = false
+
+	if err := m.startShares(); err != nil {
+		return err
+	}
+
 	if m.HostUser.Modified {
 		if machine.UpdatePodmanDockerSockService(m, name, m.UID, m.Rootful) == nil {
 			// Reset modification state if there are no errors, otherwise ignore errors
 			// which are already logged
 			m.HostUser.Modified = false
-			_ = m.writeConfig()
 		}
 	}
-
-	return nil
+	// Write the config with updated starting status and hostuser modification
+	return m.writeConfig()
 }
 
 func (m *HyperVMachine) State(_ bool) (machine.Status, error) {
@@ -503,10 +632,13 @@ func (m *HyperVMachine) State(_ bool) (machine.Status, error) {
 }
 
 func (m *HyperVMachine) Stop(name string, opts machine.StopOptions) error {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
 	vmm := hypervctl.NewVirtualMachineManager()
 	vm, err := vmm.GetMachine(m.Name)
 	if err != nil {
-		return err
+		return fmt.Errorf("getting virtual machine: %w", err)
 	}
 	vmState := vm.State()
 	if vm.State() == hypervctl.Disabled {
@@ -520,8 +652,13 @@ func (m *HyperVMachine) Stop(name string, opts machine.StopOptions) error {
 		logrus.Error(err)
 	}
 
-	return vm.Stop()
+	if err := vm.Stop(); err != nil {
+		return fmt.Errorf("stopping virtual machine: %w", err)
+	}
 
+	// keep track of last up
+	m.LastUp = time.Now()
+	return m.writeConfig()
 }
 
 func (m *HyperVMachine) jsonConfigPath() (string, error) {
@@ -544,8 +681,18 @@ func (m *HyperVMachine) loadFromFile() (*HyperVMachine, error) {
 	mm := HyperVMachine{}
 
 	if err := mm.loadHyperVMachineFromJSON(jsonPath); err != nil {
+		if errors.Is(err, machine.ErrNoSuchVM) {
+			return nil, &machine.ErrVMDoesNotExist{Name: m.Name}
+		}
 		return nil, err
 	}
+
+	lock, err := machine.GetLock(mm.Name, vmtype)
+	if err != nil {
+		return nil, err
+	}
+	mm.lock = lock
+
 	vmm := hypervctl.NewVirtualMachineManager()
 	vm, err := vmm.GetMachine(m.Name)
 	if err != nil {
@@ -566,9 +713,6 @@ func (m *HyperVMachine) loadFromFile() (*HyperVMachine, error) {
 		mm.Memory = uint64(cfg.Hardware.Memory)
 	}
 
-	mm.DiskSize = cfg.Hardware.DiskSize * units.MiB
-	mm.LastUp = cfg.Status.LastUp
-
 	return &mm, nil
 }
 
@@ -582,7 +726,7 @@ func (m *HyperVMachine) loadHyperVMachineFromJSON(fqConfigPath string) error {
 	b, err := os.ReadFile(fqConfigPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("%q: %w", fqConfigPath, machine.ErrNoSuchVM)
+			return machine.ErrNoSuchVM
 		}
 		return err
 	}
@@ -599,48 +743,101 @@ func (m *HyperVMachine) startHostNetworking() (string, machine.APIForwardingStat
 		return "", machine.NoForwarding, err
 	}
 
-	attr := new(os.ProcAttr)
-	dnr, dnw, err := machine.GetDevNullFiles()
+	executable, err := os.Executable()
 	if err != nil {
-		return "", machine.NoForwarding, err
+		return "", 0, fmt.Errorf("unable to locate executable: %w", err)
 	}
 
-	defer func() {
-		if err := dnr.Close(); err != nil {
-			logrus.Error(err)
-		}
-	}()
-	defer func() {
-		if err := dnw.Close(); err != nil {
-			logrus.Error(err)
-		}
-	}()
-
-	gvproxy, err := cfg.FindHelperBinary("gvproxy.exe", false)
+	gvproxyBinary, err := cfg.FindHelperBinary("gvproxy.exe", false)
 	if err != nil {
 		return "", 0, err
 	}
 
-	attr.Files = []*os.File{dnr, dnw, dnw}
-	cmd := []string{gvproxy}
-	// Add the ssh port
-	cmd = append(cmd, []string{"-ssh-port", fmt.Sprintf("%d", m.Port)}...)
-	cmd = append(cmd, []string{"-listen", fmt.Sprintf("vsock://%s", m.NetworkHVSock.KeyName)}...)
-	cmd = append(cmd, "-pid-file", m.GvProxyPid.GetPath())
+	cmd := gvproxy.NewGvproxyCommand()
+	cmd.SSHPort = m.Port
+	cmd.AddEndpoint(fmt.Sprintf("vsock://%s", m.NetworkHVSock.KeyName))
+	cmd.PidFile = m.GvProxyPid.GetPath()
 
 	cmd, forwardSock, state = m.setupAPIForwarding(cmd)
-	if logrus.GetLevel() == logrus.DebugLevel {
-		cmd = append(cmd, "--debug")
-		fmt.Println(cmd)
+	if logrus.IsLevelEnabled(logrus.DebugLevel) {
+		cmd.Debug = true
 	}
-	_, err = os.StartProcess(cmd[0], cmd, attr)
-	if err != nil {
-		return "", 0, fmt.Errorf("unable to execute: %q: %w", cmd, err)
+
+	c := cmd.Cmd(gvproxyBinary)
+
+	if logrus.IsLevelEnabled(logrus.DebugLevel) {
+		if err := logCommandToFile(c, "gvproxy.log"); err != nil {
+			return "", 0, err
+		}
 	}
+
+	logrus.Debugf("Starting gvproxy with command: %s %v", gvproxyBinary, c.Args)
+
+	if err := c.Start(); err != nil {
+		return "", 0, fmt.Errorf("unable to execute: %s: %w", cmd.ToCmdline(), err)
+	}
+
+	logrus.Debugf("Got gvproxy PID as %d", c.Process.Pid)
+
+	if len(m.MountVsocks) == 0 {
+		return forwardSock, state, nil
+	}
+
+	// Start the 9p server in the background
+	args := []string{}
+	if logrus.IsLevelEnabled(logrus.DebugLevel) {
+		args = append(args, "--log-level=debug")
+	}
+	args = append(args, "machine", "server9p")
+	for dir, vsock := range m.MountVsocks {
+		for _, mount := range m.Mounts {
+			if mount.Target == dir {
+				args = append(args, "--serve", fmt.Sprintf("%s:%s", mount.Source, winio.VsockServiceID(uint32(vsock)).String()))
+				break
+			}
+		}
+	}
+	args = append(args, fmt.Sprintf("%d", c.Process.Pid))
+
+	logrus.Debugf("Going to start 9p server using command: %s %v", executable, args)
+
+	fsCmd := exec.Command(executable, args...)
+
+	if logrus.IsLevelEnabled(logrus.DebugLevel) {
+		if err := logCommandToFile(fsCmd, "podman-machine-server9.log"); err != nil {
+			return "", 0, err
+		}
+	}
+
+	if err := fsCmd.Start(); err != nil {
+		return "", 0, fmt.Errorf("unable to execute: %s %v: %w", executable, args, err)
+	}
+
+	logrus.Infof("Started podman 9p server as PID %d", fsCmd.Process.Pid)
+
 	return forwardSock, state, nil
 }
 
-func (m *HyperVMachine) setupAPIForwarding(cmd []string) ([]string, string, machine.APIForwardingState) {
+func logCommandToFile(c *exec.Cmd, filename string) error {
+	dir, err := machine.GetDataDir(machine.HyperVVirt)
+	if err != nil {
+		return fmt.Errorf("obtain machine dir: %w", err)
+	}
+	path := filepath.Join(dir, filename)
+	logrus.Infof("Going to log to %s", path)
+	log, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("create log file: %w", err)
+	}
+	defer log.Close()
+
+	c.Stdout = log
+	c.Stderr = log
+
+	return nil
+}
+
+func (m *HyperVMachine) setupAPIForwarding(cmd gvproxy.GvproxyCommand) (gvproxy.GvproxyCommand, string, machine.APIForwardingState) {
 	socket, err := m.forwardSocketPath()
 	if err != nil {
 		return cmd, "", machine.NoForwarding
@@ -654,10 +851,10 @@ func (m *HyperVMachine) setupAPIForwarding(cmd []string) ([]string, string, mach
 		forwardUser = "root"
 	}
 
-	cmd = append(cmd, []string{"-forward-sock", socket.GetPath()}...)
-	cmd = append(cmd, []string{"-forward-dest", destSock}...)
-	cmd = append(cmd, []string{"-forward-user", forwardUser}...)
-	cmd = append(cmd, []string{"-forward-identity", m.IdentityPath}...)
+	cmd.AddForwardSock(socket.GetPath())
+	cmd.AddForwardDest(destSock)
+	cmd.AddForwardUser(forwardUser)
+	cmd.AddForwardIdentity(m.IdentityPath)
 
 	return cmd, "", machine.MachineLocal
 }
@@ -670,13 +867,13 @@ func (m *HyperVMachine) dockerSock() (string, error) {
 	return filepath.Join(dd, "podman.sock"), nil
 }
 
-func (m *HyperVMachine) forwardSocketPath() (*machine.VMFile, error) {
+func (m *HyperVMachine) forwardSocketPath() (*define.VMFile, error) {
 	sockName := "podman.sock"
 	path, err := machine.GetDataDir(machine.HyperVVirt)
 	if err != nil {
 		return nil, fmt.Errorf("Resolving data dir: %s", err.Error())
 	}
-	return machine.NewMachineFile(filepath.Join(path, sockName), &sockName)
+	return define.NewMachineFile(filepath.Join(path, sockName), &sockName)
 }
 
 func (m *HyperVMachine) writeConfig() error {
@@ -690,5 +887,107 @@ func (m *HyperVMachine) setRootful(rootful bool) error {
 	}
 
 	m.HostUser.Modified = true
+	return nil
+}
+
+func (m *HyperVMachine) resizeDisk(newSize strongunits.GiB) error {
+	if m.DiskSize > uint64(newSize) {
+		return &machine.ErrNewDiskSizeTooSmall{OldSize: strongunits.ToGiB(strongunits.B(m.DiskSize)), NewSize: newSize}
+	}
+	resize := exec.Command("powershell", []string{"-command", fmt.Sprintf("Resize-VHD %s %d", m.ImagePath.GetPath(), newSize.ToBytes())}...)
+	resize.Stdout = os.Stdout
+	resize.Stderr = os.Stderr
+	if err := resize.Run(); err != nil {
+		return fmt.Errorf("resizing image: %q", err)
+	}
+	return nil
+}
+
+func (m *HyperVMachine) isStarting() bool {
+	return m.Starting
+}
+
+func (m *HyperVMachine) createShares() (_ map[string]uint64, defErr error) {
+	toReturn := make(map[string]uint64)
+
+	for _, mount := range m.Mounts {
+		var vsock *HVSockRegistryEntry
+
+		vsockNum, ok := m.MountVsocks[mount.Target]
+		if ok {
+			// Ignore errors here, we'll just try and recreate the
+			// vsock below.
+			testVsock, err := LoadHVSockRegistryEntry(vsockNum)
+			if err == nil {
+				vsock = testVsock
+			}
+		}
+		if vsock == nil {
+			testVsock, err := NewHVSockRegistryEntry(m.Name, Fileserver)
+			if err != nil {
+				return nil, err
+			}
+			defer func() {
+				if defErr != nil {
+					if err := testVsock.Remove(); err != nil {
+						logrus.Errorf("Removing vsock: %v", err)
+					}
+				}
+			}()
+			vsock = testVsock
+		}
+
+		logrus.Debugf("Going to share directory %s via 9p on vsock %d", mount.Source, vsock.Port)
+
+		toReturn[mount.Target] = vsock.Port
+	}
+
+	return toReturn, nil
+}
+
+func (m *HyperVMachine) removeShares() error {
+	var removalErr error
+
+	for _, mount := range m.Mounts {
+		vsockNum, ok := m.MountVsocks[mount.Target]
+		if !ok {
+			// Mount doesn't have a valid vsock, no need to tear down
+			continue
+		}
+
+		vsock, err := LoadHVSockRegistryEntry(vsockNum)
+		if err != nil {
+			logrus.Debugf("Vsock %d for mountpoint %s does not have a valid registry entry, skipping removal", vsockNum, mount.Target)
+			continue
+		}
+
+		if err := vsock.Remove(); err != nil {
+			if removalErr != nil {
+				logrus.Errorf("Error removing vsock: %w", removalErr)
+			}
+			removalErr = fmt.Errorf("removing vsock %d for mountpoint %s: %w", vsockNum, mount.Target, err)
+		}
+	}
+
+	return removalErr
+}
+
+func (m *HyperVMachine) startShares() error {
+	for mountpoint, sockNum := range m.MountVsocks {
+		args := []string{"-q", "--", "sudo", "podman"}
+		if logrus.IsLevelEnabled(logrus.DebugLevel) {
+			args = append(args, "--log-level=debug")
+		}
+		args = append(args, "machine", "client9p", fmt.Sprintf("%d", sockNum), mountpoint)
+
+		sshOpts := machine.SSHOptions{
+			Args: args,
+		}
+
+		if err := m.SSH(m.Name, sshOpts); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }

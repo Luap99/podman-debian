@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
-	define "github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/libpod/define"
 	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -261,6 +261,20 @@ var _ = Describe("Podman healthcheck run", func() {
 		Expect(ps).Should(ExitCleanly())
 		Expect(ps.OutputToStringArray()).To(HaveLen(2))
 		Expect(ps.OutputToString()).To(ContainSubstring("hc"))
+	})
+
+	It("hc logs do not include exec events", func() {
+		session := podmanTest.Podman([]string{"run", "-dt", "--name", "hc", "--health-cmd", "true", "--health-interval", "5s", "alpine", "sleep", "60"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(ExitCleanly())
+		hc := podmanTest.Podman([]string{"healthcheck", "run", "hc"})
+		hc.WaitWithDefaultTimeout()
+		Expect(hc).Should(ExitCleanly())
+		hcLogs := podmanTest.Podman([]string{"events", "--stream=false", "--filter", "container=hc", "--filter", "event=exec_died", "--filter", "event=exec", "--since", "1m"})
+		hcLogs.WaitWithDefaultTimeout()
+		Expect(hcLogs).Should(ExitCleanly())
+		hcLogsArray := hcLogs.OutputToStringArray()
+		Expect(hcLogsArray).To(BeEmpty())
 	})
 
 	It("stopping and then starting a container with healthcheck cmd", func() {

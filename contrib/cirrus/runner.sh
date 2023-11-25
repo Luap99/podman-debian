@@ -126,6 +126,12 @@ function _run_minikube() {
     showrun bats test/minikube |& logformatter
 }
 
+function _run_farm() {
+    _bail_if_test_can_be_skipped test/farm test/system
+    msg "Testing podman farm."
+    showrun bats test/farm |& logformatter
+}
+
 exec_container() {
     local var_val
     local cmd
@@ -360,12 +366,6 @@ function _run_gitlab() {
     return $ret
 }
 
-# TODO: enable fcos_image_build task in cirrus
-#function _run_fcos_image_build() {
-#    # FIXME: Doesn't seem to grab CTXDIR from .cirrus.yml
-#    CTXDIR="contrib/podman-next/fcos-podmanimage"
-#    podman build -t quay.io/podman/fcos:podman-next $CTXDIR
-#}
 
 # Name pattern for logformatter output file, derived from environment
 function output_name() {
@@ -424,7 +424,7 @@ dotest() {
         |& logformatter
 }
 
-_run_machine() {
+_run_machine-linux() {
     # N/B: Can't use _bail_if_test_can_be_skipped here b/c content isn't under test/
     showrun make localmachine |& logformatter
 }

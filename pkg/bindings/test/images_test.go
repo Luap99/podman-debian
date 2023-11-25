@@ -9,6 +9,7 @@ import (
 	"time"
 
 	podmanRegistry "github.com/containers/podman/v4/hack/podman-registry-go"
+	"github.com/containers/podman/v4/libpod/define"
 	"github.com/containers/podman/v4/pkg/bindings"
 	"github.com/containers/podman/v4/pkg/bindings/containers"
 	"github.com/containers/podman/v4/pkg/bindings/images"
@@ -111,7 +112,7 @@ var _ = Describe("Podman images", func() {
 		Expect(code).To(BeNumerically("==", http.StatusNotFound))
 
 		// Start a container with alpine image
-		var top string = "top"
+		var top = "top"
 		_, err = bt.RunTopContainer(&top, nil)
 		Expect(err).ToNot(HaveOccurred())
 		// we should now have a container called "top" running
@@ -349,7 +350,7 @@ var _ = Describe("Podman images", func() {
 		}
 
 		//	Search with a fqdn
-		reports, err = images.Search(bt.conn, "quay.io/libpod/alpine_nginx", nil)
+		reports, err = images.Search(bt.conn, "quay.io/podman/stable", nil)
 		Expect(err).ToNot(HaveOccurred(), "Error in images.Search()")
 		Expect(reports).ToNot(BeEmpty())
 	})
@@ -409,7 +410,8 @@ var _ = Describe("Podman images", func() {
 		results, err := images.Build(bt.conn, []string{"fixture/Containerfile"}, entities.BuildOptions{})
 		Expect(err).ToNot(HaveOccurred())
 		Expect(*results).To(MatchFields(IgnoreMissing, Fields{
-			"ID": Not(BeEmpty()),
+			"ID":         Not(BeEmpty()),
+			"SaveFormat": ContainSubstring(define.OCIArchive),
 		}))
 	})
 })

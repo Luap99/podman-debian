@@ -45,12 +45,15 @@ var (
 )
 
 var (
-	void                struct{}
-	supportedExtensions = map[string]struct{}{
-		".container": void,
-		".volume":    void,
-		".kube":      void,
-		".network":   void,
+	void struct{}
+	// Key: Extension
+	// Value: Processing order for resource naming dependencies
+	supportedExtensions = map[string]int{
+		".container": 3,
+		".volume":    2,
+		".kube":      3,
+		".network":   2,
+		".image":     1,
 	}
 )
 
@@ -143,7 +146,16 @@ func getUnitDirs(rootless bool) []string {
 }
 
 func appendSubPaths(dirs []string, path string, isUserFlag bool, filterPtr func(string, bool) bool) []string {
-	err := filepath.WalkDir(path, func(_path string, info os.DirEntry, err error) error {
+	resolvedPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		Debugf("Error occurred resolving path %q: %s", path, err)
+		// Despite the failure add the path to the list for logging purposes
+		// This is the equivalent of adding the path when info==nil below
+		dirs = append(dirs, path)
+		return dirs
+	}
+
+	err = filepath.WalkDir(resolvedPath, func(_path string, info os.DirEntry, err error) error {
 		if info == nil || info.IsDir() {
 			if filterPtr == nil || filterPtr(_path, isUserFlag) {
 				dirs = append(dirs, _path)
@@ -364,13 +376,16 @@ func isUnambiguousName(imageName string) bool {
 //
 // We implement a simple version of this from scratch here to avoid
 // a huge dependency in the generator just for a warning.
-func warnIfAmbiguousName(container *parser.UnitFile) {
-	imageName, ok := container.Lookup(quadlet.ContainerGroup, quadlet.KeyImage)
+func warnIfAmbiguousName(unit *parser.UnitFile, group string) {
+	imageName, ok := unit.Lookup(group, quadlet.KeyImage)
 	if !ok {
 		return
 	}
+	if strings.HasSuffix(imageName, ".image") {
+		return
+	}
 	if !isUnambiguousName(imageName) {
-		Logf("Warning: %s specifies the image \"%s\" which not a fully qualified image name. This is not ideal for performance and security reasons. See the podman-pull manpage discussion of short-name-aliases.conf for details.", container.Filename, imageName)
+		Logf("Warning: %s specifies the image \"%s\" which not a fully qualified image name. This is not ideal for performance and security reasons. See the podman-pull manpage discussion of short-name-aliases.conf for details.", unit.Filename, imageName)
 	}
 }
 
@@ -452,8 +467,15 @@ func process() error {
 	// Sort unit files according to potential inter-dependencies, with Volume and Network units
 	// taking precedence over all others.
 	sort.Slice(units, func(i, j int) bool {
-		name := units[i].Filename
-		return strings.HasSuffix(name, ".volume") || strings.HasSuffix(name, ".network")
+		getOrder := func(i int) int {
+			ext := filepath.Ext(units[i].Filename)
+			order, ok := supportedExtensions[ext]
+			if !ok {
+				return 0
+			}
+			return order
+		}
+		return getOrder(i) < getOrder(j)
 	})
 
 	// A map of network/volume unit file-names, against their calculated names, as needed by Podman.
@@ -466,14 +488,18 @@ func process() error {
 
 		switch {
 		case strings.HasSuffix(unit.Filename, ".container"):
-			warnIfAmbiguousName(unit)
+			warnIfAmbiguousName(unit, quadlet.ContainerGroup)
 			service, err = quadlet.ConvertContainer(unit, resourceNames, isUserFlag)
 		case strings.HasSuffix(unit.Filename, ".volume"):
-			service, name, err = quadlet.ConvertVolume(unit, unit.Filename)
+			warnIfAmbiguousName(unit, quadlet.VolumeGroup)
+			service, name, err = quadlet.ConvertVolume(unit, unit.Filename, resourceNames)
 		case strings.HasSuffix(unit.Filename, ".kube"):
 			service, err = quadlet.ConvertKube(unit, resourceNames, isUserFlag)
 		case strings.HasSuffix(unit.Filename, ".network"):
 			service, name, err = quadlet.ConvertNetwork(unit, unit.Filename)
+		case strings.HasSuffix(unit.Filename, ".image"):
+			warnIfAmbiguousName(unit, quadlet.ImageGroup)
+			service, name, err = quadlet.ConvertImage(unit)
 		default:
 			Logf("Unsupported file type %q", unit.Filename)
 			continue

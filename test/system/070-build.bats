@@ -24,6 +24,10 @@ EOF
     PODMAN_TIMEOUT=240 run_podman build -t build_test --format=docker $tmpdir
     is "$output" ".*COMMIT" "COMMIT seen in log"
 
+    # $IMAGE is preloaded, so we should never re-pull
+    assert "$output" !~ "Trying to pull" "Default pull policy should be 'missing'"
+    assert "$output" !~ "Writing manifest" "Default pull policy should be 'missing'"
+
     run_podman run --rm build_test cat /$rand_filename
     is "$output"   "$rand_content"   "reading generated file in image"
 
@@ -73,9 +77,14 @@ EOF
     assert "${lines[0]}" = "${lines[5]}" "devnum( / ) = devnum( /[etc )"
     assert "${lines[0]}" = "${lines[7]}" "devnum( / ) = devnum( /etc )"
     assert "${lines[6]}" = "${lines[8]}" "devnum( /[etc/foo, ) = devnum( /etc/bar] )"
-    # ...then, each volume should be different
-    assert "${lines[0]}" != "${lines[3]}" "devnum( / ) != devnum( volume0 )"
-    assert "${lines[0]}" != "${lines[6]}" "devnum( / ) != devnum( volume1 )"
+    # ...then, check volumes; these differ between overlay and vfs.
+    # Under Overlay (usual case), these will be different. On VFS, they're the same.
+    local op="!="
+    if [[ "$(podman_storage_driver)" == "vfs" ]]; then
+        op="="
+    fi
+    assert "${lines[0]}" $op "${lines[3]}" "devnum( / ) $op devnum( volume0 )"
+    assert "${lines[0]}" $op "${lines[6]}" "devnum( / ) $op devnum( volume1 )"
 
     # FIXME: is this expected? I thought /a/b/c and /[etc/foo, would differ
     assert "${lines[3]}" = "${lines[6]}" "devnum( volume0 ) = devnum( volume1 )"
@@ -215,8 +224,11 @@ FROM $IMAGE
 RUN echo $rand_content > /$rand_filename
 EOF
 
+    # "TMPDIR=relative-path" tests buildah PR #5084. Prior to that, podman failed in RUN:
+    #   error running container: checking permissions on "sub-tmp-dir/buildah2917655141": ENOENT
     cd $PODMAN_TMPDIR
-    run_podman build -t build_test -f ./reldir/Containerfile --format=docker $tmpdir
+    mkdir sub-tmp-dir
+    TMPDIR=sub-tmp-dir run_podman build -t build_test -f ./reldir/Containerfile --format=docker $tmpdir
     is "$output" ".*COMMIT" "COMMIT seen in log"
 
     run_podman run --rm build_test cat /$rand_filename
@@ -664,6 +676,25 @@ EOF
     run_podman rmi -f build_test
 }
 
+# Regression test for #20259
+@test "podman build with ignore '*' and containerfile outside of build context" {
+    local tmpdir=$PODMAN_TMPDIR/build-test-$(random_string 10)
+    mkdir -p $tmpdir
+    mkdir -p $tmpdir/context
+
+    cat >$tmpdir/Containerfile <<EOF
+FROM scratch
+EOF
+
+    cat >$tmpdir/context/.containerignore <<EOF
+*
+EOF
+    run_podman build -t build_test -f $tmpdir/Containerfile $tmpdir/context
+
+    # Clean up
+    run_podman rmi -f build_test
+}
+
 @test "podman build - stdin test" {
     # Random workdir, and random string to verify build output
     workdir=/$(random_string 10)
@@ -1105,6 +1136,12 @@ EOF
 
     run_podman build -t build_test -f $containerfile $buildcontextdir
     assert "$output" !~ "EOF" "output should not contain EOF error"
+
+    run_podman rmi -f build_test
+}
+
+@test "podman build --file=https" {
+    run_podman build -t build_test --file=https://raw.githubusercontent.com/containers/podman/main/test/build/from-scratch/Dockerfile $PODMAN_TMPDIR
 
     run_podman rmi -f build_test
 }

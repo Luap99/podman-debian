@@ -15,8 +15,10 @@ If no options are provided, Podman assigns a free subnet and name for the networ
 
 Upon completion of creating the network, Podman displays the name of the newly added network.
 
-NOTE: The support for the network name "pasta" is deprecated and will be removed in the next major
-release because it is used as a special network mode in **podman run/create --network**.
+NOTE: The support for "pasta" as network *name* value is deprecated and will not be accepted in the next major
+Podman version 5.0, because it is used as a special network mode in **podman run/create --network**.
+The CNI backend is also deprecated and will also be removed in the next major Podman version 5.0, in preference
+of Netavark, see **[podman-network(1)](podman-network.1.md)** on how to change the backend.
 
 ## OPTIONS
 #### **--disable-dns**
@@ -42,6 +44,9 @@ under the `[network]` section.
 
 The name of the plugin can then be used as driver to create a network for your plugin.
 The list of all supported drivers and plugins can be seen with `podman info --format {{.Plugins.Network}}`.
+
+Note that the `macvlan` and `ipvlan` drivers do not support port forwarding. Support for port forwarding
+with a plugin depends on the implementation of the plugin.
 
 #### **--gateway**=*ip*
 
@@ -84,7 +89,9 @@ ipam driver automatically based on the network driver.
 
 Valid values are:
 
- - `dhcp`: IP addresses are assigned from a dhcp server on the network. This driver is not yet supported with netavark. For CNI the *dhcp* plugin needs to be activated before.
+ - `dhcp`: IP addresses are assigned from a dhcp server on the network. When using the netavark backend
+  the `netavark-dhcp-proxy.socket` must be enabled in order to start the dhcp-proxy when a container is
+  started, for CNI use the `cni-dhcp.socket` unit instead.
  - `host-local`: IP addresses are assigned locally.
  - `none`: No ip addresses are assigned to the interfaces.
 
@@ -115,6 +122,7 @@ Additionally the `bridge` driver supports the following options:
 - `isolate`: This option isolates networks by blocking traffic between those that have this option enabled.
 - `com.docker.network.bridge.name`: This option assigns the given name to the created Linux Bridge
 - `com.docker.network.driver.mtu`: Sets the Maximum Transmission Unit (MTU) and takes an integer value.
+- `vrf`: This option assigns a VRF to the bridge interface. It accepts the name of the VRF and defaults to none. Can only be used with the Netavark network backend.
 
 The `macvlan` and `ipvlan` driver support the following options:
 

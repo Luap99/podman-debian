@@ -9,7 +9,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/containers/buildah"
+	"github.com/containers/buildah/define"
 	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -35,6 +35,22 @@ var _ = Describe("Podman build", func() {
 		Expect(data[0]).To(HaveField("Architecture", runtime.GOARCH))
 
 		session = podmanTest.Podman([]string{"rmi", ALPINE})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(ExitCleanly())
+	})
+
+	It("podman build and remove basic alpine with TMPDIR as relative", func() {
+		// preserve TMPDIR if it was originally set
+		if cacheDir, found := os.LookupEnv("TMPDIR"); found {
+			defer os.Setenv("TMPDIR", cacheDir)
+			os.Unsetenv("TMPDIR")
+		} else {
+			defer os.Unsetenv("TMPDIR")
+		}
+		// Test case described here: https://github.com/containers/buildah/pull/5084
+		os.Setenv("TMPDIR", ".")
+		podmanTest.AddImageToRWStore(ALPINE)
+		session := podmanTest.Podman([]string{"build", "--pull-never", "build/basicrun"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(ExitCleanly())
 	})
@@ -328,7 +344,7 @@ RUN exit 5`, CITEST_IMAGE)
 		inspect := podmanTest.Podman([]string{"image", "inspect", "--format", "{{ index .Config.Labels }}", "test"})
 		inspect.WaitWithDefaultTimeout()
 		data := inspect.OutputToString()
-		Expect(data).To(ContainSubstring(buildah.Version))
+		Expect(data).To(ContainSubstring(define.Version))
 	})
 
 	It("podman build and check identity with always", func() {
@@ -341,7 +357,7 @@ RUN exit 5`, CITEST_IMAGE)
 		inspect := podmanTest.Podman([]string{"image", "inspect", "--format", "{{ index .Config.Labels }}", "test1"})
 		inspect.WaitWithDefaultTimeout()
 		data := inspect.OutputToString()
-		Expect(data).To(ContainSubstring(buildah.Version))
+		Expect(data).To(ContainSubstring(define.Version))
 
 		// with --pull-always
 		session = podmanTest.Podman([]string{"build", "-q", "--pull-always", "-f", "build/basicalpine/Containerfile.path", "--no-cache", "-t", "test2", "build/basicalpine"})
@@ -352,7 +368,7 @@ RUN exit 5`, CITEST_IMAGE)
 		inspect = podmanTest.Podman([]string{"image", "inspect", "--format", "{{ index .Config.Labels }}", "test2"})
 		inspect.WaitWithDefaultTimeout()
 		data = inspect.OutputToString()
-		Expect(data).To(ContainSubstring(buildah.Version))
+		Expect(data).To(ContainSubstring(define.Version))
 	})
 
 	It("podman-remote send correct path to copier", func() {
@@ -425,12 +441,24 @@ RUN find /test`, CITEST_IMAGE)
 	It("podman remote build must not allow symlink for ignore files", func() {
 		// Create a random file where symlink must be resolved
 		// but build should not be able to access it.
-		f, err := os.Create(filepath.Join("/tmp", "private_file"))
+		privateFile := filepath.Join("/tmp", "private_file")
+		f, err := os.Create(privateFile)
 		Expect(err).ToNot(HaveOccurred())
 		// Mark hello to be ignored in outerfile, but it should not be ignored.
 		_, err = f.WriteString("hello\n")
 		Expect(err).ToNot(HaveOccurred())
 		defer f.Close()
+
+		// Create .dockerignore which is a symlink to /tmp/private_file.
+		currentDir, err := os.Getwd()
+		Expect(err).ToNot(HaveOccurred())
+		ignoreFile := filepath.Join(currentDir, "build/containerignore-symlink/.dockerignore")
+		err = os.Symlink(privateFile, ignoreFile)
+		Expect(err).ToNot(HaveOccurred())
+		// Remove created .dockerignore for this test when test ends.
+		defer func() {
+			os.Remove(ignoreFile)
+		}()
 
 		if IsRemote() {
 			podmanTest.StopRemoteService()

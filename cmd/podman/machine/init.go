@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/containers/common/pkg/completion"
+	"github.com/containers/common/pkg/config"
 	"github.com/containers/podman/v4/cmd/podman/registry"
 	"github.com/containers/podman/v4/libpod/events"
 	"github.com/containers/podman/v4/pkg/machine"
@@ -103,8 +104,13 @@ func init() {
 	_ = initCmd.RegisterFlagCompletionFunc(ImagePathFlagName, completion.AutocompleteDefault)
 
 	VolumeFlagName := "volume"
-	flags.StringArrayVarP(&initOpts.Volumes, VolumeFlagName, "v", cfg.ContainersConfDefaultsRO.Machine.Volumes, "Volumes to mount, source:target")
+	flags.StringArrayVarP(&initOpts.Volumes, VolumeFlagName, "v", cfg.ContainersConfDefaultsRO.Machine.Volumes.Get(), "Volumes to mount, source:target")
 	_ = initCmd.RegisterFlagCompletionFunc(VolumeFlagName, completion.AutocompleteDefault)
+
+	USBFlagName := "usb"
+	flags.StringArrayVarP(&initOpts.USBs, USBFlagName, "", []string{},
+		"USB Host passthrough: bus=$1,devnum=$2 or vendor=$1,product=$2")
+	_ = initCmd.RegisterFlagCompletionFunc(USBFlagName, completion.AutocompleteDefault)
 
 	VolumeDriverFlagName := "volume-driver"
 	flags.StringVar(&initOpts.VolumeDriver, VolumeDriverFlagName, "", "Optional volume driver")
@@ -127,7 +133,6 @@ func initMachine(cmd *cobra.Command, args []string) error {
 		err error
 		vm  machine.VM
 	)
-
 	initOpts.Name = defaultMachineName
 	if len(args) > 0 {
 		if len(args[0]) > maxMachineNameSize {
@@ -135,9 +140,28 @@ func initMachine(cmd *cobra.Command, args []string) error {
 		}
 		initOpts.Name = args[0]
 	}
+
+	// The vmtype names need to be reserved and cannot be used for podman machine names
+	if _, err := machine.ParseVMType(initOpts.Name, machine.UnknownVirt); err == nil {
+		return fmt.Errorf("cannot use %q for a machine name", initOpts.Name)
+	}
+
 	if _, err := provider.LoadVMByName(initOpts.Name); err == nil {
 		return fmt.Errorf("%s: %w", initOpts.Name, machine.ErrVMAlreadyExists)
 	}
+
+	cfg, err := config.ReadCustomConfig()
+	if err != nil {
+		return err
+	}
+
+	// check if a system connection already exists
+	for _, connection := range []string{initOpts.Name, fmt.Sprintf("%s-root", initOpts.Name)} {
+		if _, valueFound := cfg.Engine.ServiceDestinations[connection]; valueFound {
+			return fmt.Errorf("system connection %q already exists. consider a different machine name or remove the connection with `podman system connection rm`", connection)
+		}
+	}
+
 	for idx, vol := range initOpts.Volumes {
 		initOpts.Volumes[idx] = os.ExpandEnv(vol)
 	}

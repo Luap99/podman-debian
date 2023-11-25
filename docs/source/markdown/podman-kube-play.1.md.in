@@ -163,6 +163,8 @@ and as a result environment variable `FOO` is set to `bar` for container `contai
 
 Build images even if they are found in the local storage. Use `--build=false` to completely disable builds. (This option is not available with the remote Podman client)
 
+Note:  You  can also override the default isolation type by setting the BUILDAH_ISOLATION environment variable.  export BUILDAH_ISOLATION=oci. See podman-build.1.md for more information.
+
 @@option cert-dir
 
 #### **--configmap**=*path*
@@ -220,6 +222,16 @@ Define or override a port definition in the YAML file.
 
 The lists of ports in the YAML file and the command line are merged. Matching is done by using the **containerPort** field.
 If **containerPort** exists in both the YAML file and the option, the latter takes precedence.
+
+#### **--publish-all**
+
+Setting this option to `true` will expose all ports to the host,
+even if only specified via **containerPort** in the K8 YAML.
+In terms of which port will be exposed, **--publish** has higher priority than **hostPort**, has higher priority than
+**containerPort**.
+
+If set to `false` (which is the default), only ports defined via **hostPort**
+or **--publish** are published on the host.
 
 #### **--quiet**, **-q**
 
@@ -310,4 +322,4 @@ has been changed or altered.
 @@include ../../kubernetes_support.md
 
 ## SEE ALSO
-**[podman(1)](podman.1.md)**, **[podman-kube(1)](podman-kube.1.md)**, **[podman-kube-down(1)](podman-kube-down.1.md)**, **[podman-network-create(1)](podman-network-create.1.md)**, **[podman-kube-generate(1)](podman-kube-generate.1.md)**, **[containers-certs.d(5)](https://github.com/containers/image/blob/main/docs/containers-certs.d.5.md)**
+**[podman(1)](podman.1.md)**, **[podman-kube(1)](podman-kube.1.md)**, **[podman-kube-down(1)](podman-kube-down.1.md)**, **[podman-network-create(1)](podman-network-create.1.md)**, **[podman-kube-generate(1)](podman-kube-generate.1.md)**, **[podman-build(1)](podman-build.1.md)**, **[containers-certs.d(5)](https://github.com/containers/image/blob/main/docs/containers-certs.d.5.md)**

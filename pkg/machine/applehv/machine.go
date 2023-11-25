@@ -4,13 +4,13 @@
 package applehv
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -18,10 +18,13 @@ import (
 	"time"
 
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v4/libpod/define"
+	gvproxy "github.com/containers/gvisor-tap-vsock/pkg/types"
 	"github.com/containers/podman/v4/pkg/machine"
+	"github.com/containers/podman/v4/pkg/machine/define"
+	"github.com/containers/podman/v4/pkg/strongunits"
 	"github.com/containers/podman/v4/pkg/util"
 	"github.com/containers/podman/v4/utils"
+	"github.com/containers/storage/pkg/lockfile"
 	vfConfig "github.com/crc-org/vfkit/pkg/config"
 	vfRest "github.com/crc-org/vfkit/pkg/rest"
 	"github.com/docker/go-units"
@@ -43,13 +46,29 @@ const (
 type VfkitHelper struct {
 	LogLevel        logrus.Level
 	Endpoint        string
-	VfkitBinaryPath *machine.VMFile
+	VfkitBinaryPath *define.VMFile
 	VirtualMachine  *vfConfig.VirtualMachine
 }
 
+// appleHVReadyUnit is a unit file that sets up the virtual serial device
+// where when the VM is done configuring, it will send an ack
+// so a listening host knows it can begin interacting with it
+const appleHVReadyUnit = `[Unit]
+Requires=dev-virtio\\x2dports-%s.device
+After=remove-moby.service sshd.socket sshd.service
+OnFailure=emergency.target
+OnFailureJobMode=isolate
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c '/usr/bin/echo Ready | socat - VSOCK-CONNECT:2:1025'
+[Install]
+RequiredBy=default.target
+`
+
 type MacMachine struct {
 	// ConfigPath is the fully qualified path to the configuration file
-	ConfigPath machine.VMFile
+	ConfigPath define.VMFile
 	// HostUser contains info about host user
 	machine.HostUser
 	// ImageConfig describes the bootable image
@@ -59,7 +78,7 @@ type MacMachine struct {
 	// Name of VM
 	Name string
 	// ReadySocket tells host when vm is booted
-	ReadySocket machine.VMFile
+	ReadySocket define.VMFile
 	// ResourceConfig is physical attrs of the VM
 	machine.ResourceConfig
 	// SSHConfig for accessing the remote vm
@@ -72,32 +91,28 @@ type MacMachine struct {
 	LastUp time.Time
 	// The VFKit endpoint where we can interact with the VM
 	Vfkit       VfkitHelper
-	LogPath     machine.VMFile
-	GvProxyPid  machine.VMFile
-	GvProxySock machine.VMFile
+	LogPath     define.VMFile
+	GvProxyPid  define.VMFile
+	GvProxySock define.VMFile
+
+	// Used at runtime for serializing write operations
+	lock *lockfile.LockFile
 }
 
 // setGVProxyInfo sets the VM's gvproxy pid and socket files
 func (m *MacMachine) setGVProxyInfo(runtimeDir string) error {
-	gvProxyPid, err := machine.NewMachineFile(filepath.Join(runtimeDir, "gvproxy.pid"), nil)
+	gvProxyPid, err := define.NewMachineFile(filepath.Join(runtimeDir, "gvproxy.pid"), nil)
 	if err != nil {
 		return err
 	}
-
-	gvProxySock, err := machine.NewMachineFile(filepath.Join(runtimeDir, "gvproxy.sock"), nil)
-	if err != nil {
-		return err
-	}
-
 	m.GvProxyPid = *gvProxyPid
-	m.GvProxySock = *gvProxySock
 
-	return nil
+	return machine.SetSocket(&m.GvProxySock, filepath.Join(runtimeDir, "gvproxy.sock"), nil)
 }
 
 // setVfkitInfo stores the default devices, sets the vfkit endpoint, and
 // locates/stores the path to the binary
-func (m *MacMachine) setVfkitInfo(cfg *config.Config, readySocket machine.VMFile) error {
+func (m *MacMachine) setVfkitInfo(cfg *config.Config, readySocket define.VMFile) error {
 	defaultDevices, err := getDefaultDevices(m.ImagePath.GetPath(), m.LogPath.GetPath(), readySocket.GetPath())
 	if err != nil {
 		return err
@@ -107,7 +122,7 @@ func (m *MacMachine) setVfkitInfo(cfg *config.Config, readySocket machine.VMFile
 	if err != nil {
 		return err
 	}
-	vfkitBinaryPath, err := machine.NewMachineFile(vfkitPath, nil)
+	vfkitBinaryPath, err := define.NewMachineFile(vfkitPath, nil)
 	if err != nil {
 		return err
 	}
@@ -122,7 +137,7 @@ func (m *MacMachine) setVfkitInfo(cfg *config.Config, readySocket machine.VMFile
 // addMountsToVM converts the volumes passed through the CLI to virtio-fs mounts
 // and adds them to the machine
 func (m *MacMachine) addMountsToVM(opts machine.InitOptions, virtiofsMnts *[]machine.VirtIoFs) error {
-	mounts := []machine.Mount{}
+	var mounts []machine.Mount
 	for _, volume := range opts.Volumes {
 		source, target, _, readOnly, err := machine.ParseVolumeFromPath(volume)
 		if err != nil {
@@ -137,56 +152,19 @@ func (m *MacMachine) addMountsToVM(opts machine.InitOptions, virtiofsMnts *[]mac
 	return nil
 }
 
-// writeIgnitionConfigFile generates the ignition config and writes it to the filesystem
-func (m *MacMachine) writeIgnitionConfigFile(opts machine.InitOptions, key string, virtiofsMnts *[]machine.VirtIoFs) error {
-	// Write the ignition file
-	ign := machine.DynamicIgnition{
-		Name:      opts.Username,
-		Key:       key,
-		VMName:    m.Name,
-		VMType:    machine.AppleHvVirt,
-		TimeZone:  opts.TimeZone,
-		WritePath: m.IgnitionFile.GetPath(),
-		UID:       m.UID,
-		Rootful:   m.Rootful,
-	}
-
-	if err := ign.GenerateIgnitionConfig(); err != nil {
-		return err
-	}
-
-	// ready is a unit file that sets up the virtual serial device
-	// where when the VM is done configuring, it will send an ack
-	// so a listening host knows it can being interacting with it
-	ready := `[Unit]
-		Requires=dev-virtio\\x2dports-%s.device
-		After=remove-moby.service sshd.socket sshd.service
-		OnFailure=emergency.target
-		OnFailureJobMode=isolate
-		[Service]
-		Type=oneshot
-		RemainAfterExit=yes
-		ExecStart=/bin/sh -c '/usr/bin/echo Ready | socat - VSOCK-CONNECT:2:1025'
-		[Install]
-		RequiredBy=default.target
-		`
-	readyUnit := machine.Unit{
-		Enabled:  machine.BoolToPtr(true),
-		Name:     "ready.service",
-		Contents: machine.StrToPtr(fmt.Sprintf(ready, "vsock")),
-	}
-	virtiofsUnits := generateSystemDFilesForVirtiofsMounts(*virtiofsMnts)
-	ign.Cfg.Systemd.Units = append(ign.Cfg.Systemd.Units, readyUnit)
-	ign.Cfg.Systemd.Units = append(ign.Cfg.Systemd.Units, virtiofsUnits...)
-
-	return ign.Write()
-}
-
 func (m *MacMachine) Init(opts machine.InitOptions) (bool, error) {
 	var (
 		key          string
 		virtiofsMnts []machine.VirtIoFs
+		err          error
 	)
+
+	// cleanup half-baked files if init fails at any point
+	callbackFuncs := machine.InitCleanup()
+	defer callbackFuncs.CleanIfErr(&err)
+	go callbackFuncs.CleanOnSignal()
+
+	callbackFuncs.Add(m.ConfigPath.Delete)
 	dataDir, err := machine.GetDataDir(machine.AppleHvVirt)
 	if err != nil {
 		return false, err
@@ -205,32 +183,33 @@ func (m *MacMachine) Init(opts machine.InitOptions) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	callbackFuncs.Add(imagePath.Delete)
 
 	// Set the values for imagePath and strm
 	m.ImagePath = *imagePath
 	m.ImageStream = strm.String()
 
-	logPath, err := machine.NewMachineFile(filepath.Join(dataDir, fmt.Sprintf("%s.log", m.Name)), nil)
+	logPath, err := define.NewMachineFile(filepath.Join(dataDir, fmt.Sprintf("%s.log", m.Name)), nil)
 	if err != nil {
 		return false, err
 	}
+	callbackFuncs.Add(logPath.Delete)
+
 	m.LogPath = *logPath
 	runtimeDir, err := m.getRuntimeDir()
 	if err != nil {
 		return false, err
 	}
 
-	readySocket, err := machine.NewMachineFile(filepath.Join(runtimeDir, fmt.Sprintf("%s_ready.sock", m.Name)), nil)
-	if err != nil {
-		return false, err
-	}
-	m.ReadySocket = *readySocket
-
-	if err := m.setGVProxyInfo(runtimeDir); err != nil {
+	if err := machine.SetSocket(&m.ReadySocket, machine.ReadySocketPath(runtimeDir, m.Name), nil); err != nil {
 		return false, err
 	}
 
-	if err := m.setVfkitInfo(cfg, m.ReadySocket); err != nil {
+	if err = m.setGVProxyInfo(runtimeDir); err != nil {
+		return false, err
+	}
+
+	if err = m.setVfkitInfo(cfg, m.ReadySocket); err != nil {
 		return false, err
 	}
 
@@ -246,7 +225,7 @@ func (m *MacMachine) Init(opts machine.InitOptions) (bool, error) {
 	}
 	m.Port = sshPort
 
-	if err := m.addMountsToVM(opts, &virtiofsMnts); err != nil {
+	if err = m.addMountsToVM(opts, &virtiofsMnts); err != nil {
 		return false, err
 	}
 
@@ -261,34 +240,67 @@ func (m *MacMachine) Init(opts machine.InitOptions) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	callbackFuncs.Add(m.removeSystemConnections)
 
-	// Until the disk resize can be fixed, we ignore it
-	if err := m.resizeDisk(opts.DiskSize); err != nil && !errors.Is(err, define.ErrNotImplemented) {
+	logrus.Debugf("resizing disk to %d GiB", opts.DiskSize)
+	if err = m.resizeDisk(strongunits.GiB(opts.DiskSize)); err != nil {
 		return false, err
 	}
 
-	if err := m.writeConfig(); err != nil {
+	if err = m.writeConfig(); err != nil {
 		return false, err
 	}
 
 	if len(opts.IgnitionPath) < 1 {
-		var err error
 		key, err = machine.CreateSSHKeys(m.IdentityPath)
 		if err != nil {
 			return false, err
 		}
+		callbackFuncs.Add(m.removeSSHKeys)
 	}
 
+	builder := machine.NewIgnitionBuilder(machine.DynamicIgnition{
+		Name:      opts.Username,
+		Key:       key,
+		VMName:    m.Name,
+		VMType:    machine.AppleHvVirt,
+		TimeZone:  opts.TimeZone,
+		WritePath: m.IgnitionFile.GetPath(),
+		UID:       m.UID,
+		Rootful:   m.Rootful,
+	})
+
 	if len(opts.IgnitionPath) > 0 {
-		inputIgnition, err := os.ReadFile(opts.IgnitionPath)
-		if err != nil {
-			return false, err
-		}
-		return false, os.WriteFile(m.IgnitionFile.GetPath(), inputIgnition, 0644)
+		return false, builder.BuildWithIgnitionFile(opts.IgnitionPath)
 	}
+
+	if err := builder.GenerateIgnitionConfig(); err != nil {
+		return false, err
+	}
+
+	builder.WithUnit(machine.Unit{
+		Enabled:  machine.BoolToPtr(true),
+		Name:     "ready.service",
+		Contents: machine.StrToPtr(fmt.Sprintf(appleHVReadyUnit, "vsock")),
+	})
+	builder.WithUnit(generateSystemDFilesForVirtiofsMounts(virtiofsMnts)...)
+
 	// TODO Ignition stuff goes here
-	err = m.writeIgnitionConfigFile(opts, key, &virtiofsMnts)
+	err = builder.Build()
+	callbackFuncs.Add(m.IgnitionFile.Delete)
+
 	return err == nil, err
+}
+
+func (m *MacMachine) removeSSHKeys() error {
+	if err := os.Remove(fmt.Sprintf("%s.pub", m.IdentityPath)); err != nil {
+		logrus.Error(err)
+	}
+	return os.Remove(m.IdentityPath)
+}
+
+func (m *MacMachine) removeSystemConnections() error {
+	return machine.RemoveConnections(m.Name, fmt.Sprintf("%s-root", m.Name))
 }
 
 func (m *MacMachine) Inspect() (*machine.InspectInfo, error) {
@@ -296,10 +308,16 @@ func (m *MacMachine) Inspect() (*machine.InspectInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	podmanSocket, err := m.forwardSocketPath()
+	if err != nil {
+		return nil, err
+	}
+
 	ii := machine.InspectInfo{
 		ConfigPath: m.ConfigPath,
 		ConnectionInfo: machine.ConnectionConfig{
-			PodmanSocket: nil,
+			PodmanSocket: podmanSocket,
 			PodmanPipe:   nil,
 		},
 		Created: m.Created,
@@ -345,6 +363,9 @@ func (m *MacMachine) Remove(name string, opts machine.RemoveOptions) (string, fu
 		files []string
 	)
 
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
 	vmState, err := m.Vfkit.state()
 	if err != nil {
 		return "", nil, err
@@ -352,11 +373,16 @@ func (m *MacMachine) Remove(name string, opts machine.RemoveOptions) (string, fu
 
 	if vmState == machine.Running {
 		if !opts.Force {
-			return "", nil, fmt.Errorf("invalid state: %s is running", m.Name)
+			return "", nil, &machine.ErrVMRunningCannotDestroyed{Name: m.Name}
 		}
 		if err := m.Vfkit.stop(true, true); err != nil {
 			return "", nil, err
 		}
+		defer func() {
+			if err := machine.CleanupGVProxy(m.GvProxyPid); err != nil {
+				logrus.Error(err)
+			}
+		}()
 	}
 
 	files = m.collectFilesToDestroy(opts)
@@ -395,6 +421,10 @@ func (m *MacMachine) writeConfig() error {
 
 func (m *MacMachine) Set(name string, opts machine.SetOptions) ([]error, error) {
 	var setErrors []error
+
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
 	vmState, err := m.State(false)
 	if err != nil {
 		return nil, err
@@ -413,10 +443,13 @@ func (m *MacMachine) Set(name string, opts machine.SetOptions) ([]error, error) 
 			setErrors = append(setErrors, errors.New("new disk size smaller than existing disk size: cannot shrink disk size"))
 		} else {
 			m.DiskSize = *newSize
-			if err := m.resizeDisk(*opts.DiskSize); err != nil {
+			if err := m.resizeDisk(strongunits.GiB(*opts.DiskSize)); err != nil {
 				setErrors = append(setErrors, err)
 			}
 		}
+	}
+	if opts.USBs != nil {
+		setErrors = append(setErrors, errors.New("changing USBs not supported for applehv machines"))
 	}
 
 	// Write the machine config to the filesystem
@@ -451,7 +484,7 @@ func (m *MacMachine) SSH(name string, opts machine.SSHOptions) error {
 
 // deleteIgnitionSocket retrieves the ignition socket, deletes it, and returns a
 // pointer to the `VMFile`
-func (m *MacMachine) deleteIgnitionSocket() (*machine.VMFile, error) {
+func (m *MacMachine) deleteIgnitionSocket() (*define.VMFile, error) {
 	ignitionSocket, err := m.getIgnitionSock()
 	if err != nil {
 		return nil, err
@@ -517,7 +550,10 @@ func (m *MacMachine) addVolumesToVfKit() error {
 }
 
 func (m *MacMachine) Start(name string, opts machine.StartOptions) error {
-	var ignitionSocket *machine.VMFile
+	var ignitionSocket *define.VMFile
+
+	m.lock.Lock()
+	defer m.lock.Unlock()
 
 	st, err := m.State(false)
 	if err != nil {
@@ -535,7 +571,7 @@ func (m *MacMachine) Start(name string, opts machine.StartOptions) error {
 	defer ioEater.Close()
 
 	// TODO handle returns from startHostNetworking
-	forwardSock, forwardState, err := m.startHostNetworking(ioEater)
+	forwardSock, forwardState, err := m.startHostNetworking()
 	if err != nil {
 		return err
 	}
@@ -556,6 +592,7 @@ func (m *MacMachine) Start(name string, opts machine.StartOptions) error {
 
 	// To start the VM, we need to call vfkit
 
+	logrus.Debugf("vfkit path is: %s", m.Vfkit.VfkitBinaryPath.Path)
 	cmd, err := m.Vfkit.VirtualMachine.Cmd(m.Vfkit.VfkitBinaryPath.Path)
 	if err != nil {
 		return err
@@ -597,7 +634,6 @@ func (m *MacMachine) Start(name string, opts machine.StartOptions) error {
 	}
 
 	cmd.ExtraFiles = []*os.File{ioEater, ioEater, ioEater}
-	fmt.Println(cmd.Args)
 
 	readSocketBaseDir := filepath.Dir(m.ReadySocket.GetPath())
 	if err := os.MkdirAll(readSocketBaseDir, 0755); err != nil {
@@ -626,27 +662,14 @@ func (m *MacMachine) Start(name string, opts machine.StartOptions) error {
 	}
 
 	logrus.Debug("waiting for ready notification")
-	var conn net.Conn
 	readyChan := make(chan error)
-	go func() {
-		conn, err = readyListen.Accept()
-		if err != nil {
-			logrus.Error(err)
-		}
-		_, err = bufio.NewReader(conn).ReadString('\n')
-		readyChan <- err
-	}()
+	go machine.ListenAndWaitOnSocket(readyChan, readyListen)
 
 	if err := cmd.Start(); err != nil {
 		return err
 	}
 
 	err = <-readyChan
-	defer func() {
-		if closeErr := conn.Close(); closeErr != nil {
-			logrus.Error(closeErr)
-		}
-	}()
 	if err != nil {
 		return err
 	}
@@ -673,13 +696,16 @@ func (m *MacMachine) State(_ bool) (machine.Status, error) {
 }
 
 func (m *MacMachine) Stop(name string, opts machine.StopOptions) error {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
 	vmState, err := m.State(false)
 	if err != nil {
 		return err
 	}
 
 	if vmState != machine.Running {
-		return machine.ErrWrongState
+		return nil
 	}
 
 	defer func() {
@@ -706,23 +732,35 @@ func (m *MacMachine) loadFromFile() (*MacMachine, error) {
 	if err != nil {
 		return nil, err
 	}
-	mm := MacMachine{}
 
-	if err := loadMacMachineFromJSON(jsonPath, &mm); err != nil {
+	mm, err := loadMacMachineFromJSON(jsonPath)
+	if err != nil {
 		return nil, err
 	}
-	return &mm, nil
+
+	lock, err := machine.GetLock(mm.Name, vmtype)
+	if err != nil {
+		return nil, err
+	}
+	mm.lock = lock
+
+	return mm, nil
 }
 
-func loadMacMachineFromJSON(fqConfigPath string, macMachine *MacMachine) error {
+func loadMacMachineFromJSON(fqConfigPath string) (*MacMachine, error) {
 	b, err := os.ReadFile(fqConfigPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("%q: %w", fqConfigPath, machine.ErrNoSuchVM)
+			name := strings.TrimSuffix(filepath.Base(fqConfigPath), ".json")
+			return nil, fmt.Errorf("%s: %w", name, machine.ErrNoSuchVM)
 		}
-		return err
+		return nil, err
 	}
-	return json.Unmarshal(b, macMachine)
+	mm := new(MacMachine)
+	if err := json.Unmarshal(b, mm); err != nil {
+		return nil, err
+	}
+	return mm, nil
 }
 
 func (m *MacMachine) jsonConfigPath() (string, error) {
@@ -780,16 +818,7 @@ func getVMInfos() ([]*machine.ListResponse, error) {
 				return err
 			}
 			listEntry.Running = vmState == machine.Running
-
-			if !vm.LastUp.IsZero() { // this means we have already written a time to the config
-				listEntry.LastUp = vm.LastUp
-			} else { // else we just created the machine AKA last up = created time
-				listEntry.LastUp = vm.Created
-				vm.LastUp = listEntry.LastUp
-				if err := vm.writeConfig(); err != nil {
-					return err
-				}
-			}
+			listEntry.LastUp = vm.LastUp
 
 			listed = append(listed, listEntry)
 		}
@@ -803,24 +832,22 @@ func getVMInfos() ([]*machine.ListResponse, error) {
 // setupStartHostNetworkingCmd generates the cmd that will be used to start the
 // host networking. Includes the ssh port, gvproxy pid file, gvproxy socket, and
 // a debug flag depending on the logrus log level
-func (m *MacMachine) setupStartHostNetworkingCmd(gvProxyBinary, forwardSock string, state machine.APIForwardingState) []string {
-	cmd := []string{gvProxyBinary}
-	// Add the ssh port
-	cmd = append(cmd, []string{"-ssh-port", fmt.Sprintf("%d", m.Port)}...)
-	// Add pid file
-	cmd = append(cmd, "-pid-file", m.GvProxyPid.GetPath())
-	// Add vfkit proxy listen
-	cmd = append(cmd, "-listen-vfkit", fmt.Sprintf("unixgram://%s", m.GvProxySock.GetPath()))
-	cmd, forwardSock, state = m.setupAPIForwarding(cmd)
-	if logrus.GetLevel() == logrus.DebugLevel {
-		cmd = append(cmd, "--debug")
-		fmt.Println(cmd)
+func (m *MacMachine) setupStartHostNetworkingCmd() (gvproxy.GvproxyCommand, string, machine.APIForwardingState) {
+	cmd := gvproxy.NewGvproxyCommand()
+	cmd.SSHPort = m.Port
+	cmd.PidFile = m.GvProxyPid.GetPath()
+	cmd.AddVfkitSocket(fmt.Sprintf("unixgram://%s", m.GvProxySock.GetPath()))
+	cmd.Debug = logrus.IsLevelEnabled(logrus.DebugLevel)
+
+	cmd, forwardSock, state := m.setupAPIForwarding(cmd)
+	if cmd.Debug {
+		logrus.Debug(cmd.ToCmdline())
 	}
 
-	return cmd
+	return cmd, forwardSock, state
 }
 
-func (m *MacMachine) startHostNetworking(ioEater *os.File) (string, machine.APIForwardingState, error) {
+func (m *MacMachine) startHostNetworking() (string, machine.APIForwardingState, error) {
 	var (
 		forwardSock string
 		state       machine.APIForwardingState
@@ -855,23 +882,39 @@ func (m *MacMachine) startHostNetworking(ioEater *os.File) (string, machine.APIF
 		return "", machine.NoForwarding, err
 	}
 
-	attr := new(os.ProcAttr)
-	gvproxy, err := cfg.FindHelperBinary("gvproxy", false)
+	gvproxyBinary, err := cfg.FindHelperBinary("gvproxy", false)
 	if err != nil {
 		return "", 0, err
 	}
 
-	attr.Files = []*os.File{ioEater, ioEater, ioEater}
-	cmd := m.setupStartHostNetworkingCmd(gvproxy, forwardSock, state)
+	logrus.Debugf("gvproxy binary being used: %s", gvproxyBinary)
 
-	_, err = os.StartProcess(cmd[0], cmd, attr)
+	cmd, forwardSock, state := m.setupStartHostNetworkingCmd()
+	c := cmd.Cmd(gvproxyBinary)
+	if err := c.Start(); err != nil {
+		return "", 0, fmt.Errorf("unable to execute: %q: %w", cmd.ToCmdline(), err)
+	}
+
+	// We need to wait and make sure gvproxy is in fact running
+	// before continuing
+	for i := 0; i < 10; i++ {
+		_, err := os.Stat(m.GvProxySock.GetPath())
+		if err == nil {
+			break
+		}
+		logrus.Debugf("gvproxy unixgram socket %q not found: %v", m.GvProxySock.GetPath(), err)
+		// Sleep for 1/2 second
+		time.Sleep(500 * time.Millisecond)
+	}
 	if err != nil {
-		return "", 0, fmt.Errorf("unable to execute: %q: %w", cmd, err)
+		// I guess we would also check the pidfile and look to see if it is running
+		// to?
+		return "", 0, fmt.Errorf("unable to verify gvproxy is running")
 	}
 	return forwardSock, state, nil
 }
 
-func (m *MacMachine) setupAPIForwarding(cmd []string) ([]string, string, machine.APIForwardingState) {
+func (m *MacMachine) setupAPIForwarding(cmd gvproxy.GvproxyCommand) (gvproxy.GvproxyCommand, string, machine.APIForwardingState) {
 	socket, err := m.forwardSocketPath()
 	if err != nil {
 		return cmd, "", machine.NoForwarding
@@ -885,10 +928,10 @@ func (m *MacMachine) setupAPIForwarding(cmd []string) ([]string, string, machine
 		forwardUser = "root"
 	}
 
-	cmd = append(cmd, []string{"-forward-sock", socket.GetPath()}...)
-	cmd = append(cmd, []string{"-forward-dest", destSock}...)
-	cmd = append(cmd, []string{"-forward-user", forwardUser}...)
-	cmd = append(cmd, []string{"-forward-identity", m.IdentityPath}...)
+	cmd.AddForwardSock(socket.GetPath())
+	cmd.AddForwardDest(destSock)
+	cmd.AddForwardUser(forwardUser)
+	cmd.AddForwardIdentity(m.IdentityPath)
 
 	link, err := m.userGlobalSocketLink()
 	if err != nil {
@@ -937,24 +980,33 @@ func (m *MacMachine) dockerSock() (string, error) {
 	return filepath.Join(dd, "podman.sock"), nil
 }
 
-func (m *MacMachine) forwardSocketPath() (*machine.VMFile, error) {
+func (m *MacMachine) forwardSocketPath() (*define.VMFile, error) {
 	sockName := "podman.sock"
 	path, err := machine.GetDataDir(machine.AppleHvVirt)
 	if err != nil {
 		return nil, fmt.Errorf("Resolving data dir: %s", err.Error())
 	}
-	return machine.NewMachineFile(filepath.Join(path, sockName), &sockName)
+	return define.NewMachineFile(filepath.Join(path, sockName), &sockName)
 }
 
-func (m *MacMachine) resizeDisk(newSize uint64) error {
-	// TODO truncating is not enough; we may not be able to support resizing with raw image?
-	// Leaving for now but returning an unimplemented error
-
-	//if newSize < m.DiskSize {
-	//	return fmt.Errorf("invalid disk size %d: new disk must be larger than %dGB", newSize, m.DiskSize)
-	//}
-	//return os.Truncate(m.ImagePath.GetPath(), int64(newSize))
-	return define.ErrNotImplemented
+// resizeDisk uses os truncate to resize (only larger) a raw disk.  the input size
+// is assumed GiB
+func (m *MacMachine) resizeDisk(newSize strongunits.GiB) error {
+	if uint64(newSize) < m.DiskSize {
+		// TODO this error needs to be changed to the common error.  would do now but the PR for the common
+		// error has not merged
+		return fmt.Errorf("invalid disk size %d: new disk must be larger than %dGB", newSize, m.DiskSize)
+	}
+	logrus.Debugf("resizing %s to %d bytes", m.ImagePath.GetPath(), newSize.ToBytes())
+	// seems like os.truncate() is not very performant with really large files
+	// so exec'ing out to the command truncate
+	size := fmt.Sprintf("%dG", newSize)
+	c := exec.Command("truncate", "-s", size, m.ImagePath.GetPath())
+	if logrus.IsLevelEnabled(logrus.DebugLevel) {
+		c.Stderr = os.Stderr
+		c.Stdout = os.Stdout
+	}
+	return c.Run()
 }
 
 // isFirstBoot returns a bool reflecting if the machine has been booted before
@@ -966,7 +1018,7 @@ func (m *MacMachine) isFirstBoot() (bool, error) {
 	return m.LastUp == never, nil
 }
 
-func (m *MacMachine) getIgnitionSock() (*machine.VMFile, error) {
+func (m *MacMachine) getIgnitionSock() (*define.VMFile, error) {
 	dataDir, err := machine.GetDataDir(machine.AppleHvVirt)
 	if err != nil {
 		return nil, err
@@ -976,7 +1028,7 @@ func (m *MacMachine) getIgnitionSock() (*machine.VMFile, error) {
 			return nil, err
 		}
 	}
-	return machine.NewMachineFile(filepath.Join(dataDir, ignitionSocketName), nil)
+	return define.NewMachineFile(filepath.Join(dataDir, ignitionSocketName), nil)
 }
 
 func (m *MacMachine) getRuntimeDir() (string, error) {
@@ -984,7 +1036,13 @@ func (m *MacMachine) getRuntimeDir() (string, error) {
 	if !ok {
 		tmpDir = "/tmp"
 	}
-	return filepath.Join(tmpDir, "podman"), nil
+	rtd := filepath.Join(tmpDir, "podman")
+	logrus.Debugf("creating runtimeDir: %s", rtd)
+	if err := os.MkdirAll(rtd, 0755); err != nil {
+		return "", err
+	}
+
+	return rtd, nil
 }
 
 func (m *MacMachine) userGlobalSocketLink() (string, error) {
@@ -1002,13 +1060,20 @@ func (m *MacMachine) isIncompatible() bool {
 }
 
 func generateSystemDFilesForVirtiofsMounts(mounts []machine.VirtIoFs) []machine.Unit {
-	var unitFiles []machine.Unit
+	// mounting in fcos with virtiofs is a bit of a dance.  we need a unit file for the mount, a unit file
+	// for automatic mounting on boot, and a "preparatory" service file that disables FCOS security, performs
+	// the mkdir of the mount point, and then re-enables security.  This must be done for each mount.
 
+	var unitFiles []machine.Unit
 	for _, mnt := range mounts {
+		// Here we are looping the mounts and for each mount, we are adding two unit files
+		// for virtiofs.  One unit file is the mount itself and the second is to automount it
+		// on boot.
 		autoMountUnit := `[Automount]
 Where=%s
 [Install]
 WantedBy=multi-user.target
+
 [Unit]
 Description=Mount virtiofs volume %s
 `
@@ -1016,9 +1081,10 @@ Description=Mount virtiofs volume %s
 What=%s
 Where=%s
 Type=virtiofs
-[Install]
-WantedBy=multi-user.target`
 
+[Install]
+WantedBy=multi-user.target
+`
 		virtiofsAutomount := machine.Unit{
 			Enabled:  machine.BoolToPtr(true),
 			Name:     fmt.Sprintf("%s.automount", mnt.Tag),
@@ -1029,7 +1095,38 @@ WantedBy=multi-user.target`
 			Name:     fmt.Sprintf("%s.mount", mnt.Tag),
 			Contents: machine.StrToPtr(fmt.Sprintf(mountUnit, mnt.Tag, mnt.Target)),
 		}
-		unitFiles = append(unitFiles, virtiofsAutomount, virtiofsMount)
+
+		// This "unit" simulates something like systemctl enable virtiofs-mount-prepare@
+		enablePrep := machine.Unit{
+			Enabled: machine.BoolToPtr(true),
+			Name:    fmt.Sprintf("virtiofs-mount-prepare@%s.service", mnt.Tag),
+		}
+
+		unitFiles = append(unitFiles, virtiofsAutomount, virtiofsMount, enablePrep)
 	}
+
+	// mount prep is a way to workaround the FCOS limitation of creating directories
+	// at the rootfs / and then mounting to them.
+	mountPrep := `
+[Unit]
+Description=Allow virtios to mount to /
+DefaultDependencies=no
+ConditionPathExists=!%f
+
+[Service]
+Type=oneshot
+ExecStartPre=chattr -i /
+ExecStart=mkdir -p '%f'
+ExecStopPost=chattr +i /
+
+[Install]
+WantedBy=remote-fs.target
+`
+	virtioFSChattr := machine.Unit{
+		Contents: machine.StrToPtr(mountPrep),
+		Name:     "virtiofs-mount-prepare@.service",
+	}
+	unitFiles = append(unitFiles, virtioFSChattr)
+
 	return unitFiles
 }

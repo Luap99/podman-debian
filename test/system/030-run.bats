@@ -182,7 +182,8 @@ echo $rand        |   0 | $rand
 
     # Now try running with --rmi : it should succeed, but not remove the image
     run_podman 0+w run --rmi --rm $NONLOCAL_IMAGE /bin/true
-    is "$output" ".*image is in use by a container" "--rmi should warn that the image was not removed"
+    require_warning "image is in use by a container" \
+                    "--rmi should warn that the image was not removed"
     run_podman image exists $NONLOCAL_IMAGE
 
     # Remove the stray container, and run one more time with --rmi.
@@ -947,7 +948,7 @@ EOF
         skip "the current oom-score-adj is already -1000"
     fi
     run_podman 0+w run --oom-score-adj=-1000 --rm $IMAGE true
-    is "$output" ".*Requested oom_score_adj=.* is lower than the current one, changing to .*"
+    require_warning "Requested oom_score_adj=.* is lower than the current one, changing to "
 }
 
 # CVE-2022-1227 : podman top joins container mount NS and uses nsenter from image
@@ -1061,7 +1062,8 @@ $IMAGE--c_ok" \
     # FIXME: do we really really mean to say FFFFFFFFFFFFFFFF here???
     run_podman 0+w stop -t -1 $cid
     if ! is_remote; then
-        assert "$output" =~ "StopSignal \(37\) failed to stop container .* in 18446744073709551615 seconds, resorting to SIGKILL" "stop -t -1 (negative one) issues warning"
+        require_warning "StopSignal \(37\) failed to stop container .* in 18446744073709551615 seconds, resorting to SIGKILL" \
+                        "stop -t -1 (negative 1) issues warning"
     fi
     run_podman rm -t -1 -f $cid
 }
@@ -1118,10 +1120,13 @@ EOF
     CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm --read-only=false $IMAGE touch /testrw
     CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm $IMAGE touch /tmp/testrw
     for dir in /tmp /var/tmp /dev /dev/shm /run; do
+        CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm $IMAGE touch $dir/testro
+        CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm --read-only=false $IMAGE touch $dir/testro
+        CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm --read-only=false --read-only-tmpfs=true $IMAGE touch $dir/testro
+        CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm --read-only-tmpfs=true $IMAGE touch $dir/testro
+
         CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman 1 run --rm --read-only-tmpfs=false $IMAGE touch $dir/testro
         assert "$output" =~ "touch: $dir/testro: Read-only file system"
-        CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm --read-only-tmpfs=true $IMAGE touch $dir/testro
-        CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm --read-only=false $IMAGE touch $dir/testro
     done
 }
 
@@ -1142,6 +1147,23 @@ EOF
     assert "$output" =~ " ${nofile1}  * ${nofile1}  * files"
     CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --ulimit nofile=${nofile2}:${nofile2} --rm $IMAGE grep "Max open files" /proc/self/limits
     assert "$output" =~ " ${nofile2}  * ${nofile2}  * files"
+}
+
+@test "podman run ulimit with -1" {
+    max=unlimited
+    if is_rootless; then
+        run ulimit -c -H
+        max=$output
+    fi
+
+    run_podman run --ulimit core=-1:-1 --rm $IMAGE grep core /proc/self/limits
+    assert "$output" =~ " ${max}  * ${max}  * bytes"
+
+    run_podman run --ulimit core=1000:-1 --rm $IMAGE grep core /proc/self/limits
+    assert "$output" =~ " 1000  * ${max}  * bytes"
+
+    run_podman 125 run --ulimit core=-1:1000 --rm $IMAGE grep core /proc/self/limits
+    is "$output" "Error: ulimit option \"core=-1:1000\" requires name=SOFT:HARD, failed to be parsed: ulimit soft limit must be less than or equal to hard limit: soft: -1 (unlimited), hard: 1000"
 }
 
 @test "podman run bad --name" {
@@ -1214,6 +1236,29 @@ EOF
     run_podman rm -f -t0 $ctr
 }
 
+@test "podman run - custom static_dir" {
+    # regression test for #19938 to make sure the cleanup process uses the same
+    # static_dir and writes the exit code.  If not, podman-run will run into
+    # it's 20 sec timeout waiting for the exit code to be written.
+
+    skip_if_remote "CONTAINERS_CONF_OVERRIDE redirect does not work on remote"
+    containersconf=$PODMAN_TMPDIR/containers.conf
+    static_dir=$PODMAN_TMPDIR/static_dir
+cat >$containersconf <<EOF
+[engine]
+static_dir="$static_dir"
+EOF
+    ctr=$(random_string)
+    CONTAINERS_CONF_OVERRIDE=$containersconf PODMAN_TIMEOUT=20 run_podman run --name=$ctr $IMAGE true
+    CONTAINERS_CONF_OVERRIDE=$containersconf PODMAN_TIMEOUT=20 run_podman inspect --format "{{.ID}}" $ctr
+    cid="$output"
+    # Since the container has been run with custom static_dir (where the libpod
+    # DB is stored), the default podman should not see it.
+    run_podman 1 container exists $ctr
+    run_podman 1 container exists $cid
+    CONTAINERS_CONF_OVERRIDE=$containersconf run_podman rm -f -t0 $ctr
+}
+
 @test "podman --authfile=nonexistent-path" {
     # List of commands to be tested. These all share a common authfile check.
     #
@@ -1252,18 +1297,18 @@ search               | $IMAGE           |
         if [[ "$args" = "''" ]]; then args=;fi
 
         run_podman 125 $command --authfile=$bogus $args
-        assert "$output" = "Error: checking authfile: stat $bogus: no such file or directory" \
+        assert "$output" = "Error: credential file is not accessible: stat $bogus: no such file or directory" \
            "$command --authfile=nonexistent-path"
 
         if [[ "$command" != "logout" ]]; then
            REGISTRY_AUTH_FILE=$bogus run_podman ? $command $args
-           assert "$output" !~ "checking authfile" \
+           assert "$output" !~ "credential file is not accessible" \
               "$command REGISTRY_AUTH_FILE=nonexistent-path"
         fi
     done < <(parse_table "$tests")
 }
 
-@test "podman --syslog passed to conmon" {
+@test "podman --syslog and environment passed to conmon" {
     skip_if_remote "--syslog is not supported for remote clients"
     skip_if_journald_unavailable
 
@@ -1273,8 +1318,39 @@ search               | $IMAGE           |
     run_podman container inspect $cid --format "{{ .State.ConmonPid }}"
     conmon_pid="$output"
     is "$(< /proc/$conmon_pid/cmdline)" ".*--exit-command-arg--syslog.*" "conmon's exit-command has --syslog set"
+    conmon_env="$(< /proc/$conmon_pid/environ)"
+    assert "$conmon_env" =~ "BATS_TEST_TMPDIR" "entire env is passed down to conmon (incl. BATS variables)"
+    assert "$conmon_env" !~ "NOTIFY_SOCKET=" "NOTIFY_SOCKET is not included (incl. BATS variables)"
+    if ! is_rootless; then
+        assert "$conmon_env" !~ "DBUS_SESSION_BUS_ADDRESS=" "DBUS_SESSION_BUS_ADDRESS is not included (incl. BATS variables)"
+    fi
 
     run_podman rm -f -t0 $cid
+}
+
+@test "podman create container with conflicting name" {
+    local cname="$(random_string 10 | tr A-Z a-z)"
+    local output_msg_ext="^Error: .*: the container name \"$cname\" is already in use by .* You have to remove that container to be able to reuse that name: that name is already in use by an external entity, or use --replace to instruct Podman to do so."
+    local output_msg="^Error: .*: the container name \"$cname\" is already in use by .* You have to remove that container to be able to reuse that name: that name is already in use, or use --replace to instruct Podman to do so."
+    if is_remote; then
+        output_msg_ext="^Error: .*: the container name \"$cname\" is already in use by .* You have to remove that container to be able to reuse that name: that name is already in use by an external entity"
+        output_msg="^Error: .*: the container name \"$cname\" is already in use by .* You have to remove that container to be able to reuse that name: that name is already in use"
+    fi
+
+    # external container
+    buildah from --name $cname scratch
+
+    run_podman 125 create --name $cname $IMAGE
+    assert "$output" =~ "$output_msg_ext" "Trying to create two containers with same name"
+
+    run_podman container rm $cname
+
+    run_podman --noout create --name $cname $IMAGE
+
+    run_podman 125 create --name $cname $IMAGE
+    assert "$output" =~ "$output_msg" "Trying to create two containers with same name"
+
+    run_podman container rm $cname
 }
 
 # vim: filetype=sh

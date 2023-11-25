@@ -19,9 +19,12 @@ import (
 
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/podman/v4/pkg/machine"
+	"github.com/containers/podman/v4/pkg/machine/define"
 	"github.com/containers/podman/v4/pkg/machine/wsl/wutil"
 	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v4/utils"
 	"github.com/containers/storage/pkg/homedir"
+	"github.com/containers/storage/pkg/lockfile"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
@@ -300,6 +303,8 @@ type MachineVM struct {
 	Version int
 	// Whether to use user-mode networking
 	UserModeNetworking bool
+	// Used at runtime for serializing write operations
+	lock *lockfile.LockFile
 }
 
 type ExitCodeError struct {
@@ -391,6 +396,14 @@ func getLegacyLastStart(vm *MachineVM) time.Time {
 // Init writes the json configuration file to the filesystem for
 // other verbs (start, stop)
 func (v *MachineVM) Init(opts machine.InitOptions) (bool, error) {
+	var (
+		err error
+	)
+	// cleanup half-baked files if init fails at any point
+	callbackFuncs := machine.InitCleanup()
+	defer callbackFuncs.CleanIfErr(&err)
+	go callbackFuncs.CleanOnSignal()
+
 	if cont, err := checkAndInstallWSL(opts); !cont {
 		appendOutputIfError(opts.ReExec, err)
 		return cont, err
@@ -402,20 +415,22 @@ func (v *MachineVM) Init(opts machine.InitOptions) (bool, error) {
 	v.Version = currentMachineVersion
 
 	if v.UserModeNetworking {
-		if err := verifyWSLUserModeCompat(); err != nil {
+		if err = verifyWSLUserModeCompat(); err != nil {
 			return false, err
 		}
 	}
 
-	if err := downloadDistro(v, opts); err != nil {
+	if err = downloadDistro(v, opts); err != nil {
 		return false, err
 	}
+	callbackFuncs.Add(v.removeMachineImage)
 
 	const prompt = "Importing operating system into WSL (this may take a few minutes on a new WSL install)..."
 	dist, err := provisionWSLDist(v.Name, v.ImagePath, prompt)
 	if err != nil {
 		return false, err
 	}
+	callbackFuncs.Add(v.unprovisionWSL)
 
 	if v.UserModeNetworking {
 		if err = installUserModeDist(dist, v.ImagePath); err != nil {
@@ -436,19 +451,57 @@ func (v *MachineVM) Init(opts machine.InitOptions) (bool, error) {
 	if err = createKeys(v, dist); err != nil {
 		return false, err
 	}
+	callbackFuncs.Add(v.removeSSHKeys)
 
 	// Cycle so that user change goes into effect
 	_ = terminateDist(dist)
 
-	if err := v.writeConfig(); err != nil {
+	if err = v.writeConfig(); err != nil {
 		return false, err
 	}
+	callbackFuncs.Add(v.removeMachineConfig)
 
-	if err := setupConnections(v, opts); err != nil {
+	if err = setupConnections(v, opts); err != nil {
 		return false, err
 	}
-
+	callbackFuncs.Add(v.removeSystemConnections)
 	return true, nil
+}
+
+func (v *MachineVM) unprovisionWSL() error {
+	if err := terminateDist(toDist(v.Name)); err != nil {
+		logrus.Error(err)
+	}
+	if err := unregisterDist(toDist(v.Name)); err != nil {
+		logrus.Error(err)
+	}
+
+	vmDataDir, err := machine.GetDataDir(vmtype)
+	if err != nil {
+		return err
+	}
+	distDir := filepath.Join(vmDataDir, "wsldist")
+	distTarget := filepath.Join(distDir, v.Name)
+	return utils.GuardedRemoveAll(distTarget)
+}
+
+func (v *MachineVM) removeMachineConfig() error {
+	return utils.GuardedRemoveAll(v.ConfigPath)
+}
+
+func (v *MachineVM) removeMachineImage() error {
+	return utils.GuardedRemoveAll(v.ImagePath)
+}
+
+func (v *MachineVM) removeSSHKeys() error {
+	if err := utils.GuardedRemoveAll(fmt.Sprintf("%s.pub", v.IdentityPath)); err != nil {
+		logrus.Error(err)
+	}
+	return utils.GuardedRemoveAll(v.IdentityPath)
+}
+
+func (v *MachineVM) removeSystemConnections() error {
+	return machine.RemoveConnections(v.Name, fmt.Sprintf("%s-root", v.Name))
 }
 
 func downloadDistro(v *MachineVM, opts machine.InitOptions) error {
@@ -1003,7 +1056,7 @@ func wslPipe(input string, dist string, arg ...string) error {
 }
 
 func wslCreateKeys(identityPath string, dist string) (string, error) {
-	return machine.CreateSSHKeysPrefix(identityPath, true, true, "wsl", "-u", "root", "-d", dist)
+	return machine.CreateSSHKeysPrefix(identityPath, true, false, "wsl", "-u", "root", "-d", dist)
 }
 
 func runCmdPassThrough(name string, arg ...string) error {
@@ -1061,6 +1114,9 @@ func (v *MachineVM) Set(_ string, opts machine.SetOptions) ([]error, error) {
 	// The setting(s) that failed to be applied will have its errors returned in setErrors
 	var setErrors []error
 
+	v.lock.Lock()
+	defer v.lock.Unlock()
+
 	if opts.Rootful != nil && v.Rootful != *opts.Rootful {
 		err := v.setRootful(*opts.Rootful)
 		if err != nil {
@@ -1079,11 +1135,14 @@ func (v *MachineVM) Set(_ string, opts machine.SetOptions) ([]error, error) {
 
 	if opts.Memory != nil {
 		setErrors = append(setErrors, errors.New("changing memory not supported for WSL machines"))
+	}
 
+	if opts.USBs != nil {
+		setErrors = append(setErrors, errors.New("changing USBs not supported for WSL machines"))
 	}
 
 	if opts.DiskSize != nil {
-		setErrors = append(setErrors, errors.New("changing Disk Size not supported for WSL machines"))
+		setErrors = append(setErrors, errors.New("changing disk size not supported for WSL machines"))
 	}
 
 	if opts.UserModeNetworking != nil && *opts.UserModeNetworking != v.UserModeNetworking {
@@ -1106,13 +1165,23 @@ func (v *MachineVM) Set(_ string, opts machine.SetOptions) ([]error, error) {
 			v.UserModeNetworking = *opts.UserModeNetworking
 		}
 	}
+	err := v.writeConfig()
+	if err != nil {
+		setErrors = append(setErrors, err)
+	}
 
-	return setErrors, v.writeConfig()
+	if len(setErrors) > 0 {
+		return setErrors, setErrors[0]
+	}
+	return setErrors, nil
 }
 
 func (v *MachineVM) Start(name string, opts machine.StartOptions) error {
+	v.lock.Lock()
+	defer v.lock.Unlock()
+
 	if v.isRunning() {
-		return fmt.Errorf("%q is already running", name)
+		return machine.ErrVMAlreadyRunning
 	}
 
 	dist := toDist(name)
@@ -1399,6 +1468,9 @@ func isSystemdRunning(dist string) (bool, error) {
 }
 
 func (v *MachineVM) Stop(name string, _ machine.StopOptions) error {
+	v.lock.Lock()
+	defer v.lock.Unlock()
+
 	dist := toDist(v.Name)
 
 	wsl, err := isWSLRunning(dist)
@@ -1415,7 +1487,7 @@ func (v *MachineVM) Stop(name string, _ machine.StopOptions) error {
 	}
 
 	if !wsl || !sysd {
-		return fmt.Errorf("%q is not running", v.Name)
+		return nil
 	}
 
 	// Stop user-mode networking if enabled
@@ -1522,9 +1594,12 @@ func readWinProxyTid(v *MachineVM) (uint32, uint32, string, error) {
 func (v *MachineVM) Remove(name string, opts machine.RemoveOptions) (string, func() error, error) {
 	var files []string
 
+	v.lock.Lock()
+	defer v.lock.Unlock()
+
 	if v.isRunning() {
 		if !opts.Force {
-			return "", nil, fmt.Errorf("running vm %q cannot be destroyed", v.Name)
+			return "", nil, &machine.ErrVMRunningCannotDestroyed{Name: v.Name}
 		}
 		if err := v.Stop(v.Name, machine.StopOptions{}); err != nil {
 			return "", nil, err
@@ -1565,7 +1640,7 @@ func (v *MachineVM) Remove(name string, opts machine.RemoveOptions) (string, fun
 			logrus.Error(err)
 		}
 		for _, f := range files {
-			if err := machine.GuardedRemoveAll(f); err != nil {
+			if err := utils.GuardedRemoveAll(f); err != nil {
 				logrus.Error(err)
 			}
 		}
@@ -1632,14 +1707,14 @@ func (v *MachineVM) SSH(name string, opts machine.SSHOptions) error {
 	return cmd.Run()
 }
 
-func (vm *MachineVM) updateTimeStamps(updateLast bool) (time.Time, time.Time, error) {
+func (v *MachineVM) updateTimeStamps(updateLast bool) (time.Time, time.Time, error) {
 	var err error
 	if updateLast {
-		vm.LastUp = time.Now()
-		err = vm.writeConfig()
+		v.LastUp = time.Now()
+		err = v.writeConfig()
 	}
 
-	return vm.Created, vm.LastUp, err
+	return v.Created, v.LastUp, err
 }
 
 func getDiskSize(vm *MachineVM) uint64 {
@@ -1734,15 +1809,15 @@ func (v *MachineVM) Inspect() (*machine.InspectInfo, error) {
 
 	connInfo := new(machine.ConnectionConfig)
 	machinePipe := toDist(v.Name)
-	connInfo.PodmanPipe = &machine.VMFile{Path: `\\.\pipe\` + machinePipe}
+	connInfo.PodmanPipe = &define.VMFile{Path: `\\.\pipe\` + machinePipe}
 
 	created, lastUp, _ := v.updateTimeStamps(state == machine.Running)
 	return &machine.InspectInfo{
-		ConfigPath:     machine.VMFile{Path: v.ConfigPath},
+		ConfigPath:     define.VMFile{Path: v.ConfigPath},
 		ConnectionInfo: *connInfo,
 		Created:        created,
 		Image: machine.ImageConfig{
-			ImagePath:   machine.VMFile{Path: v.ImagePath},
+			ImagePath:   define.VMFile{Path: v.ImagePath},
 			ImageStream: v.ImageStream,
 		},
 		LastUp:             lastUp,

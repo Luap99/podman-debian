@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/containers/podman/v4/pkg/machine"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -31,8 +32,9 @@ var _ = Describe("podman machine rm", func() {
 	})
 
 	It("Remove machine", func() {
+		name := randomString()
 		i := new(initMachine)
-		session, err := mb.setCmd(i.withImagePath(mb.imagePath)).run()
+		session, err := mb.setName(name).setCmd(i.withImagePath(mb.imagePath)).run()
 		Expect(err).ToNot(HaveOccurred())
 		Expect(session).To(Exit(0))
 		rm := rmMachine{}
@@ -45,6 +47,12 @@ var _ = Describe("podman machine rm", func() {
 		_, ec, err := mb.toQemuInspectInfo()
 		Expect(err).ToNot(HaveOccurred())
 		Expect(ec).To(Equal(125))
+
+		// Removing non-existent machine should fail
+		removeSession2, err := mb.setCmd(rm.withForce()).run()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(removeSession2).To(Exit(125))
+		Expect(removeSession2.errorToString()).To(ContainSubstring(fmt.Sprintf("%s: VM does not exist", name)))
 	})
 
 	It("Remove running machine", func() {
@@ -73,7 +81,6 @@ var _ = Describe("podman machine rm", func() {
 	})
 
 	It("machine rm --save-keys, --save-ignition, --save-image", func() {
-
 		i := new(initMachine)
 		session, err := mb.setCmd(i.withImagePath(mb.imagePath)).run()
 		Expect(err).ToNot(HaveOccurred())
@@ -111,10 +118,13 @@ var _ = Describe("podman machine rm", func() {
 		Expect(err).ToNot(HaveOccurred())
 		_, err = os.Stat(pubkey)
 		Expect(err).ToNot(HaveOccurred())
-		_, err = os.Stat(ign)
-		Expect(err).ToNot(HaveOccurred())
+
+		// WSL does not use ignition
+		if testProvider.VMType() != machine.WSLVirt {
+			_, err = os.Stat(ign)
+			Expect(err).ToNot(HaveOccurred())
+		}
 		_, err = os.Stat(img)
 		Expect(err).ToNot(HaveOccurred())
-
 	})
 })

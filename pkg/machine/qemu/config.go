@@ -12,6 +12,8 @@ import (
 
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/podman/v4/pkg/machine"
+	"github.com/containers/podman/v4/pkg/machine/compression"
+	"github.com/containers/podman/v4/pkg/machine/define"
 	"github.com/containers/podman/v4/utils"
 	"github.com/docker/go-units"
 	"github.com/sirupsen/logrus"
@@ -19,6 +21,14 @@ import (
 
 type QEMUVirtualization struct {
 	machine.Virtualization
+}
+
+// setNewMachineCMDOpts are options needed to pass
+// into setting up the qemu command line.  long term, this need
+// should be eliminated
+// TODO Podman5
+type setNewMachineCMDOpts struct {
+	imageDir string
 }
 
 // findQEMUBinary locates and returns the QEMU binary
@@ -42,54 +52,100 @@ func (v *MachineVM) setQMPMonitorSocket() error {
 
 // setNewMachineCMD configure the CLI command that will be run to create the new
 // machine
-func (v *MachineVM) setNewMachineCMD(qemuBinary string) {
-	cmd := []string{qemuBinary}
-	// Add memory
-	cmd = append(cmd, []string{"-m", strconv.Itoa(int(v.Memory))}...)
-	// Add cpus
-	cmd = append(cmd, []string{"-smp", strconv.Itoa(int(v.CPUs))}...)
-	// Add ignition file
-	cmd = append(cmd, []string{"-fw_cfg", "name=opt/com.coreos/config,file=" + v.IgnitionFile.GetPath()}...)
-	cmd = append(cmd, []string{"-qmp", v.QMPMonitor.Network + ":" + v.QMPMonitor.Address.GetPath() + ",server=on,wait=off"}...)
+func (v *MachineVM) setNewMachineCMD(qemuBinary string, cmdOpts *setNewMachineCMDOpts) {
+	v.CmdLine = NewQemuBuilder(qemuBinary, v.addArchOptions(cmdOpts))
+	v.CmdLine.SetMemory(v.Memory)
+	v.CmdLine.SetCPUs(v.CPUs)
+	v.CmdLine.SetIgnitionFile(v.IgnitionFile)
+	v.CmdLine.SetQmpMonitor(v.QMPMonitor)
+	v.CmdLine.SetNetwork()
+	v.CmdLine.SetSerialPort(v.ReadySocket, v.VMPidFilePath, v.Name)
+	v.CmdLine.SetUSBHostPassthrough(v.USBs)
+}
 
-	// Add network
-	// Right now the mac address is hardcoded so that the host networking gives it a specific IP address.  This is
-	// why we can only run one vm at a time right now
-	cmd = append(cmd, []string{"-netdev", "socket,id=vlan,fd=3", "-device", "virtio-net-pci,netdev=vlan,mac=5a:94:ef:e4:0c:ee"}...)
+func parseUSBs(usbs []string) ([]machine.USBConfig, error) {
+	configs := []machine.USBConfig{}
+	for _, str := range usbs {
+		if str == "" {
+			// Ignore --usb="" as it can be used to reset USBConfigs
+			continue
+		}
 
-	// Add serial port for readiness
-	cmd = append(cmd, []string{
-		"-device", "virtio-serial",
-		// qemu needs to establish the long name; other connections can use the symlink'd
-		// Note both id and chardev start with an extra "a" because qemu requires that it
-		// starts with a letter but users can also use numbers
-		"-chardev", "socket,path=" + v.ReadySocket.Path + ",server=on,wait=off,id=a" + v.Name + "_ready",
-		"-device", "virtserialport,chardev=a" + v.Name + "_ready" + ",name=org.fedoraproject.port.0",
-		"-pidfile", v.VMPidFilePath.GetPath()}...)
-	v.CmdLine = cmd
+		vals := strings.Split(str, ",")
+		if len(vals) != 2 {
+			return configs, fmt.Errorf("usb: fail to parse: missing ',': %s", str)
+		}
+
+		left := strings.Split(vals[0], "=")
+		if len(left) != 2 {
+			return configs, fmt.Errorf("usb: fail to parse: missing '=': %s", str)
+		}
+
+		right := strings.Split(vals[1], "=")
+		if len(right) != 2 {
+			return configs, fmt.Errorf("usb: fail to parse: missing '=': %s", str)
+		}
+
+		option := left[0] + "_" + right[0]
+
+		switch option {
+		case "bus_devnum", "devnum_bus":
+			bus, devnumber := left[1], right[1]
+			if right[0] == "bus" {
+				bus, devnumber = devnumber, bus
+			}
+
+			configs = append(configs, machine.USBConfig{
+				Bus:       bus,
+				DevNumber: devnumber,
+			})
+		case "vendor_product", "product_vendor":
+			vendorStr, productStr := left[1], right[1]
+			if right[0] == "vendor" {
+				vendorStr, productStr = productStr, vendorStr
+			}
+
+			vendor, err := strconv.ParseInt(vendorStr, 16, 0)
+			if err != nil {
+				return configs, fmt.Errorf("usb: fail to convert vendor of %s: %s", str, err)
+			}
+
+			product, err := strconv.ParseInt(productStr, 16, 0)
+			if err != nil {
+				return configs, fmt.Errorf("usb: fail to convert product of %s: %s", str, err)
+			}
+
+			configs = append(configs, machine.USBConfig{
+				Vendor:  int(vendor),
+				Product: int(product),
+			})
+		default:
+			return configs, fmt.Errorf("usb: fail to parse: %s", str)
+		}
+	}
+	return configs, nil
 }
 
 // NewMachine initializes an instance of a virtual machine based on the qemu
 // virtualization.
 func (p *QEMUVirtualization) NewMachine(opts machine.InitOptions) (machine.VM, error) {
-	vmConfigDir, err := machine.GetConfDir(vmtype)
-	if err != nil {
-		return nil, err
-	}
 	vm := new(MachineVM)
 	if len(opts.Name) > 0 {
 		vm.Name = opts.Name
 	}
 
-	// set VM ignition file
-	ignitionFile, err := machine.NewMachineFile(filepath.Join(vmConfigDir, vm.Name+".ign"), nil)
+	dataDir, err := machine.GetDataDir(p.VMType())
 	if err != nil {
 		return nil, err
 	}
-	vm.IgnitionFile = *ignitionFile
+
+	// set VM ignition file
+	if err := machine.SetIgnitionFile(&vm.IgnitionFile, vmtype, vm.Name); err != nil {
+		return nil, err
+	}
 
 	// set VM image file
-	imagePath, err := machine.NewMachineFile(opts.ImagePath, nil)
+	imagePath, err := define.NewMachineFile(opts.ImagePath, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -107,6 +163,9 @@ func (p *QEMUVirtualization) NewMachine(opts machine.InitOptions) (machine.VM, e
 	vm.CPUs = opts.CPUS
 	vm.Memory = opts.Memory
 	vm.DiskSize = opts.DiskSize
+	if vm.USBs, err = parseUSBs(opts.USBs); err != nil {
+		return nil, err
+	}
 
 	vm.Created = time.Now()
 
@@ -125,12 +184,18 @@ func (p *QEMUVirtualization) NewMachine(opts machine.InitOptions) (machine.VM, e
 		return nil, err
 	}
 
-	if err := vm.setReadySocket(); err != nil {
+	runtimeDir, err := getRuntimeDir()
+	if err != nil {
+		return nil, err
+	}
+	symlink := vm.Name + "_ready.sock"
+	if err := machine.SetSocket(&vm.ReadySocket, machine.ReadySocketPath(runtimeDir+"/podman/", vm.Name), &symlink); err != nil {
 		return nil, err
 	}
 
 	// configure command to run
-	vm.setNewMachineCMD(execPath)
+	cmdOpts := setNewMachineCMDOpts{imageDir: dataDir}
+	vm.setNewMachineCMD(execPath, &cmdOpts)
 	return vm, nil
 }
 
@@ -142,6 +207,12 @@ func (p *QEMUVirtualization) LoadVMByName(name string) (machine.VM, error) {
 	if err := vm.update(); err != nil {
 		return nil, err
 	}
+
+	lock, err := machine.GetLock(vm.Name, vmtype)
+	if err != nil {
+		return nil, err
+	}
+	vm.lock = lock
 
 	return vm, nil
 }
@@ -204,16 +275,7 @@ func getVMInfos() ([]*machine.ListResponse, error) {
 				return err
 			}
 			listEntry.Running = state == machine.Running
-
-			if !vm.LastUp.IsZero() { // this means we have already written a time to the config
-				listEntry.LastUp = vm.LastUp
-			} else { // else we just created the machine AKA last up = created time
-				listEntry.LastUp = vm.Created
-				vm.LastUp = listEntry.LastUp
-				if err := vm.writeConfig(); err != nil {
-					return err
-				}
-			}
+			listEntry.LastUp = vm.LastUp
 
 			listed = append(listed, listEntry)
 		}
@@ -301,7 +363,7 @@ func (p *QEMUVirtualization) RemoveAndCleanMachines() error {
 		}
 		prevErr = err
 	} else {
-		err := machine.GuardedRemoveAll(dataDir)
+		err := utils.GuardedRemoveAll(dataDir)
 		if err != nil {
 			if prevErr != nil {
 				logrus.Error(prevErr)
@@ -318,7 +380,7 @@ func (p *QEMUVirtualization) RemoveAndCleanMachines() error {
 		}
 		prevErr = err
 	} else {
-		err := machine.GuardedRemoveAll(confDir)
+		err := utils.GuardedRemoveAll(confDir)
 		if err != nil {
 			if prevErr != nil {
 				logrus.Error(prevErr)
@@ -335,7 +397,7 @@ func (p *QEMUVirtualization) VMType() machine.VMType {
 
 func VirtualizationProvider() machine.VirtProvider {
 	return &QEMUVirtualization{
-		machine.NewVirtualization(machine.Qemu, machine.Xz, machine.Qcow, vmtype),
+		machine.NewVirtualization(define.Qemu, compression.Xz, define.Qcow, vmtype),
 	}
 }
 

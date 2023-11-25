@@ -33,6 +33,7 @@ import (
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/sys/unix"
 )
 
 var (
@@ -286,22 +287,22 @@ func PodmanTestCreateUtil(tempDir string, remote bool) *PodmanTestIntegration {
 	}
 	os.Setenv("DISABLE_HC_SYSTEMD", "true")
 
-	dbBackend := "boltdb"
-	if os.Getenv("PODMAN_DB") == "sqlite" {
-		dbBackend = "sqlite"
+	dbBackend := "sqlite"
+	if os.Getenv("PODMAN_DB") == "boltdb" {
+		dbBackend = "boltdb"
 	}
 
-	networkBackend := CNI
-	networkConfigDir := "/etc/cni/net.d"
+	networkBackend := Netavark
+	networkConfigDir := "/etc/containers/networks"
 	if isRootless() {
-		networkConfigDir = filepath.Join(os.Getenv("HOME"), ".config/cni/net.d")
+		networkConfigDir = filepath.Join(root, "etc", "networks")
 	}
 
-	if strings.ToLower(os.Getenv("NETWORK_BACKEND")) == "netavark" {
-		networkBackend = Netavark
-		networkConfigDir = "/etc/containers/networks"
+	if strings.ToLower(os.Getenv("NETWORK_BACKEND")) == "cni" {
+		networkBackend = CNI
+		networkConfigDir = "/etc/cni/net.d"
 		if isRootless() {
-			networkConfigDir = filepath.Join(root, "etc", "networks")
+			networkConfigDir = filepath.Join(os.Getenv("HOME"), ".config/cni/net.d")
 		}
 	}
 
@@ -366,7 +367,7 @@ func PodmanTestCreateUtil(tempDir string, remote bool) *PodmanTestIntegration {
 			if err == nil {
 				lockFile.Close()
 				p.RemoteSocketLock = lockPath
-				p.RemoteSocket = fmt.Sprintf("unix:%s-%s.sock", pathPrefix, uuid)
+				p.RemoteSocket = fmt.Sprintf("unix://%s-%s.sock", pathPrefix, uuid)
 				break
 			}
 			tries++
@@ -412,9 +413,19 @@ func (p *PodmanTestIntegration) createArtifact(image string) {
 	destName := imageTarPath(image)
 	if _, err := os.Stat(destName); os.IsNotExist(err) {
 		GinkgoWriter.Printf("Caching %s at %s...\n", image, destName)
-		pull := p.PodmanNoCache([]string{"pull", image})
-		pull.Wait(440)
-		Expect(pull).Should(Exit(0))
+		for try := 0; try < 3; try++ {
+			pull := p.PodmanNoCache([]string{"pull", image})
+			pull.Wait(440)
+			if pull.ExitCode() == 0 {
+				break
+			}
+			if try == 2 {
+				Expect(pull).Should(Exit(0), "Failed after many retries")
+			}
+
+			GinkgoWriter.Println("Will wait and retry")
+			time.Sleep(time.Duration(try+1) * 5 * time.Second)
+		}
 
 		save := p.PodmanNoCache([]string{"save", "-o", destName, image})
 		save.Wait(90)
@@ -540,7 +551,7 @@ func (p *PodmanTestIntegration) RunContainerWithNetworkTest(mode string) *Podman
 	if mode != "" {
 		podmanArgs = append(podmanArgs, "--network", mode)
 	}
-	podmanArgs = append(podmanArgs, fedoraMinimal, "curl", "-k", "-o", "/dev/null", "http://www.redhat.com:80")
+	podmanArgs = append(podmanArgs, fedoraMinimal, "curl", "-s", "-S", "-k", "-o", "/dev/null", "http://www.redhat.com:80")
 	session := p.Podman(podmanArgs)
 	return session
 }
@@ -983,7 +994,17 @@ func rmAll(podmanBin string, path string) {
 			GinkgoWriter.Printf("%v\n", err)
 		}
 	} else {
-		if err := os.RemoveAll(path); err != nil {
+		// When using overlay as root, podman leaves a stray mount behind.
+		// This leak causes remote tests to take a loooooong time, which
+		// then causes Cirrus to time out. Unmount that stray.
+		overlayPath := path + "/root/overlay"
+		if _, err := os.Stat(overlayPath); err == nil {
+			if err = unix.Unmount(overlayPath, unix.MNT_DETACH); err != nil {
+				GinkgoWriter.Printf("Error unmounting %s: %v\n", overlayPath, err)
+			}
+		}
+
+		if err = os.RemoveAll(path); err != nil {
 			GinkgoWriter.Printf("%q\n", err)
 		}
 	}
@@ -1223,7 +1244,7 @@ func GetPort() int {
 		// Random port within that range
 		port := portMin + rng.Intn((portMax-portMin)/nProcs)*nProcs + myProc
 
-		used, err := net.Listen("tcp", "localhost:"+strconv.Itoa(port))
+		used, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(port))
 		if err == nil {
 			// it's open. Return it.
 			err = used.Close()
@@ -1232,14 +1253,14 @@ func GetPort() int {
 		}
 	}
 
-	Fail(fmt.Sprintf("unable to get free port: %v", err))
+	Fail(fmt.Sprintf("unable to get free port in range %d-%d", portMin, portMax))
 	return 0 // notreached
 }
 
 func ncz(port int) bool {
 	timeout := 500 * time.Millisecond
 	for i := 0; i < 5; i++ {
-		ncCmd := []string{"-z", "localhost", fmt.Sprintf("%d", port)}
+		ncCmd := []string{"-z", "localhost", strconv.Itoa(port)}
 		GinkgoWriter.Printf("Running: nc %s\n", strings.Join(ncCmd, " "))
 		check := SystemExec("nc", ncCmd)
 		if check.ExitCode() == 0 {

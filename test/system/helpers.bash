@@ -135,11 +135,6 @@ function skopeo() {
 
 # Setup helper: establish a test environment with exactly the images needed
 function basic_setup() {
-    # FIXME FIXME FIXME: remove if #17216 is fixed. See below also.
-    if [[ -e "${BATS_SUITE_TMPDIR}/forget-it" ]]; then
-        skip "everything is hosed, no point in going on"
-    fi
-
     # Clean up all containers
     run_podman rm -t 0 --all --force --ignore
 
@@ -154,11 +149,6 @@ function basic_setup() {
             for errline in "${lines[@]}"; do
                 echo "# $errline" >&3
             done
-            # FIXME FIXME FIXME: temporary hack for #18831. If we see the
-            # unmount/EINVAL flake, nothing will ever work again.
-            if [[ $output =~ unmounting.*invalid ]]; then
-                touch "${BATS_SUITE_TMPDIR}/forget-it"
-            fi
         fi
     done
 
@@ -169,22 +159,6 @@ function basic_setup() {
     # Image loads are slow.
     found_needed_image=
     run_podman '?' images --all --format '{{.Repository}}:{{.Tag}} {{.ID}}'
-    # FIXME FIXME FIXME: temporary hack for #17216. If we see the unlinkat-busy
-    # flake, nothing will ever work again.
-    if [[ $status -ne 0 ]]; then
-        if [[ "$output" =~ unlinkat.*busy ]]; then
-            # Signal (see above) to skip all subsequent tests.
-            touch "${BATS_SUITE_TMPDIR}/forget-it"
-            # Gather some debugging info, then fail
-            echo "$_LOG_PROMPT ps auxww --forest"
-            ps auxww --forest
-            echo "$_LOG_PROMPT mount"
-            mount
-            echo "$_LOG_PROMPT lsof /var/lib/containers"
-            lsof /var/lib/containers
-            false
-        fi
-    fi
 
     for line in "${lines[@]}"; do
         set $line
@@ -223,6 +197,10 @@ function basic_setup() {
 
     # In the unlikely event that a test runs is() before a run_podman()
     MOST_RECENT_PODMAN_COMMAND=
+
+    # Test filenames must match ###-name.bats; use "[###] " as prefix
+    run expr "$BATS_TEST_FILENAME" : "^.*/\([0-9]\{3\}\)-[^/]\+\.bats\$"
+    BATS_TEST_NAME_PREFIX="[${output}] "
 }
 
 # Basic teardown: remove all pods and containers
@@ -339,11 +317,22 @@ function run_podman() {
     # Remember command args, for possible use in later diagnostic messages
     MOST_RECENT_PODMAN_COMMAND="podman $*"
 
+    # BATS >= 1.5.0 treats 127 as a special case, adding a big nasty warning
+    # at the end of the test run if any command exits thus. Silence it.
+    #   https://bats-core.readthedocs.io/en/stable/warnings/BW01.html
+    local silence127=
+    if [[ "$expected_rc" = "127" ]]; then
+        # We could use "-127", but that would cause BATS to fail if the
+        # command exits any other status -- and default BATS failure messages
+        # are much less helpful than the run_podman ones. "!" is more flexible.
+        silence127="!"
+    fi
+
     # stdout is only emitted upon error; this printf is to help in debugging
-    printf "\n%s %s %s\n" "$(timestamp)" "$_LOG_PROMPT" "$*"
+    printf "\n%s %s %s %s\n" "$(timestamp)" "$_LOG_PROMPT" "$PODMAN" "$*"
     # BATS hangs if a subprocess remains and keeps FD 3 open; this happens
     # if podman crashes unexpectedly without cleaning up subprocesses.
-    run timeout --foreground -v --kill=10 $PODMAN_TIMEOUT $PODMAN $_PODMAN_TEST_OPTS "$@" 3>/dev/null
+    run $silence127 timeout --foreground -v --kill=10 $PODMAN_TIMEOUT $PODMAN $_PODMAN_TEST_OPTS "$@" 3>/dev/null
     # without "quotes", multiple lines are glommed together into one
     if [ -n "$output" ]; then
         echo "$(timestamp) $output"
@@ -562,6 +551,18 @@ function podman_runtime() {
     # it emits the command invocation to stdout, hence the redirection.
     run_podman info --format '{{ .Host.OCIRuntime.Name }}' >/dev/null
     basename "${output:-[null]}"
+}
+
+# Returns the storage driver: 'overlay' or 'vfs'
+function podman_storage_driver() {
+    run_podman info --format '{{.Store.GraphDriverName}}' >/dev/null
+    # Should there ever be a new driver
+    case "$output" in
+        overlay) ;;
+        vfs)     ;;
+        *)       die "Unknown storage driver '$output'; if this is a new driver, please review uses of this function in tests." ;;
+    esac
+    echo "$output"
 }
 
 # rhbz#1895105: rootless journald is unavailable except to users in
@@ -913,6 +914,38 @@ function is() {
     false
 }
 
+####################
+#  allow_warnings  #  check cmd output for warning messages other than these
+####################
+#
+# HEADS UP: Operates on '$lines' array, so, must be invoked after run_podman
+#
+function allow_warnings() {
+    for line in "${lines[@]}"; do
+        if [[ "$line" =~ level=[we] ]]; then
+            local ok=
+            for pattern in "$@"; do
+                if [[ "$line" =~ $pattern ]]; then
+                   ok=ok
+                fi
+            done
+            if [[ -z "$ok" ]]; then
+                die "Unexpected warning/error in command results: $line"
+            fi
+        fi
+    done
+}
+
+#####################
+#  require_warning  #  Require the given message, but disallow any others
+#####################
+# Optional 2nd argument is a message to display if warning is missing
+function require_warning() {
+    local expect="$1"
+    local msg="${2:-Did not find expected warning/error message}"
+    assert "$output" =~ "$expect" "$msg"
+    allow_warnings "$expect"
+}
 
 ############
 #  dprint  #  conditional debug message

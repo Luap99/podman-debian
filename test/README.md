@@ -87,8 +87,8 @@ The following environment variables are supported by the test setup:
  - `QUADLET_BINARY`: path to the quadlet binary, defaults to `bin/quadlet` in the repository root.
  - `CONMON_BINARY`: path to th conmon binary, defaults to `/usr/libexec/podman/conmon`.
  - `OCI_RUNTIME`: which oci runtime to use, defaults to `crun`.
- - `NETWORK_BACKEND`: the network backend, either `cni` (default) or `netavark`.
- - `PODMAN_DB`: the database backend `boltdb` (default) or `sqlite`.
+ - `NETWORK_BACKEND`: the network backend, either `netavark` (default) or `cni`.
+ - `PODMAN_DB`: the database backend `sqlite` (default) or `boltdb`.
  - `PODMAN_TEST_IMAGE_CACHE_DIR`: path were the container images should be cached, defaults to `/tmp`.
 
 ### Running a single file of integration tests
@@ -125,6 +125,13 @@ Alternatively you can use the `FOCUS` option which maps to `--focus`, again see 
 ```
 make localintegration FOCUS="podman inspect bogus pod"
 ```
+
+### Controlling Ginkgo parameters
+You can control some of the parameters passed to Ginkgo
+
+- Disable parallel tests by setting `GINKGO_PARALLEL=n`
+- Set flake retry count (default 3) to one by setting `GINKGO_FLAKE_ATTEMPTS=1`
+- Produce colorful tests report by setting `GINKGO_NO_COLOR=n`
 
 # System tests
 System tests are used for testing the *podman* CLI in the context of a complete system. It
