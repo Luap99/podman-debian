@@ -15,6 +15,8 @@ Build-Depends:
  go-md2man,
  golang-dbus-dev,
  golang-ginkgo-dev,
+ golang-github-shirou-gopsutil-dev,
+ golang-github-mdlayher-vsock-dev,
  golang-github-appc-cni-dev,
  golang-github-buger-goterm-dev,
  golang-github-checkpoint-restore-checkpointctl-dev,
