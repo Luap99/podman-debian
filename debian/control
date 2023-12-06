@@ -30,6 +30,7 @@ Build-Depends:
  golang-github-containers-ocicrypt-dev,
  golang-github-containers-psgo-dev,
  golang-github-containers-storage-dev (>= 1.51),
+ golang-github-containers-gvisor-tap-vsocks-dev,
  golang-github-coreos-bbolt-dev,
  golang-github-coreos-go-iptables-dev,
  golang-github-coreos-go-systemd-dev,
