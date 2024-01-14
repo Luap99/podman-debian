@@ -18,6 +18,7 @@ export DH_GOLANG_EXCLUDES := \
 	contrib/perftest \
 	dependencies \
 	hack/podman-registry-go \
+	cmd/podman/machine \
 	pkg/bindings/test \
 	podman/pkg/machine/e2e \
 	test/e2e \
