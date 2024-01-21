@@ -3,3 +3,4 @@ downgrade-checkpoint-restore-criu.patch
 revert-newer-docker.patch
 revert-newer-docker2.patch
 sigstore-tests.patch
+pkg-fileserver-buildtags.patch

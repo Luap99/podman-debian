@@ -1,0 +1,25 @@
+From: Reinhard Tartler <siretart@tauware.de>
+Subject: avoid building pkg/fileserver implemenation
+
+The plan9 server is only relevant for the windows build
+
+Index: libpod/pkg/fileserver/plan9/serve.go
+===================================================================
+--- libpod.orig/pkg/fileserver/plan9/serve.go
++++ libpod/pkg/fileserver/plan9/serve.go
+@@ -1,3 +1,5 @@
++//go:build windows
++// +build windows
+ package plan9
+ 
+ import (
+Index: libpod/pkg/fileserver/server_windows.go
+===================================================================
+--- libpod.orig/pkg/fileserver/server_windows.go
++++ libpod/pkg/fileserver/server_windows.go
+@@ -1,3 +1,5 @@
++//go:build windows
++// +build windows
+ package fileserver
+ 
+ import (
