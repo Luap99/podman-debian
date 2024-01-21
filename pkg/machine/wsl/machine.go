@@ -671,7 +671,7 @@ func configureSystem(v *MachineVM, dist string) error {
 		return err
 	}
 
-	return changeDistUserModeNetworking(dist, user, "", v.UserModeNetworking)
+	return changeDistUserModeNetworking(dist, user, v.ImagePath, v.UserModeNetworking)
 }
 
 func configureBindMounts(dist string, user string) error {
@@ -1150,11 +1150,8 @@ func (v *MachineVM) Set(_ string, opts machine.SetOptions) ([]error, error) {
 		if v.isRunning() {
 			update = false
 			setErrors = append(setErrors, fmt.Errorf("user-mode networking can only be changed when the machine is not running"))
-		}
-
-		if update && *opts.UserModeNetworking {
+		} else {
 			dist := toDist(v.Name)
-
 			if err := changeDistUserModeNetworking(dist, v.RemoteUsername, v.ImagePath, *opts.UserModeNetworking); err != nil {
 				update = false
 				setErrors = append(setErrors, err)
@@ -1594,9 +1591,6 @@ func readWinProxyTid(v *MachineVM) (uint32, uint32, string, error) {
 func (v *MachineVM) Remove(name string, opts machine.RemoveOptions) (string, func() error, error) {
 	var files []string
 
-	v.lock.Lock()
-	defer v.lock.Unlock()
-
 	if v.isRunning() {
 		if !opts.Force {
 			return "", nil, &machine.ErrVMRunningCannotDestroyed{Name: v.Name}
@@ -1605,6 +1599,9 @@ func (v *MachineVM) Remove(name string, opts machine.RemoveOptions) (string, fun
 			return "", nil, err
 		}
 	}
+
+	v.lock.Lock()
+	defer v.lock.Unlock()
 
 	// Collect all the files that need to be destroyed
 	if !opts.SaveKeys {
