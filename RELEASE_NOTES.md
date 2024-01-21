@@ -1,9 +1,30 @@
 # Release Notes
 
+## 4.8.3
+### Security
+- Fixed [GHSA-45x7-px36-x8w8](https://github.com/advisories/GHSA-45x7-px36-x8w8): CVE-2023-48795 by vendoring golang.org/x/crypto v0.17.0.
+
+## 4.8.2
+### Bugfixes
+- Fixed a bug in the MacOS pkginstaller where Podman machine was using a different QEMU binary than the one installed using the installer, if it existed on the system ([#20808](https://github.com/containers/podman/issues/20808)).
+- Fixed a bug on Windows (WSL) with the first-time install of user-mode networking when using the init command, as opposed to set ([#20921](https://github.com/containers/podman/issues/20921)).
+
+### Quadlet
+- Fixed a bug where Kube image build failed when starting service with missing image ([#20432](https://github.com/containers/podman/issues/20432)).
+
+## 4.8.1
+### Bugfixes
+- Fixed a bug on Windows (WSL) where wsl.conf/resolv.conf was not restored when user-mode networking was disabled after being enabled ([#20625](https://github.com/containers/podman/issues/20625)).
+- Fixed a bug where currently if user specifies `podman kube play --replace`, the pod is removed on the client side, not the server side ([#20705](https://github.com/containers/podman/discussions/20705)).
+- Fixed a bug where `podman machine rm -f` would cause a deadlock when running with WSL.
+- Fixed `database is locked` errors with the new sqlite database backend ([#20809](https://github.com/containers/podman/issues/20809)).
+- Fixed a bug where `podman-remote exec` would fail if the server API version is older than 4.8.0 ([#20821](https://github.com/containers/podman/issues/20821)).
+- Fixed a bug where Podman would not run any command on systems with a symlinked $HOME ([#20872](https://github.com/containers/podman/issues/20872)).
+
 ## 4.8.0
 ### Features
-- A new command, `podman farm build`, has been added, which sends out builds to nodes defined in the farm, builds the images on the farm nodes, and pulls them back to the local machine to create a manifest list.
 - Podman machine now supports HyperV as a provider on Windows. This option can be set via the `CONTAINERS_MACHINE_PROVIDER` environment variable, or via containers.conf. HyperV requires Powershell to be run as Admin. Note that running WSL and HyperV machines at the same time is not supported.
+- The `podman build` command now supports Containerfiles with heredoc syntax.
 - The `podman login` and `podman logout` commands now support a new option, `--compat-auth-file`, which allows for editing Docker-compatible config files ([#18617](https://github.com/containers/podman/issues/18617)).
 - The `podman machine init` and `podman machine set` commands now support a new option, `--usb`, which sets allows USB passthrough for the QEMU provider ([#16707](https://github.com/containers/podman/issues/16707)).
 - The `--ulimit` option now supports setting -1 to indicate the maximum limit allowed for the current process ([#19319](https://github.com/containers/podman/issues/19319)).
@@ -16,6 +37,13 @@
 - A new option `--rdt-class=COS` has been added to the `podman create` and `podman run` commands that enables assigning a container to a Class Of Service (COS). The COS has to be pre-configured based on a pseudo-filesystem created by the *resctrl* kernel driver that enables interacting with the Intel RDT CAT feature.
 - The `podman kube play` command now supports a new option, `--publish-all`, which exposes all containerPorts on the host.
 - The --filter option now supports `label!=`, which filters for containers without the specified label.
+
+### Upcoming Deprecations
+- We are beginning development on Podman 5.0, which will include a number of breaking changes and deprecations. We are still finalizing what will be done, but a preliminary list is below. Please note that none of these changes are present in Podman 4.8; this is a preview of upcoming changes.
+- Podman 5.0 will deprecate the BoltDB database backend. Exact details on the transition to SQLite are still being decided - expect more news here soon.
+- The containers.conf configuration file will be broken up into multiple separate files, ensuring that it will never be rewritten by Podman.
+- Support for the CNI network backend and Cgroups V1 are being deprecated and gated by build tags. They will not be enabled in Podman builds by default.
+- A variety of small breaking changes to the REST API are planned, both to improve Docker compatibility and to better support `containers.conf` settings when creating and managing containers.
 
 ### Changes
 - Podman now defaults to sqlite as its database backend. For backwards compatibility, if a boltdb database already exists on the system, Podman will continue using it.
@@ -78,12 +106,11 @@
 - The Compat Network List endpoint should see a significant performance improvement ([#20035](https://github.com/containers/podman/issues/20035)).
 
 ### Misc
-- Updated Buildah to v1.33.1
+- Updated Buildah to v1.33.2
 - Updated the containers/storage library to v1.51.0
 - Updated the containers/image library to v5.29.0
 - Updated the containers/common library to v0.57.0
 - Updated the containers/libhvee library to v0.5.0
-- Updated the Mac pkginstaller QEMU to v8.0.0
 - Podman Machine now runs with gvproxy v0.7.1
 
 ## 4.7.2

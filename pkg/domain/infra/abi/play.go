@@ -714,6 +714,11 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 		podSpec.PodSpecGen.ServiceContainerID = serviceContainer.ID()
 	}
 
+	if options.Replace {
+		if _, err := ic.PodRm(ctx, []string{podName}, entities.PodRmOptions{Force: true, Ignore: true}); err != nil {
+			return nil, nil, fmt.Errorf("replacing pod %v: %w", podName, err)
+		}
+	}
 	// Create the Pod
 	pod, err := generate.MakePod(&podSpec, ic.Libpod)
 	if err != nil {
@@ -1018,6 +1023,7 @@ func (ic *ContainerEngine) getImageAndLabelInfo(ctx context.Context, cwd string,
 		buildOpts.CommonBuildOpts = commonOpts
 		buildOpts.Output = container.Image
 		buildOpts.ContextDirectory = filepath.Dir(buildFile)
+		buildOpts.ReportWriter = writer
 		if _, _, err := ic.Libpod.Build(ctx, *buildOpts, []string{buildFile}...); err != nil {
 			return nil, nil, err
 		}
