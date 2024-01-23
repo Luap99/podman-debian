@@ -301,14 +301,15 @@ func (v *MachineVM) Init(opts machine.InitOptions) (bool, error) {
 	}
 
 	builder := machine.NewIgnitionBuilder(machine.DynamicIgnition{
-		Name:      opts.Username,
-		Key:       key,
-		VMName:    v.Name,
-		VMType:    machine.QemuVirt,
-		TimeZone:  opts.TimeZone,
-		WritePath: v.getIgnitionFile(),
-		UID:       v.UID,
-		Rootful:   v.Rootful,
+		Name:       opts.Username,
+		Key:        key,
+		VMName:     v.Name,
+		VMType:     machine.QemuVirt,
+		TimeZone:   opts.TimeZone,
+		WritePath:  v.getIgnitionFile(),
+		UID:        v.UID,
+		Rootful:    v.Rootful,
+		NetRecover: useNetworkRecover(),
 	})
 
 	// If the user provides an ignition file, we need to
@@ -1265,8 +1266,8 @@ func (v *MachineVM) startHostNetworking() (string, machine.APIForwardingState, e
 		cmd.Debug = true
 		logrus.Debug(cmd)
 	}
-
 	c := cmd.Cmd(binary)
+	logrus.Debugf("gvproxy args: %v", c.Args)
 	if err := c.Start(); err != nil {
 		return "", 0, fmt.Errorf("unable to execute: %q: %w", cmd.ToCmdline(), err)
 	}
@@ -1281,7 +1282,8 @@ func (v *MachineVM) setupAPIForwarding(cmd gvproxy.GvproxyCommand) (gvproxy.Gvpr
 	}
 
 	destSock := fmt.Sprintf("/run/user/%d/podman/podman.sock", v.UID)
-	forwardUser := "core"
+
+	forwardUser := v.RemoteUsername
 
 	if v.Rootful {
 		destSock = "/run/podman/podman.sock"
