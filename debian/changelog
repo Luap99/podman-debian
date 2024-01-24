@@ -1,6 +1,7 @@
-libpod (4.8.3+ds1-3) experimental; urgency=medium
+libpod (4.9.0+ds1-1) experimental; urgency=medium
 
   * New upstream release, closes: #1061383
+  * Build against buildah 1.33.3
 
  -- Reinhard Tartler <siretart@tauware.de>  Tue, 23 Jan 2024 18:14:02 -0500
 
