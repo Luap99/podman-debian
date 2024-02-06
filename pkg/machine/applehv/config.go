@@ -19,8 +19,8 @@ import (
 )
 
 const (
-	defaultVFKitEndpoint = "http://localhost:8081"
-	ignitionSocketName   = "ignition.sock"
+	localhostURI       = "http://localhost"
+	ignitionSocketName = "ignition.sock"
 )
 
 type AppleHVVirtualization struct {
@@ -59,7 +59,8 @@ func (v AppleHVVirtualization) IsValidVMName(name string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if _, err := loadMacMachineFromJSON(configDir); err != nil {
+	fqName := filepath.Join(configDir, fmt.Sprintf("%s.json", name))
+	if _, err := loadMacMachineFromJSON(fqName); err != nil {
 		return false, err
 	}
 	return true, nil

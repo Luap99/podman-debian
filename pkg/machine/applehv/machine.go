@@ -129,7 +129,12 @@ func (m *MacMachine) setVfkitInfo(cfg *config.Config, readySocket define.VMFile)
 	}
 
 	m.Vfkit.VirtualMachine.Devices = defaultDevices
-	m.Vfkit.Endpoint = defaultVFKitEndpoint
+	randPort, err := utils.GetRandomPort()
+	if err != nil {
+		return err
+	}
+
+	m.Vfkit.Endpoint = localhostURI + ":" + strconv.Itoa(randPort)
 	m.Vfkit.VfkitBinaryPath = vfkitBinaryPath
 
 	return nil
@@ -420,6 +425,15 @@ func (m *MacMachine) writeConfig() error {
 	return os.WriteFile(m.ConfigPath.Path, b, 0644)
 }
 
+func (m *MacMachine) setRootful(rootful bool) error {
+	if err := machine.SetRootful(rootful, m.Name, m.Name+"-root"); err != nil {
+		return err
+	}
+
+	m.HostUser.Modified = true
+	return nil
+}
+
 func (m *MacMachine) Set(name string, opts machine.SetOptions) ([]error, error) {
 	var setErrors []error
 
@@ -451,6 +465,14 @@ func (m *MacMachine) Set(name string, opts machine.SetOptions) ([]error, error) 
 	}
 	if opts.USBs != nil {
 		setErrors = append(setErrors, errors.New("changing USBs not supported for applehv machines"))
+	}
+
+	if opts.Rootful != nil && m.Rootful != *opts.Rootful {
+		if err := m.setRootful(*opts.Rootful); err != nil {
+			setErrors = append(setErrors, fmt.Errorf("failed to set rootful option: %w", err))
+		} else {
+			m.Rootful = *opts.Rootful
+		}
 	}
 
 	// Write the machine config to the filesystem
@@ -565,12 +587,6 @@ func (m *MacMachine) Start(name string, opts machine.StartOptions) error {
 		return machine.ErrVMAlreadyRunning
 	}
 
-	ioEater, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0755)
-	if err != nil {
-		return err
-	}
-	defer ioEater.Close()
-
 	// TODO handle returns from startHostNetworking
 	forwardSock, forwardState, err := m.startHostNetworking()
 	if err != nil {
@@ -633,8 +649,6 @@ func (m *MacMachine) Start(name string, opts machine.StartOptions) error {
 		cmd.Args = append(cmd.Args, debugDevArgs...)
 		cmd.Args = append(cmd.Args, "--gui") // add command line switch to pop the gui open
 	}
-
-	cmd.ExtraFiles = []*os.File{ioEater, ioEater, ioEater}
 
 	readSocketBaseDir := filepath.Dir(m.ReadySocket.GetPath())
 	if err := os.MkdirAll(readSocketBaseDir, 0755); err != nil {
@@ -712,6 +726,17 @@ func (m *MacMachine) Start(name string, opts machine.StartOptions) error {
 		m.isIncompatible(),
 		m.Rootful,
 	)
+
+	// update the podman/docker socket service if the host user has been modified at all (UID or Rootful)
+	if m.HostUser.Modified {
+		if machine.UpdatePodmanDockerSockService(m, name, m.UID, m.Rootful) == nil {
+			// Reset modification state if there are no errors, otherwise ignore errors
+			// which are already logged
+			m.HostUser.Modified = false
+			_ = m.writeConfig()
+		}
+	}
+
 	return nil
 }
 
@@ -741,8 +766,13 @@ func (m *MacMachine) Stop(name string, opts machine.StopOptions) error {
 			logrus.Error(err)
 		}
 	}()
+	if err := m.Vfkit.stop(false, true); err != nil {
+		return err
+	}
 
-	return m.Vfkit.stop(false, true)
+	// keep track of last up
+	m.LastUp = time.Now()
+	return m.writeConfig()
 }
 
 // getVMConfigPath is a simple wrapper for getting the fully-qualified
@@ -1016,7 +1046,8 @@ func (m *MacMachine) setupAPIForwarding(cmd gvproxy.GvproxyCommand) (gvproxy.Gvp
 		}
 	}
 
-	return cmd, "", machine.MachineLocal
+	return cmd, socket.GetPath(), machine.MachineLocal
+
 }
 
 func (m *MacMachine) dockerSock() (string, error) {
