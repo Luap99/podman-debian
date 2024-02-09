@@ -4,9 +4,16 @@ libpod (5.0.0~rc1+ds1-1) experimental; urgency=medium
 
  -- Reinhard Tartler <siretart@tauware.de>  Fri, 09 Feb 2024 11:29:29 -0500
 
+libpod (4.9.2+ds1-2) unstable; urgency=medium
+
+  * Upload to unstable
+
+ -- Reinhard Tartler <siretart@tauware.de>  Tue, 06 Feb 2024 19:05:37 -0500
+
 libpod (4.9.2+ds1-1) experimental; urgency=medium
 
   * New Upstream release, Closes: #1062529
+    - Fixes: CVE-2024-23651, CVE-2024-23652, and CVE-2024-23653.
   * Tighten dependencies on containers/{image,common,buildah}
 
  -- Reinhard Tartler <siretart@tauware.de>  Tue, 06 Feb 2024 11:17:43 -0500
