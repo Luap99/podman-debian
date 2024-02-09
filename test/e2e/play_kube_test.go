@@ -19,13 +19,13 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/bindings"
-	"github.com/containers/podman/v4/pkg/bindings/play"
-	v1 "github.com/containers/podman/v4/pkg/k8s.io/api/core/v1"
-	"github.com/containers/podman/v4/pkg/util"
-	. "github.com/containers/podman/v4/test/utils"
-	"github.com/containers/podman/v4/utils"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/pkg/bindings"
+	"github.com/containers/podman/v5/pkg/bindings/play"
+	v1 "github.com/containers/podman/v5/pkg/k8s.io/api/core/v1"
+	"github.com/containers/podman/v5/pkg/util"
+	. "github.com/containers/podman/v5/test/utils"
+	"github.com/containers/podman/v5/utils"
 	"github.com/containers/storage/pkg/stringid"
 	"github.com/google/uuid"
 	. "github.com/onsi/ginkgo/v2"
@@ -4062,6 +4062,36 @@ o: {{ .Options.o }}`})
 		Expect(files[0].Name()).To(Equal(fileName))
 	})
 
+	It("persistentVolumeClaim - image based", func() {
+		volName := "myVolWithStorage"
+		imageName := "quay.io/libpod/alpine_nginx:latest"
+		pvc := getPVC(withPVCName(volName),
+			withPVCAnnotations(util.VolumeDriverAnnotation, "image"),
+			withPVCAnnotations(util.VolumeImageAnnotation, imageName),
+		)
+		err = generateKubeYaml("persistentVolumeClaim", pvc, kubeYaml)
+		Expect(err).ToNot(HaveOccurred())
+
+		kube := podmanTest.Podman([]string{"kube", "play", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(ExitCleanly())
+
+		inspect := podmanTest.Podman([]string{"inspect", volName, "--format", `
+{
+	"Name": "{{ .Name }}",
+	"Driver": "{{ .Driver }}",
+	"Image": "{{ .Options.image }}"
+}`})
+		inspect.WaitWithDefaultTimeout()
+		Expect(inspect).Should(ExitCleanly())
+		mp := make(map[string]string)
+		err = json.Unmarshal([]byte(inspect.OutputToString()), &mp)
+		Expect(err).ToNot(HaveOccurred())
+		Expect(mp["Name"]).To(Equal(volName))
+		Expect(mp["Driver"]).To(Equal("image"))
+		Expect(mp["Image"]).To(Equal(imageName))
+	})
+
 	// Multi doc related tests
 	It("multi doc yaml with persistentVolumeClaim, service and deployment", func() {
 		yamlDocs := []string{}
@@ -4886,7 +4916,7 @@ ENV OPENJ9_JAVA_OPTIONS=%q
 		err := generateKubeYaml("pod", pod, kubeYaml)
 		Expect(err).ToNot(HaveOccurred())
 
-		kube := podmanTest.Podman([]string{"kube", "play", kubeYaml, "--log-driver", "journald", "--log-opt", "tag={{.ImageName}}"})
+		kube := podmanTest.Podman([]string{"kube", "play", kubeYaml, "--log-driver", "journald", "--log-opt", "tag={{.ImageName}},withcomma"})
 		kube.WaitWithDefaultTimeout()
 		Expect(kube).Should(ExitCleanly())
 
@@ -4897,7 +4927,7 @@ ENV OPENJ9_JAVA_OPTIONS=%q
 		inspect := podmanTest.Podman([]string{"inspect", getCtrNameInPod(pod)})
 		inspect.WaitWithDefaultTimeout()
 		Expect(start).Should(ExitCleanly())
-		Expect((inspect.InspectContainerToJSON()[0]).HostConfig.LogConfig.Tag).To(Equal("{{.ImageName}}"))
+		Expect((inspect.InspectContainerToJSON()[0]).HostConfig.LogConfig.Tag).To(Equal("{{.ImageName}},withcomma"))
 	})
 
 	It("using a user namespace", func() {
@@ -5642,6 +5672,18 @@ spec:
 		Expect(kube).Should(ExitCleanly())
 
 		testHTTPServer("19003", false, "podman rulez")
+	})
+
+	It("podman play kube should publish containerPort with --publish-all", func() {
+		SkipIfRootless("rootlessport can't expose privileged port 80")
+		err := writeYaml(publishPortsPodWithContainerPort, kubeYaml)
+		Expect(err).ToNot(HaveOccurred())
+
+		kube := podmanTest.Podman([]string{"kube", "play", "--publish-all=true", kubeYaml})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(Exit(0))
+
+		testHTTPServer("80", false, "podman rulez")
 	})
 
 	It("with Host Ports - curl should succeed", func() {

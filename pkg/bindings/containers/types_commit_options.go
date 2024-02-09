@@ -2,9 +2,10 @@
 package containers
 
 import (
+	"io"
 	"net/url"
 
-	"github.com/containers/podman/v4/pkg/bindings/internal/util"
+	"github.com/containers/podman/v5/pkg/bindings/internal/util"
 )
 
 // Changed returns true if named field has been set
@@ -45,6 +46,21 @@ func (o *CommitOptions) GetChanges() []string {
 		return z
 	}
 	return o.Changes
+}
+
+// WithConfig set field Config to given value
+func (o *CommitOptions) WithConfig(value io.Reader) *CommitOptions {
+	o.Config = &value
+	return o
+}
+
+// GetConfig returns value of field Config
+func (o *CommitOptions) GetConfig() io.Reader {
+	if o.Config == nil {
+		var z io.Reader
+		return z
+	}
+	return *o.Config
 }
 
 // WithComment set field Comment to given value

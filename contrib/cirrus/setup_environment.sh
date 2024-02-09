@@ -158,16 +158,6 @@ case "$OS_RELEASE_ID" in
     *) die_unknown OS_RELEASE_ID
 esac
 
-# Networking: force CNI or Netavark as requested in .cirrus.yml
-# (this variable is mandatory).
-# shellcheck disable=SC2154
-showrun echo "about to set up for CI_DESIRED_NETWORK [=$CI_DESIRED_NETWORK]"
-case "$CI_DESIRED_NETWORK" in
-    netavark)   use_netavark ;;
-    cni)        use_cni ;;
-    *)          die_unknown CI_DESIRED_NETWORK ;;
-esac
-
 # Database: force SQLite or BoltDB as requested in .cirrus.yml.
 # If unset, will default to SQLite.
 # shellcheck disable=SC2154
@@ -204,6 +194,11 @@ driver = "$CI_DESIRED_STORAGE"
 runroot = "/run/containers/storage"
 graphroot = "/var/lib/containers/storage"
 EOF
+
+# Since we've potentially changed important config settings, reset.
+# This prevents `database graph driver "" does not match "overlay"`
+# on Debian.
+rm -rf /var/lib/containers/storage
 
 # shellcheck disable=SC2154
 showrun echo "Setting CI_DESIRED_STORAGE [=$CI_DESIRED_STORAGE] for *e2e* tests"
@@ -291,6 +286,10 @@ esac
 #
 # Either way, this block of code should be removed after March 31 2023
 # because it creates a system that is not representative of real-world Fedora.
+#
+# 2024-01-25 update: ha ha. This fix has proven so popular that it is
+# being used by other groups who were seeing the cdn03 flake. Looks like
+# we're stuck with it.
 if ((CONTAINER==0)); then
     nsswitch=/etc/authselect/nsswitch.conf
     if [[ -e $nsswitch ]]; then

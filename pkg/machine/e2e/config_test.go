@@ -10,20 +10,21 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containers/podman/v4/pkg/machine"
-	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v5/pkg/machine"
+	"github.com/containers/podman/v5/pkg/machine/define"
 	"github.com/containers/storage/pkg/stringid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/format"
 	. "github.com/onsi/gomega/gexec"
 	"github.com/onsi/gomega/types"
+	"golang.org/x/exp/slices"
 )
 
 var originalHomeDir = os.Getenv("HOME")
 
 const (
-	defaultTimeout = 90 * time.Second
+	defaultTimeout = 240 * time.Second
 )
 
 type machineCommand interface {
@@ -121,7 +122,7 @@ func (m *machineTestBuilder) setName(name string) *machineTestBuilder {
 // representation of the podman machine command
 func (m *machineTestBuilder) setCmd(mc machineCommand) *machineTestBuilder {
 	// If no name for the machine exists, we set a random name.
-	if !util.StringInSlice(m.name, m.names) {
+	if !slices.Contains(m.names, m.name) {
 		if len(m.name) < 1 {
 			m.name = randomString()
 		}
@@ -210,27 +211,42 @@ func (matcher *ValidJSONMatcher) NegatedFailureMessage(actual interface{}) (mess
 	return format.Message(actual, "to _not_ be valid JSON")
 }
 
-func skipIfVmtype(vmType machine.VMType, message string) {
+func skipIfVmtype(vmType define.VMType, message string) {
 	if isVmtype(vmType) {
 		Skip(message)
 	}
 }
 
-func skipIfNotVmtype(vmType machine.VMType, message string) {
+func skipIfNotVmtype(vmType define.VMType, message string) {
 	if !isVmtype(vmType) {
 		Skip(message)
 	}
 }
 
 func skipIfWSL(message string) {
-	skipIfVmtype(machine.WSLVirt, message)
+	skipIfVmtype(define.WSLVirt, message)
 }
 
-func isVmtype(vmType machine.VMType) bool {
+func isVmtype(vmType define.VMType) bool {
 	return testProvider.VMType() == vmType
 }
 
 // isWSL is a simple wrapper to determine if the testprovider is WSL
 func isWSL() bool {
-	return isVmtype(machine.WSLVirt)
+	return isVmtype(define.WSLVirt)
 }
+
+// TODO temporarily suspended
+// func getFCOSDownloadLocation(p vmconfigs.VMStubber) string {
+// 	dd, err := p.NewDownload("")
+// 	if err != nil {
+// 		Fail("unable to create new download")
+// 	}
+//
+// 	fcd, err := dd.GetFCOSDownload(defaultStream)
+// 	if err != nil {
+// 		Fail("unable to get virtual machine image")
+// 	}
+//
+// 	return fcd.Location
+// }

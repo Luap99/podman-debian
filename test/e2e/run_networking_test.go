@@ -11,7 +11,7 @@ import (
 
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/containers/common/libnetwork/types"
-	. "github.com/containers/podman/v4/test/utils"
+	. "github.com/containers/podman/v5/test/utils"
 	"github.com/containers/storage/pkg/stringid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -24,6 +24,7 @@ var _ = Describe("Podman run networking", func() {
 	hostname, _ := os.Hostname()
 
 	It("podman verify network scoped DNS server and also verify updating network dns server", func() {
+		Skip("FIXME: needs netavark > 1.10.2, available >= 2024-02-02")
 		// Following test is only functional with netavark and aardvark
 		SkipIfCNI(podmanTest)
 		net := createNetworkName("IntTest")
@@ -71,6 +72,8 @@ var _ = Describe("Podman run networking", func() {
 	})
 
 	It("podman network dns multiple servers", func() {
+		Skip("FIXME: needs netavark > 1.10.2, available >= 2024-02-02")
+
 		// Following test is only functional with netavark and aardvark
 		SkipIfCNI(podmanTest)
 		net := createNetworkName("IntTest")

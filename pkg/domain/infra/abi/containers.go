@@ -1,6 +1,7 @@
 package abi
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -14,23 +15,24 @@ import (
 	"github.com/containers/common/pkg/cgroups"
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/image/v5/manifest"
-	"github.com/containers/podman/v4/libpod"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/libpod/logs"
-	"github.com/containers/podman/v4/pkg/checkpoint"
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/containers/podman/v4/pkg/domain/entities/reports"
-	dfilters "github.com/containers/podman/v4/pkg/domain/filters"
-	"github.com/containers/podman/v4/pkg/domain/infra/abi/terminal"
-	"github.com/containers/podman/v4/pkg/errorhandling"
-	parallelctr "github.com/containers/podman/v4/pkg/parallel/ctr"
-	"github.com/containers/podman/v4/pkg/ps"
-	"github.com/containers/podman/v4/pkg/rootless"
-	"github.com/containers/podman/v4/pkg/signal"
-	"github.com/containers/podman/v4/pkg/specgen"
-	"github.com/containers/podman/v4/pkg/specgen/generate"
-	"github.com/containers/podman/v4/pkg/specgenutil"
-	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v5/libpod"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/libpod/logs"
+	"github.com/containers/podman/v5/pkg/api/handlers"
+	"github.com/containers/podman/v5/pkg/checkpoint"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	"github.com/containers/podman/v5/pkg/domain/entities/reports"
+	dfilters "github.com/containers/podman/v5/pkg/domain/filters"
+	"github.com/containers/podman/v5/pkg/domain/infra/abi/terminal"
+	"github.com/containers/podman/v5/pkg/errorhandling"
+	parallelctr "github.com/containers/podman/v5/pkg/parallel/ctr"
+	"github.com/containers/podman/v5/pkg/ps"
+	"github.com/containers/podman/v5/pkg/rootless"
+	"github.com/containers/podman/v5/pkg/signal"
+	"github.com/containers/podman/v5/pkg/specgen"
+	"github.com/containers/podman/v5/pkg/specgen/generate"
+	"github.com/containers/podman/v5/pkg/specgenutil"
+	"github.com/containers/podman/v5/pkg/util"
 	"github.com/containers/storage"
 	"github.com/sirupsen/logrus"
 )
@@ -581,18 +583,29 @@ func (ic *ContainerEngine) ContainerCommit(ctx context.Context, nameOrID string,
 	}
 
 	sc := ic.Libpod.SystemContext()
+	var changes []string
+	if len(options.Changes) > 0 {
+		changes = handlers.DecodeChanges(options.Changes)
+	}
+	var overrideConfig *manifest.Schema2Config
+	if len(options.Config) > 0 {
+		if overrideConfig, err = DecodeOverrideConfig(bytes.NewReader(options.Config)); err != nil {
+			return nil, err
+		}
+	}
 	coptions := buildah.CommitOptions{
 		SignaturePolicyPath:   rtc.Engine.SignaturePolicyPath,
 		ReportWriter:          options.Writer,
 		SystemContext:         sc,
 		PreferredManifestType: mimeType,
+		OverrideConfig:        overrideConfig,
 	}
 	opts := libpod.ContainerCommitOptions{
 		CommitOptions:  coptions,
 		Pause:          options.Pause,
 		IncludeVolumes: options.IncludeVolumes,
 		Message:        options.Message,
-		Changes:        options.Changes,
+		Changes:        changes,
 		Author:         options.Author,
 		Squash:         options.Squash,
 	}
@@ -809,6 +822,7 @@ func makeExecConfig(options entities.ExecOptions, rt *libpod.Runtime) (*libpod.E
 	execConfig.WorkDir = options.WorkDir
 	execConfig.DetachKeys = &options.DetachKeys
 	execConfig.PreserveFDs = options.PreserveFDs
+	execConfig.PreserveFD = options.PreserveFD
 	execConfig.AttachStdin = options.Interactive
 
 	// Make an exit command
@@ -858,6 +872,7 @@ func (ic *ContainerEngine) ContainerExec(ctx context.Context, nameOrID string, o
 	if err != nil {
 		return ec, err
 	}
+
 	containers, err := getContainers(ic.Libpod, getContainersOptions{latest: options.Latest, names: []string{nameOrID}})
 	if err != nil {
 		return ec, err
@@ -1192,7 +1207,8 @@ func (ic *ContainerEngine) GetContainerExitCode(ctx context.Context, ctr *libpod
 	exitCode, err := ctr.Wait(ctx)
 	if err != nil {
 		logrus.Errorf("Waiting for container %s: %v", ctr.ID(), err)
-		return define.ExecErrorCodeNotFound
+		intExitCode := int(define.ExecErrorCodeNotFound)
+		return intExitCode
 	}
 	return int(exitCode)
 }
@@ -1685,7 +1701,8 @@ func (ic *ContainerEngine) ContainerClone(ctx context.Context, ctrCloneOpts enti
 	}
 
 	// if we do not pass term, running ctrs exit
-	spec.Terminal = c.Terminal()
+	localTerm := c.Terminal()
+	spec.Terminal = &localTerm
 
 	// Print warnings
 	if len(out) > 0 {

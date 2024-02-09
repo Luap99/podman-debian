@@ -2,19 +2,13 @@ package util
 
 import (
 	"fmt"
-	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/containers/storage/pkg/homedir"
 	"github.com/containers/storage/pkg/idtools"
-	ruser "github.com/opencontainers/runc/libcontainer/user"
+	ruser "github.com/moby/sys/user"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/stretchr/testify/assert"
-)
-
-var (
-	sliceData = []string{"one", "two", "three", "four"}
 )
 
 func BreakInsert(mapping []idtools.IDMap, extension idtools.IDMap) (result []idtools.IDMap) {
@@ -391,6 +385,42 @@ func TestParseIDMapUserGroupFlags(t *testing.T) {
 	assert.Equal(t, expectedResultGroup, result)
 }
 
+func TestParseAutoIDMap(t *testing.T) {
+	result, err := parseAutoIDMap("3:4:5", "UID", []ruser.IDMap{})
+	assert.Equal(t, err, nil)
+	assert.Equal(t, result, []idtools.IDMap{
+		{
+			ContainerID: 3,
+			HostID:      4,
+			Size:        5,
+		},
+	})
+}
+
+func TestParseAutoIDMapRelative(t *testing.T) {
+	parentMapping := []ruser.IDMap{
+		{
+			ID:       0,
+			ParentID: 1000,
+			Count:    1,
+		},
+		{
+			ID:       1,
+			ParentID: 100000,
+			Count:    65536,
+		},
+	}
+	result, err := parseAutoIDMap("100:@100000:1", "UID", parentMapping)
+	assert.Equal(t, err, nil)
+	assert.Equal(t, result, []idtools.IDMap{
+		{
+			ContainerID: 100,
+			HostID:      1,
+			Size:        1,
+		},
+	})
+}
+
 func TestFillIDMap(t *testing.T) {
 	availableRanges := [][2]int{{0, 10}, {10000, 20000}}
 	idmap := []idtools.IDMap{
@@ -449,15 +479,6 @@ func TestGetAvailableIDRanges(t *testing.T) {
 	assert.Equal(t, expectedResult, result)
 }
 
-func TestStringInSlice(t *testing.T) {
-	// string is in the slice
-	assert.True(t, StringInSlice("one", sliceData))
-	// string is not in the slice
-	assert.False(t, StringInSlice("five", sliceData))
-	// string is not in empty slice
-	assert.False(t, StringInSlice("one", []string{}))
-}
-
 func TestValidateSysctls(t *testing.T) {
 	strSlice := []string{"net.core.test1=4", "kernel.msgmax=2"}
 	result, _ := ValidateSysctls(strSlice)
@@ -490,12 +511,6 @@ func TestValidateSysctlBadSysctlWithExtraSpaces(t *testing.T) {
 	_, err = ValidateSysctls(strSlice2)
 	assert.Error(t, err)
 	assert.Equal(t, err.Error(), fmt.Sprintf(expectedError, strSlice2[1]))
-}
-
-func TestGetIdentityPath(t *testing.T) {
-	name := "p-test"
-	identityPath := GetIdentityPath(name)
-	assert.Equal(t, identityPath, filepath.Join(homedir.Get(), ".ssh", name))
 }
 
 func TestCoresToPeriodAndQuota(t *testing.T) {

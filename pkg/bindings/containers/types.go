@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"io"
 
-	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v5/libpod/define"
 )
 
 // LogOptions describe finer control of log content or
@@ -29,6 +29,7 @@ type LogOptions struct {
 type CommitOptions struct {
 	Author  *string
 	Changes []string
+	Config  *io.Reader `schema:"-"`
 	Comment *string
 	Format  *string
 	Pause   *bool

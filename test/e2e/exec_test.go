@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	. "github.com/containers/podman/v4/test/utils"
+	. "github.com/containers/podman/v5/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -409,14 +409,20 @@ var _ = Describe("Podman exec", func() {
 	})
 
 	It("podman exec cannot be invoked", func() {
-		SkipIfNotFedora("FIXME: #19552 fails on Debian SID w/ runc 1.1.5")
 		setup := podmanTest.RunTopContainer("test1")
 		setup.WaitWithDefaultTimeout()
 		Expect(setup).Should(ExitCleanly())
 
 		session := podmanTest.Podman([]string{"exec", "test1", "/etc"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(126))
+
+		if podmanTest.OCIRuntime == "runc" {
+			// #19552 and others: some versions of runc exit 255.
+			Expect(session).Should(ExitWithError())
+		} else {
+			// crun (and, we hope, any other future runtimes)
+			Expect(session).Should(Exit(126))
+		}
 	})
 
 	It("podman exec command not found", func() {

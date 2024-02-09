@@ -1,5 +1,4 @@
 //go:build amd64 || arm64
-// +build amd64 arm64
 
 package machine
 
@@ -15,54 +14,22 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containers/podman/v4/pkg/machine/compression"
-	"github.com/containers/podman/v4/pkg/machine/define"
+	"github.com/containers/podman/v5/pkg/machine/compression"
+	"github.com/containers/podman/v5/pkg/machine/define"
+	"github.com/containers/podman/v5/pkg/machine/vmconfigs"
 	"github.com/containers/storage/pkg/homedir"
 	"github.com/containers/storage/pkg/lockfile"
 	"github.com/sirupsen/logrus"
 )
 
-type InitOptions struct {
-	CPUS               uint64
-	DiskSize           uint64
-	IgnitionPath       string
-	ImagePath          string
-	Volumes            []string
-	VolumeDriver       string
-	IsDefault          bool
-	Memory             uint64
-	Name               string
-	TimeZone           string
-	URI                url.URL
-	Username           string
-	ReExec             bool
-	Rootful            bool
-	UID                string // uid of the user that called machine
-	UserModeNetworking *bool  // nil = use backend/system default, false = disable, true = enable
-	USBs               []string
-}
-
-type Status = string
-
 const (
-	// Running indicates the qemu vm is running.
-	Running Status = "running"
-	// Stopped indicates the vm has stopped.
-	Stopped Status = "stopped"
-	// Starting indicated the vm is in the process of starting
-	Starting Status = "starting"
-	// Unknown means the state is not known
-	Unknown            Status = "unknown"
 	DefaultMachineName string = "podman-machine-default"
 	apiUpTimeout              = 20 * time.Second
 )
 
-type RemoteConnectionType string
-
 var (
-	SSHRemoteConnection     RemoteConnectionType = "ssh"
-	DefaultIgnitionUserName                      = "core"
-	ForwarderBinaryName                          = "gvproxy"
+	DefaultIgnitionUserName = "core"
+	ForwarderBinaryName     = "gvproxy"
 )
 
 type Download struct {
@@ -78,7 +45,7 @@ type Download struct {
 	Sha256sum             string
 	Size                  int64
 	URL                   *url.URL
-	VMKind                VMType
+	VMKind                define.VMType
 	VMName                string
 }
 
@@ -124,7 +91,6 @@ type StopOptions struct{}
 
 type RemoveOptions struct {
 	Force        bool
-	SaveKeys     bool
 	SaveImage    bool
 	SaveIgnition bool
 }
@@ -132,32 +98,14 @@ type RemoveOptions struct {
 type InspectOptions struct{}
 
 type VM interface {
-	Init(opts InitOptions) (bool, error)
+	Init(opts define.InitOptions) (bool, error)
 	Inspect() (*InspectInfo, error)
 	Remove(name string, opts RemoveOptions) (string, func() error, error)
 	Set(name string, opts SetOptions) ([]error, error)
 	SSH(name string, opts SSHOptions) error
 	Start(name string, opts StartOptions) error
-	State(bypass bool) (Status, error)
+	State(bypass bool) (define.Status, error)
 	Stop(name string, opts StopOptions) error
-}
-
-func GetLock(name string, vmtype VMType) (*lockfile.LockFile, error) {
-	// FIXME: there's a painful amount of `GetConfDir` calls scattered
-	// across the code base.  This should be done once and stored
-	// somewhere instead.
-	vmConfigDir, err := GetConfDir(vmtype)
-	if err != nil {
-		return nil, err
-	}
-
-	lockPath := filepath.Join(vmConfigDir, name+".lock")
-	lock, err := lockfile.GetLockFile(lockPath)
-	if err != nil {
-		return nil, fmt.Errorf("creating lockfile for VM: %w", err)
-	}
-
-	return lock, nil
 }
 
 type DistributionDownload interface {
@@ -172,35 +120,15 @@ type InspectInfo struct {
 	Image              ImageConfig
 	LastUp             time.Time
 	Name               string
-	Resources          ResourceConfig
-	SSHConfig          SSHConfig
-	State              Status
+	Resources          vmconfigs.ResourceConfig
+	SSHConfig          vmconfigs.SSHConfig
+	State              define.Status
 	UserModeNetworking bool
 	Rootful            bool
 }
 
-func (rc RemoteConnectionType) MakeSSHURL(host, path, port, userName string) url.URL {
-	// TODO Should this function have input verification?
-	userInfo := url.User(userName)
-	uri := url.URL{
-		Scheme:     "ssh",
-		Opaque:     "",
-		User:       userInfo,
-		Host:       host,
-		Path:       path,
-		RawPath:    "",
-		ForceQuery: false,
-		RawQuery:   "",
-		Fragment:   "",
-	}
-	if len(port) > 0 {
-		uri.Host = net.JoinHostPort(uri.Hostname(), port)
-	}
-	return uri
-}
-
 // GetCacheDir returns the dir where VM images are downloaded into when pulled
-func GetCacheDir(vmType VMType) (string, error) {
+func GetCacheDir(vmType define.VMType) (string, error) {
 	dataDir, err := GetDataDir(vmType)
 	if err != nil {
 		return "", err
@@ -214,7 +142,7 @@ func GetCacheDir(vmType VMType) (string, error) {
 
 // GetDataDir returns the filepath where vm images should
 // live for podman-machine.
-func GetDataDir(vmType VMType) (string, error) {
+func GetDataDir(vmType define.VMType) (string, error) {
 	dataDirPrefix, err := DataDirPrefix()
 	if err != nil {
 		return "", err
@@ -238,6 +166,55 @@ func GetGlobalDataDir() (string, error) {
 	return dataDir, os.MkdirAll(dataDir, 0755)
 }
 
+func GetMachineDirs(vmType define.VMType) (*define.MachineDirs, error) {
+	rtDir, err := getRuntimeDir()
+	if err != nil {
+		return nil, err
+	}
+
+	rtDir = filepath.Join(rtDir, "podman")
+	configDir, err := GetConfDir(vmType)
+	if err != nil {
+		return nil, err
+	}
+
+	configDirFile, err := define.NewMachineFile(configDir, nil)
+	if err != nil {
+		return nil, err
+	}
+	dataDir, err := GetDataDir(vmType)
+	if err != nil {
+		return nil, err
+	}
+
+	dataDirFile, err := define.NewMachineFile(dataDir, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	rtDirFile, err := define.NewMachineFile(rtDir, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	dirs := define.MachineDirs{
+		ConfigDir:  configDirFile,
+		DataDir:    dataDirFile,
+		RuntimeDir: rtDirFile,
+	}
+
+	// make sure all machine dirs are present
+	if err := os.MkdirAll(rtDir, 0755); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return nil, err
+	}
+	err = os.MkdirAll(dataDir, 0755)
+
+	return &dirs, err
+}
+
 // DataDirPrefix returns the path prefix for all machine data files
 func DataDirPrefix() (string, error) {
 	data, err := homedir.GetDataHome()
@@ -250,7 +227,7 @@ func DataDirPrefix() (string, error) {
 
 // GetConfigDir returns the filepath to where configuration
 // files for podman-machine should live
-func GetConfDir(vmType VMType) (string, error) {
+func GetConfDir(vmType define.VMType) (string, error) {
 	confDirPrefix, err := ConfDirPrefix()
 	if err != nil {
 		return "", err
@@ -273,31 +250,13 @@ func ConfDirPrefix() (string, error) {
 	return confDir, nil
 }
 
-type USBConfig struct {
-	Bus       string
-	DevNumber string
-	Vendor    int
-	Product   int
-}
-
-// ResourceConfig describes physical attributes of the machine
-type ResourceConfig struct {
-	// CPUs to be assigned to the VM
-	CPUs uint64
-	// Disk size in gigabytes assigned to the vm
-	DiskSize uint64
-	// Memory in megabytes assigned to the vm
-	Memory uint64
-	// Usbs
-	USBs []USBConfig
-}
-
-type Mount struct {
-	ReadOnly bool
-	Source   string
-	Tag      string
-	Target   string
-	Type     string
+// GetSSHIdentityPath returns the path to the expected SSH private key
+func GetSSHIdentityPath(name string) (string, error) {
+	datadir, err := GetGlobalDataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(datadir, name), nil
 }
 
 // ImageConfig describes the bootable image for the VM
@@ -311,54 +270,12 @@ type ImageConfig struct {
 	ImagePath define.VMFile `json:"ImagePath"`
 }
 
-// HostUser describes the host user
-type HostUser struct {
-	// Whether this machine should run in a rootful or rootless manner
-	Rootful bool
-	// UID is the numerical id of the user that called machine
-	UID int
-	// Whether one of these fields has changed and actions should be taken
-	Modified bool `json:"HostUserModified"`
-}
-
-// SSHConfig contains remote access information for SSH
-type SSHConfig struct {
-	// IdentityPath is the fq path to the ssh priv key
-	IdentityPath string
-	// SSH port for user networking
-	Port int
-	// RemoteUsername of the vm user
-	RemoteUsername string
-}
-
 // ConnectionConfig contains connections like sockets, etc.
 type ConnectionConfig struct {
 	// PodmanSocket is the exported podman service socket
 	PodmanSocket *define.VMFile `json:"PodmanSocket"`
 	// PodmanPipe is the exported podman service named pipe (Windows hosts only)
 	PodmanPipe *define.VMFile `json:"PodmanPipe"`
-}
-
-type VMType int64
-
-const (
-	QemuVirt VMType = iota
-	WSLVirt
-	AppleHvVirt
-	HyperVVirt
-	UnknownVirt
-)
-
-func (v VMType) String() string {
-	switch v {
-	case WSLVirt:
-		return "wsl"
-	case AppleHvVirt:
-		return "applehv"
-	case HyperVVirt:
-		return "hyperv"
-	}
-	return "qemu"
 }
 
 type APIForwardingState int
@@ -371,42 +288,11 @@ const (
 	DockerGlobal
 )
 
-func ParseVMType(input string, emptyFallback VMType) (VMType, error) {
-	switch strings.TrimSpace(strings.ToLower(input)) {
-	case "qemu":
-		return QemuVirt, nil
-	case "wsl":
-		return WSLVirt, nil
-	case "applehv":
-		return AppleHvVirt, nil
-	case "hyperv":
-		return HyperVVirt, nil
-	case "":
-		return emptyFallback, nil
-	default:
-		return UnknownVirt, fmt.Errorf("unknown VMType `%s`", input)
-	}
-}
-
-type VirtProvider interface { //nolint:interfacebloat
-	Artifact() define.Artifact
-	CheckExclusiveActiveVM() (bool, string, error)
-	Compression() compression.ImageCompression
-	Format() define.ImageFormat
-	IsValidVMName(name string) (bool, error)
-	List(opts ListOptions) ([]*ListResponse, error)
-	LoadVMByName(name string) (VM, error)
-	NewMachine(opts InitOptions) (VM, error)
-	NewDownload(vmName string) (Download, error)
-	RemoveAndCleanMachines() error
-	VMType() VMType
-}
-
 type Virtualization struct {
 	artifact    define.Artifact
 	compression compression.ImageCompression
 	format      define.ImageFormat
-	vmKind      VMType
+	vmKind      define.VMType
 }
 
 func (p *Virtualization) Artifact() define.Artifact {
@@ -421,7 +307,7 @@ func (p *Virtualization) Format() define.ImageFormat {
 	return p.format
 }
 
-func (p *Virtualization) VMType() VMType {
+func (p *Virtualization) VMType() define.VMType {
 	return p.vmKind
 }
 
@@ -447,7 +333,7 @@ func (p *Virtualization) NewDownload(vmName string) (Download, error) {
 	}, nil
 }
 
-func NewVirtualization(artifact define.Artifact, compression compression.ImageCompression, format define.ImageFormat, vmKind VMType) Virtualization {
+func NewVirtualization(artifact define.Artifact, compression compression.ImageCompression, format define.ImageFormat, vmKind define.VMType) Virtualization {
 	return Virtualization{
 		artifact,
 		compression,
@@ -553,4 +439,23 @@ func (dl Download) AcquireVMImage(imagePath string) (*define.VMFile, FCOSStream,
 		imageLocation = imgPath
 	}
 	return imageLocation, fcosStream, nil
+}
+
+// Deprecated: GetLock
+func GetLock(name string, vmtype define.VMType) (*lockfile.LockFile, error) {
+	// FIXME: there's a painful amount of `GetConfDir` calls scattered
+	// across the code base.  This should be done once and stored
+	// somewhere instead.
+	vmConfigDir, err := GetConfDir(vmtype)
+	if err != nil {
+		return nil, err
+	}
+
+	lockPath := filepath.Join(vmConfigDir, name+".lock")
+	lock, err := lockfile.GetLockFile(lockPath)
+	if err != nil {
+		return nil, fmt.Errorf("creating lockfile for VM: %w", err)
+	}
+
+	return lock, nil
 }

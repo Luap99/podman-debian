@@ -11,8 +11,9 @@ import (
 	"time"
 
 	"github.com/containers/common/pkg/cgroups"
-	"github.com/containers/podman/v4/libpod/define"
-	. "github.com/containers/podman/v4/test/utils"
+	"github.com/containers/common/pkg/config"
+	"github.com/containers/podman/v5/libpod/define"
+	. "github.com/containers/podman/v5/test/utils"
 	"github.com/containers/storage/pkg/stringid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -369,6 +370,36 @@ var _ = Describe("Podman run", func() {
 		}
 		return jsonFile
 	}
+
+	It("podman run default mask test", func() {
+		session := podmanTest.Podman([]string{"run", "-d", "--name=maskCtr", ALPINE, "sleep", "200"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(ExitCleanly())
+		for _, mask := range config.DefaultMaskedPaths {
+			if st, err := os.Stat(mask); err == nil {
+				if st.IsDir() {
+					session = podmanTest.Podman([]string{"exec", "maskCtr", "ls", mask})
+					session.WaitWithDefaultTimeout()
+					Expect(session).Should(ExitCleanly())
+					Expect(session.OutputToString()).To(BeEmpty())
+				} else {
+					session = podmanTest.Podman([]string{"exec", "maskCtr", "cat", mask})
+					session.WaitWithDefaultTimeout()
+					// Call can fail with permission denied, ignoring error or Not exist.
+					// key factor is there is no information leak
+					Expect(session.OutputToString()).To(BeEmpty())
+				}
+			}
+		}
+		for _, mask := range config.DefaultReadOnlyPaths {
+			if _, err := os.Stat(mask); err == nil {
+				session = podmanTest.Podman([]string{"exec", "maskCtr", "touch", mask})
+				session.WaitWithDefaultTimeout()
+				Expect(session).Should(Exit(1))
+				Expect(session.ErrorToString()).To(Equal(fmt.Sprintf("touch: %s: Read-only file system", mask)))
+			}
+		}
+	})
 
 	It("podman run mask and unmask path test", func() {
 		session := podmanTest.Podman([]string{"run", "-d", "--name=maskCtr1", "--security-opt", "unmask=ALL", "--security-opt", "mask=/proc/acpi", ALPINE, "sleep", "200"})
@@ -885,7 +916,7 @@ USER bin`, BB)
 
 	It("podman test hooks", func() {
 		SkipIfRemote("--hooks-dir does not work with remote")
-		hooksDir := tempdir + "/hooks"
+		hooksDir := tempdir + "/hooks,withcomma"
 		err := os.Mkdir(hooksDir, 0755)
 		Expect(err).ToNot(HaveOccurred())
 		hookJSONPath := filepath.Join(hooksDir, "checkhooks.json")
@@ -2121,7 +2152,7 @@ WORKDIR /madethis`, BB)
 		}
 
 		bitSize := 1024
-		keyFileName := filepath.Join(podmanTest.TempDir, "key")
+		keyFileName := filepath.Join(podmanTest.TempDir, "key,withcomma")
 		publicKeyFileName, privateKeyFileName, err := WriteRSAKeyPair(keyFileName, bitSize)
 		Expect(err).ToNot(HaveOccurred())
 

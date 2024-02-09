@@ -63,47 +63,47 @@ The Kubernetes kind to generate in the YAML file. Currently, the only supported 
 
 ## EXAMPLES
 
-Create Kubernetes Pod YAML for a container called `some-mariadb`.
+Create Kubernetes Pod YAML for the specified container.
 ```
-$ sudo podman kube generate some-mariadb
+$ podman kube generate some-mariadb
 # Save the output of this file and use kubectl create -f to import
 # it into Kubernetes.
 #
-# Created with podman-0.11.2-dev
+# Created with podman-4.8.2
+
+# NOTE: If you generated this yaml from an unprivileged and rootless podman container on an SELinux
+# enabled system, check the podman generate kube man page for steps to follow to ensure that your pod/container
+# has the right permissions to access the volumes added.
+---
 apiVersion: v1
 kind: Pod
 metadata:
-  creationTimestamp: 2018-12-03T19:07:59Z
+  creationTimestamp: "2024-01-09T02:24:55Z"
   labels:
-    app: some-mariadb
-  name: some-mariadb-libpod
+    app: some-mariadb-pod
+  name: some-mariadb-pod
 spec:
   containers:
-  - command:
-    - docker-entrypoint.sh
-    - mysqld
+  - args:
+    - mariadbd
     env:
-    - name: HOSTNAME
-    - name: GOSU_VERSION
-      value: "1.10"
-    - name: GPG_KEYS
-      value: "199369E5404BD5FC7D2FE43BCBCB082A1BB943DB \t177F4010FE56CA3336300305F1656F24C74CD1D8
-        \t430BDF5C56E7C94E848EE60C1C4CBDCDCD2EFD2A \t4D1BB29D63D98E422B2113B19334A25F8507EFA5"
-    - name: MARIADB_MAJOR
-      value: "10.3"
-    - name: MARIADB_VERSION
-      value: 1:10.3.10+maria~bionic
-    - name: MYSQL_ROOT_PASSWORD
+    - name: MARIADB_ROOT_PASSWORD
       value: x
-    image: quay.io/baude/demodb:latest
+    image: docker.io/library/mariadb:10.11
     name: some-mariadb
     ports:
     - containerPort: 3306
-      hostPort: 36533
-    tty: true
+      hostPort: 34891
+    volumeMounts:
+    - mountPath: /var/lib/mysql
+      name: mariadb_data-pvc
+  volumes:
+  - name: mariadb_data-pvc
+    persistentVolumeClaim:
+      claimName: mariadb_data
 ```
 
-Create Kubernetes Deployment YAML with 3 replicas for a container called `dep-ctr`
+Create Kubernetes Deployment YAML with 3 replicas for the specified container.
 ```
 $ podman kube generate --type deployment --replicas 3 dep-ct
 r
@@ -140,7 +140,7 @@ spec:
 ```
 
 
-Create Kubernetes Pod YAML for a container with the directory `/home/user/my-data` on the host bind-mounted in the container to `/volume`.
+Create Kubernetes Pod YAML for the specified container with the host directory `/home/user/my-data` bind-mounted onto the container path `/volume`.
 ```
 $ podman kube generate my-container-with-bind-mounted-data
 # Save the output of this file and use kubectl create -f to import
@@ -171,7 +171,7 @@ spec:
     name: home-user-my-data-host
 ```
 
-Create Kubernetes Pod YAML for a container with the named volume `priceless-data` mounted in the container at `/volume`.
+Create Kubernetes Pod YAML for the specified container with named volume `priceless-data` mounted onto the container path `/volume`.
 ```
 $ podman kube generate my-container-using-priceless-data
 # Save the output of this file and use kubectl create -f to import
@@ -201,7 +201,7 @@ spec:
       claimName: priceless-data
 ```
 
-Create Kubernetes Pod YAML for a pod called `demoweb` and include a service.
+Create Kubernetes Pod YAML for the specified pod and include a service.
 ```
 $ sudo podman kube generate -s demoweb
 # Save the output of this file and use kubectl create -f to import

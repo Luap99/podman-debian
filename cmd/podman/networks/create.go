@@ -10,10 +10,10 @@ import (
 	"github.com/containers/common/libnetwork/types"
 	"github.com/containers/common/libnetwork/util"
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/podman/v4/cmd/podman/common"
-	"github.com/containers/podman/v4/cmd/podman/parse"
-	"github.com/containers/podman/v4/cmd/podman/registry"
-	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v5/cmd/podman/common"
+	"github.com/containers/podman/v5/cmd/podman/parse"
+	"github.com/containers/podman/v5/cmd/podman/registry"
+	"github.com/containers/podman/v5/pkg/domain/entities"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -245,16 +245,16 @@ func parseRoute(routeStr string) (*types.Route, error) {
 }
 
 func parseRange(iprange string) (*types.LeaseRange, error) {
-	split := strings.SplitN(iprange, "-", 2)
-	if len(split) > 1 {
+	startIPString, endIPString, hasDash := strings.Cut(iprange, "-")
+	if hasDash {
 		// range contains dash so assume form is start-end
-		start := net.ParseIP(split[0])
+		start := net.ParseIP(startIPString)
 		if start == nil {
-			return nil, fmt.Errorf("range start ip %q is not a ip address", split[0])
+			return nil, fmt.Errorf("range start ip %q is not a ip address", startIPString)
 		}
-		end := net.ParseIP(split[1])
+		end := net.ParseIP(endIPString)
 		if end == nil {
-			return nil, fmt.Errorf("range end ip %q is not a ip address", split[1])
+			return nil, fmt.Errorf("range end ip %q is not a ip address", endIPString)
 		}
 		return &types.LeaseRange{
 			StartIP: start,

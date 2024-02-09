@@ -336,4 +336,182 @@ EOF
     fi
 }
 
-# vim: filetype=sh
+@test "podman mount no-dereference" {
+    # Test how bind and glob-mounts behave with respect to relative (rel) and
+    # absolute (abs) symlinks.
+
+    if [ $(podman_runtime) != "crun" ]; then
+        # Requires crun >= 1.11.0
+        skip "only crun supports the no-dereference (copy-symlink) mount option"
+    fi
+
+    # Contents of the file 'data' inside the container image.
+    declare -A datacontent=(
+        [img]="data file inside the IMAGE - $(random_string 15)"
+    )
+
+    # Purpose of the image is so "link -> data" can point to an existing
+    # file whether or not "data" is mounted.
+    dockerfile=$PODMAN_TMPDIR/Dockerfile
+    cat >$dockerfile <<EOF
+FROM $IMAGE
+RUN mkdir /mountroot && echo ${datacontent[img]} > /mountroot/data
+EOF
+
+    img="localhost/preserve:symlinks"
+    run_podman build -t $img -f $dockerfile
+
+    # Each test is set up in exactly the same way:
+    #
+    #    <tmpdir>/
+    #    ├── mountdir/     <----- this is always the source dir
+    #    │   ├── data
+    #    │   └── link -> ?????
+    #    └── otherdir/
+    #        └── data
+    #
+    # The test is run in a container that has its own /mountroot/data file,
+    # so in some situations 'link -> data' will get the container's
+    # data file, in others it'll be the host's, and in others, ENOENT.
+    #
+    # There are four options for 'link': -> data in mountdir (same dir)
+    # or otherdir, and, relative or absolute. Then, for each of those
+    # permutations, run with and without no-dereference. (With no-dereference,
+    # only the first of these options is valid, link->data. The other three
+    # appear in the container as link->path-not-in-container)
+    #
+    # Finally, the table below defines a number of variations of mount
+    # type (bind, glob); mount source (just the link, a glob, or entire
+    # directory); and mount destination. These are the variations that
+    # introduce complexity, hence the special cases in the innermost loop.
+    #
+    # Table format:
+    #
+    #    mount type | mount source | mount destination | what_is_data | enoents
+    #
+    # The what_is_data column indicates whether the file "data" in the
+    # container will be the image's copy ("img") or the one from the host
+    # ("in", referring to the source directory). "-" means N/A, no data file.
+    #
+    # The enoent column is a space-separated list of patterns to search for
+    # in the test description. When these match, "link" will point to a
+    # path that does not exist in the directory, and we should expect cat
+    # to result in ENOENT.
+    #
+    tests="
+bind | /link | /mountroot/link       | img
+bind | /link | /i/do/not/exist/link  | -    | relative.*no-dereference
+bind | /     | /mountroot/           | in   | absolute out
+glob | /lin* | /mountroot/           | img
+glob | /*    | /mountroot/           | in
+"
+
+    defer-assertion-failures
+
+    while read mount_type mount_source mount_dest what_is_data enoents; do
+        # link pointing inside the same directory, or outside
+        for in_out in "in" "out"; do
+            # relative symlink or absolute
+            for rel_abs in "relative" "absolute"; do
+                # Generate fresh new content for each data file (the in & out ones)
+                datacontent[in]="data file in the SAME DIRECTORY - $(random_string 15)"
+                datacontent[out]="data file OUTSIDE the tree - $(random_string 15)"
+
+                # Populate data files in and out our tree
+                local condition="${rel_abs:0:3}-${in_out}"
+                local sourcedir="$PODMAN_TMPDIR/$condition"
+                rm -rf $sourcedir $PODMAN_TMPDIR/outside-the-tree
+                mkdir  $sourcedir $PODMAN_TMPDIR/outside-the-tree
+                echo "${datacontent[in]}"  > "$sourcedir/data"
+                echo "${datacontent[out]}" > "$PODMAN_TMPDIR/outside-the-tree/data"
+
+                # Create the symlink itself (in the in-dir of course)
+                local target
+                case "$condition" in
+                    rel-in)  target="data" ;;
+                    rel-out) target="../outside-the-tree/data" ;;
+                    abs-in)  target="$sourcedir/data" ;;
+                    abs-out) target="$PODMAN_TMPDIR/outside-the-tree/data" ;;
+                    *)       die "Internal error, invalid condition '$condition'" ;;
+                esac
+                ln -s $target "$sourcedir/link"
+
+                # Absolute path to 'link' inside the container. What we stat & cat.
+                local containerpath="$mount_dest"
+                if [[ ! $containerpath =~ /link$ ]]; then
+                    containerpath="${containerpath}link"
+                fi
+
+                # Now test with no args (mounts link CONTENT) and --no-dereference
+                # (mounts symlink AS A SYMLINK)
+                for mount_opts in "" ",no-dereference"; do
+                    local description="$mount_type mount $mount_source -> $mount_dest ($in_out), $rel_abs $mount_opts"
+
+                    # Expected exit status. Almost always success.
+                    local exit_code=0
+
+                    # Without --no-dereference, we always expect exactly the same,
+                    # because podman mounts "link" as a data file...
+                    local expect_stat="$containerpath"
+                    local expect_cat="${datacontent[$in_out]}"
+                    # ...except when bind-mounting link's parent directory: "link"
+                    # is mounted as a link, and host's "data" file overrides the image
+                    if [[ $mount_source = '/' ]]; then
+                        expect_stat="'$containerpath' -> '$target'"
+                    fi
+
+                    # With --no-dereference...
+                    if [[ -n "$mount_opts" ]]; then
+                        # stat() is always the same (symlink and its target)  ....
+                        expect_stat="'$containerpath' -> '$target'"
+
+                        # ...and the only valid case for cat is same-dir relative:
+                        if [[ "$condition" = "rel-in" ]]; then
+                            expect_cat="${datacontent[$what_is_data]}"
+                        else
+                            # All others are ENOENT, because link -> nonexistent-path
+                            exit_code=1
+                        fi
+                    fi
+
+                    for ex in $enoents; do
+                        if grep -q -w -E "$ex" <<<"$description"; then
+                            exit_code=1
+                        fi
+                    done
+                    if [[ $exit_code -eq 1 ]]; then
+                        expect_cat="cat: can't open '$containerpath': No such file or directory"
+                    fi
+
+                    run_podman $exit_code run \
+                               --mount type=$mount_type,src="$sourcedir$mount_source",dst="$mount_dest$mount_opts" \
+                               --rm --privileged $img sh -c "stat -c '%N' $containerpath; cat $containerpath"
+                    assert "${lines[0]}" = "$expect_stat" "$description -- stat $containerpath"
+                    assert "${lines[1]}" = "$expect_cat"  "$description -- cat $containerpath"
+                done
+            done
+        done
+    done < <(parse_table "$tests")
+
+    immediate-assertion-failures
+
+    # Make sure that links are preserved across starts and stops
+    local workdir=$PODMAN_TMPDIR/test-restart
+    mkdir $workdir
+    local datafile="data-$(random_string 5)"
+    local datafile_contents="What we expect to see, $(random_string 20)"
+    echo "$datafile_contents" > $workdir/$datafile
+    ln -s $datafile $workdir/link
+
+    run_podman create --mount type=glob,src=$workdir/*,dst=/mountroot/,no-dereference --privileged $img sh -c "stat -c '%N' /mountroot/link; cat /mountroot/link"
+    cid="$output"
+    run_podman start -a $cid
+    assert "${lines[0]}" = "'/mountroot/link' -> '$datafile'" "symlink is preserved, on start"
+    assert "${lines[1]}" = "$datafile_contents"         "glob matches symlink and host 'data' file, on start"
+    run_podman start -a $cid
+    assert "${lines[0]}" = "'/mountroot/link' -> '$datafile'" "symlink is preserved, on restart"
+    assert "${lines[1]}" = "$datafile_contents"         "glob matches symlink and host 'data' file, on restart"
+    run_podman rm -f -t=0 $cid
+
+    run_podman rmi -f $img
+}

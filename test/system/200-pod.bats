@@ -514,7 +514,6 @@ spec:
     skip_if_remote "resource limits only implemented on non-remote"
     skip_if_rootless "resource limits only work with root"
     skip_if_cgroupsv1 "resource limits only meaningful on cgroups V2"
-    skip_if_aarch64 "FIXME: #15074 - flakes often on aarch64"
 
     # create loopback device
     lofile=${PODMAN_TMPDIR}/disk.img
@@ -717,8 +716,8 @@ function thingy_with_unique_id() {
         podid="$output"
         run_podman run -d --pod $podid $IMAGE top -d 2
 
-        run_podman pod inspect $podid
-        result=$(jq -r .CgroupPath <<< $output)
+        run_podman pod inspect $podid --format "{{.CgroupPath}}"
+        result="$output"
         assert "$result" =~ "/" ".CgroupPath is a valid path"
 
         if is_cgroupsv2; then

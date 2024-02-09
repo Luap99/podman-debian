@@ -1,5 +1,4 @@
 //go:build !remote
-// +build !remote
 
 package libpod
 
@@ -18,20 +17,20 @@ import (
 	"github.com/containers/common/libnetwork/types"
 	"github.com/containers/common/pkg/cgroups"
 	"github.com/containers/common/pkg/config"
-	cutil "github.com/containers/common/pkg/util"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/libpod/events"
-	"github.com/containers/podman/v4/libpod/shutdown"
-	"github.com/containers/podman/v4/pkg/domain/entities/reports"
-	"github.com/containers/podman/v4/pkg/rootless"
-	"github.com/containers/podman/v4/pkg/specgen"
-	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/libpod/events"
+	"github.com/containers/podman/v5/libpod/shutdown"
+	"github.com/containers/podman/v5/pkg/domain/entities/reports"
+	"github.com/containers/podman/v5/pkg/rootless"
+	"github.com/containers/podman/v5/pkg/specgen"
+	"github.com/containers/podman/v5/pkg/util"
 	"github.com/containers/storage"
 	"github.com/containers/storage/pkg/stringid"
 	"github.com/docker/go-units"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/runtime-tools/generate"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/exp/slices"
 )
 
 // Contains the public Runtime API for containers
@@ -257,7 +256,7 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 		for _, opts := range ctr.config.Networks {
 			if opts.InterfaceName != "" {
 				// check that no name is assigned to more than network
-				if cutil.StringInSlice(opts.InterfaceName, usedIfNames) {
+				if slices.Contains(usedIfNames, opts.InterfaceName) {
 					return nil, fmt.Errorf("network interface name %q is already assigned to another network", opts.InterfaceName)
 				}
 				usedIfNames = append(usedIfNames, opts.InterfaceName)
@@ -265,15 +264,22 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 		}
 		i := 0
 		for nameOrID, opts := range ctr.config.Networks {
-			netName, err := r.normalizeNetworkName(nameOrID)
+			netName, nicName, err := r.normalizeNetworkName(nameOrID)
 			if err != nil {
 				return nil, err
 			}
-			// assign interface name if empty
+
+			// check whether interface is to be named as the network_interface
+			// when name left unspecified
+			if opts.InterfaceName == "" {
+				opts.InterfaceName = nicName
+			}
+
+			// assign default interface name if empty
 			if opts.InterfaceName == "" {
 				for i < 100000 {
 					ifName := fmt.Sprintf("eth%d", i)
-					if !cutil.StringInSlice(ifName, usedIfNames) {
+					if !slices.Contains(usedIfNames, ifName) {
 						opts.InterfaceName = ifName
 						usedIfNames = append(usedIfNames, ifName)
 						break

@@ -1,11 +1,12 @@
 package e2e_test
 
 import (
+	"fmt"
 	"runtime"
 	"strconv"
 	"strings"
 
-	"github.com/containers/podman/v4/pkg/machine"
+	"github.com/containers/podman/v5/pkg/machine/define"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -75,7 +76,7 @@ var _ = Describe("podman machine set", func() {
 	})
 
 	It("wsl cannot change disk, memory, processor", func() {
-		skipIfNotVmtype(machine.WSLVirt, "tests are only for WSL provider")
+		skipIfNotVmtype(define.WSLVirt, "tests are only for WSL provider")
 		name := randomString()
 		i := new(initMachine)
 		session, err := mb.setName(name).setCmd(i.withImagePath(mb.imagePath)).run()
@@ -131,7 +132,7 @@ var _ = Describe("podman machine set", func() {
 		sshSession3, err := mb.setName(name).setCmd(ssh3.withSSHCommand([]string{"sudo", "fdisk", "-l", "|", "grep", "Disk"})).run()
 		Expect(err).ToNot(HaveOccurred())
 		Expect(sshSession3).To(Exit(0))
-		Expect(sshSession3.outputToString()).To(ContainSubstring("100 GiB"))
+		Expect(sshSession3.outputToString()).To(ContainSubstring(fmt.Sprintf("%d GiB", defaultDiskSize)))
 	})
 
 	It("set rootful with docker sock change", func() {
@@ -167,7 +168,7 @@ var _ = Describe("podman machine set", func() {
 	})
 
 	It("set user mode networking", func() {
-		if testProvider.VMType() != machine.WSLVirt {
+		if testProvider.VMType() != define.WSLVirt {
 			Skip("Test is only for WSL")
 		}
 		name := randomString()

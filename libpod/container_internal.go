@@ -1,5 +1,4 @@
 //go:build !remote
-// +build !remote
 
 package libpod
 
@@ -9,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -26,16 +24,17 @@ import (
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/hooks"
 	"github.com/containers/common/pkg/hooks/exec"
+	"github.com/containers/common/pkg/timezone"
 	cutil "github.com/containers/common/pkg/util"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/libpod/events"
-	"github.com/containers/podman/v4/libpod/shutdown"
-	"github.com/containers/podman/v4/pkg/ctime"
-	"github.com/containers/podman/v4/pkg/lookup"
-	"github.com/containers/podman/v4/pkg/rootless"
-	"github.com/containers/podman/v4/pkg/selinux"
-	"github.com/containers/podman/v4/pkg/systemd/notifyproxy"
-	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/libpod/events"
+	"github.com/containers/podman/v5/libpod/shutdown"
+	"github.com/containers/podman/v5/pkg/ctime"
+	"github.com/containers/podman/v5/pkg/lookup"
+	"github.com/containers/podman/v5/pkg/rootless"
+	"github.com/containers/podman/v5/pkg/selinux"
+	"github.com/containers/podman/v5/pkg/systemd/notifyproxy"
+	"github.com/containers/podman/v5/pkg/util"
 	"github.com/containers/storage"
 	"github.com/containers/storage/pkg/chrootarchive"
 	"github.com/containers/storage/pkg/idmap"
@@ -48,6 +47,7 @@ import (
 	"github.com/opencontainers/runtime-tools/generate"
 	"github.com/opencontainers/selinux/go-selinux/label"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/exp/slices"
 	"golang.org/x/sys/unix"
 )
 
@@ -306,9 +306,13 @@ func (c *Container) handleRestartPolicy(ctx context.Context) (_ bool, retErr err
 		return false, err
 	}
 
-	// set up slirp4netns again because slirp4netns will die when conmon exits
-	if err := c.setupRootlessNetwork(); err != nil {
-		return false, err
+	// only do this if the container is not in a userns, if we are the cleanupNetwork()
+	// was called above and a proper network setup is needed which is part of the init() below.
+	if !c.config.PostConfigureNetNS {
+		// set up slirp4netns again because slirp4netns will die when conmon exits
+		if err := c.setupRootlessNetwork(); err != nil {
+			return false, err
+		}
 	}
 
 	if c.state.State == define.ContainerStateStopped {
@@ -535,11 +539,11 @@ func (c *Container) setupStorage(ctx context.Context) error {
 	c.state.RunDir = containerInfo.RunDir
 
 	if len(c.config.IDMappings.UIDMap) != 0 || len(c.config.IDMappings.GIDMap) != 0 {
-		if err := os.Chown(containerInfo.RunDir, c.RootUID(), c.RootGID()); err != nil {
+		if err := idtools.SafeChown(containerInfo.RunDir, c.RootUID(), c.RootGID()); err != nil {
 			return err
 		}
 
-		if err := os.Chown(containerInfo.Dir, c.RootUID(), c.RootGID()); err != nil {
+		if err := idtools.SafeChown(containerInfo.Dir, c.RootUID(), c.RootGID()); err != nil {
 			return err
 		}
 	}
@@ -622,7 +626,19 @@ func resetContainerState(state *ContainerState) {
 	state.ConmonPID = 0
 	state.Mountpoint = ""
 	state.Mounted = false
-	if state.State != define.ContainerStateExited {
+	// Reset state.
+	// Almost all states are reset to either Configured or Exited,
+	// except ContainerStateRemoving which is preserved.
+	switch state.State {
+	case define.ContainerStateStopped, define.ContainerStateExited, define.ContainerStateStopping, define.ContainerStateRunning, define.ContainerStatePaused:
+		// All containers that ran at any point during the last boot
+		// must be placed in the Exited state.
+		state.State = define.ContainerStateExited
+	case define.ContainerStateConfigured, define.ContainerStateCreated:
+		state.State = define.ContainerStateConfigured
+	case define.ContainerStateUnknown:
+		// Something really strange must have happened to get us here.
+		// Reset to configured, maybe the reboot cleared things up?
 		state.State = define.ContainerStateConfigured
 	}
 	state.ExecSessions = make(map[string]*ExecSession)
@@ -643,7 +659,6 @@ func resetContainerState(state *ContainerState) {
 	state.StartupHCFailureCount = 0
 	state.NetNS = ""
 	state.NetworkStatus = nil
-	state.NetworkStatusOld = nil
 }
 
 // Refresh refreshes the container's state after a restart.
@@ -681,7 +696,7 @@ func (c *Container) refresh() error {
 		if err := os.MkdirAll(root, 0755); err != nil {
 			return fmt.Errorf("creating userNS tmpdir for container %s: %w", c.ID(), err)
 		}
-		if err := os.Chown(root, c.RootUID(), c.RootGID()); err != nil {
+		if err := idtools.SafeChown(root, c.RootUID(), c.RootGID()); err != nil {
 			return err
 		}
 	}
@@ -694,7 +709,6 @@ func (c *Container) refresh() error {
 	c.lock = lock
 
 	c.state.NetworkStatus = nil
-	c.state.NetworkStatusOld = nil
 
 	// Rewrite the config if necessary.
 	// Podman 4.0 uses a new port format in the config.
@@ -1578,7 +1592,7 @@ func (c *Container) mountStorage() (_ string, deferredErr error) {
 			if err := c.mountSHM(shmOptions); err != nil {
 				return "", err
 			}
-			if err := os.Chown(c.config.ShmDir, c.RootUID(), c.RootGID()); err != nil {
+			if err := idtools.SafeChown(c.config.ShmDir, c.RootUID(), c.RootGID()); err != nil {
 				return "", fmt.Errorf("failed to chown %s: %w", c.config.ShmDir, err)
 			}
 			defer func() {
@@ -1708,45 +1722,18 @@ func (c *Container) mountStorage() (_ string, deferredErr error) {
 	}
 
 	tz := c.Timezone()
-	if tz != "" {
-		timezonePath := filepath.Join("/usr/share/zoneinfo", tz)
-		if tz == "local" {
-			timezonePath, err = filepath.EvalSymlinks("/etc/localtime")
-			if err != nil {
-				return "", fmt.Errorf("finding local timezone for container %s: %w", c.ID(), err)
-			}
+	localTimePath, err := timezone.ConfigureContainerTimeZone(tz, c.state.RunDir, mountPoint, etcInTheContainerPath, c.ID())
+	if err != nil {
+		return "", fmt.Errorf("configuring timezone for container %s: %w", c.ID(), err)
+	}
+	if localTimePath != "" {
+		if err := c.relabel(localTimePath, c.config.MountLabel, false); err != nil {
+			return "", err
 		}
-		// make sure to remove any existing localtime file in the container to not create invalid links
-		err = unix.Unlinkat(etcInTheContainerFd, "localtime", 0)
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return "", fmt.Errorf("removing /etc/localtime: %w", err)
+		if c.state.BindMounts == nil {
+			c.state.BindMounts = make(map[string]string)
 		}
-
-		hostPath, err := securejoin.SecureJoin(mountPoint, timezonePath)
-		if err != nil {
-			return "", fmt.Errorf("resolve zoneinfo path in the container: %w", err)
-		}
-
-		_, err = os.Stat(hostPath)
-		if err != nil {
-			// file does not exists which means tzdata is not installed in the container, just create /etc/locatime which a copy from the host
-			logrus.Debugf("Timezone %s does not exist in the container, create our own copy from the host", timezonePath)
-			localtimePath, err := c.copyTimezoneFile(timezonePath)
-			if err != nil {
-				return "", fmt.Errorf("setting timezone for container %s: %w", c.ID(), err)
-			}
-			if c.state.BindMounts == nil {
-				c.state.BindMounts = make(map[string]string)
-			}
-			c.state.BindMounts["/etc/localtime"] = localtimePath
-		} else {
-			// file exists lets just symlink according to localtime(5)
-			logrus.Debugf("Create locatime symlink for %s", timezonePath)
-			err = unix.Symlinkat(".."+timezonePath, etcInTheContainerFd, "localtime")
-			if err != nil {
-				return "", fmt.Errorf("creating /etc/localtime symlink: %w", err)
-			}
-		}
+		c.state.BindMounts["/etc/localtime"] = localTimePath
 	}
 
 	// Request a mount of all named volumes
@@ -1797,7 +1784,7 @@ func (c *Container) mountNamedVolume(v *ContainerNamedVolume, mountpoint string)
 		return nil, err
 	}
 	_, hasNoCopy := vol.config.Options["nocopy"]
-	if vol.state.NeedsCopyUp && !cutil.StringInSlice("nocopy", v.Options) && !hasNoCopy {
+	if vol.state.NeedsCopyUp && !slices.Contains(v.Options, "nocopy") && !hasNoCopy {
 		logrus.Debugf("Copying up contents from container %s to volume %s", c.ID(), vol.Name())
 
 		srcDir, err := securejoin.SecureJoin(mountpoint, v.Dest)
@@ -2325,7 +2312,7 @@ func (c *Container) mount() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolving storage path for container %s: %w", c.ID(), err)
 	}
-	if err := os.Chown(mountPoint, c.RootUID(), c.RootGID()); err != nil {
+	if err := idtools.SafeChown(mountPoint, c.RootUID(), c.RootGID()); err != nil {
 		return "", fmt.Errorf("cannot chown %s to %d:%d: %w", mountPoint, c.RootUID(), c.RootGID(), err)
 	}
 	return mountPoint, nil
@@ -2508,13 +2495,13 @@ func (c *Container) extractSecretToCtrStorage(secr *ContainerSecret) error {
 	if err != nil {
 		return fmt.Errorf("unable to create %s: %w", secretFile, err)
 	}
-	if err := os.Lchown(secretFile, int(hostUID), int(hostGID)); err != nil {
+	if err := idtools.SafeLchown(secretFile, int(hostUID), int(hostGID)); err != nil {
 		return err
 	}
 	if err := os.Chmod(secretFile, os.FileMode(secr.Mode)); err != nil {
 		return err
 	}
-	if err := label.Relabel(secretFile, c.config.MountLabel, false); err != nil {
+	if err := c.relabel(secretFile, c.config.MountLabel, false); err != nil {
 		return err
 	}
 	return nil

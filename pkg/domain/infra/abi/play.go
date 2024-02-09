@@ -20,20 +20,21 @@ import (
 	"github.com/containers/common/pkg/secrets"
 	"github.com/containers/image/v5/docker/reference"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v4/cmd/podman/parse"
-	"github.com/containers/podman/v4/libpod"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	v1apps "github.com/containers/podman/v4/pkg/k8s.io/api/apps/v1"
-	v1 "github.com/containers/podman/v4/pkg/k8s.io/api/core/v1"
-	metav1 "github.com/containers/podman/v4/pkg/k8s.io/apimachinery/pkg/apis/meta/v1"
-	"github.com/containers/podman/v4/pkg/specgen"
-	"github.com/containers/podman/v4/pkg/specgen/generate"
-	"github.com/containers/podman/v4/pkg/specgen/generate/kube"
-	"github.com/containers/podman/v4/pkg/specgenutil"
-	"github.com/containers/podman/v4/pkg/systemd/notifyproxy"
-	"github.com/containers/podman/v4/pkg/util"
-	"github.com/containers/podman/v4/utils"
+	"github.com/containers/podman/v5/cmd/podman/parse"
+	"github.com/containers/podman/v5/libpod"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	entitiesTypes "github.com/containers/podman/v5/pkg/domain/entities/types"
+	v1apps "github.com/containers/podman/v5/pkg/k8s.io/api/apps/v1"
+	v1 "github.com/containers/podman/v5/pkg/k8s.io/api/core/v1"
+	metav1 "github.com/containers/podman/v5/pkg/k8s.io/apimachinery/pkg/apis/meta/v1"
+	"github.com/containers/podman/v5/pkg/specgen"
+	"github.com/containers/podman/v5/pkg/specgen/generate"
+	"github.com/containers/podman/v5/pkg/specgen/generate/kube"
+	"github.com/containers/podman/v5/pkg/specgenutil"
+	"github.com/containers/podman/v5/pkg/systemd/notifyproxy"
+	"github.com/containers/podman/v5/pkg/util"
+	"github.com/containers/podman/v5/utils"
 	"github.com/coreos/go-systemd/v22/daemon"
 	"github.com/opencontainers/go-digest"
 	"github.com/opencontainers/selinux/go-selinux"
@@ -74,7 +75,6 @@ func (ic *ContainerEngine) createServiceContainer(ctx context.Context, name stri
 	}
 	ctrOpts := entities.ContainerCreateOptions{
 		// Inherited from infra containers
-		ImageVolume:      define.TypeBind,
 		IsInfra:          false,
 		MemorySwappiness: -1,
 		ReadOnly:         true,
@@ -509,7 +509,11 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 	}
 
 	if options.Userns == "" {
-		options.Userns = "host"
+		if v, ok := annotations[define.UserNsAnnotation]; ok {
+			options.Userns = v
+		} else {
+			options.Userns = "host"
+		}
 		if podYAML.Spec.HostUsers != nil && !*podYAML.Spec.HostUsers {
 			options.Userns = "auto"
 		}
@@ -625,7 +629,7 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 					// error out instead reuse the current volume.
 					vol, err = ic.Libpod.GetVolume(v.Source)
 					if err != nil {
-						return nil, nil, fmt.Errorf("cannot re-use local volume for volume from configmap %q: %w", v.Source, err)
+						return nil, nil, fmt.Errorf("cannot reuse local volume for volume from configmap %q: %w", v.Source, err)
 					}
 				} else {
 					return nil, nil, fmt.Errorf("cannot create a local volume for volume from configmap %q: %w", v.Source, err)
@@ -1021,6 +1025,7 @@ func (ic *ContainerEngine) getImageAndLabelInfo(ctx context.Context, cwd string,
 		}
 		buildOpts.Isolation = isolation
 		buildOpts.CommonBuildOpts = commonOpts
+		buildOpts.SystemContext = options.SystemContext
 		buildOpts.Output = container.Image
 		buildOpts.ContextDirectory = filepath.Dir(buildFile)
 		buildOpts.ReportWriter = writer
@@ -1142,6 +1147,8 @@ func (ic *ContainerEngine) playKubePVC(ctx context.Context, mountLabel string, p
 			opts["o"] = v
 		case util.VolumeImportSourceAnnotation:
 			importFrom = v
+		case util.VolumeImageAnnotation:
+			opts["image"] = v
 		}
 	}
 	volOptions = append(volOptions, libpod.WithVolumeOptions(opts))
@@ -1179,7 +1186,7 @@ func (ic *ContainerEngine) playKubePVC(ctx context.Context, mountLabel string, p
 		}
 	}
 
-	report.Volumes = append(report.Volumes, entities.PlayKubeVolume{
+	report.Volumes = append(report.Volumes, entitiesTypes.PlayKubeVolume{
 		Name: vol.Name(),
 	})
 

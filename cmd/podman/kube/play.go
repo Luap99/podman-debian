@@ -12,18 +12,19 @@ import (
 	"strings"
 	"syscall"
 
+	buildahParse "github.com/containers/buildah/pkg/parse"
 	"github.com/containers/common/pkg/auth"
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v4/cmd/podman/common"
-	"github.com/containers/podman/v4/cmd/podman/parse"
-	"github.com/containers/podman/v4/cmd/podman/registry"
-	"github.com/containers/podman/v4/cmd/podman/utils"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/libpod/shutdown"
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/containers/podman/v4/pkg/errorhandling"
-	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v5/cmd/podman/common"
+	"github.com/containers/podman/v5/cmd/podman/parse"
+	"github.com/containers/podman/v5/cmd/podman/registry"
+	"github.com/containers/podman/v5/cmd/podman/utils"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/libpod/shutdown"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	"github.com/containers/podman/v5/pkg/errorhandling"
+	"github.com/containers/podman/v5/pkg/util"
 	"github.com/spf13/cobra"
 )
 
@@ -98,7 +99,7 @@ func playFlags(cmd *cobra.Command) {
 	flags.SetNormalizeFunc(utils.AliasFlags)
 
 	annotationFlagName := "annotation"
-	flags.StringSliceVar(
+	flags.StringArrayVar(
 		&playOptions.annotations,
 		annotationFlagName, []string{},
 		"Add annotations to pods (key=value)",
@@ -124,7 +125,7 @@ func playFlags(cmd *cobra.Command) {
 	_ = cmd.RegisterFlagCompletionFunc(logDriverFlagName, common.AutocompleteLogDriver)
 
 	logOptFlagName := "log-opt"
-	flags.StringSliceVar(
+	flags.StringArrayVar(
 		&playOptions.LogOptions,
 		logOptFlagName, []string{},
 		"Logging driver options",
@@ -165,7 +166,7 @@ func playFlags(cmd *cobra.Command) {
 	flags.BoolVarP(&playOptions.Wait, waitFlagName, "w", false, "Clean up all objects created when a SIGTERM is received or pods exit")
 
 	configmapFlagName := "configmap"
-	flags.StringSliceVar(&playOptions.ConfigMaps, configmapFlagName, []string{}, "`Pathname` of a YAML file containing a kubernetes configmap")
+	flags.StringArrayVar(&playOptions.ConfigMaps, configmapFlagName, []string{}, "`Pathname` of a YAML file containing a kubernetes configmap")
 	_ = cmd.RegisterFlagCompletionFunc(configmapFlagName, completion.AutocompleteDefault)
 
 	noTruncFlagName := "no-trunc"
@@ -219,6 +220,13 @@ func play(cmd *cobra.Command, args []string) error {
 	}
 	if cmd.Flags().Changed("build") {
 		playOptions.Build = types.NewOptionalBool(playOptions.BuildCLI)
+		if playOptions.Build == types.OptionalBoolTrue {
+			systemContext, err := buildahParse.SystemContextFromOptions(cmd)
+			if err != nil {
+				return err
+			}
+			playOptions.SystemContext = systemContext
+		}
 	}
 	if cmd.Flags().Changed("authfile") {
 		if err := auth.CheckAuthFile(playOptions.Authfile); err != nil {
@@ -238,18 +246,17 @@ func play(cmd *cobra.Command, args []string) error {
 	}
 
 	for _, annotation := range playOptions.annotations {
-		splitN := strings.SplitN(annotation, "=", 2)
-		if len(splitN) != 2 {
+		key, val, hasVal := strings.Cut(annotation, "=")
+		if !hasVal {
 			return fmt.Errorf("annotation %q must include an '=' sign", annotation)
 		}
 		if playOptions.Annotations == nil {
 			playOptions.Annotations = make(map[string]string)
 		}
-		annotation := splitN[1]
-		if len(annotation) > define.MaxKubeAnnotation && !playOptions.UseLongAnnotations {
-			return fmt.Errorf("annotation exceeds maximum size, %d, of kubernetes annotation: %s", define.MaxKubeAnnotation, annotation)
+		if len(val) > define.MaxKubeAnnotation && !playOptions.UseLongAnnotations {
+			return fmt.Errorf("annotation exceeds maximum size, %d, of kubernetes annotation: %s", define.MaxKubeAnnotation, val)
 		}
-		playOptions.Annotations[splitN[0]] = annotation
+		playOptions.Annotations[key] = val
 	}
 
 	for _, mac := range playOptions.macs {
