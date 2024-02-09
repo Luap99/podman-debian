@@ -1,5 +1,4 @@
 //go:build !remote
-// +build !remote
 
 package libpod
 
@@ -12,10 +11,9 @@ import (
 
 	"github.com/containers/common/libimage"
 	"github.com/containers/common/libnetwork/types"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/errorhandling"
-	"github.com/containers/podman/v4/pkg/rootless"
-	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/pkg/errorhandling"
+	"github.com/containers/podman/v5/pkg/util"
 	"github.com/containers/storage"
 	"github.com/containers/storage/pkg/lockfile"
 	stypes "github.com/containers/storage/types"
@@ -238,7 +236,7 @@ func (r *Runtime) Reset(ctx context.Context) error {
 			prevError = err
 		}
 	}
-	runtimeDir, err := util.GetRuntimeDir()
+	runtimeDir, err := util.GetRootlessRuntimeDir()
 	if err != nil {
 		return err
 	}
@@ -259,7 +257,7 @@ func (r *Runtime) Reset(ctx context.Context) error {
 			prevError = err
 		}
 	}
-	if storageConfPath, err := storage.DefaultConfigFile(rootless.IsRootless()); err == nil {
+	if storageConfPath, err := storage.DefaultConfigFile(); err == nil {
 		switch storageConfPath {
 		case stypes.SystemConfigFile:
 			break

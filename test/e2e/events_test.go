@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/containers/podman/v4/libpod/events"
-	. "github.com/containers/podman/v4/test/utils"
+	"github.com/containers/podman/v5/libpod/events"
+	. "github.com/containers/podman/v5/test/utils"
 	"github.com/containers/storage/pkg/stringid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -220,6 +220,36 @@ var _ = Describe("Podman events", func() {
 		result2.WaitWithDefaultTimeout()
 		Expect(result2).Should(ExitCleanly())
 		Expect(result2.OutputToString()).To(ContainSubstring(fmt.Sprintf("pod_id=%s", id)))
+	})
+
+	It("podman events network connection", func() {
+		network := stringid.GenerateRandomID()
+		result := podmanTest.Podman([]string{"create", "--network", "bridge", ALPINE, "top"})
+		result.WaitWithDefaultTimeout()
+		Expect(result).Should(ExitCleanly())
+		ctrID := result.OutputToString()
+
+		result = podmanTest.Podman([]string{"network", "create", network})
+		result.WaitWithDefaultTimeout()
+		Expect(result).Should(ExitCleanly())
+
+		result = podmanTest.Podman([]string{"network", "connect", network, ctrID})
+		result.WaitWithDefaultTimeout()
+		Expect(result).Should(ExitCleanly())
+
+		result = podmanTest.Podman([]string{"network", "disconnect", network, ctrID})
+		result.WaitWithDefaultTimeout()
+		Expect(result).Should(ExitCleanly())
+
+		result = podmanTest.Podman([]string{"events", "--stream=false", "--since", "30s"})
+		result.WaitWithDefaultTimeout()
+		Expect(result).Should(ExitCleanly())
+		lines := result.OutputToStringArray()
+		Expect(lines).To(HaveLen(5))
+		Expect(lines[3]).To(ContainSubstring("network connect"))
+		Expect(lines[3]).To(ContainSubstring(fmt.Sprintf("(container=%s, name=%s)", ctrID, network)))
+		Expect(lines[4]).To(ContainSubstring("network disconnect"))
+		Expect(lines[4]).To(ContainSubstring(fmt.Sprintf("(container=%s, name=%s)", ctrID, network)))
 	})
 
 	It("podman events health_status generated", func() {

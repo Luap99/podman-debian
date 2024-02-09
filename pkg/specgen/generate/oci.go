@@ -1,16 +1,15 @@
 //go:build !remote
-// +build !remote
 
 package generate
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/containers/common/libimage"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/specgen"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/pkg/specgen"
 	"github.com/opencontainers/runtime-tools/generate"
+	"github.com/sirupsen/logrus"
 )
 
 func addRlimits(s *specgen.SpecGenerator, g *generate.Generator) {
@@ -24,7 +23,7 @@ func addRlimits(s *specgen.SpecGenerator, g *generate.Generator) {
 }
 
 // Produce the final command for the container.
-func makeCommand(s *specgen.SpecGenerator, imageData *libimage.ImageData) ([]string, error) {
+func makeCommand(s *specgen.SpecGenerator, imageData *libimage.ImageData) []string {
 	finalCommand := []string{}
 
 	entrypoint := s.Entrypoint
@@ -47,13 +46,14 @@ func makeCommand(s *specgen.SpecGenerator, imageData *libimage.ImageData) ([]str
 	finalCommand = append(finalCommand, command...)
 
 	if len(finalCommand) == 0 {
-		return nil, fmt.Errorf("no command or entrypoint provided, and no CMD or ENTRYPOINT from image")
+		logrus.Debug("no command or entrypoint provided, and no CMD or ENTRYPOINT from image: defaulting to empty string")
+		finalCommand = []string{""}
 	}
 
-	if s.Init {
+	if s.Init != nil && *s.Init {
 		// bind mount for this binary is added in addContainerInitBinary()
 		finalCommand = append([]string{define.ContainerInitPath, "--"}, finalCommand...)
 	}
 
-	return finalCommand, nil
+	return finalCommand
 }

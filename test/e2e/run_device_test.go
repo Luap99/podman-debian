@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	. "github.com/containers/podman/v4/test/utils"
+	. "github.com/containers/podman/v5/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -115,12 +115,6 @@ var _ = Describe("Podman run device", func() {
 
 		createContainersConfFileWithDevices(podmanTest, "\"vendor.com/device=myKmsg\"")
 		session = podmanTest.Podman([]string{"run", "-q", "--security-opt", "label=disable", ALPINE, "test", "-c", "/dev/kmsg1"})
-		session.WaitWithDefaultTimeout()
-		Expect(session).Should(ExitCleanly())
-	})
-
-	It("podman run --gpus noop", func() {
-		session := podmanTest.Podman([]string{"run", "--gpus", "all", ALPINE, "true"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(ExitCleanly())
 	})

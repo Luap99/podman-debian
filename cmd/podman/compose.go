@@ -1,5 +1,4 @@
 //go:build amd64 || arm64
-// +build amd64 arm64
 
 package main
 
@@ -15,11 +14,12 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v4/cmd/podman/registry"
-	"github.com/containers/podman/v4/pkg/errorhandling"
-	"github.com/containers/podman/v4/pkg/machine"
-	"github.com/containers/podman/v4/pkg/machine/provider"
+	"github.com/containers/podman/v5/cmd/podman/registry"
+	"github.com/containers/podman/v5/pkg/errorhandling"
+	"github.com/containers/podman/v5/pkg/machine"
+	"github.com/containers/podman/v5/pkg/machine/define"
+	"github.com/containers/podman/v5/pkg/machine/provider"
+	"github.com/containers/podman/v5/pkg/machine/vmconfigs"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -114,15 +114,10 @@ func composeDockerHost() (string, error) {
 		return registry.DefaultAPIAddress(), nil
 	}
 
-	cfg, err := config.ReadCustomConfig()
+	// TODO need to add support for --connection and --url
+	connection, err := registry.PodmanConfig().ContainersConfDefaultsRO.GetConnection("", true)
 	if err != nil {
-		return "", err
-	}
-
-	// NOTE: podman --connection=foo and --url=... are injected
-	// into the default connection below in `root.go`.
-	defaultConnection := cfg.Engine.ActiveService
-	if defaultConnection == "" {
+		logrus.Info(err)
 		switch runtime.GOOS {
 		// If no default connection is set on Linux or FreeBSD,
 		// we just use the local socket by default - just as
@@ -137,10 +132,6 @@ func composeDockerHost() (string, error) {
 		}
 	}
 
-	connection, ok := cfg.Engine.ServiceDestinations[defaultConnection]
-	if !ok {
-		return "", fmt.Errorf("internal error: default connection %q not found in database", defaultConnection)
-	}
 	parsedConnection, err := url.Parse(connection.URI)
 	if err != nil {
 		return "", fmt.Errorf("preparing connection to remote machine: %w", err)
@@ -159,7 +150,12 @@ func composeDockerHost() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("getting machine provider: %w", err)
 	}
-	machineList, err := machineProvider.List(machine.ListOptions{})
+	dirs, err := machine.GetMachineDirs(machineProvider.VMType())
+	if err != nil {
+		return "", err
+	}
+
+	machineList, err := vmconfigs.LoadMachinesInDir(dirs)
 	if err != nil {
 		return "", fmt.Errorf("listing machines: %w", err)
 	}
@@ -172,31 +168,32 @@ func composeDockerHost() (string, error) {
 		return "", fmt.Errorf("parsing connection port: %w", err)
 	}
 	for _, item := range machineList {
-		if connectionPort != item.Port {
+		if connectionPort != item.SSH.Port {
 			continue
 		}
 
-		vm, err := machineProvider.LoadVMByName(item.Name)
+		state, err := machineProvider.State(item, false)
 		if err != nil {
-			return "", fmt.Errorf("loading machine: %w", err)
+			return "", err
 		}
-		info, err := vm.Inspect()
-		if err != nil {
-			return "", fmt.Errorf("inspecting machine: %w", err)
+
+		if state != define.Running {
+			return "", fmt.Errorf("machine %s is not running but in state %s", item.Name, state)
 		}
-		if info.State != machine.Running {
-			return "", fmt.Errorf("machine %s is not running but in state %s", item.Name, info.State)
-		}
-		if machineProvider.VMType() == machine.WSLVirt || machineProvider.VMType() == machine.HyperVVirt {
-			if info.ConnectionInfo.PodmanPipe == nil {
-				return "", errors.New("pipe of machine is not set")
-			}
-			return strings.Replace(info.ConnectionInfo.PodmanPipe.Path, `\\.\pipe\`, "npipe:////./pipe/", 1), nil
-		}
-		if info.ConnectionInfo.PodmanSocket == nil {
-			return "", errors.New("socket of machine is not set")
-		}
-		return "unix://" + info.ConnectionInfo.PodmanSocket.Path, nil
+
+		// TODO This needs to be wired back in when all providers are complete
+		// TODO Need someoone to plumb in the connection information below
+		// if machineProvider.VMType() == define.WSLVirt || machineProvider.VMType() == define.HyperVVirt {
+		// 	if info.ConnectionInfo.PodmanPipe == nil {
+		// 		return "", errors.New("pipe of machine is not set")
+		// 	}
+		// 	return strings.Replace(info.ConnectionInfo.PodmanPipe.Path, `\\.\pipe\`, "npipe:////./pipe/", 1), nil
+		// }
+		// if info.ConnectionInfo.PodmanSocket == nil {
+		// 	return "", errors.New("socket of machine is not set")
+		// }
+		// return "unix://" + info.ConnectionInfo.PodmanSocket.Path, nil
+		return "", nil
 	}
 
 	return "", fmt.Errorf("could not find a matching machine for connection %q", connection.URI)

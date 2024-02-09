@@ -11,9 +11,9 @@ import (
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/ssh"
-	"github.com/containers/podman/v4/cmd/podman/common"
-	"github.com/containers/podman/v4/cmd/podman/registry"
-	"github.com/containers/podman/v4/cmd/podman/system"
+	"github.com/containers/podman/v5/cmd/podman/common"
+	"github.com/containers/podman/v5/cmd/podman/registry"
+	"github.com/containers/podman/v5/cmd/podman/system"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -176,49 +176,39 @@ func add(cmd *cobra.Command, args []string) error {
 		logrus.Warnf("%q unknown scheme, no validation provided", uri.Scheme)
 	}
 
-	cfg, err := config.ReadCustomConfig()
-	if err != nil {
-		return err
-	}
-
-	if cmd.Flags().Changed("default") {
-		if cOpts.Default {
-			cfg.Engine.ActiveService = args[0]
-		}
-	}
-
 	dst := config.Destination{
-		URI: uri.String(),
+		URI:      uri.String(),
+		Identity: cOpts.Identity,
 	}
 
-	if cmd.Flags().Changed("identity") {
-		dst.Identity = cOpts.Identity
-	}
-
-	if cfg.Engine.ServiceDestinations == nil {
-		cfg.Engine.ServiceDestinations = map[string]config.Destination{
-			args[0]: dst,
+	connection := args[0]
+	return config.EditConnectionConfig(func(cfg *config.ConnectionsFile) error {
+		if cOpts.Default {
+			cfg.Connection.Default = connection
 		}
-		cfg.Engine.ActiveService = args[0]
-	} else {
-		cfg.Engine.ServiceDestinations[args[0]] = dst
-	}
 
-	if cOpts.Farm != "" {
-		if cfg.Farms.List == nil {
-			cfg.Farms.List = map[string][]string{
-				cOpts.Farm: {args[0]},
+		if cfg.Connection.Connections == nil {
+			cfg.Connection.Connections = map[string]config.Destination{
+				connection: dst,
 			}
-			cfg.Farms.Default = cOpts.Farm
+			cfg.Connection.Default = connection
 		} else {
-			if val, ok := cfg.Farms.List[cOpts.Farm]; ok {
-				cfg.Farms.List[cOpts.Farm] = append(val, args[0])
+			cfg.Connection.Connections[connection] = dst
+		}
+
+		// Create or update an existing farm with the connection being added
+		if cOpts.Farm != "" {
+			if len(cfg.Farm.List) == 0 {
+				cfg.Farm.Default = cOpts.Farm
+			}
+			if val, ok := cfg.Farm.List[cOpts.Farm]; ok {
+				cfg.Farm.List[cOpts.Farm] = append(val, connection)
 			} else {
-				cfg.Farms.List[cOpts.Farm] = []string{args[0]}
+				cfg.Farm.List[cOpts.Farm] = []string{connection}
 			}
 		}
-	}
-	return cfg.Write()
+		return nil
+	})
 }
 
 func create(cmd *cobra.Command, args []string) error {
@@ -237,39 +227,36 @@ func create(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	cfg, err := config.ReadCustomConfig()
-	if err != nil {
-		return err
-	}
-
 	dst := config.Destination{
 		URI: uri.String(),
 	}
 
-	if cfg.Engine.ServiceDestinations == nil {
-		cfg.Engine.ServiceDestinations = map[string]config.Destination{
-			args[0]: dst,
+	return config.EditConnectionConfig(func(cfg *config.ConnectionsFile) error {
+		if cfg.Connection.Connections == nil {
+			cfg.Connection.Connections = map[string]config.Destination{
+				args[0]: dst,
+			}
+			cfg.Connection.Default = args[0]
+		} else {
+			cfg.Connection.Connections[args[0]] = dst
 		}
-		cfg.Engine.ActiveService = args[0]
-	} else {
-		cfg.Engine.ServiceDestinations[args[0]] = dst
-	}
-	return cfg.Write()
+		return nil
+	})
 }
 
 func translateDest(path string) (string, error) {
 	if path == "" {
 		return "", nil
 	}
-	split := strings.SplitN(path, "=", 2)
-	if len(split) == 1 {
-		return split[0], nil
+	key, val, hasVal := strings.Cut(path, "=")
+	if !hasVal {
+		return key, nil
 	}
-	if split[0] != "host" {
-		return "", fmt.Errorf("\"host\" is requited for --docker option")
+	if key != "host" {
+		return "", fmt.Errorf("\"host\" is required for --docker option")
 	}
 	// "host=tcp://myserver:2376,ca=~/ca-file,cert=~/cert-file,key=~/key-file"
-	vals := strings.Split(split[1], ",")
+	vals := strings.Split(val, ",")
 	if len(vals) > 1 {
 		return "", fmt.Errorf("--docker additional options %q not supported", strings.Join(vals[1:], ","))
 	}

@@ -18,12 +18,12 @@ import (
 	"strings"
 
 	"github.com/containers/buildah/define"
-	"github.com/containers/image/v5/types"
-	ldefine "github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/auth"
-	"github.com/containers/podman/v4/pkg/bindings"
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/containers/podman/v4/pkg/util"
+	imageTypes "github.com/containers/image/v5/types"
+	ldefine "github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/pkg/auth"
+	"github.com/containers/podman/v5/pkg/bindings"
+	"github.com/containers/podman/v5/pkg/domain/entities/types"
+	"github.com/containers/podman/v5/pkg/util"
 	"github.com/containers/storage/pkg/fileutils"
 	"github.com/containers/storage/pkg/ioutils"
 	"github.com/containers/storage/pkg/regexp"
@@ -50,7 +50,7 @@ type BuildResponse struct {
 }
 
 // Build creates an image using a containerfile reference
-func Build(ctx context.Context, containerFiles []string, options entities.BuildOptions) (*entities.BuildReport, error) {
+func Build(ctx context.Context, containerFiles []string, options types.BuildOptions) (*types.BuildReport, error) {
 	if options.CommonBuildOpts == nil {
 		options.CommonBuildOpts = new(define.CommonBuildOptions)
 	}
@@ -255,9 +255,9 @@ func Build(ctx context.Context, containerFiles []string, options entities.BuildO
 	}
 
 	switch options.SkipUnusedStages {
-	case types.OptionalBoolTrue:
+	case imageTypes.OptionalBoolTrue:
 		params.Set("skipunusedstages", "1")
-	case types.OptionalBoolFalse:
+	case imageTypes.OptionalBoolFalse:
 		params.Set("skipunusedstages", "0")
 	}
 
@@ -342,9 +342,9 @@ func Build(ctx context.Context, containerFiles []string, options entities.BuildO
 	params.Set("pullpolicy", options.PullPolicy.String())
 
 	switch options.CommonBuildOpts.IdentityLabel {
-	case types.OptionalBoolTrue:
+	case imageTypes.OptionalBoolTrue:
 		params.Set("identitylabel", "1")
-	case types.OptionalBoolFalse:
+	case imageTypes.OptionalBoolFalse:
 		params.Set("identitylabel", "0")
 	}
 	if options.Quiet {
@@ -416,7 +416,7 @@ func Build(ctx context.Context, containerFiles []string, options entities.BuildO
 		} else {
 			headers, err = auth.MakeXRegistryConfigHeader(options.SystemContext, "", "")
 		}
-		if options.SystemContext.DockerInsecureSkipTLSVerify == types.OptionalBoolTrue {
+		if options.SystemContext.DockerInsecureSkipTLSVerify == imageTypes.OptionalBoolTrue {
 			params.Set("tlsVerify", "false")
 		}
 	}
@@ -530,9 +530,9 @@ func Build(ctx context.Context, containerFiles []string, options entities.BuildO
 			if len(secretOpt) > 0 {
 				modifiedOpt := []string{}
 				for _, token := range secretOpt {
-					arr := strings.SplitN(token, "=", 2)
-					if len(arr) > 1 {
-						if arr[0] == "src" {
+					opt, val, hasVal := strings.Cut(token, "=")
+					if hasVal {
+						if opt == "src" {
 							// read specified secret into a tmp file
 							// move tmp file to tar and change secret source to relative tmp file
 							tmpSecretFile, err := os.CreateTemp(options.ContextDirectory, "podman-build-secret")
@@ -541,7 +541,7 @@ func Build(ctx context.Context, containerFiles []string, options entities.BuildO
 							}
 							defer os.Remove(tmpSecretFile.Name()) // clean up
 							defer tmpSecretFile.Close()
-							srcSecretFile, err := os.Open(arr[1])
+							srcSecretFile, err := os.Open(val)
 							if err != nil {
 								return nil, err
 							}
@@ -618,7 +618,7 @@ func Build(ctx context.Context, containerFiles []string, options entities.BuildO
 		// even when the server quit but it seems desirable to
 		// distinguish a proper build from a transient EOF.
 		case <-response.Request.Context().Done():
-			return &entities.BuildReport{ID: id, SaveFormat: saveFormat}, nil
+			return &types.BuildReport{ID: id, SaveFormat: saveFormat}, nil
 		default:
 			// non-blocking select
 		}
@@ -632,7 +632,7 @@ func Build(ctx context.Context, containerFiles []string, options entities.BuildO
 			if errors.Is(err, io.EOF) && id != "" {
 				break
 			}
-			return &entities.BuildReport{ID: id, SaveFormat: saveFormat}, fmt.Errorf("decoding stream: %w", err)
+			return &types.BuildReport{ID: id, SaveFormat: saveFormat}, fmt.Errorf("decoding stream: %w", err)
 		}
 
 		switch {
@@ -645,12 +645,12 @@ func Build(ctx context.Context, containerFiles []string, options entities.BuildO
 		case s.Error != nil:
 			// If there's an error, return directly.  The stream
 			// will be closed on return.
-			return &entities.BuildReport{ID: id, SaveFormat: saveFormat}, errors.New(s.Error.Message)
+			return &types.BuildReport{ID: id, SaveFormat: saveFormat}, errors.New(s.Error.Message)
 		default:
-			return &entities.BuildReport{ID: id, SaveFormat: saveFormat}, errors.New("failed to parse build results stream, unexpected input")
+			return &types.BuildReport{ID: id, SaveFormat: saveFormat}, errors.New("failed to parse build results stream, unexpected input")
 		}
 	}
-	return &entities.BuildReport{ID: id, SaveFormat: saveFormat}, nil
+	return &types.BuildReport{ID: id, SaveFormat: saveFormat}, nil
 }
 
 func nTar(excludes []string, sources ...string) (io.ReadCloser, error) {

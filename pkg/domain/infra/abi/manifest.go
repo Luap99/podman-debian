@@ -18,8 +18,8 @@ import (
 	"github.com/containers/image/v5/transports"
 	"github.com/containers/image/v5/transports/alltransports"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	envLib "github.com/containers/podman/v4/pkg/env"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	envLib "github.com/containers/podman/v5/pkg/env"
 	"github.com/containers/storage"
 	"github.com/opencontainers/go-digest"
 	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
@@ -230,11 +230,11 @@ func (ir *ImageEngine) ManifestAdd(ctx context.Context, name string, images []st
 		if len(opts.Annotation) != 0 {
 			annotations := make(map[string]string)
 			for _, annotationSpec := range opts.Annotation {
-				spec := strings.SplitN(annotationSpec, "=", 2)
-				if len(spec) != 2 {
-					return "", fmt.Errorf("no value given for annotation %q", spec[0])
+				key, val, hasVal := strings.Cut(annotationSpec, "=")
+				if !hasVal {
+					return "", fmt.Errorf("no value given for annotation %q", key)
 				}
-				annotations[spec[0]] = spec[1]
+				annotations[key] = val
 			}
 			opts.Annotations = envLib.Join(opts.Annotations, annotations)
 		}
@@ -269,11 +269,11 @@ func (ir *ImageEngine) ManifestAnnotate(ctx context.Context, name, image string,
 	if len(opts.Annotation) != 0 {
 		annotations := make(map[string]string)
 		for _, annotationSpec := range opts.Annotation {
-			spec := strings.SplitN(annotationSpec, "=", 2)
-			if len(spec) != 2 {
-				return "", fmt.Errorf("no value given for annotation %q", spec[0])
+			key, val, hasVal := strings.Cut(annotationSpec, "=")
+			if !hasVal {
+				return "", fmt.Errorf("no value given for annotation %q", key)
 			}
-			annotations[spec[0]] = spec[1]
+			annotations[key] = val
 		}
 		opts.Annotations = envLib.Join(opts.Annotations, annotations)
 	}

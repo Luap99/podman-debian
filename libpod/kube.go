@@ -1,5 +1,4 @@
 //go:build !remote
-// +build !remote
 
 package libpod
 
@@ -18,21 +17,21 @@ import (
 
 	"github.com/containers/common/libnetwork/types"
 	"github.com/containers/common/pkg/config"
-	cutil "github.com/containers/common/pkg/util"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/annotations"
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/containers/podman/v4/pkg/env"
-	v1 "github.com/containers/podman/v4/pkg/k8s.io/api/core/v1"
-	"github.com/containers/podman/v4/pkg/k8s.io/apimachinery/pkg/api/resource"
-	v12 "github.com/containers/podman/v4/pkg/k8s.io/apimachinery/pkg/apis/meta/v1"
-	"github.com/containers/podman/v4/pkg/k8s.io/apimachinery/pkg/util/intstr"
-	"github.com/containers/podman/v4/pkg/lookup"
-	"github.com/containers/podman/v4/pkg/namespaces"
-	"github.com/containers/podman/v4/pkg/specgen"
-	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/pkg/annotations"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	"github.com/containers/podman/v5/pkg/env"
+	v1 "github.com/containers/podman/v5/pkg/k8s.io/api/core/v1"
+	"github.com/containers/podman/v5/pkg/k8s.io/apimachinery/pkg/api/resource"
+	v12 "github.com/containers/podman/v5/pkg/k8s.io/apimachinery/pkg/apis/meta/v1"
+	"github.com/containers/podman/v5/pkg/k8s.io/apimachinery/pkg/util/intstr"
+	"github.com/containers/podman/v5/pkg/lookup"
+	"github.com/containers/podman/v5/pkg/namespaces"
+	"github.com/containers/podman/v5/pkg/specgen"
+	"github.com/containers/podman/v5/pkg/util"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/exp/slices"
 )
 
 // GenerateForKube takes a slice of libpod containers and generates
@@ -74,13 +73,13 @@ func (p *Pod) GenerateForKube(ctx context.Context, getService, useLongAnnotation
 			return nil, servicePorts, err
 		}
 		for _, host := range infraContainer.config.ContainerNetworkConfig.HostAdd {
-			hostSli := strings.SplitN(host, ":", 2)
-			if len(hostSli) != 2 {
+			hostname, ip, hasIP := strings.Cut(host, ":")
+			if !hasIP {
 				return nil, servicePorts, errors.New("invalid hostAdd")
 			}
 			extraHost = append(extraHost, v1.HostAlias{
-				IP:        hostSli[1],
-				Hostnames: []string{hostSli[0]},
+				IP:        ip,
+				Hostnames: []string{hostname},
 			})
 		}
 		ports, err = portMappingToContainerPort(infraContainer.config.PortMappings, getService)
@@ -730,7 +729,7 @@ func simplePodWithV1Containers(ctx context.Context, ctrs []*Container, getServic
 			for _, ulimit := range ctr.config.Spec.Process.Rlimits {
 				finalUlimit := strings.ToLower(strings.ReplaceAll(ulimit.Type, "RLIMIT_", "")) + "=" + strconv.Itoa(int(ulimit.Soft)) + ":" + strconv.Itoa(int(ulimit.Hard))
 				// compare ulimit with default list so we don't add it twice
-				if cutil.StringInSlice(finalUlimit, defaultUlimits) {
+				if slices.Contains(defaultUlimits, finalUlimit) {
 					continue
 				}
 
@@ -769,7 +768,7 @@ func simplePodWithV1Containers(ctx context.Context, ctrs []*Container, getServic
 					podDNS.Nameservers = make([]string, 0)
 				}
 				for _, s := range servers {
-					if !cutil.StringInSlice(s, podDNS.Nameservers) { // only append if it does not exist
+					if !slices.Contains(podDNS.Nameservers, s) { // only append if it does not exist
 						podDNS.Nameservers = append(podDNS.Nameservers, s)
 					}
 				}
@@ -780,7 +779,7 @@ func simplePodWithV1Containers(ctx context.Context, ctrs []*Container, getServic
 					podDNS.Searches = make([]string, 0)
 				}
 				for _, d := range domains {
-					if !cutil.StringInSlice(d, podDNS.Searches) { // only append if it does not exist
+					if !slices.Contains(podDNS.Searches, d) { // only append if it does not exist
 						podDNS.Searches = append(podDNS.Searches, d)
 					}
 				}
@@ -797,7 +796,7 @@ func simplePodWithV1Containers(ctx context.Context, ctrs []*Container, getServic
 	podName := removeUnderscores(ctrs[0].Name())
 	// Check if the pod name and container name will end up conflicting
 	// Append -pod if so
-	if cutil.StringInSlice(podName, ctrNames) {
+	if slices.Contains(ctrNames, podName) {
 		podName += "-pod"
 	}
 
@@ -1002,10 +1001,10 @@ func containerToV1Container(ctx context.Context, c *Container, getService bool) 
 		dnsOptions := make([]v1.PodDNSConfigOption, 0)
 		for _, option := range options {
 			// the option can be "k:v" or just "k", no delimiter is required
-			opts := strings.SplitN(option, ":", 2)
+			name, value, _ := strings.Cut(option, ":")
 			dnsOpt := v1.PodDNSConfigOption{
-				Name:  opts[0],
-				Value: &opts[1],
+				Name:  name,
+				Value: &value,
 			}
 			dnsOptions = append(dnsOptions, dnsOpt)
 		}
@@ -1056,23 +1055,23 @@ func libpodEnvVarsToKubeEnvVars(envs []string, imageEnvs []string) ([]v1.EnvVar,
 	envVars := make([]v1.EnvVar, 0, len(envs))
 	imageMap := make(map[string]string, len(imageEnvs))
 	for _, ie := range imageEnvs {
-		split := strings.SplitN(ie, "=", 2)
-		imageMap[split[0]] = split[1]
+		key, val, _ := strings.Cut(ie, "=")
+		imageMap[key] = val
 	}
 	for _, e := range envs {
-		split := strings.SplitN(e, "=", 2)
-		if len(split) != 2 {
+		envName, envValue, hasValue := strings.Cut(e, "=")
+		if !hasValue {
 			return envVars, fmt.Errorf("environment variable %s is malformed; should be key=value", e)
 		}
-		if defaultEnv[split[0]] == split[1] {
+		if defaultEnv[envName] == envValue {
 			continue
 		}
-		if imageMap[split[0]] == split[1] {
+		if imageMap[envName] == envValue {
 			continue
 		}
 		ev := v1.EnvVar{
-			Name:  split[0],
-			Value: split[1],
+			Name:  envName,
+			Value: envValue,
 		}
 		envVars = append(envVars, ev)
 	}
@@ -1115,7 +1114,7 @@ func libpodMountsToKubeVolumeMounts(c *Container) ([]v1.VolumeMount, []v1.Volume
 
 // generateKubePersistentVolumeClaim converts a ContainerNamedVolume to a Kubernetes PersistentVolumeClaim
 func generateKubePersistentVolumeClaim(v *ContainerNamedVolume) (v1.VolumeMount, v1.Volume) {
-	ro := cutil.StringInSlice("ro", v.Options)
+	ro := slices.Contains(v.Options, "ro")
 
 	// To avoid naming conflicts with any host path mounts, add a unique suffix to the volume's name.
 	name := v.Name + "-pvc"
@@ -1176,7 +1175,7 @@ func generateKubeVolumeMount(m specs.Mount) (v1.VolumeMount, v1.Volume, error) {
 	}
 	vm.Name = name
 	vm.MountPath = m.Destination
-	if cutil.StringInSlice("ro", m.Options) {
+	if slices.Contains(m.Options, "ro") {
 		vm.ReadOnly = true
 	}
 
@@ -1217,7 +1216,7 @@ func determineCapAddDropFromCapabilities(defaultCaps, containerCaps []string) *v
 	// Find caps in the defaultCaps but not in the container's
 	// those indicate a dropped cap
 	for _, capability := range defaultCaps {
-		if !cutil.StringInSlice(capability, containerCaps) {
+		if !slices.Contains(containerCaps, capability) {
 			if _, ok := dedupDrop[capability]; !ok {
 				drop = append(drop, v1.Capability(capability))
 				dedupDrop[capability] = true
@@ -1227,7 +1226,7 @@ func determineCapAddDropFromCapabilities(defaultCaps, containerCaps []string) *v
 	// Find caps in the container but not in the defaults; those indicate
 	// an added cap
 	for _, capability := range containerCaps {
-		if !cutil.StringInSlice(capability, defaultCaps) {
+		if !slices.Contains(defaultCaps, capability) {
 			if _, ok := dedupAdd[capability]; !ok {
 				add = append(add, v1.Capability(capability))
 				dedupAdd[capability] = true
@@ -1287,25 +1286,22 @@ func generateKubeSecurityContext(c *Container) (*v1.SecurityContext, bool, error
 	var selinuxOpts v1.SELinuxOptions
 	selinuxHasData := false
 	for _, label := range strings.Split(c.config.Spec.Annotations[define.InspectAnnotationLabel], ",label=") {
-		opts := strings.SplitN(label, ":", 2)
-		switch len(opts) {
-		case 2:
-			switch opts[0] {
+		opt, val, hasVal := strings.Cut(label, ":")
+		if hasVal {
+			switch opt {
 			case "filetype":
-				selinuxOpts.FileType = opts[1]
+				selinuxOpts.FileType = val
 				selinuxHasData = true
 			case "type":
-				selinuxOpts.Type = opts[1]
+				selinuxOpts.Type = val
 				selinuxHasData = true
 			case "level":
-				selinuxOpts.Level = opts[1]
+				selinuxOpts.Level = val
 				selinuxHasData = true
 			}
-		case 1:
-			if opts[0] == "disable" {
-				selinuxOpts.Type = "spc_t"
-				selinuxHasData = true
-			}
+		} else if opt == "disable" {
+			selinuxOpts.Type = "spc_t"
+			selinuxHasData = true
 		}
 	}
 	if selinuxHasData {

@@ -14,17 +14,17 @@ import (
 	"github.com/containers/common/libimage/define"
 	"github.com/containers/image/v5/docker/reference"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v4/libpod"
-	"github.com/containers/podman/v4/pkg/api/handlers"
-	"github.com/containers/podman/v4/pkg/api/handlers/utils"
-	"github.com/containers/podman/v4/pkg/api/handlers/utils/apiutil"
-	api "github.com/containers/podman/v4/pkg/api/types"
-	"github.com/containers/podman/v4/pkg/auth"
-	"github.com/containers/podman/v4/pkg/channel"
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/containers/podman/v4/pkg/domain/infra/abi"
-	envLib "github.com/containers/podman/v4/pkg/env"
-	"github.com/containers/podman/v4/pkg/errorhandling"
+	"github.com/containers/podman/v5/libpod"
+	"github.com/containers/podman/v5/pkg/api/handlers"
+	"github.com/containers/podman/v5/pkg/api/handlers/utils"
+	"github.com/containers/podman/v5/pkg/api/handlers/utils/apiutil"
+	api "github.com/containers/podman/v5/pkg/api/types"
+	"github.com/containers/podman/v5/pkg/auth"
+	"github.com/containers/podman/v5/pkg/channel"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	"github.com/containers/podman/v5/pkg/domain/infra/abi"
+	envLib "github.com/containers/podman/v5/pkg/env"
+	"github.com/containers/podman/v5/pkg/errorhandling"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/schema"
 	"github.com/opencontainers/go-digest"
@@ -489,12 +489,12 @@ func ManifestModify(w http.ResponseWriter, r *http.Request) {
 		}
 		annotations := make(map[string]string)
 		for _, annotationSpec := range body.ManifestAddOptions.Annotation {
-			spec := strings.SplitN(annotationSpec, "=", 2)
-			if len(spec) != 2 {
-				utils.Error(w, http.StatusBadRequest, fmt.Errorf("no value given for annotation %q", spec[0]))
+			key, val, hasVal := strings.Cut(annotationSpec, "=")
+			if !hasVal {
+				utils.Error(w, http.StatusBadRequest, fmt.Errorf("no value given for annotation %q", key))
 				return
 			}
-			annotations[spec[0]] = spec[1]
+			annotations[key] = val
 		}
 		body.ManifestAddOptions.Annotations = envLib.Join(body.ManifestAddOptions.Annotations, annotations)
 		body.ManifestAddOptions.Annotation = nil

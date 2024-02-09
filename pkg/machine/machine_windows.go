@@ -1,5 +1,4 @@
 //go:build windows
-// +build windows
 
 package machine
 
@@ -12,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/containers/podman/v5/pkg/machine/define"
 	"github.com/sirupsen/logrus"
 )
 
@@ -32,7 +32,7 @@ type WinProxyOpts struct {
 	Port           int
 	RemoteUsername string
 	Rootful        bool
-	VMType         VMType
+	VMType         define.VMType
 }
 
 func GetProcessState(pid int) (active bool, exitCode int) {
@@ -133,6 +133,7 @@ func launchWinProxy(opts WinProxyOpts) (bool, string, error) {
 	}
 
 	cmd := exec.Command(command, args...)
+	logrus.Debugf("winssh command: %s %v", command, args)
 	if err := cmd.Start(); err != nil {
 		return globalName, "", err
 	}
@@ -147,7 +148,7 @@ func launchWinProxy(opts WinProxyOpts) (bool, string, error) {
 	})
 }
 
-func StopWinProxy(name string, vmtype VMType) error {
+func StopWinProxy(name string, vmtype define.VMType) error {
 	pid, tid, tidFile, err := readWinProxyTid(name, vmtype)
 	if err != nil {
 		return err
@@ -164,7 +165,7 @@ func StopWinProxy(name string, vmtype VMType) error {
 	return nil
 }
 
-func readWinProxyTid(name string, vmtype VMType) (uint32, uint32, string, error) {
+func readWinProxyTid(name string, vmtype define.VMType) (uint32, uint32, string, error) {
 	stateDir, err := GetWinProxyStateDir(name, vmtype)
 	if err != nil {
 		return 0, 0, "", err
@@ -220,7 +221,7 @@ func FindExecutablePeer(name string) (string, error) {
 	return filepath.Join(filepath.Dir(exe), name), nil
 }
 
-func GetWinProxyStateDir(name string, vmtype VMType) (string, error) {
+func GetWinProxyStateDir(name string, vmtype define.VMType) (string, error) {
 	dir, err := GetDataDir(vmtype)
 	if err != nil {
 		return "", err

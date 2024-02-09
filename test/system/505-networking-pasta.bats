@@ -254,10 +254,6 @@ function pasta_test_do() {
     assert "${output}" = "${expect}" "Mismatch between data sent and received"
 }
 
-function teardown() {
-    rm -f "${XFER_FILE}"
-}
-
 ### Addresses ##################################################################
 
 @test "IPv4 default address assignment" {
@@ -693,7 +689,6 @@ function teardown() {
 }
 
 @test "TCP/IPv4 large transfer, tap" {
-    skip "FIXME: #20170 - needs passt >= 2023-11-10"
     pasta_test_do
 }
 
