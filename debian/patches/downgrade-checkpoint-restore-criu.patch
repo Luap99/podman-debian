@@ -2,7 +2,7 @@ Index: libpod/libpod/container_internal_common.go
 ===================================================================
 --- libpod.orig/libpod/container_internal_common.go
 +++ libpod/libpod/container_internal_common.go
-@@ -21,7 +21,7 @@ import (
+@@ -19,7 +19,7 @@ import (
  	"time"
  
  	metadata "github.com/checkpoint-restore/checkpointctl/lib"
@@ -28,7 +28,7 @@ Index: libpod/pkg/criu/criu_linux.go
 ===================================================================
 --- libpod.orig/pkg/criu/criu_linux.go
 +++ libpod/pkg/criu/criu_linux.go
-@@ -6,8 +6,8 @@ package criu
+@@ -5,8 +5,8 @@ package criu
  import (
  	"fmt"
  
@@ -49,6 +49,6 @@ Index: libpod/test/e2e/checkpoint_test.go
  
 -	"github.com/checkpoint-restore/go-criu/v7/stats"
 +	"github.com/checkpoint-restore/go-criu/v6/stats"
- 	"github.com/containers/podman/v4/pkg/checkpoint/crutils"
- 	"github.com/containers/podman/v4/pkg/criu"
- 	"github.com/containers/podman/v4/pkg/domain/entities"
+ 	"github.com/containers/podman/v5/pkg/checkpoint/crutils"
+ 	"github.com/containers/podman/v5/pkg/criu"
+ 	"github.com/containers/podman/v5/pkg/domain/entities"

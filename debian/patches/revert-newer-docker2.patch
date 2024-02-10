@@ -11,9 +11,9 @@ Index: libpod/pkg/api/handlers/compat/auth.go
 --- libpod.orig/pkg/api/handlers/compat/auth.go
 +++ libpod/pkg/api/handlers/compat/auth.go
 @@ -15,11 +15,11 @@ import (
- 	"github.com/containers/podman/v4/pkg/api/handlers/utils"
- 	api "github.com/containers/podman/v4/pkg/api/types"
- 	"github.com/containers/podman/v4/pkg/domain/entities"
+ 	"github.com/containers/podman/v5/pkg/api/handlers/utils"
+ 	api "github.com/containers/podman/v5/pkg/api/types"
+ 	"github.com/containers/podman/v5/pkg/domain/entities"
 -	"github.com/docker/docker/api/types/registry"
 +	docker "github.com/docker/docker/api/types"
  )
@@ -34,7 +34,7 @@ Index: libpod/pkg/api/handlers/compat/info.go
  			CgroupDriver:       configInfo.Engine.CgroupManager,
 +			ClusterAdvertise:   "",
 +			ClusterStore:       "",
- 			ContainerdCommit:   docker.Commit{},
+ 			ContainerdCommit:   dockerSystem.Commit{},
  			Containers:         infoData.Store.ContainerStore.Number,
  			ContainersPaused:   stateInfo[define.ContainerStatePaused],
 Index: libpod/pkg/auth/auth.go
@@ -54,16 +54,16 @@ Index: libpod/pkg/specgen/generate/kube/kube.go
 ===================================================================
 --- libpod.orig/pkg/specgen/generate/kube/kube.go
 +++ libpod/pkg/specgen/generate/kube/kube.go
-@@ -35,7 +35,7 @@ import (
- 	"github.com/containers/podman/v4/pkg/specgen/generate"
- 	systemdDefine "github.com/containers/podman/v4/pkg/systemd/define"
- 	"github.com/containers/podman/v4/pkg/util"
+@@ -33,7 +33,7 @@ import (
+ 	"github.com/containers/podman/v5/pkg/specgen/generate"
+ 	systemdDefine "github.com/containers/podman/v5/pkg/systemd/define"
+ 	"github.com/containers/podman/v5/pkg/util"
 -	"github.com/docker/docker/pkg/meminfo"
 +	"github.com/docker/docker/pkg/system"
  	"github.com/docker/go-units"
  	spec "github.com/opencontainers/runtime-spec/specs-go"
  	"github.com/sirupsen/logrus"
-@@ -1122,7 +1122,7 @@ func getContainerResources(container v1.
+@@ -1134,7 +1134,7 @@ func getContainerResources(container v1.
  	requests := container.Resources.Requests
  
  	if limits == nil || limits.Memory().IsZero() {
@@ -76,16 +76,16 @@ Index: libpod/pkg/specgen/generate/kube/play_test.go
 ===================================================================
 --- libpod.orig/pkg/specgen/generate/kube/play_test.go
 +++ libpod/pkg/specgen/generate/kube/play_test.go
-@@ -15,7 +15,7 @@ import (
- 	v12 "github.com/containers/podman/v4/pkg/k8s.io/apimachinery/pkg/apis/meta/v1"
- 	"github.com/containers/podman/v4/pkg/k8s.io/apimachinery/pkg/util/intstr"
- 	"github.com/containers/podman/v4/pkg/specgen"
+@@ -14,7 +14,7 @@ import (
+ 	v12 "github.com/containers/podman/v5/pkg/k8s.io/apimachinery/pkg/apis/meta/v1"
+ 	"github.com/containers/podman/v5/pkg/k8s.io/apimachinery/pkg/util/intstr"
+ 	"github.com/containers/podman/v5/pkg/specgen"
 -	"github.com/docker/docker/pkg/meminfo"
 +	"github.com/docker/docker/pkg/system"
  	"github.com/stretchr/testify/assert"
  	"sigs.k8s.io/yaml"
  )
-@@ -448,7 +448,7 @@ func TestEnvVarValue(t *testing.T) {
+@@ -447,7 +447,7 @@ func TestEnvVarValue(t *testing.T) {
  	secretsManager := createSecrets(t, d)
  	stringNumCPUs := strconv.Itoa(runtime.NumCPU())
  

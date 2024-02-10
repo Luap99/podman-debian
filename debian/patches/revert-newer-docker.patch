@@ -17,15 +17,15 @@ Index: libpod/pkg/api/handlers/compat/system.go
 ===================================================================
 --- libpod.orig/pkg/api/handlers/compat/system.go
 +++ libpod/pkg/api/handlers/compat/system.go
-@@ -11,7 +11,6 @@ import (
- 	"github.com/containers/podman/v4/pkg/domain/entities"
- 	"github.com/containers/podman/v4/pkg/domain/infra/abi"
+@@ -12,7 +12,6 @@ import (
+ 	"github.com/containers/podman/v5/pkg/domain/infra/abi"
  	docker "github.com/docker/docker/api/types"
+ 	dockerImage "github.com/docker/docker/api/types/image"
 -	"github.com/docker/docker/api/types/volume"
  )
  
  func GetDiskUsage(w http.ResponseWriter, r *http.Request) {
-@@ -65,9 +64,9 @@ func GetDiskUsage(w http.ResponseWriter,
+@@ -66,9 +65,9 @@ func GetDiskUsage(w http.ResponseWriter,
  		ctnrs[i] = &t
  	}
  
@@ -37,7 +37,7 @@ Index: libpod/pkg/api/handlers/compat/system.go
  			CreatedAt:  "",
  			Driver:     "",
  			Labels:     map[string]string{},
-@@ -76,7 +75,7 @@ func GetDiskUsage(w http.ResponseWriter,
+@@ -77,7 +76,7 @@ func GetDiskUsage(w http.ResponseWriter,
  			Options:    nil,
  			Scope:      "local",
  			Status:     nil,
@@ -116,7 +116,7 @@ Index: libpod/pkg/api/handlers/swagger/responses.go
 ===================================================================
 --- libpod.orig/pkg/api/handlers/swagger/responses.go
 +++ libpod/pkg/api/handlers/swagger/responses.go
-@@ -240,7 +240,7 @@ type containersList struct {
+@@ -241,7 +241,7 @@ type containersList struct {
  // swagger:response
  type volumeInspect struct {
  	// in:body
@@ -125,7 +125,7 @@ Index: libpod/pkg/api/handlers/swagger/responses.go
  }
  
  // Volume prune
-@@ -254,7 +254,7 @@ type volumePruneResponse struct {
+@@ -255,7 +255,7 @@ type volumePruneResponse struct {
  // swagger:response
  type volumeList struct {
  	// in:body
