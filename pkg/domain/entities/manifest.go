@@ -1,9 +1,6 @@
 package entities
 
-import (
-	"github.com/containers/image/v5/types"
-	entitiesTypes "github.com/containers/podman/v5/pkg/domain/entities/types"
-)
+import "github.com/containers/image/v5/types"
 
 // ManifestCreateOptions provides model for creating manifest
 type ManifestCreateOptions struct {
@@ -48,7 +45,7 @@ type ManifestAddOptions struct {
 type ManifestAnnotateOptions struct {
 	// Annotation to add to manifest list
 	Annotation []string `json:"annotation" schema:"annotation"`
-	// Annotations to add to manifest list by a map which is preferred over Annotation
+	// Annotations to add to manifest list by a map which is prefferred over Annotation
 	Annotations map[string]string `json:"annotations" schema:"annotations"`
 	// Arch overrides the architecture for the image
 	Arch string `json:"arch" schema:"arch"`
@@ -82,7 +79,14 @@ type ManifestModifyOptions struct {
 // ManifestPushReport provides the model for the pushed manifest
 //
 // swagger:model
-type ManifestPushReport = entitiesTypes.ManifestPushReport
+type ManifestPushReport struct {
+	// ID of the pushed manifest
+	ID string `json:"Id"`
+	// Stream used to provide push progress
+	Stream string `json:"stream,omitempty"`
+	// Error contains text of errors from pushing
+	Error string `json:"error,omitempty"`
+}
 
 // ManifestRemoveOptions provides the model for removing digests from a manifest
 //
@@ -93,9 +97,26 @@ type ManifestRemoveOptions struct {
 // ManifestRemoveReport provides the model for the removed manifest
 //
 // swagger:model
-type ManifestRemoveReport = entitiesTypes.ManifestRemoveReport
+type ManifestRemoveReport struct {
+	// Deleted manifest list.
+	Deleted []string `json:",omitempty"`
+	// Untagged images. Can be longer than Deleted.
+	Untagged []string `json:",omitempty"`
+	// Errors associated with operation
+	Errors []string `json:",omitempty"`
+	// ExitCode describes the exit codes as described in the `podman rmi`
+	// man page.
+	ExitCode int
+}
 
 // ManifestModifyReport provides the model for removed digests and changed manifest
 //
 // swagger:model
-type ManifestModifyReport = entitiesTypes.ManifestModifyReport
+type ManifestModifyReport struct {
+	// Manifest List ID
+	ID string `json:"Id"`
+	// Images to removed from manifest list, otherwise not provided.
+	Images []string `json:"images,omitempty" schema:"images"`
+	// Errors associated with operation
+	Errors []error `json:"errors,omitempty"`
+}

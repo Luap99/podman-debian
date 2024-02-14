@@ -1,4 +1,5 @@
 //go:build windows
+// +build windows
 
 package wsl
 
@@ -16,15 +17,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containers/podman/v5/pkg/machine/connection"
-
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v5/pkg/machine"
-	"github.com/containers/podman/v5/pkg/machine/define"
-	"github.com/containers/podman/v5/pkg/machine/ignition"
-	"github.com/containers/podman/v5/pkg/machine/vmconfigs"
-	"github.com/containers/podman/v5/pkg/machine/wsl/wutil"
-	"github.com/containers/podman/v5/utils"
+	"github.com/containers/podman/v4/pkg/machine"
+	"github.com/containers/podman/v4/pkg/machine/define"
+	"github.com/containers/podman/v4/pkg/machine/wsl/wutil"
+	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v4/utils"
 	"github.com/containers/storage/pkg/homedir"
 	"github.com/containers/storage/pkg/lockfile"
 	"github.com/sirupsen/logrus"
@@ -34,7 +32,7 @@ import (
 
 var (
 	// vmtype refers to qemu (vs libvirt, krun, etc)
-	vmtype = define.WSLVirt
+	vmtype = machine.WSLVirt
 )
 
 const (
@@ -299,7 +297,7 @@ type MachineVM struct {
 	// Whether this machine should run in a rootful or rootless manner
 	Rootful bool
 	// SSH identity, username, etc
-	vmconfigs.SSHConfig
+	machine.SSHConfig
 	// machine version
 	Version int
 	// Whether to use user-mode networking
@@ -336,7 +334,7 @@ func readAndMigrate(configPath string, name string) (*MachineVM, error) {
 	b, err := os.ReadFile(configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("%v: %w", name, define.ErrNoSuchVM)
+			return nil, fmt.Errorf("%v: %w", name, machine.ErrNoSuchVM)
 		}
 		return vm, err
 	}
@@ -396,7 +394,7 @@ func getLegacyLastStart(vm *MachineVM) time.Time {
 
 // Init writes the json configuration file to the filesystem for
 // other verbs (start, stop)
-func (v *MachineVM) Init(opts define.InitOptions) (bool, error) {
+func (v *MachineVM) Init(opts machine.InitOptions) (bool, error) {
 	var (
 		err error
 	)
@@ -411,10 +409,7 @@ func (v *MachineVM) Init(opts define.InitOptions) (bool, error) {
 	}
 
 	_ = setupWslProxyEnv()
-	v.IdentityPath, err = machine.GetSSHIdentityPath(define.DefaultIdentityName)
-	if err != nil {
-		return false, err
-	}
+	v.IdentityPath = util.GetIdentityPath(v.Name)
 	v.Rootful = opts.Rootful
 	v.Version = currentMachineVersion
 
@@ -455,6 +450,7 @@ func (v *MachineVM) Init(opts define.InitOptions) (bool, error) {
 	if err = createKeys(v, dist); err != nil {
 		return false, err
 	}
+	callbackFuncs.Add(v.removeSSHKeys)
 
 	// Cycle so that user change goes into effect
 	_ = terminateDist(dist)
@@ -496,11 +492,18 @@ func (v *MachineVM) removeMachineImage() error {
 	return utils.GuardedRemoveAll(v.ImagePath)
 }
 
-func (v *MachineVM) removeSystemConnections() error {
-	return connection.RemoveConnections(v.Name, fmt.Sprintf("%s-root", v.Name))
+func (v *MachineVM) removeSSHKeys() error {
+	if err := utils.GuardedRemoveAll(fmt.Sprintf("%s.pub", v.IdentityPath)); err != nil {
+		logrus.Error(err)
+	}
+	return utils.GuardedRemoveAll(v.IdentityPath)
 }
 
-func downloadDistro(v *MachineVM, opts define.InitOptions) error {
+func (v *MachineVM) removeSystemConnections() error {
+	return machine.RemoveConnections(v.Name, fmt.Sprintf("%s-root", v.Name))
+}
+
+func downloadDistro(v *MachineVM, opts machine.InitOptions) error {
 	var (
 		dd  machine.DistributionDownload
 		err error
@@ -527,8 +530,8 @@ func (v *MachineVM) writeConfig() error {
 }
 
 func constructSSHUris(v *MachineVM) ([]url.URL, []string) {
-	uri := connection.SSHRemoteConnection.MakeSSHURL(connection.LocalhostIP, rootlessSock, strconv.Itoa(v.Port), v.RemoteUsername)
-	uriRoot := connection.SSHRemoteConnection.MakeSSHURL(connection.LocalhostIP, rootfulSock, strconv.Itoa(v.Port), "root")
+	uri := machine.SSHRemoteConnection.MakeSSHURL(machine.LocalhostIP, rootlessSock, strconv.Itoa(v.Port), v.RemoteUsername)
+	uriRoot := machine.SSHRemoteConnection.MakeSSHURL(machine.LocalhostIP, rootfulSock, strconv.Itoa(v.Port), "root")
 
 	uris := []url.URL{uri, uriRoot}
 	names := []string{v.Name, v.Name + "-root"}
@@ -536,7 +539,7 @@ func constructSSHUris(v *MachineVM) ([]url.URL, []string) {
 	return uris, names
 }
 
-func setupConnections(v *MachineVM, opts define.InitOptions) error {
+func setupConnections(v *MachineVM, opts machine.InitOptions) error {
 	uris, names := constructSSHUris(v)
 
 	// The first connection defined when connections is empty will become the default
@@ -554,7 +557,7 @@ func setupConnections(v *MachineVM, opts define.InitOptions) error {
 	defer flock.unlock()
 
 	for i := 0; i < 2; i++ {
-		if err := connection.AddConnection(&uris[i], names[i], v.IdentityPath, opts.IsDefault && i == 0); err != nil {
+		if err := machine.AddConnection(&uris[i], names[i], v.IdentityPath, opts.IsDefault && i == 0); err != nil {
 			return err
 		}
 	}
@@ -713,9 +716,9 @@ func getBindMountFsTab(dist string) string {
 }
 
 func (v *MachineVM) setupPodmanDockerSock(dist string, rootful bool) error {
-	content := ignition.GetPodmanDockerTmpConfig(1000, rootful, true)
+	content := machine.GetPodmanDockerTmpConfig(1000, rootful, true)
 
-	if err := wslPipe(content, dist, "sh", "-c", "cat > "+ignition.PodmanDockerTmpConfPath); err != nil {
+	if err := wslPipe(content, dist, "sh", "-c", "cat > "+machine.PodmanDockerTmpConfPath); err != nil {
 		return fmt.Errorf("could not create internal docker sock conf: %w", err)
 	}
 
@@ -811,7 +814,7 @@ func writeWslConf(dist string, user string) error {
 	return nil
 }
 
-func checkAndInstallWSL(opts define.InitOptions) (bool, error) {
+func checkAndInstallWSL(opts machine.InitOptions) (bool, error) {
 	if wutil.IsWSLInstalled() {
 		return true, nil
 	}
@@ -846,7 +849,7 @@ func checkAndInstallWSL(opts define.InitOptions) (bool, error) {
 	return true, nil
 }
 
-func attemptFeatureInstall(opts define.InitOptions, admin bool) error {
+func attemptFeatureInstall(opts machine.InitOptions, admin bool) error {
 	if !winVersionAtLeast(10, 0, 18362) {
 		return errors.New("your version of Windows does not support WSL. Update to Windows 10 Build 19041 or later")
 	} else if !winVersionAtLeast(10, 0, 19041) {
@@ -1052,7 +1055,7 @@ func wslPipe(input string, dist string, arg ...string) error {
 }
 
 func wslCreateKeys(identityPath string, dist string) (string, error) {
-	return machine.CreateSSHKeysPrefix(identityPath, true, true, "wsl", "-u", "root", "-d", dist)
+	return machine.CreateSSHKeysPrefix(identityPath, true, false, "wsl", "-u", "root", "-d", dist)
 }
 
 func runCmdPassThrough(name string, arg ...string) error {
@@ -1174,7 +1177,7 @@ func (v *MachineVM) Start(name string, opts machine.StartOptions) error {
 	defer v.lock.Unlock()
 
 	if v.isRunning() {
-		return define.ErrVMAlreadyRunning
+		return machine.ErrVMAlreadyRunning
 	}
 
 	dist := toDist(name)
@@ -1278,7 +1281,7 @@ func (v *MachineVM) reassignSshPort() error {
 	v.Port = newPort
 	uris, names := constructSSHUris(v)
 	for i := 0; i < 2; i++ {
-		if err := connection.ChangeConnectionURI(names[i], &uris[i]); err != nil {
+		if err := machine.ChangeConnectionURI(names[i], &uris[i]); err != nil {
 			return err
 		}
 	}
@@ -1430,12 +1433,12 @@ func unregisterDist(dist string) error {
 	return cmd.Run()
 }
 
-func (v *MachineVM) State(bypass bool) (define.Status, error) {
+func (v *MachineVM) State(bypass bool) (machine.Status, error) {
 	if v.isRunning() {
-		return define.Running, nil
+		return machine.Running, nil
 	}
 
-	return define.Stopped, nil
+	return machine.Stopped, nil
 }
 
 //nolint:cyclop
@@ -1444,7 +1447,7 @@ func (v *MachineVM) Remove(name string, opts machine.RemoveOptions) (string, fun
 
 	if v.isRunning() {
 		if !opts.Force {
-			return "", nil, &define.ErrVMRunningCannotDestroyed{Name: v.Name}
+			return "", nil, &machine.ErrVMRunningCannotDestroyed{Name: v.Name}
 		}
 		if err := v.Stop(v.Name, machine.StopOptions{}); err != nil {
 			return "", nil, err
@@ -1455,6 +1458,9 @@ func (v *MachineVM) Remove(name string, opts machine.RemoveOptions) (string, fun
 	defer v.lock.Unlock()
 
 	// Collect all the files that need to be destroyed
+	if !opts.SaveKeys {
+		files = append(files, v.IdentityPath, v.IdentityPath+".pub")
+	}
 	if !opts.SaveImage {
 		files = append(files, v.ImagePath)
 	}
@@ -1478,7 +1484,7 @@ func (v *MachineVM) Remove(name string, opts machine.RemoveOptions) (string, fun
 
 	confirmationMessage += "\n"
 	return confirmationMessage, func() error {
-		if err := connection.RemoveConnections(v.Name, v.Name+"-root"); err != nil {
+		if err := machine.RemoveConnections(v.Name, v.Name+"-root"); err != nil {
 			logrus.Error(err)
 		}
 		if err := runCmdPassThrough("wsl", "--unregister", toDist(v.Name)); err != nil {
@@ -1656,7 +1662,7 @@ func (v *MachineVM) Inspect() (*machine.InspectInfo, error) {
 	machinePipe := toDist(v.Name)
 	connInfo.PodmanPipe = &define.VMFile{Path: `\\.\pipe\` + machinePipe}
 
-	created, lastUp, _ := v.updateTimeStamps(state == define.Running)
+	created, lastUp, _ := v.updateTimeStamps(state == machine.Running)
 	return &machine.InspectInfo{
 		ConfigPath:     define.VMFile{Path: v.ConfigPath},
 		ConnectionInfo: *connInfo,
@@ -1675,7 +1681,7 @@ func (v *MachineVM) Inspect() (*machine.InspectInfo, error) {
 	}, nil
 }
 
-func (v *MachineVM) getResources() (resources vmconfigs.ResourceConfig) {
+func (v *MachineVM) getResources() (resources machine.ResourceConfig) {
 	resources.CPUs, _ = getCPUs(v)
 	resources.Memory, _ = getMem(v)
 	resources.DiskSize = getDiskSize(v)

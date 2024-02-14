@@ -92,7 +92,7 @@ function generate_service() {
     run_podman rm -t 0 -f $cname
 
     systemctl daemon-reload
-    systemctl_start container-$cname
+    systemctl start container-$cname
     systemctl status container-$cname
 
     # Original image ID.
@@ -530,7 +530,7 @@ EOF
 
     # Dispatch the YAML file
     service_name="podman-kube@$(systemd-escape $yaml_source).service"
-    systemctl_start $service_name
+    systemctl start $service_name
     systemctl is-active $service_name
 
     # Make sure the containers are properly configured
@@ -588,7 +588,8 @@ EOF
 
     systemctl daemon-reload
 
-    systemctl_start pod-$podname.service
+    run systemctl start pod-$podname.service
+    assert $status -eq 0 "Error starting pod systemd unit: $output"
     _wait_service_ready container-$ctrname.service
 
     run_podman pod inspect --format "{{.State}}" $podname

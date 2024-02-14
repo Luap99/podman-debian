@@ -12,8 +12,8 @@ import (
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/ssh"
 	"github.com/containers/image/v5/transports/alltransports"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/domain/entities"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/sirupsen/logrus"
 )
 
@@ -31,6 +31,11 @@ func ExecuteTransfer(src, dst string, parentFlags []string, quiet bool, sshMode 
 	f, err := os.CreateTemp("", "podman") // open temp file for load/save output
 	if err != nil {
 		return nil, nil, nil, nil, err
+	}
+
+	confR, err := config.New(nil) // create a hand made config for the remote engine since we might use remote and native at once
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("could not make config: %w", err)
 	}
 
 	locations := []*entities.ImageScpOptions{}
@@ -79,15 +84,17 @@ func ExecuteTransfer(src, dst string, parentFlags []string, quiet bool, sshMode 
 		cliConnections = []string{}
 	}
 
-	cfg, err := config.Default()
+	cfg, err := config.ReadCustomConfig() // get ready to set ssh destination if necessary
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	err = GetServiceInformation(&sshInfo, cliConnections, cfg)
+	var serv map[string]config.Destination
+	serv, err = GetServiceInformation(&sshInfo, cliConnections, cfg)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
 
+	confR.Engine = config.EngineConfig{Remote: true, CgroupManager: "cgroupfs", ServiceDestinations: serv} // pass the service dest (either remote or something else) to engine
 	saveCmd, loadCmd := CreateCommands(source, dest, parentFlags, podman)
 
 	switch {
@@ -231,7 +238,7 @@ func LoadToRemote(dest entities.ImageScpOptions, localFile string, tag string, u
 	outArr := strings.Split(rep, " ")
 	id := outArr[len(outArr)-1]
 	if len(dest.Tag) > 0 { // tag the remote image using the output ID
-		_, err := ssh.Exec(&ssh.ConnectionExecOptions{Host: url.String(), Identity: iden, Port: port, User: url.User, Args: []string{"podman", "image", "tag", id, dest.Tag}}, sshEngine)
+		_, err := ssh.Exec(&ssh.ConnectionExecOptions{Host: url.Hostname(), Identity: iden, Port: port, User: url.User, Args: []string{"podman", "image", "tag", id, dest.Tag}}, sshEngine)
 		if err != nil {
 			return "", "", err
 		}
@@ -394,15 +401,15 @@ func RemoteArgLength(input string, side int) int {
 }
 
 // GetServiceInformation takes the parsed list of hosts to connect to and validates the information
-func GetServiceInformation(sshInfo *entities.ImageScpConnections, cliConnections []string, cfg *config.Config) error {
+func GetServiceInformation(sshInfo *entities.ImageScpConnections, cliConnections []string, cfg *config.Config) (map[string]config.Destination, error) {
+	var serv map[string]config.Destination
 	var urlS string
 	var iden string
 	for i, val := range cliConnections {
-		connection, _, _ := strings.Cut(val, "::")
-		sshInfo.Connections = append(sshInfo.Connections, connection)
-		conn, err := cfg.GetConnection(sshInfo.Connections[i], false)
-		if err == nil {
-			// connection found
+		splitEnv := strings.SplitN(val, "::", 2)
+		sshInfo.Connections = append(sshInfo.Connections, splitEnv[0])
+		conn, found := cfg.Engine.ServiceDestinations[sshInfo.Connections[i]]
+		if found {
 			urlS = conn.URI
 			iden = conn.Identity
 		} else { // no match, warn user and do a manual connection.
@@ -412,17 +419,17 @@ func GetServiceInformation(sshInfo *entities.ImageScpConnections, cliConnections
 		}
 		urlFinal, err := url.Parse(urlS) // create an actual url to pass to exec command
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if urlFinal.User.Username() == "" {
 			if urlFinal.User, err = GetUserInfo(urlFinal); err != nil {
-				return err
+				return nil, err
 			}
 		}
 		sshInfo.URI = append(sshInfo.URI, urlFinal)
 		sshInfo.Identities = append(sshInfo.Identities, iden)
 	}
-	return nil
+	return serv, nil
 }
 
 func GetUserInfo(uri *url.URL) (*url.Userinfo, error) {

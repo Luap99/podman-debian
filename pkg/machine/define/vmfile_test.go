@@ -1,4 +1,5 @@
 //go:build (amd64 && !windows) || (arm64 && !windows)
+// +build amd64,!windows arm64,!windows
 
 package define
 
@@ -8,7 +9,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/containers/podman/v5/test/utils"
+	"github.com/containers/podman/v4/test/utils"
 )
 
 func TestMachineFile_GetPath(t *testing.T) {

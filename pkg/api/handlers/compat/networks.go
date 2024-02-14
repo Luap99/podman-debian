@@ -9,13 +9,13 @@ import (
 
 	nettypes "github.com/containers/common/libnetwork/types"
 	netutil "github.com/containers/common/libnetwork/util"
-	"github.com/containers/podman/v5/libpod"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/api/handlers/utils"
-	api "github.com/containers/podman/v5/pkg/api/types"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	"github.com/containers/podman/v5/pkg/domain/infra/abi"
-	"github.com/containers/podman/v5/pkg/util"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v4/pkg/api/types"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/domain/infra/abi"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/docker/docker/api/types"
 
 	dockerNetwork "github.com/docker/docker/api/types/network"
@@ -308,10 +308,7 @@ func CreateNetwork(w http.ResponseWriter, r *http.Request) {
 	}
 
 	opts := nettypes.NetworkCreateOptions{
-		// networkCreate.CheckDuplicate is deprecated since API v1.44,
-		// but it defaults to true when sent by the client package to
-		// older daemons.
-		IgnoreIfExists: false,
+		IgnoreIfExists: !networkCreate.CheckDuplicate,
 	}
 	ic := abi.ContainerEngine{Libpod: runtime}
 	newNetwork, err := ic.NetworkCreate(r.Context(), network, &opts)

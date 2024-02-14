@@ -9,8 +9,8 @@ import (
 	"github.com/blang/semver/v4"
 	"github.com/containers/image/v5/pkg/compression"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v5/pkg/machine/define"
-	"github.com/containers/podman/v5/version"
+	"github.com/containers/podman/v4/pkg/machine/define"
+	"github.com/containers/podman/v4/version"
 	"github.com/containers/storage/pkg/archive"
 	"github.com/sirupsen/logrus"
 )
@@ -28,7 +28,10 @@ type OSVersion struct {
 }
 
 type Disker interface {
-	Get() error
+	Pull() error
+	Decompress(compressedFile *define.VMFile) (*define.VMFile, error)
+	DiskEndpoint() string
+	Unpack() (*define.VMFile, error)
 }
 
 type OCIOpts struct {
@@ -64,6 +67,12 @@ func StripOCIReference(input string) string {
 
 func getVersion() *OSVersion {
 	v := version.Version
+
+	// OVERRIDES FOR DEV ONLY
+	v.Minor = 6
+	v.Pre = nil
+	// OVERRIDES FOR DEV ONLY
+
 	return &OSVersion{&v}
 }
 
@@ -71,8 +80,8 @@ func (o *OSVersion) majorMinor() string {
 	return fmt.Sprintf("%d.%d", o.Major, o.Minor)
 }
 
-func (o *OSVersion) diskImage(vmType string) string {
-	return fmt.Sprintf("%s/%s/%s:%s-%s", registry, repo, diskImages, o.majorMinor(), vmType)
+func (o *OSVersion) diskImage(diskFlavor define.ImageFormat) string {
+	return fmt.Sprintf("%s/%s/%s:%s-%s", registry, repo, diskImages, o.majorMinor(), diskFlavor.Kind())
 }
 
 func unpackOCIDir(ociTb, machineImageDir string) (*define.VMFile, error) {

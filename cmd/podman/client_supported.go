@@ -1,9 +1,10 @@
 //go:build amd64 || arm64
+// +build amd64 arm64
 
 package main
 
 import (
-	"github.com/containers/podman/v5/pkg/machine/provider"
+	"github.com/containers/podman/v4/pkg/machine/provider"
 )
 
 func getProvider() (string, error) {

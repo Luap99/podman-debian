@@ -27,8 +27,6 @@ Start the exec session, but do not attach to it. The command runs in the backgro
 
 @@option latest
 
-@@option preserve-fd
-
 @@option preserve-fds
 
 @@option privileged

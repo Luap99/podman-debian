@@ -60,7 +60,10 @@ function _check_pause_process() {
         test $status -eq 0 && die "Pause process $pause_pid is still running even after podman system migrate"
     fi
 
-    run_podman $(podman_isolation_opts ${PODMAN_TMPDIR}) $getns
+    run_podman --root    $PODMAN_TMPDIR/root \
+               --runroot $PODMAN_TMPDIR/runroot \
+               --tmpdir  $PODMAN_TMPDIR/tmp \
+               $getns
     tmpdir_userns="$output"
 
     # And now we should once again have a pause process

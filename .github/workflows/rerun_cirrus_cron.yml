@@ -59,14 +59,14 @@ jobs:
                 SECRET_CIRRUS_API_KEY: ${{ secrets.SECRET_CIRRUS_API_KEY }}
               run: './.github/actions/check_cirrus_cron/rerun_failed_tasks.sh'
 
-            - uses: actions/upload-artifact@v4
+            - uses: actions/upload-artifact@v3
               with:
                   name: ${{ github.job }}_artifacts
                   path: artifacts/*
 
             - if: failure()
               name: Send error notification e-mail
-              uses: dawidd6/action-send-mail@v3.11.0
+              uses: dawidd6/action-send-mail@v3.9.0
               with:
                 server_address: ${{secrets.ACTION_MAIL_SERVER}}
                 server_port: 465

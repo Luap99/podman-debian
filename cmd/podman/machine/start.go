@@ -1,17 +1,14 @@
 //go:build amd64 || arm64
+// +build amd64 arm64
 
 package machine
 
 import (
 	"fmt"
 
-	"github.com/containers/podman/v5/cmd/podman/registry"
-	"github.com/containers/podman/v5/libpod/events"
-	"github.com/containers/podman/v5/pkg/machine"
-	"github.com/containers/podman/v5/pkg/machine/define"
-	"github.com/containers/podman/v5/pkg/machine/shim"
-	"github.com/containers/podman/v5/pkg/machine/vmconfigs"
-	"github.com/sirupsen/logrus"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/libpod/events"
+	"github.com/containers/podman/v4/pkg/machine"
 	"github.com/spf13/cobra"
 )
 
@@ -46,6 +43,7 @@ func init() {
 func start(_ *cobra.Command, args []string) error {
 	var (
 		err error
+		vm  machine.VM
 	)
 
 	startOpts.NoInfo = startOpts.Quiet || startOpts.NoInfo
@@ -55,46 +53,25 @@ func start(_ *cobra.Command, args []string) error {
 		vmName = args[0]
 	}
 
-	dirs, err := machine.GetMachineDirs(provider.VMType())
-	if err != nil {
-		return err
-	}
-	mc, err := vmconfigs.LoadMachineByName(vmName, dirs)
+	vm, err = provider.LoadVMByName(vmName)
 	if err != nil {
 		return err
 	}
 
-	state, err := provider.State(mc, false)
-	if err != nil {
-		return err
+	active, activeName, cerr := provider.CheckExclusiveActiveVM()
+	if cerr != nil {
+		return cerr
 	}
-
-	if state == define.Running {
-		return define.ErrVMAlreadyRunning
+	if active {
+		if vmName == activeName {
+			return fmt.Errorf("cannot start VM %s: %w", vmName, machine.ErrVMAlreadyRunning)
+		}
+		return fmt.Errorf("cannot start VM %s. VM %s is currently running or starting: %w", vmName, activeName, machine.ErrMultipleActiveVM)
 	}
-
-	if err := shim.CheckExclusiveActiveVM(provider, mc); err != nil {
-		return err
-	}
-
 	if !startOpts.Quiet {
 		fmt.Printf("Starting machine %q\n", vmName)
 	}
-
-	// Set starting to true
-	mc.Starting = true
-	if err := mc.Write(); err != nil {
-		logrus.Error(err)
-	}
-
-	// Set starting to false on exit
-	defer func() {
-		mc.Starting = false
-		if err := mc.Write(); err != nil {
-			logrus.Error(err)
-		}
-	}()
-	if err := shim.Start(mc, provider, dirs, startOpts); err != nil {
+	if err := vm.Start(vmName, startOpts); err != nil {
 		return err
 	}
 	fmt.Printf("Machine %q started successfully\n", vmName)

@@ -1,16 +1,13 @@
 //go:build amd64 || arm64
+// +build amd64 arm64
 
 package machine
 
 import (
 	"net"
 	"net/url"
-	"path/filepath"
 	"reflect"
 	"testing"
-
-	"github.com/containers/podman/v5/pkg/machine/connection"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestRemoteConnectionType_MakeSSHURL(t *testing.T) {
@@ -28,7 +25,7 @@ func TestRemoteConnectionType_MakeSSHURL(t *testing.T) {
 	}
 	tests := []struct {
 		name string
-		rc   connection.RemoteConnectionType
+		rc   RemoteConnectionType
 		args args
 		want url.URL
 	}{
@@ -74,13 +71,4 @@ func TestRemoteConnectionType_MakeSSHURL(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestGetSSHIdentityPath(t *testing.T) {
-	name := "p-test"
-	datadir, err := GetGlobalDataDir()
-	assert.Nil(t, err)
-	identityPath, err := GetSSHIdentityPath(name)
-	assert.Nil(t, err)
-	assert.Equal(t, identityPath, filepath.Join(datadir, name))
 }

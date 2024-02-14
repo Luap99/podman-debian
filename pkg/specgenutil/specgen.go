@@ -11,14 +11,14 @@ import (
 
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/image/v5/manifest"
-	"github.com/containers/podman/v5/cmd/podman/parse"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	envLib "github.com/containers/podman/v5/pkg/env"
-	"github.com/containers/podman/v5/pkg/namespaces"
-	"github.com/containers/podman/v5/pkg/specgen"
-	systemdDefine "github.com/containers/podman/v5/pkg/systemd/define"
-	"github.com/containers/podman/v5/pkg/util"
+	"github.com/containers/podman/v4/cmd/podman/parse"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	envLib "github.com/containers/podman/v4/pkg/env"
+	"github.com/containers/podman/v4/pkg/namespaces"
+	"github.com/containers/podman/v4/pkg/specgen"
+	systemdDefine "github.com/containers/podman/v4/pkg/systemd/define"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/docker/go-units"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/selinux/go-selinux"
@@ -226,7 +226,6 @@ func setNamespaces(rtc *config.Config, s *specgen.SpecGenerator, c *entities.Con
 		if ns, ok := os.LookupEnv("PODMAN_USERNS"); ok {
 			userns = ns
 		} else {
-			// TODO: This should be moved into pkg/specgen/generate so we don't use the client's containers.conf
 			userns = rtc.Containers.UserNS
 		}
 	}
@@ -327,7 +326,6 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 		return err
 	}
 
-	// TODO: This needs to move into pkg/specgen/generate so we aren't using containers.conf on the client.
 	if rtc.Containers.EnableLabeledUsers {
 		defSecurityOpts, err := currentLabelOpts()
 		if err != nil {
@@ -336,7 +334,6 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 
 		c.SecurityOpt = append(defSecurityOpts, c.SecurityOpt...)
 	}
-
 	// validate flags as needed
 	if err := validate(c); err != nil {
 		return err
@@ -392,8 +389,8 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 		return err
 	}
 
-	if s.Terminal == nil {
-		s.Terminal = &c.TTY
+	if !s.Terminal {
+		s.Terminal = c.TTY
 	}
 
 	if err := verifyExpose(c.Expose); err != nil {
@@ -404,8 +401,8 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 	if c.Net != nil {
 		s.PortMappings = c.Net.PublishPorts
 	}
-	if s.PublishExposedPorts == nil {
-		s.PublishExposedPorts = &c.PublishAll
+	if !s.PublishExposedPorts {
+		s.PublishExposedPorts = c.PublishAll
 	}
 
 	if len(s.Pod) == 0 || len(c.Pod) > 0 {
@@ -453,12 +450,12 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 	// any case.
 	osEnv := envLib.Map(os.Environ())
 
-	if s.EnvHost == nil {
-		s.EnvHost = &c.EnvHost
+	if !s.EnvHost {
+		s.EnvHost = c.EnvHost
 	}
 
-	if s.HTTPProxy == nil {
-		s.HTTPProxy = &c.HTTPProxy
+	if !s.HTTPProxy {
+		s.HTTPProxy = c.HTTPProxy
 	}
 
 	// env-file overrides any previous variables
@@ -505,11 +502,11 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 
 	// Last, add user annotations
 	for _, annotation := range c.Annotation {
-		key, val, hasVal := strings.Cut(annotation, "=")
-		if !hasVal {
+		splitAnnotation := strings.SplitN(annotation, "=", 2)
+		if len(splitAnnotation) < 2 {
 			return errors.New("annotations must be formatted KEY=VALUE")
 		}
-		annotations[key] = val
+		annotations[splitAnnotation[0]] = splitAnnotation[1]
 	}
 	if len(s.Annotations) == 0 {
 		s.Annotations = annotations
@@ -518,11 +515,11 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 	if len(c.StorageOpts) > 0 {
 		opts := make(map[string]string, len(c.StorageOpts))
 		for _, opt := range c.StorageOpts {
-			key, val, hasVal := strings.Cut(opt, "=")
-			if !hasVal {
+			split := strings.SplitN(opt, "=", 2)
+			if len(split) != 2 {
 				return errors.New("storage-opt must be formatted KEY=VALUE")
 			}
-			opts[key] = val
+			opts[split[0]] = split[1]
 		}
 		s.StorageOpts = opts
 	}
@@ -575,12 +572,12 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 
 	if c.Net != nil {
 		s.HostAdd = c.Net.AddHosts
-		s.UseImageResolvConf = &c.Net.UseImageResolvConf
+		s.UseImageResolvConf = c.Net.UseImageResolvConf
 		s.DNSServers = c.Net.DNSServers
 		s.DNSSearch = c.Net.DNSSearch
 		s.DNSOptions = c.Net.DNSOptions
 		s.NetworkOptions = c.Net.NetworkOptions
-		s.UseImageHosts = &c.Net.NoHosts
+		s.UseImageHosts = c.Net.NoHosts
 	}
 	if len(s.HostUsers) == 0 || len(c.HostUsers) != 0 {
 		s.HostUsers = c.HostUsers
@@ -589,6 +586,9 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 		if len(s.ImageVolumeMode) == 0 {
 			s.ImageVolumeMode = c.ImageVolume
 		}
+	}
+	if len(s.ImageVolumeMode) == 0 {
+		s.ImageVolumeMode = rtc.Engine.ImageVolumeMode
 	}
 	if s.ImageVolumeMode == define.TypeBind {
 		s.ImageVolumeMode = "anonymous"
@@ -622,6 +622,9 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 	if len(s.CgroupsMode) == 0 {
 		s.CgroupsMode = c.CgroupsMode
 	}
+	if s.CgroupsMode == "" {
+		s.CgroupsMode = rtc.Cgroups()
+	}
 
 	if len(s.Groups) == 0 || len(c.GroupAdd) != 0 {
 		s.Groups = c.GroupAdd
@@ -647,11 +650,11 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 	if len(s.CapDrop) == 0 || len(c.CapDrop) != 0 {
 		s.CapDrop = c.CapDrop
 	}
-	if s.Privileged == nil {
-		s.Privileged = &c.Privileged
+	if !s.Privileged {
+		s.Privileged = c.Privileged
 	}
-	if s.ReadOnlyFilesystem == nil {
-		s.ReadOnlyFilesystem = &c.ReadOnly
+	if !s.ReadOnlyFilesystem {
+		s.ReadOnlyFilesystem = c.ReadOnly
 	}
 	if len(s.ConmonPidFile) == 0 || len(c.ConmonPIDFile) != 0 {
 		s.ConmonPidFile = c.ConmonPIDFile
@@ -664,18 +667,17 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 	// Only add ReadWrite tmpfs mounts iff the container is
 	// being run ReadOnly and ReadWriteTmpFS is not disabled,
 	// (user specifying --read-only-tmpfs=false.)
-	localRWTmpfs := c.ReadOnly && c.ReadWriteTmpFS
-	s.ReadWriteTmpfs = &localRWTmpfs
+	s.ReadWriteTmpfs = c.ReadOnly && c.ReadWriteTmpFS
 
 	//  TODO convert to map?
 	// check if key=value and convert
 	sysmap := make(map[string]string)
 	for _, ctl := range c.Sysctl {
-		key, val, hasVal := strings.Cut(ctl, "=")
-		if !hasVal {
+		splitCtl := strings.SplitN(ctl, "=", 2)
+		if len(splitCtl) < 2 {
 			return fmt.Errorf("invalid sysctl value %q", ctl)
 		}
-		sysmap[key] = val
+		sysmap[splitCtl[0]] = splitCtl[1]
 	}
 	if len(s.Sysctl) == 0 || len(c.Sysctl) != 0 {
 		s.Sysctl = sysmap
@@ -688,57 +690,53 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 	for _, opt := range c.SecurityOpt {
 		// Docker deprecated the ":" syntax but still supports it,
 		// so we need to as well
-		var key, val string
-		var hasVal bool
+		var con []string
 		if strings.Contains(opt, "=") {
-			key, val, hasVal = strings.Cut(opt, "=")
+			con = strings.SplitN(opt, "=", 2)
 		} else {
-			key, val, hasVal = strings.Cut(opt, ":")
+			con = strings.SplitN(opt, ":", 2)
 		}
-		if !hasVal &&
-			key != "no-new-privileges" {
+		if len(con) != 2 &&
+			con[0] != "no-new-privileges" {
 			return fmt.Errorf("invalid --security-opt 1: %q", opt)
 		}
-		switch key {
+		switch con[0] {
 		case "apparmor":
-			s.ContainerSecurityConfig.ApparmorProfile = val
-			s.Annotations[define.InspectAnnotationApparmor] = val
+			s.ContainerSecurityConfig.ApparmorProfile = con[1]
+			s.Annotations[define.InspectAnnotationApparmor] = con[1]
 		case "label":
-			if val == "nested" {
-				localTrue := true
-				s.ContainerSecurityConfig.LabelNested = &localTrue
+			if con[1] == "nested" {
+				s.ContainerSecurityConfig.LabelNested = true
 				continue
 			}
 			// TODO selinux opts and label opts are the same thing
-			s.ContainerSecurityConfig.SelinuxOpts = append(s.ContainerSecurityConfig.SelinuxOpts, val)
+			s.ContainerSecurityConfig.SelinuxOpts = append(s.ContainerSecurityConfig.SelinuxOpts, con[1])
 			s.Annotations[define.InspectAnnotationLabel] = strings.Join(s.ContainerSecurityConfig.SelinuxOpts, ",label=")
 		case "mask":
-			s.ContainerSecurityConfig.Mask = append(s.ContainerSecurityConfig.Mask, strings.Split(val, ":")...)
+			s.ContainerSecurityConfig.Mask = append(s.ContainerSecurityConfig.Mask, strings.Split(con[1], ":")...)
 		case "proc-opts":
-			s.ProcOpts = strings.Split(val, ",")
+			s.ProcOpts = strings.Split(con[1], ",")
 		case "seccomp":
-			s.SeccompProfilePath = val
-			s.Annotations[define.InspectAnnotationSeccomp] = val
+			s.SeccompProfilePath = con[1]
+			s.Annotations[define.InspectAnnotationSeccomp] = con[1]
 			// this option is for docker compatibility, it is the same as unmask=ALL
 		case "systempaths":
-			if val == "unconfined" {
+			if con[1] == "unconfined" {
 				s.ContainerSecurityConfig.Unmask = append(s.ContainerSecurityConfig.Unmask, []string{"ALL"}...)
 			} else {
-				return fmt.Errorf("invalid systempaths option %q, only `unconfined` is supported", val)
+				return fmt.Errorf("invalid systempaths option %q, only `unconfined` is supported", con[1])
 			}
 		case "unmask":
-			if hasVal {
-				s.ContainerSecurityConfig.Unmask = append(s.ContainerSecurityConfig.Unmask, val)
-			}
+			s.ContainerSecurityConfig.Unmask = append(s.ContainerSecurityConfig.Unmask, con[1:]...)
 		case "no-new-privileges":
 			noNewPrivileges := true
-			if hasVal {
-				noNewPrivileges, err = strconv.ParseBool(val)
+			if len(con) == 2 {
+				noNewPrivileges, err = strconv.ParseBool(con[1])
 				if err != nil {
 					return fmt.Errorf("invalid --security-opt 2: %q", opt)
 				}
 			}
-			s.ContainerSecurityConfig.NoNewPrivileges = &noNewPrivileges
+			s.ContainerSecurityConfig.NoNewPrivileges = noNewPrivileges
 		default:
 			return fmt.Errorf("invalid --security-opt 2: %q", opt)
 		}
@@ -765,7 +763,7 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 		s.Volumes = volumes
 	}
 
-	if s.LabelNested != nil && *s.LabelNested {
+	if s.ContainerSecurityConfig.LabelNested {
 		// Need to unmask the SELinux file system
 		s.Unmask = append(s.Unmask, "/sys/fs/selinux", "/proc")
 		s.Mounts = append(s.Mounts, specs.Mount{
@@ -783,12 +781,7 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 		s.ImageVolumes = imageVolumes
 	}
 
-	devices := c.Devices
-	for _, gpu := range c.GPUs {
-		devices = append(devices, "nvidia.com/gpu="+gpu)
-	}
-
-	for _, dev := range devices {
+	for _, dev := range c.Devices {
 		s.Devices = append(s.Devices, specs.LinuxDevice{Path: dev})
 	}
 
@@ -800,14 +793,14 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 		s.DeviceCgroupRule = append(s.DeviceCgroupRule, dev)
 	}
 
-	if s.Init == nil {
-		s.Init = &c.Init
+	if !s.Init {
+		s.Init = c.Init
 	}
 	if len(s.InitPath) == 0 || len(c.InitPath) != 0 {
 		s.InitPath = c.InitPath
 	}
-	if s.Stdin == nil {
-		s.Stdin = &c.Interactive
+	if !s.Stdin {
+		s.Stdin = c.Interactive
 	}
 	// quiet
 	// DeviceCgroupRules: c.StringSlice("device-cgroup-rule"),
@@ -820,23 +813,23 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 
 	logOpts := make(map[string]string)
 	for _, o := range c.LogOptions {
-		key, val, hasVal := strings.Cut(o, "=")
-		if !hasVal {
+		split := strings.SplitN(o, "=", 2)
+		if len(split) < 2 {
 			return fmt.Errorf("invalid log option %q", o)
 		}
-		switch strings.ToLower(key) {
+		switch strings.ToLower(split[0]) {
 		case "driver":
-			s.LogConfiguration.Driver = val
+			s.LogConfiguration.Driver = split[1]
 		case "path":
-			s.LogConfiguration.Path = val
+			s.LogConfiguration.Path = split[1]
 		case "max-size":
-			logSize, err := units.FromHumanSize(val)
+			logSize, err := units.FromHumanSize(split[1])
 			if err != nil {
 				return err
 			}
 			s.LogConfiguration.Size = logSize
 		default:
-			logOpts[key] = val
+			logOpts[split[0]] = split[1]
 		}
 	}
 	if len(s.LogConfiguration.Options) == 0 || len(c.LogOptions) != 0 {
@@ -845,16 +838,8 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 	if len(s.Name) == 0 || len(c.Name) != 0 {
 		s.Name = c.Name
 	}
-
-	if c.PreserveFDs != 0 && c.PreserveFD != nil {
-		return errors.New("cannot specify both --preserve-fds and --preserve-fd")
-	}
-
 	if s.PreserveFDs == 0 || c.PreserveFDs != 0 {
 		s.PreserveFDs = c.PreserveFDs
-	}
-	if s.PreserveFD == nil || c.PreserveFD != nil {
-		s.PreserveFD = c.PreserveFD
 	}
 
 	if s.OOMScoreAdj == nil || c.OOMScoreAdj != nil {
@@ -881,8 +866,8 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 		s.Personality.Domain = specs.LinuxPersonalityDomain(c.Personality)
 	}
 
-	if s.Remove == nil {
-		s.Remove = &c.Rm
+	if !s.Remove {
+		s.Remove = c.Rm
 	}
 	if s.StopTimeout == nil || c.StopTimeout != 0 {
 		s.StopTimeout = &c.StopTimeout
@@ -899,8 +884,8 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 	if len(s.PidFile) == 0 || len(c.PidFile) != 0 {
 		s.PidFile = c.PidFile
 	}
-	if s.Volatile == nil {
-		s.Volatile = &c.Rm
+	if !s.Volatile {
+		s.Volatile = c.Rm
 	}
 	if len(s.EnvMerge) == 0 || len(c.EnvMerge) != 0 {
 		s.EnvMerge = c.EnvMerge
@@ -908,8 +893,8 @@ func FillOutSpecGen(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions
 	if len(s.UnsetEnv) == 0 || len(c.UnsetEnv) != 0 {
 		s.UnsetEnv = c.UnsetEnv
 	}
-	if s.UnsetEnvAll == nil {
-		s.UnsetEnvAll = &c.UnsetEnvAll
+	if !s.UnsetEnvAll {
+		s.UnsetEnvAll = c.UnsetEnvAll
 	}
 	if len(s.ChrootDirs) == 0 || len(c.ChrootDirs) != 0 {
 		s.ChrootDirs = c.ChrootDirs
@@ -1011,23 +996,23 @@ func makeHealthCheckFromCli(inCmd, interval string, retries uint, timeout, start
 
 func parseWeightDevices(weightDevs []string) (map[string]specs.LinuxWeightDevice, error) {
 	wd := make(map[string]specs.LinuxWeightDevice)
-	for _, dev := range weightDevs {
-		key, val, hasVal := strings.Cut(dev, ":")
-		if !hasVal {
-			return nil, fmt.Errorf("bad format: %s", dev)
+	for _, val := range weightDevs {
+		split := strings.SplitN(val, ":", 2)
+		if len(split) != 2 {
+			return nil, fmt.Errorf("bad format: %s", val)
 		}
-		if !strings.HasPrefix(key, "/dev/") {
-			return nil, fmt.Errorf("bad format for device path: %s", dev)
+		if !strings.HasPrefix(split[0], "/dev/") {
+			return nil, fmt.Errorf("bad format for device path: %s", val)
 		}
-		weight, err := strconv.ParseUint(val, 10, 0)
+		weight, err := strconv.ParseUint(split[1], 10, 0)
 		if err != nil {
-			return nil, fmt.Errorf("invalid weight for device: %s", dev)
+			return nil, fmt.Errorf("invalid weight for device: %s", val)
 		}
 		if weight > 0 && (weight < 10 || weight > 1000) {
-			return nil, fmt.Errorf("invalid weight for device: %s", dev)
+			return nil, fmt.Errorf("invalid weight for device: %s", val)
 		}
 		w := uint16(weight)
-		wd[key] = specs.LinuxWeightDevice{
+		wd[split[0]] = specs.LinuxWeightDevice{
 			Weight:     &w,
 			LeafWeight: nil,
 		}
@@ -1037,41 +1022,41 @@ func parseWeightDevices(weightDevs []string) (map[string]specs.LinuxWeightDevice
 
 func parseThrottleBPSDevices(bpsDevices []string) (map[string]specs.LinuxThrottleDevice, error) {
 	td := make(map[string]specs.LinuxThrottleDevice)
-	for _, dev := range bpsDevices {
-		key, val, hasVal := strings.Cut(dev, ":")
-		if !hasVal {
-			return nil, fmt.Errorf("bad format: %s", dev)
+	for _, val := range bpsDevices {
+		split := strings.SplitN(val, ":", 2)
+		if len(split) != 2 {
+			return nil, fmt.Errorf("bad format: %s", val)
 		}
-		if !strings.HasPrefix(key, "/dev/") {
-			return nil, fmt.Errorf("bad format for device path: %s", dev)
+		if !strings.HasPrefix(split[0], "/dev/") {
+			return nil, fmt.Errorf("bad format for device path: %s", val)
 		}
-		rate, err := units.RAMInBytes(val)
+		rate, err := units.RAMInBytes(split[1])
 		if err != nil {
-			return nil, fmt.Errorf("invalid rate for device: %s. The correct format is <device-path>:<number>[<unit>]. Number must be a positive integer. Unit is optional and can be kb, mb, or gb", dev)
+			return nil, fmt.Errorf("invalid rate for device: %s. The correct format is <device-path>:<number>[<unit>]. Number must be a positive integer. Unit is optional and can be kb, mb, or gb", val)
 		}
 		if rate < 0 {
-			return nil, fmt.Errorf("invalid rate for device: %s. The correct format is <device-path>:<number>[<unit>]. Number must be a positive integer. Unit is optional and can be kb, mb, or gb", dev)
+			return nil, fmt.Errorf("invalid rate for device: %s. The correct format is <device-path>:<number>[<unit>]. Number must be a positive integer. Unit is optional and can be kb, mb, or gb", val)
 		}
-		td[key] = specs.LinuxThrottleDevice{Rate: uint64(rate)}
+		td[split[0]] = specs.LinuxThrottleDevice{Rate: uint64(rate)}
 	}
 	return td, nil
 }
 
 func parseThrottleIOPsDevices(iopsDevices []string) (map[string]specs.LinuxThrottleDevice, error) {
 	td := make(map[string]specs.LinuxThrottleDevice)
-	for _, dev := range iopsDevices {
-		key, val, hasVal := strings.Cut(dev, ":")
-		if !hasVal {
-			return nil, fmt.Errorf("bad format: %s", dev)
+	for _, val := range iopsDevices {
+		split := strings.SplitN(val, ":", 2)
+		if len(split) != 2 {
+			return nil, fmt.Errorf("bad format: %s", val)
 		}
-		if !strings.HasPrefix(key, "/dev/") {
-			return nil, fmt.Errorf("bad format for device path: %s", dev)
+		if !strings.HasPrefix(split[0], "/dev/") {
+			return nil, fmt.Errorf("bad format for device path: %s", val)
 		}
-		rate, err := strconv.ParseUint(val, 10, 64)
+		rate, err := strconv.ParseUint(split[1], 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("invalid rate for device: %s. The correct format is <device-path>:<number>. Number must be a positive integer", dev)
+			return nil, fmt.Errorf("invalid rate for device: %s. The correct format is <device-path>:<number>. Number must be a positive integer", val)
 		}
-		td[key] = specs.LinuxThrottleDevice{Rate: rate}
+		td[split[0]] = specs.LinuxThrottleDevice{Rate: rate}
 	}
 	return td, nil
 }
@@ -1110,42 +1095,42 @@ func parseSecrets(secrets []string) ([]specgen.Secret, map[string]string, error)
 		}
 
 		for _, val := range split {
-			name, value, hasValue := strings.Cut(val, "=")
-			if !hasValue {
+			kv := strings.SplitN(val, "=", 2)
+			if len(kv) < 2 {
 				return nil, nil, fmt.Errorf("option %s must be in form option=value: %w", val, secretParseError)
 			}
-			switch name {
+			switch kv[0] {
 			case "source":
-				source = value
+				source = kv[1]
 			case "type":
 				if secretType != "" {
 					return nil, nil, fmt.Errorf("cannot set more than one secret type: %w", secretParseError)
 				}
-				if value != "mount" && value != "env" {
-					return nil, nil, fmt.Errorf("type %s is invalid: %w", value, secretParseError)
+				if kv[1] != "mount" && kv[1] != "env" {
+					return nil, nil, fmt.Errorf("type %s is invalid: %w", kv[1], secretParseError)
 				}
-				secretType = value
+				secretType = kv[1]
 			case "target":
-				target = value
+				target = kv[1]
 			case "mode":
 				mountOnly = true
-				mode64, err := strconv.ParseUint(value, 8, 32)
+				mode64, err := strconv.ParseUint(kv[1], 8, 32)
 				if err != nil {
-					return nil, nil, fmt.Errorf("mode %s invalid: %w", value, secretParseError)
+					return nil, nil, fmt.Errorf("mode %s invalid: %w", kv[1], secretParseError)
 				}
 				mode = uint32(mode64)
 			case "uid", "UID":
 				mountOnly = true
-				uid64, err := strconv.ParseUint(value, 10, 32)
+				uid64, err := strconv.ParseUint(kv[1], 10, 32)
 				if err != nil {
-					return nil, nil, fmt.Errorf("UID %s invalid: %w", value, secretParseError)
+					return nil, nil, fmt.Errorf("UID %s invalid: %w", kv[1], secretParseError)
 				}
 				uid = uint32(uid64)
 			case "gid", "GID":
 				mountOnly = true
-				gid64, err := strconv.ParseUint(value, 10, 32)
+				gid64, err := strconv.ParseUint(kv[1], 10, 32)
 				if err != nil {
-					return nil, nil, fmt.Errorf("GID %s invalid: %w", value, secretParseError)
+					return nil, nil, fmt.Errorf("GID %s invalid: %w", kv[1], secretParseError)
 				}
 				gid = uint32(gid64)
 
@@ -1210,17 +1195,17 @@ func parseLinuxResourcesDeviceAccess(device string) (specs.LinuxDeviceCgroup, er
 		return specs.LinuxDeviceCgroup{}, fmt.Errorf("invalid device type in device-access-add: %s", devType)
 	}
 
-	majorNumber, minorNumber, hasMinor := strings.Cut(value[1], ":")
-	if majorNumber != "*" {
-		i, err := strconv.ParseUint(majorNumber, 10, 64)
+	number := strings.SplitN(value[1], ":", 2)
+	if number[0] != "*" {
+		i, err := strconv.ParseUint(number[0], 10, 64)
 		if err != nil {
 			return specs.LinuxDeviceCgroup{}, err
 		}
 		m := int64(i)
 		major = &m
 	}
-	if hasMinor && minorNumber != "*" {
-		i, err := strconv.ParseUint(minorNumber, 10, 64)
+	if len(number) == 2 && number[1] != "*" {
+		i, err := strconv.ParseUint(number[1], 10, 64)
 		if err != nil {
 			return specs.LinuxDeviceCgroup{}, err
 		}
@@ -1270,11 +1255,11 @@ func GetResources(s *specgen.SpecGenerator, c *entities.ContainerCreateOptions) 
 
 	unifieds := make(map[string]string)
 	for _, unified := range c.CgroupConf {
-		key, val, hasVal := strings.Cut(unified, "=")
-		if !hasVal {
+		splitUnified := strings.SplitN(unified, "=", 2)
+		if len(splitUnified) < 2 {
 			return nil, errors.New("--cgroup-conf must be formatted KEY=VALUE")
 		}
-		unifieds[key] = val
+		unifieds[splitUnified[0]] = splitUnified[1]
 	}
 	if len(unifieds) > 0 {
 		s.ResourceLimits.Unified = unifieds

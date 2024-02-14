@@ -159,8 +159,6 @@ See [**Environment**](#environment) note below for precedence and examples.
 
 @@option gidmap.container
 
-@@option gpus
-
 @@option group-add
 
 @@option group-entry

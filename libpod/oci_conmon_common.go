@@ -1,4 +1,6 @@
 //go:build !remote && (linux || freebsd)
+// +build !remote
+// +build linux freebsd
 
 package libpod
 
@@ -26,14 +28,14 @@ import (
 	"github.com/containers/common/pkg/resize"
 	"github.com/containers/common/pkg/version"
 	conmonConfig "github.com/containers/conmon/runner/config"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/libpod/logs"
-	"github.com/containers/podman/v5/pkg/checkpoint/crutils"
-	"github.com/containers/podman/v5/pkg/errorhandling"
-	"github.com/containers/podman/v5/pkg/rootless"
-	"github.com/containers/podman/v5/pkg/specgenutil"
-	"github.com/containers/podman/v5/pkg/util"
-	"github.com/containers/podman/v5/utils"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/libpod/logs"
+	"github.com/containers/podman/v4/pkg/checkpoint/crutils"
+	"github.com/containers/podman/v4/pkg/errorhandling"
+	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/specgenutil"
+	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v4/utils"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
@@ -207,7 +209,7 @@ func (r *ConmonOCIRuntime) CreateContainer(ctr *Container, restoreOptions *Conta
 // status, but will instead only check for the existence of the conmon exit file
 // and update state to stopped if it exists.
 func (r *ConmonOCIRuntime) UpdateContainerStatus(ctr *Container) error {
-	runtimeDir, err := util.GetRootlessRuntimeDir()
+	runtimeDir, err := util.GetRuntimeDir()
 	if err != nil {
 		return err
 	}
@@ -288,7 +290,7 @@ func (r *ConmonOCIRuntime) UpdateContainerStatus(ctr *Container) error {
 // Sets time the container was started, but does not save it.
 func (r *ConmonOCIRuntime) StartContainer(ctr *Container) error {
 	// TODO: streams should probably *not* be our STDIN/OUT/ERR - redirect to buffers?
-	runtimeDir, err := util.GetRootlessRuntimeDir()
+	runtimeDir, err := util.GetRuntimeDir()
 	if err != nil {
 		return err
 	}
@@ -307,7 +309,7 @@ func (r *ConmonOCIRuntime) StartContainer(ctr *Container) error {
 
 // UpdateContainer updates the given container's cgroup configuration
 func (r *ConmonOCIRuntime) UpdateContainer(ctr *Container, resources *spec.LinuxResources) error {
-	runtimeDir, err := util.GetRootlessRuntimeDir()
+	runtimeDir, err := util.GetRuntimeDir()
 	if err != nil {
 		return err
 	}
@@ -366,7 +368,7 @@ func (r *ConmonOCIRuntime) KillContainer(ctr *Container, signal uint, all bool) 
 // *bytes.buffer and returned; otherwise, it is set to os.Stderr.
 func (r *ConmonOCIRuntime) killContainer(ctr *Container, signal uint, all, captureStderr bool) (*bytes.Buffer, error) {
 	logrus.Debugf("Sending signal %d to container %s", signal, ctr.ID())
-	runtimeDir, err := util.GetRootlessRuntimeDir()
+	runtimeDir, err := util.GetRuntimeDir()
 	if err != nil {
 		return nil, err
 	}
@@ -502,7 +504,7 @@ func (r *ConmonOCIRuntime) StopContainer(ctr *Container, timeout uint, all bool)
 
 // DeleteContainer deletes a container from the OCI runtime.
 func (r *ConmonOCIRuntime) DeleteContainer(ctr *Container) error {
-	runtimeDir, err := util.GetRootlessRuntimeDir()
+	runtimeDir, err := util.GetRuntimeDir()
 	if err != nil {
 		return err
 	}
@@ -512,7 +514,7 @@ func (r *ConmonOCIRuntime) DeleteContainer(ctr *Container) error {
 
 // PauseContainer pauses the given container.
 func (r *ConmonOCIRuntime) PauseContainer(ctr *Container) error {
-	runtimeDir, err := util.GetRootlessRuntimeDir()
+	runtimeDir, err := util.GetRuntimeDir()
 	if err != nil {
 		return err
 	}
@@ -522,7 +524,7 @@ func (r *ConmonOCIRuntime) PauseContainer(ctr *Container) error {
 
 // UnpauseContainer unpauses the given container.
 func (r *ConmonOCIRuntime) UnpauseContainer(ctr *Container) error {
-	runtimeDir, err := util.GetRootlessRuntimeDir()
+	runtimeDir, err := util.GetRuntimeDir()
 	if err != nil {
 		return err
 	}
@@ -849,7 +851,7 @@ func (r *ConmonOCIRuntime) CheckpointContainer(ctr *Container, options Container
 	args = append(args, ctr.ID())
 	logrus.Debugf("the args to checkpoint: %s %s", r.path, strings.Join(args, " "))
 
-	runtimeDir, err := util.GetRootlessRuntimeDir()
+	runtimeDir, err := util.GetRuntimeDir()
 	if err != nil {
 		return 0, err
 	}
@@ -1036,39 +1038,6 @@ func (r *ConmonOCIRuntime) getLogTag(ctr *Container) (string, error) {
 	return b.String(), nil
 }
 
-func getPreserveFdExtraFiles(preserveFD []uint, preserveFDs uint) (uint, []*os.File, []*os.File, error) {
-	var filesToClose []*os.File
-	var extraFiles []*os.File
-
-	preserveFDsMap := make(map[uint]struct{})
-	for _, i := range preserveFD {
-		if i < 3 {
-			return 0, nil, nil, fmt.Errorf("cannot preserve FD %d, consider using the passthrough log-driver to pass STDIO streams into the container: %w", i, define.ErrInvalidArg)
-		}
-		if i-2 > preserveFDs {
-			// preserveFDs is the number of FDs above 2 to keep around.
-			// e.g. if the user specified FD=3, then preserveFDs must be 1.
-			preserveFDs = i - 2
-		}
-		preserveFDsMap[i] = struct{}{}
-	}
-
-	if preserveFDs > 0 {
-		for fd := 3; fd < int(3+preserveFDs); fd++ {
-			if len(preserveFDsMap) > 0 {
-				if _, ok := preserveFDsMap[uint(fd)]; !ok {
-					extraFiles = append(extraFiles, nil)
-					continue
-				}
-			}
-			f := os.NewFile(uintptr(fd), fmt.Sprintf("fd-%d", fd))
-			filesToClose = append(filesToClose, f)
-			extraFiles = append(extraFiles, f)
-		}
-	}
-	return preserveFDs, filesToClose, extraFiles, nil
-}
-
 // createOCIContainer generates this container's main conmon instance and prepares it for starting
 func (r *ConmonOCIRuntime) createOCIContainer(ctr *Container, restoreOptions *ContainerCheckpointOptions) (int64, error) {
 	var stderrBuf bytes.Buffer
@@ -1097,7 +1066,7 @@ func (r *ConmonOCIRuntime) createOCIContainer(ctr *Container, restoreOptions *Co
 	}
 
 	if ctr.config.CgroupsMode == cgroupSplit {
-		if err := moveToRuntimeCgroup(); err != nil {
+		if err := utils.MoveUnderCgroupSubtree("runtime"); err != nil {
 			return 0, err
 		}
 	}
@@ -1145,11 +1114,10 @@ func (r *ConmonOCIRuntime) createOCIContainer(ctr *Container, restoreOptions *Co
 		args = append(args, []string{"--exit-command-arg", arg}...)
 	}
 
-	preserveFDs := ctr.config.PreserveFDs
-
 	// Pass down the LISTEN_* environment (see #10443).
+	preserveFDs := ctr.config.PreserveFDs
 	if val := os.Getenv("LISTEN_FDS"); val != "" {
-		if preserveFDs > 0 || len(ctr.config.PreserveFD) > 0 {
+		if ctr.config.PreserveFDs > 0 {
 			logrus.Warnf("Ignoring LISTEN_FDS to preserve custom user-specified FDs")
 		} else {
 			fds, err := strconv.Atoi(val)
@@ -1160,10 +1128,6 @@ func (r *ConmonOCIRuntime) createOCIContainer(ctr *Container, restoreOptions *Co
 		}
 	}
 
-	preserveFDs, filesToClose, extraFiles, err := getPreserveFdExtraFiles(ctr.config.PreserveFD, preserveFDs)
-	if err != nil {
-		return 0, err
-	}
 	if preserveFDs > 0 {
 		args = append(args, formatRuntimeOpts("--preserve-fds", strconv.FormatUint(uint64(preserveFDs), 10))...)
 	}
@@ -1225,7 +1189,14 @@ func (r *ConmonOCIRuntime) createOCIContainer(ctr *Container, restoreOptions *Co
 		return 0, fmt.Errorf("configuring conmon env: %w", err)
 	}
 
-	cmd.ExtraFiles = extraFiles
+	var filesToClose []*os.File
+	if preserveFDs > 0 {
+		for fd := 3; fd < int(3+preserveFDs); fd++ {
+			f := os.NewFile(uintptr(fd), fmt.Sprintf("fd-%d", fd))
+			filesToClose = append(filesToClose, f)
+			cmd.ExtraFiles = append(cmd.ExtraFiles, f)
+		}
+	}
 
 	cmd.Env = r.conmonEnv
 	// we don't want to step on users fds they asked to preserve
@@ -1353,7 +1324,7 @@ func (r *ConmonOCIRuntime) configureConmonEnv() ([]string, error) {
 		}
 		res = append(res, v)
 	}
-	runtimeDir, err := util.GetRootlessRuntimeDir()
+	runtimeDir, err := util.GetRuntimeDir()
 	if err != nil {
 		return nil, err
 	}

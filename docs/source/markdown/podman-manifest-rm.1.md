@@ -1,4 +1,4 @@
-% podman-manifest-rm 1
+# podman-manifest-rm "1" "April 2021" "podman"
 
 ## NAME
 podman\-manifest\-rm - Remove manifest list or image index from local storage

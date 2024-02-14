@@ -1,4 +1,5 @@
 //go:build windows
+// +build windows
 
 package main
 
@@ -10,7 +11,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/containers/podman/v5/pkg/machine/wsl/wutil"
+	"github.com/containers/podman/v4/pkg/machine/wsl/wutil"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/windows/svc/eventlog"
 )

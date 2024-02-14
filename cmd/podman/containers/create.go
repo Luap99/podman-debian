@@ -11,19 +11,19 @@ import (
 	"github.com/containers/buildah/pkg/cli"
 	"github.com/containers/common/pkg/auth"
 	"github.com/containers/common/pkg/config"
+	cutil "github.com/containers/common/pkg/util"
 	"github.com/containers/image/v5/transports/alltransports"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v5/cmd/podman/common"
-	"github.com/containers/podman/v5/cmd/podman/registry"
-	"github.com/containers/podman/v5/cmd/podman/utils"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	"github.com/containers/podman/v5/pkg/specgen"
-	"github.com/containers/podman/v5/pkg/specgenutil"
-	"github.com/containers/podman/v5/pkg/util"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/utils"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/specgen"
+	"github.com/containers/podman/v4/pkg/specgenutil"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"golang.org/x/exp/slices"
 	"golang.org/x/term"
 )
 
@@ -134,7 +134,7 @@ func create(cmd *cobra.Command, args []string) error {
 		if !cmd.Flags().Changed("pod") {
 			return errors.New("must specify pod value with init-ctr")
 		}
-		if !slices.Contains([]string{define.AlwaysInitContainer, define.OneShotInitContainer}, initctr) {
+		if !cutil.StringInSlice(initctr, []string{define.AlwaysInitContainer, define.OneShotInitContainer}) {
 			return fmt.Errorf("init-ctr value must be '%s' or '%s'", define.AlwaysInitContainer, define.OneShotInitContainer)
 		}
 		cliVals.InitContainerType = initctr
@@ -180,13 +180,6 @@ func create(cmd *cobra.Command, args []string) error {
 
 	report, err := registry.ContainerEngine().ContainerCreate(registry.GetContext(), s)
 	if err != nil {
-		// if pod was created as part of run
-		// remove it in case ctr creation fails
-		if err := rmPodIfNecessary(cmd, s); err != nil {
-			if !errors.Is(err, define.ErrNoSuchPod) {
-				logrus.Error(err.Error())
-			}
-		}
 		return err
 	}
 
@@ -349,10 +342,10 @@ func PullImage(imageName string, cliVals *entities.ContainerCreateOptions) (stri
 			if cliVals.Arch != "" || cliVals.OS != "" {
 				return "", errors.New("--platform option can not be specified with --arch or --os")
 			}
-			OS, Arch, hasArch := strings.Cut(cliVals.Platform, "/")
-			cliVals.OS = OS
-			if hasArch {
-				cliVals.Arch = Arch
+			split := strings.SplitN(cliVals.Platform, "/", 2)
+			cliVals.OS = split[0]
+			if len(split) > 1 {
+				cliVals.Arch = split[1]
 			}
 		}
 	}
@@ -390,18 +383,6 @@ func PullImage(imageName string, cliVals *entities.ContainerCreateOptions) (stri
 	}
 
 	return imageName, nil
-}
-
-func rmPodIfNecessary(cmd *cobra.Command, s *specgen.SpecGenerator) error {
-	if !strings.HasPrefix(cmd.Flag("pod").Value.String(), "new:") {
-		return nil
-	}
-
-	// errcheck not necessary since
-	// pod creation would've failed
-	podName := strings.Replace(s.Pod, "new:", "", 1)
-	_, err := registry.ContainerEngine().PodRm(context.Background(), []string{podName}, entities.PodRmOptions{})
-	return err
 }
 
 // createPodIfNecessary automatically creates a pod when requested.  if the pod name

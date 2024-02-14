@@ -1,4 +1,5 @@
 //go:build !remote
+// +build !remote
 
 package generate
 
@@ -12,10 +13,10 @@ import (
 	"github.com/containers/common/libimage"
 	"github.com/containers/common/pkg/cgroups"
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v5/libpod"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/rootless"
-	"github.com/containers/podman/v5/pkg/specgen"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/specgen"
 	"github.com/docker/go-units"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/runtime-tools/generate"
@@ -100,7 +101,7 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 
 	canMountSys := canMountSys(isRootless, isNewUserns, s)
 
-	if s.IsPrivileged() && canMountSys {
+	if s.Privileged && canMountSys {
 		cgroupPerm = "rw"
 		g.RemoveMount("/sys")
 		sysMnt := spec.Mount{
@@ -115,7 +116,7 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 		addCgroup = false
 		g.RemoveMount("/sys")
 		r := "ro"
-		if s.IsPrivileged() {
+		if s.Privileged {
 			r = "rw"
 		}
 		sysMnt := spec.Mount{
@@ -134,7 +135,7 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 			Options:     []string{"rprivate", "nosuid", "noexec", "nodev", r},
 		}
 		g.AddMount(sysFsCgroupMnt)
-		if !s.IsPrivileged() && isRootless {
+		if !s.Privileged && isRootless {
 			g.AddLinuxMaskedPaths("/sys/kernel")
 		}
 	}
@@ -211,9 +212,7 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 
 	g.SetProcessArgs(finalCmd)
 
-	if s.Terminal != nil {
-		g.SetProcessTerminal(*s.Terminal)
-	}
+	g.SetProcessTerminal(s.Terminal)
 
 	for key, val := range s.Annotations {
 		g.AddAnnotation(key, val)
@@ -249,13 +248,13 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 
 	// Devices
 	// set the default rule at the beginning of device configuration
-	if !inUserNS && !s.IsPrivileged() {
+	if !inUserNS && !s.Privileged {
 		g.AddLinuxResourcesDevice(false, "", nil, nil, "rwm")
 	}
 
 	var userDevices []spec.LinuxDevice
 
-	if !s.IsPrivileged() {
+	if !s.Privileged {
 		// add default devices from containers.conf
 		for _, device := range rtc.Containers.Devices.Get() {
 			if err = DevicesFromPath(&g, device); err != nil {
@@ -280,13 +279,13 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 	if isRootless && len(s.DeviceCgroupRule) > 0 {
 		return nil, fmt.Errorf("device cgroup rules are not supported in rootless mode or in a user namespace")
 	}
-	if !isRootless && !s.IsPrivileged() {
+	if !isRootless && !s.Privileged {
 		for _, dev := range s.DeviceCgroupRule {
 			g.AddLinuxResourcesDevice(true, dev.Type, dev.Major, dev.Minor, dev.Access)
 		}
 	}
 
-	BlockAccessToKernelFilesystems(s.IsPrivileged(), s.PidNS.IsHost(), s.Mask, s.Unmask, &g)
+	BlockAccessToKernelFilesystems(s.Privileged, s.PidNS.IsHost(), s.Mask, s.Unmask, &g)
 
 	g.ClearProcessEnv()
 	for name, val := range s.Env {
@@ -317,19 +316,19 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 		configSpec.Annotations = make(map[string]string)
 	}
 
-	if s.Remove != nil && *s.Remove {
+	if s.Remove {
 		configSpec.Annotations[define.InspectAnnotationAutoremove] = define.InspectResponseTrue
 	}
 
 	if len(s.VolumesFrom) > 0 {
-		configSpec.Annotations[define.InspectAnnotationVolumesFrom] = strings.Join(s.VolumesFrom, ";")
+		configSpec.Annotations[define.InspectAnnotationVolumesFrom] = strings.Join(s.VolumesFrom, ",")
 	}
 
-	if s.IsPrivileged() {
+	if s.Privileged {
 		configSpec.Annotations[define.InspectAnnotationPrivileged] = define.InspectResponseTrue
 	}
 
-	if s.Init != nil && *s.Init {
+	if s.Init {
 		configSpec.Annotations[define.InspectAnnotationInit] = define.InspectResponseTrue
 	}
 
@@ -338,15 +337,7 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 	}
 
 	setProcOpts(s, &g)
-	roFS := false
-	if s.ReadOnlyFilesystem != nil {
-		roFS = *s.ReadOnlyFilesystem
-	}
-	rwTmpfs := false
-	if s.ReadWriteTmpfs != nil {
-		rwTmpfs = *s.ReadWriteTmpfs
-	}
-	if roFS && !rwTmpfs {
+	if s.ReadOnlyFilesystem && !s.ReadWriteTmpfs {
 		setDevOptsReadOnly(&g)
 	}
 

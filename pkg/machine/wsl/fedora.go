@@ -1,4 +1,5 @@
 //go:build windows
+// +build windows
 
 package wsl
 
@@ -14,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containers/podman/v5/pkg/machine"
-	"github.com/containers/podman/v5/pkg/machine/define"
+	"github.com/containers/podman/v4/pkg/machine"
+	"github.com/containers/podman/v4/pkg/machine/define"
 )
 
 const (
@@ -27,7 +28,7 @@ type FedoraDownload struct {
 	machine.Download
 }
 
-func NewFedoraDownloader(vmType define.VMType, vmName, releaseStream string) (machine.DistributionDownload, error) {
+func NewFedoraDownloader(vmType machine.VMType, vmName, releaseStream string) (machine.DistributionDownload, error) {
 	downloadURL, version, arch, size, err := getFedoraDownload()
 	if err != nil {
 		return nil, err

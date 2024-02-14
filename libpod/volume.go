@@ -1,13 +1,14 @@
 //go:build !remote
+// +build !remote
 
 package libpod
 
 import (
 	"time"
 
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/libpod/lock"
-	"github.com/containers/podman/v5/libpod/plugin"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/libpod/lock"
+	"github.com/containers/podman/v4/libpod/plugin"
 	"github.com/containers/storage/pkg/directory"
 )
 

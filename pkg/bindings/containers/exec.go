@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/api/handlers"
-	"github.com/containers/podman/v5/pkg/bindings"
-	dockerAPI "github.com/docker/docker/api/types"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/api/handlers"
+	"github.com/containers/podman/v4/pkg/bindings"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/sirupsen/logrus"
 )
@@ -43,7 +43,7 @@ func ExecCreate(ctx context.Context, nameOrID string, config *handlers.ExecCreat
 	}
 	defer resp.Body.Close()
 
-	respStruct := new(dockerAPI.IDResponse)
+	respStruct := new(entities.IDResponse)
 	if err := resp.Process(respStruct); err != nil {
 		return "", err
 	}

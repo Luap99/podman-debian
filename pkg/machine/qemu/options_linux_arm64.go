@@ -9,7 +9,7 @@ var (
 	QemuCommand = "qemu-system-aarch64"
 )
 
-func (q *QEMUStubber) addArchOptions(_ *setNewMachineCMDOpts) []string {
+func (v *MachineVM) addArchOptions(_ *setNewMachineCMDOpts) []string {
 	opts := []string{
 		"-accel", "kvm",
 		"-cpu", "host",
@@ -17,6 +17,14 @@ func (q *QEMUStubber) addArchOptions(_ *setNewMachineCMDOpts) []string {
 		"-bios", getQemuUefiFile("QEMU_EFI.fd"),
 	}
 	return opts
+}
+
+func (v *MachineVM) prepare() error {
+	return nil
+}
+
+func (v *MachineVM) archRemovalFiles() []string {
+	return []string{}
 }
 
 func getQemuUefiFile(name string) string {

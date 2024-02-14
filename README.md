@@ -72,7 +72,7 @@ A little configuration by an administrator is required before rootless Podman ca
 
 ## Podman Desktop
 
-[Podman Desktop](https://podman-desktop.io/) is a new project under the container organization built to help the developers working with containers from their local environment with a desktop UI. Podman Desktop is still in its early days, but already provides capabilities to list your images, interact with containers (access logs, get a terminal), connect to registries (pull private images, push your images) and configure podman settings (proxies). The project develops on [GitHub](https://github.com/containers/podman-desktop) and contributors are welcome.
+[Podman Desktop](https://podman-desktop.io/) is a new project under the container organization built to help the developers working with containers from their local environment with a desktop UI. Podman Desktop is still in its early days, but already provides capabilities to list your images, interact with containers (access logs, get a terminal), connect to registries (pull private images, push your images) and configure podman settings (proxies). The project develops on [Github](https://github.com/containers/podman-desktop) and contributors are welcome.
 
 ## Out of scope
 
@@ -197,3 +197,8 @@ Website:   https://podman.io
 Documents: https://docs.podman.io
 Twitter:   @Podman_io
 ```
+
+## Podman Former API (Varlink)
+Podman formerly offered a Varlink-based API for remote management of containers. However, this API
+was replaced by the REST API. Varlink support has been removed as of the 3.0 release.
+For more details, you can see [this blog](https://podman.io/blogs/2020/01/17/podman-new-api.html).

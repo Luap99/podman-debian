@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	. "github.com/containers/podman/v5/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -612,7 +612,7 @@ var _ = Describe("Podman pull", func() {
 
 		decryptionTestHelper := func(imgPath string) *PodmanSessionIntegration {
 			bitSize := 1024
-			keyFileName := filepath.Join(podmanTest.TempDir, "key,withcomma")
+			keyFileName := filepath.Join(podmanTest.TempDir, "key")
 			publicKeyFileName, privateKeyFileName, err := WriteRSAKeyPair(keyFileName, bitSize)
 			Expect(err).ToNot(HaveOccurred())
 

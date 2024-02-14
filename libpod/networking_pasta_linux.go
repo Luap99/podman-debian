@@ -1,4 +1,5 @@
 //go:build !remote
+// +build !remote
 
 // SPDX-License-Identifier: Apache-2.0
 //

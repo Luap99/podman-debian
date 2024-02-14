@@ -1,4 +1,5 @@
 //go:build !remote
+// +build !remote
 
 package libpod
 
@@ -12,8 +13,8 @@ import (
 	"github.com/containers/common/libimage"
 	is "github.com/containers/image/v5/storage"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/libpod/events"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/libpod/events"
 	"github.com/sirupsen/logrus"
 )
 
@@ -97,8 +98,8 @@ func (c *Container) Commit(ctx context.Context, destImage string, options Contai
 	// Should we store the ENV we actually want in the spec separately?
 	if c.config.Spec.Process != nil {
 		for _, e := range c.config.Spec.Process.Env {
-			key, val, _ := strings.Cut(e, "=")
-			importBuilder.SetEnv(key, val)
+			splitEnv := strings.SplitN(e, "=", 2)
+			importBuilder.SetEnv(splitEnv[0], splitEnv[1])
 		}
 	}
 	// Expose ports

@@ -21,9 +21,10 @@ import (
 	"time"
 
 	"github.com/containers/common/pkg/cgroups"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/inspect"
-	. "github.com/containers/podman/v5/test/utils"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/inspect"
+	"github.com/containers/podman/v4/pkg/util"
+	. "github.com/containers/podman/v4/test/utils"
 	"github.com/containers/storage/pkg/lockfile"
 	"github.com/containers/storage/pkg/reexec"
 	"github.com/containers/storage/pkg/stringid"
@@ -32,7 +33,6 @@ import (
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/exp/slices"
 	"golang.org/x/sys/unix"
 )
 
@@ -122,7 +122,6 @@ var (
 		// invalid containers.conf files to fail the cleanup.
 		os.Unsetenv("CONTAINERS_CONF")
 		os.Unsetenv("CONTAINERS_CONF_OVERRIDE")
-		os.Unsetenv("PODMAN_CONNECTIONS_CONF")
 		podmanTest.Cleanup()
 		f := CurrentSpecReport()
 		processTestResult(f)
@@ -210,11 +209,12 @@ var _ = SynchronizedAfterSuite(func() {
 			scanner := bufio.NewScanner(f)
 			for scanner.Scan() {
 				text := scanner.Text()
-				name, durationString, ok := strings.Cut(text, "\t\t")
-				if !ok {
+				timing := strings.SplitN(text, "\t\t", 2)
+				if len(timing) != 2 {
 					Fail(fmt.Sprintf("incorrect timing line: %q", text))
 				}
-				duration, err := strconv.ParseFloat(durationString, 64)
+				name := timing[0]
+				duration, err := strconv.ParseFloat(timing[1], 64)
 				Expect(err).ToNot(HaveOccurred(), "failed to parse float from timings file")
 				testTimings = append(testTimings, testResult{name: name, length: duration})
 			}
@@ -508,17 +508,8 @@ func (p *PodmanTestIntegration) RunTopContainerWithArgs(name string, args []stri
 		podmanArgs = append(podmanArgs, "--name", name)
 	}
 	podmanArgs = append(podmanArgs, args...)
-	podmanArgs = append(podmanArgs, "-d", ALPINE, "top", "-b")
-	session := p.Podman(podmanArgs)
-	session.WaitWithDefaultTimeout()
-	Expect(session).To(ExitCleanly())
-	cid := session.OutputToString()
-	// Output indicates that top is running, which means it's safe
-	// for our caller to invoke `podman stop`
-	if !WaitContainerReady(p, cid, "Mem:", 20, 1) {
-		Fail("Could not start a top container")
-	}
-	return session
+	podmanArgs = append(podmanArgs, "-d", ALPINE, "top")
+	return p.Podman(podmanArgs)
 }
 
 // RunLsContainer runs a simple container in the background that
@@ -695,11 +686,10 @@ func (s *PodmanSessionIntegration) InspectContainerToJSON() []define.InspectCont
 
 // InspectPodToJSON takes the sessions output from a pod inspect and returns json
 func (s *PodmanSessionIntegration) InspectPodToJSON() define.InspectPodData {
-	var i []define.InspectPodData
+	var i define.InspectPodData
 	err := jsoniter.Unmarshal(s.Out.Contents(), &i)
 	Expect(err).ToNot(HaveOccurred())
-	Expect(i).To(HaveLen(1))
-	return i[0]
+	return i
 }
 
 // InspectPodToJSON takes the sessions output from an inspect and returns json
@@ -852,21 +842,17 @@ type journaldTests struct {
 
 var journald journaldTests
 
-// Check if journalctl is unavailable
-func checkAvailableJournald() {
+func SkipIfJournaldUnavailable() {
 	f := func() {
 		journald.journaldSkip = false
 
+		// Check if journalctl is unavailable
 		cmd := exec.Command("journalctl", "-n", "1")
 		if err := cmd.Run(); err != nil {
 			journald.journaldSkip = true
 		}
 	}
 	journald.journaldOnce.Do(f)
-}
-
-func SkipIfJournaldUnavailable() {
-	checkAvailableJournald()
 
 	// In container, journalctl does not return an error even if
 	// journald is unavailable
@@ -1044,7 +1030,7 @@ func (p *PodmanTestIntegration) PodmanNoEvents(args []string) *PodmanSessionInte
 // MakeOptions assembles all the podman main options
 func (p *PodmanTestIntegration) makeOptions(args []string, noEvents, noCache bool) []string {
 	if p.RemoteTest {
-		if !slices.Contains(args, "--remote") {
+		if !util.StringInSlice("--remote", args) {
 			return append([]string{"--remote", "--url", p.RemoteSocket}, args...)
 		}
 		return args

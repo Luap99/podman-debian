@@ -1,4 +1,6 @@
 //go:build !remote && (linux || freebsd)
+// +build !remote
+// +build linux freebsd
 
 package libpod
 
@@ -32,28 +34,28 @@ import (
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/subscriptions"
 	"github.com/containers/common/pkg/umask"
+	cutil "github.com/containers/common/pkg/util"
 	is "github.com/containers/image/v5/storage"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/libpod/events"
-	"github.com/containers/podman/v5/pkg/annotations"
-	"github.com/containers/podman/v5/pkg/checkpoint/crutils"
-	"github.com/containers/podman/v5/pkg/criu"
-	"github.com/containers/podman/v5/pkg/lookup"
-	"github.com/containers/podman/v5/pkg/rootless"
-	"github.com/containers/podman/v5/pkg/util"
-	"github.com/containers/podman/v5/version"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/libpod/events"
+	"github.com/containers/podman/v4/pkg/annotations"
+	"github.com/containers/podman/v4/pkg/checkpoint/crutils"
+	"github.com/containers/podman/v4/pkg/criu"
+	"github.com/containers/podman/v4/pkg/lookup"
+	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v4/version"
 	"github.com/containers/storage/pkg/archive"
 	"github.com/containers/storage/pkg/idtools"
 	"github.com/containers/storage/pkg/lockfile"
 	stypes "github.com/containers/storage/types"
 	securejoin "github.com/cyphar/filepath-securejoin"
-	runcuser "github.com/moby/sys/user"
+	runcuser "github.com/opencontainers/runc/libcontainer/user"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/runtime-tools/generate"
 	"github.com/opencontainers/selinux/go-selinux"
 	"github.com/opencontainers/selinux/go-selinux/label"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/exp/slices"
 	"golang.org/x/sys/unix"
 	cdi "tags.cncf.io/container-device-interface/pkg/cdi"
 )
@@ -84,7 +86,7 @@ func parseOptionIDs(ctrMappings []idtools.IDMap, option string) ([]idtools.IDMap
 		if relative {
 			found := false
 			for _, m := range ctrMappings {
-				if v.HostID >= m.ContainerID && v.HostID < m.ContainerID+m.Size {
+				if v.ContainerID >= m.ContainerID && v.ContainerID < m.ContainerID+m.Size {
 					v.HostID += m.HostID - m.ContainerID
 					found = true
 					break
@@ -193,7 +195,7 @@ func (c *Container) generateSpec(ctx context.Context) (s *spec.Spec, cleanupFunc
 	overrides := c.getUserOverrides()
 	execUser, err := lookup.GetUserGroupInfo(c.state.Mountpoint, c.config.User, overrides)
 	if err != nil {
-		if slices.Contains(c.config.HostUsers, c.config.User) {
+		if cutil.StringInSlice(c.config.User, c.config.HostUsers) {
 			execUser, err = lookupHostUser(c.config.User)
 		}
 		if err != nil {
@@ -364,11 +366,7 @@ func (c *Container) generateSpec(ctx context.Context) (s *spec.Spec, cleanupFunc
 				if err := c.relabel(m.Source, c.MountLabel(), label.IsShared(o)); err != nil {
 					return nil, nil, err
 				}
-			case "no-dereference":
-				// crun calls the option `copy-symlink`.
-				// Podman decided for --no-dereference as many
-				// bin-utils tools (e..g, touch, chown, cp) do.
-				options = append(options, "copy-symlink")
+
 			default:
 				options = append(options, o)
 			}
@@ -607,6 +605,9 @@ func (c *Container) generateSpec(ctx context.Context) (s *spec.Spec, cleanupFunc
 		if err != nil {
 			return nil, nil, err
 		}
+		if err != nil {
+			return nil, nil, err
+		}
 		for name, secr := range c.config.EnvSecrets {
 			_, data, err := manager.LookupSecretData(secr.Name)
 			if err != nil {
@@ -790,7 +791,7 @@ func (c *Container) resolveWorkDir() error {
 	if err != nil {
 		return fmt.Errorf("looking up %s inside of the container %s: %w", c.User(), c.ID(), err)
 	}
-	if err := idtools.SafeChown(resolvedWorkdir, int(uid), int(gid)); err != nil {
+	if err := os.Chown(resolvedWorkdir, int(uid), int(gid)); err != nil {
 		return fmt.Errorf("chowning container %s workdir to container root: %w", c.ID(), err)
 	}
 
@@ -864,7 +865,7 @@ func (c *Container) mountNotifySocket(g generate.Generator) error {
 			return fmt.Errorf("unable to create notify %q dir: %w", notifyDir, err)
 		}
 	}
-	if err := c.relabel(notifyDir, c.MountLabel(), true); err != nil {
+	if err := label.Relabel(notifyDir, c.MountLabel(), true); err != nil {
 		return fmt.Errorf("relabel failed %q: %w", notifyDir, err)
 	}
 	logrus.Debugf("Add bindmount notify %q dir", notifyDir)
@@ -1815,7 +1816,7 @@ func (c *Container) mountIntoRootDirs(mountName string, mountPath string) error 
 
 // Make standard bind mounts to include in the container
 func (c *Container) makeBindMounts() error {
-	if err := idtools.SafeChown(c.state.RunDir, c.RootUID(), c.RootGID()); err != nil {
+	if err := os.Chown(c.state.RunDir, c.RootUID(), c.RootGID()); err != nil {
 		return fmt.Errorf("cannot chown run directory: %w", err)
 	}
 
@@ -2262,14 +2263,7 @@ func (c *Container) addHosts() error {
 	if err != nil {
 		return fmt.Errorf("failed to get container ip host entries: %w", err)
 	}
-
-	// Consider container level BaseHostsFile configuration first.
-	// If it is empty, fallback to containers.conf level configuration.
-	baseHostsFileConf := c.config.BaseHostsFile
-	if baseHostsFileConf == "" {
-		baseHostsFileConf = c.runtime.config.Containers.BaseHostsFile
-	}
-	baseHostFile, err := etchosts.GetBaseHostFile(baseHostsFileConf, c.state.Mountpoint)
+	baseHostFile, err := etchosts.GetBaseHostFile(c.runtime.config.Containers.BaseHostsFile, c.state.Mountpoint)
 	if err != nil {
 		return err
 	}
@@ -2287,10 +2281,10 @@ func (c *Container) addHosts() error {
 // It will also add the path to the container bind mount map.
 // source is the path on the host, dest is the path in the container.
 func (c *Container) bindMountRootFile(source, dest string) error {
-	if err := idtools.SafeChown(source, c.RootUID(), c.RootGID()); err != nil {
+	if err := os.Chown(source, c.RootUID(), c.RootGID()); err != nil {
 		return err
 	}
-	if err := c.relabel(source, c.MountLabel(), false); err != nil {
+	if err := label.Relabel(source, c.MountLabel(), false); err != nil {
 		return err
 	}
 
@@ -2492,7 +2486,7 @@ func (c *Container) setHomeEnvIfNeeded() error {
 		overrides := c.getUserOverrides()
 		execUser, err := lookup.GetUserGroupInfo(c.state.Mountpoint, c.config.User, overrides)
 		if err != nil {
-			if slices.Contains(c.config.HostUsers, c.config.User) {
+			if cutil.StringInSlice(c.config.User, c.config.HostUsers) {
 				execUser, err = lookupHostUser(c.config.User)
 			}
 
@@ -2782,6 +2776,38 @@ func (c *Container) generatePasswdAndGroup() (string, string, error) {
 	return passwdPath, groupPath, nil
 }
 
+func (c *Container) copyTimezoneFile(zonePath string) (string, error) {
+	localtimeCopy := filepath.Join(c.state.RunDir, "localtime")
+	file, err := os.Stat(zonePath)
+	if err != nil {
+		return "", err
+	}
+	if file.IsDir() {
+		return "", errors.New("invalid timezone: is a directory")
+	}
+	src, err := os.Open(zonePath)
+	if err != nil {
+		return "", err
+	}
+	defer src.Close()
+	dest, err := os.Create(localtimeCopy)
+	if err != nil {
+		return "", err
+	}
+	defer dest.Close()
+	_, err = io.Copy(dest, src)
+	if err != nil {
+		return "", err
+	}
+	if err := c.relabel(localtimeCopy, c.config.MountLabel, false); err != nil {
+		return "", err
+	}
+	if err := dest.Chown(c.RootUID(), c.RootGID()); err != nil {
+		return "", err
+	}
+	return localtimeCopy, err
+}
+
 func (c *Container) cleanupOverlayMounts() error {
 	return overlay.CleanupContent(c.config.StaticDir)
 }
@@ -2794,10 +2820,10 @@ func (c *Container) createSecretMountDir(runPath string) error {
 		if err := umask.MkdirAllIgnoreUmask(src, os.FileMode(0o755)); err != nil {
 			return err
 		}
-		if err := c.relabel(src, c.config.MountLabel, false); err != nil {
+		if err := label.Relabel(src, c.config.MountLabel, false); err != nil {
 			return err
 		}
-		if err := idtools.SafeChown(src, c.RootUID(), c.RootGID()); err != nil {
+		if err := os.Chown(src, c.RootUID(), c.RootGID()); err != nil {
 			return err
 		}
 		c.state.BindMounts[filepath.Join(runPath, "secrets")] = src
@@ -2856,7 +2882,7 @@ func (c *Container) fixVolumePermissions(v *ContainerNamedVolume) error {
 			return err
 		}
 
-		if err := idtools.SafeLchown(mountPoint, uid, gid); err != nil {
+		if err := os.Lchown(mountPoint, uid, gid); err != nil {
 			return err
 		}
 
@@ -2865,7 +2891,7 @@ func (c *Container) fixVolumePermissions(v *ContainerNamedVolume) error {
 		st, err := os.Lstat(filepath.Join(c.state.Mountpoint, v.Dest))
 		if err == nil {
 			if stat, ok := st.Sys().(*syscall.Stat_t); ok {
-				if err := idtools.SafeLchown(mountPoint, int(stat.Uid), int(stat.Gid)); err != nil {
+				if err := os.Lchown(mountPoint, int(stat.Uid), int(stat.Gid)); err != nil {
 					return err
 				}
 			}
@@ -2897,12 +2923,7 @@ func (c *Container) relabel(src, mountLabel string, shared bool) error {
 			return nil
 		}
 	}
-	err := label.Relabel(src, mountLabel, shared)
-	if errors.Is(err, unix.ENOTSUP) {
-		logrus.Debugf("Labeling not supported on %q", src)
-		return nil
-	}
-	return err
+	return label.Relabel(src, mountLabel, shared)
 }
 
 func (c *Container) ChangeHostPathOwnership(src string, recurse bool, uid, gid int) error {

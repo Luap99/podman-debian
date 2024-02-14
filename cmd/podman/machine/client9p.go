@@ -1,4 +1,6 @@
 //go:build linux && (amd64 || arm64)
+// +build linux
+// +build amd64 arm64
 
 package machine
 
@@ -10,7 +12,7 @@ import (
 	"strconv"
 
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/podman/v5/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/registry"
 	"github.com/mdlayher/vsock"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"

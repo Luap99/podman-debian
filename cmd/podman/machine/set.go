@@ -1,15 +1,15 @@
 //go:build amd64 || arm64
+// +build amd64 arm64
 
 package machine
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/common/pkg/strongunits"
-	"github.com/containers/podman/v5/cmd/podman/registry"
-	"github.com/containers/podman/v5/pkg/machine"
-	"github.com/containers/podman/v5/pkg/machine/vmconfigs"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/pkg/machine"
 	"github.com/spf13/cobra"
 )
 
@@ -89,10 +89,8 @@ func init() {
 
 func setMachine(cmd *cobra.Command, args []string) error {
 	var (
-		err                error
-		newCPUs, newMemory *uint64
-		newDiskSize        *strongunits.GiB
-		newRootful         *bool
+		vm  machine.VM
+		err error
 	)
 
 	vmName := defaultMachineName
@@ -100,50 +98,34 @@ func setMachine(cmd *cobra.Command, args []string) error {
 		vmName = args[0]
 	}
 
-	dirs, err := machine.GetMachineDirs(provider.VMType())
-	if err != nil {
-		return err
-	}
-
-	mc, err := vmconfigs.LoadMachineByName(vmName, dirs)
+	vm, err = provider.LoadVMByName(vmName)
 	if err != nil {
 		return err
 	}
 
 	if cmd.Flags().Changed("rootful") {
-		newRootful = &setFlags.Rootful
+		setOpts.Rootful = &setFlags.Rootful
 	}
 	if cmd.Flags().Changed("cpus") {
-		mc.Resources.CPUs = setFlags.CPUs
-		newCPUs = &mc.Resources.CPUs
+		setOpts.CPUs = &setFlags.CPUs
 	}
 	if cmd.Flags().Changed("memory") {
-		mc.Resources.Memory = setFlags.Memory
-		newMemory = &mc.Resources.Memory
+		setOpts.Memory = &setFlags.Memory
 	}
 	if cmd.Flags().Changed("disk-size") {
-		if setFlags.DiskSize <= mc.Resources.DiskSize {
-			return fmt.Errorf("new disk size must be larger than %d GB", mc.Resources.DiskSize)
-		}
-		mc.Resources.DiskSize = setFlags.DiskSize
-		newDiskSizeGB := strongunits.GiB(setFlags.DiskSize)
-		newDiskSize = &newDiskSizeGB
+		setOpts.DiskSize = &setFlags.DiskSize
 	}
 	if cmd.Flags().Changed("user-mode-networking") {
-		// TODO This needs help
 		setOpts.UserModeNetworking = &setFlags.UserModeNetworking
 	}
 	if cmd.Flags().Changed("usb") {
-		// TODO This needs help
 		setOpts.USBs = &setFlags.USBs
 	}
 
-	// At this point, we have the known changed information, etc
-	// Walk through changes to the providers if they need them
-	if err := provider.SetProviderAttrs(mc, newCPUs, newMemory, newDiskSize, newRootful); err != nil {
-		return err
+	setErrs, lasterr := vm.Set(vmName, setOpts)
+	for _, err := range setErrs {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
 	}
 
-	// Update the configuration file last if everything earlier worked
-	return mc.Write()
+	return lasterr
 }

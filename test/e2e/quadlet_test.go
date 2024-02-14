@@ -9,9 +9,9 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/containers/podman/v5/pkg/systemd/parser"
-	. "github.com/containers/podman/v5/test/utils"
-	"github.com/containers/podman/v5/version"
+	"github.com/containers/podman/v4/pkg/systemd/parser"
+	. "github.com/containers/podman/v4/test/utils"
+	"github.com/containers/podman/v4/version"
 	"github.com/mattn/go-shellwords"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -23,17 +23,6 @@ type quadletTestcase struct {
 	data        []byte
 	serviceName string
 	checks      [][]string
-}
-
-// Converts "foo@bar.container" to "foo@.container"
-func getGenericTemplateFile(fileName string) (bool, string) {
-	extension := filepath.Ext(fileName)
-	base := strings.TrimSuffix(fileName, extension)
-	parts := strings.SplitN(base, "@", 2)
-	if len(parts) == 2 && len(parts[1]) > 0 {
-		return true, parts[0] + "@" + extension
-	}
-	return false, ""
 }
 
 func loadQuadletTestcase(path string) *quadletTestcase {
@@ -50,8 +39,6 @@ func loadQuadletTestcase(path string) *quadletTestcase {
 		service += "-network"
 	case ".image":
 		service += "-image"
-	case ".pod":
-		service += "-pod"
 	}
 	service += ".service"
 
@@ -213,8 +200,12 @@ func keyValueStringToMap(keyValueString, separator string) (map[string]string, e
 		return nil, err
 	}
 	for _, param := range keyVarList[0] {
-		key, val, _ := strings.Cut(param, "=")
-		keyValMap[key] = val
+		val := ""
+		kv := strings.SplitN(param, "=", 2)
+		if len(kv) == 2 {
+			val = kv[1]
+		}
+		keyValMap[kv[0]] = val
 	}
 
 	return keyValMap, nil
@@ -340,46 +331,6 @@ func (t *quadletTestcase) assertStartPodmanFinalArgsRegex(args []string, unit *p
 	return t.assertPodmanFinalArgsRegex(args, unit, "ExecStart")
 }
 
-func (t *quadletTestcase) assertStartPrePodmanArgs(args []string, unit *parser.UnitFile) bool {
-	return t.assertPodmanArgs(args, unit, "ExecStartPre", false, false)
-}
-
-func (t *quadletTestcase) assertStartPrePodmanArgsRegex(args []string, unit *parser.UnitFile) bool {
-	return t.assertPodmanArgs(args, unit, "ExecStartPre", true, false)
-}
-
-func (t *quadletTestcase) assertStartPrePodmanGlobalArgs(args []string, unit *parser.UnitFile) bool {
-	return t.assertPodmanArgs(args, unit, "ExecStartPre", false, true)
-}
-
-func (t *quadletTestcase) assertStartPrePodmanGlobalArgsRegex(args []string, unit *parser.UnitFile) bool {
-	return t.assertPodmanArgs(args, unit, "ExecStartPre", true, true)
-}
-
-func (t *quadletTestcase) assertStartPrePodmanArgsKeyVal(args []string, unit *parser.UnitFile) bool {
-	return t.assertPodmanArgsKeyVal(args, unit, "ExecStartPre", false, false)
-}
-
-func (t *quadletTestcase) assertStartPrePodmanArgsKeyValRegex(args []string, unit *parser.UnitFile) bool {
-	return t.assertPodmanArgsKeyVal(args, unit, "ExecStartPre", true, false)
-}
-
-func (t *quadletTestcase) assertStartPrePodmanGlobalArgsKeyVal(args []string, unit *parser.UnitFile) bool {
-	return t.assertPodmanArgsKeyVal(args, unit, "ExecStartPre", false, true)
-}
-
-func (t *quadletTestcase) assertStartPrePodmanGlobalArgsKeyValRegex(args []string, unit *parser.UnitFile) bool {
-	return t.assertPodmanArgsKeyVal(args, unit, "ExecStartPre", true, true)
-}
-
-func (t *quadletTestcase) assertStartPrePodmanFinalArgs(args []string, unit *parser.UnitFile) bool {
-	return t.assertPodmanFinalArgs(args, unit, "ExecStartPre")
-}
-
-func (t *quadletTestcase) assertStartPrePodmanFinalArgsRegex(args []string, unit *parser.UnitFile) bool {
-	return t.assertPodmanFinalArgsRegex(args, unit, "ExecStartPre")
-}
-
 func (t *quadletTestcase) assertStopPodmanArgs(args []string, unit *parser.UnitFile) bool {
 	return t.assertPodmanArgs(args, unit, "ExecStop", false, false)
 }
@@ -489,26 +440,6 @@ func (t *quadletTestcase) doAssert(check []string, unit *parser.UnitFile, sessio
 		ok = t.assertStartPodmanFinalArgs(args, unit)
 	case "assert-podman-final-args-regex":
 		ok = t.assertStartPodmanFinalArgsRegex(args, unit)
-	case "assert-podman-pre-args":
-		ok = t.assertStartPrePodmanArgs(args, unit)
-	case "assert-podman-pre-args-regex":
-		ok = t.assertStartPrePodmanArgsRegex(args, unit)
-	case "assert-podman-pre-args-key-val":
-		ok = t.assertStartPrePodmanArgsKeyVal(args, unit)
-	case "assert-podman-pre-args-key-val-regex":
-		ok = t.assertStartPrePodmanArgsKeyValRegex(args, unit)
-	case "assert-podman-pre-global-args":
-		ok = t.assertStartPrePodmanGlobalArgs(args, unit)
-	case "assert-podman-pre-global-args-regex":
-		ok = t.assertStartPrePodmanGlobalArgsRegex(args, unit)
-	case "assert-podman-pre-global-args-key-val":
-		ok = t.assertStartPrePodmanGlobalArgsKeyVal(args, unit)
-	case "assert-podman-pre-global-args-key-val-regex":
-		ok = t.assertStartPrePodmanGlobalArgsKeyValRegex(args, unit)
-	case "assert-podman-pre-final-args":
-		ok = t.assertStartPrePodmanFinalArgs(args, unit)
-	case "assert-podman-pre-final-args-regex":
-		ok = t.assertStartPrePodmanFinalArgsRegex(args, unit)
 	case "assert-symlink":
 		ok = t.assertSymlink(args, unit)
 	case "assert-podman-stop-args":
@@ -646,7 +577,6 @@ BOGUS=foo
 			session := podmanTest.Quadlet([]string{"-dryrun"}, podmanTest.TempDir)
 			session.WaitWithDefaultTimeout()
 			Expect(session).Should(Exit(1))
-			Expect(session.ErrorToString()).To(ContainSubstring("converting \"bogus.container\": unsupported key 'BOGUS' in group 'Container' in " + quadletfilePath))
 		})
 
 		It("Should scan and return output for files in subdirectories", func() {
@@ -734,22 +664,6 @@ BOGUS=foo
 			err = os.WriteFile(filepath.Join(quadletDir, fileName), testcase.data, 0644)
 			Expect(err).ToNot(HaveOccurred())
 
-			// Also copy any extra snippets
-			snippetdirs := []string{fileName + ".d"}
-			if ok, genericFileName := getGenericTemplateFile(fileName); ok {
-				snippetdirs = append(snippetdirs, genericFileName+".d")
-			}
-			for _, snippetdir := range snippetdirs {
-				dotdDir := filepath.Join("quadlet", snippetdir)
-				if s, err := os.Stat(dotdDir); err == nil && s.IsDir() {
-					dotdDirDest := filepath.Join(quadletDir, snippetdir)
-					err = os.Mkdir(dotdDirDest, os.ModePerm)
-					Expect(err).ToNot(HaveOccurred())
-					err = CopyDirectory(dotdDir, dotdDirDest)
-					Expect(err).ToNot(HaveOccurred())
-				}
-			}
-
 			// Run quadlet to convert the file
 			session := podmanTest.Quadlet([]string{"--user", "--no-kmsg-log", generatedDir}, quadletDir)
 			session.WaitWithDefaultTimeout()
@@ -779,7 +693,6 @@ BOGUS=foo
 		Entry("env-host-false.container", "env-host-false.container", 0, ""),
 		Entry("env-host.container", "env-host.container", 0, ""),
 		Entry("env.container", "env.container", 0, ""),
-		Entry("entrypoint.container", "entrypoint.container", 0, ""),
 		Entry("escapes.container", "escapes.container", 0, ""),
 		Entry("exec.container", "exec.container", 0, ""),
 		Entry("health.container", "health.container", 0, ""),
@@ -790,7 +703,6 @@ BOGUS=foo
 		Entry("install.container", "install.container", 0, ""),
 		Entry("ip.container", "ip.container", 0, ""),
 		Entry("label.container", "label.container", 0, ""),
-		Entry("line-continuation-whitespace.container", "line-continuation-whitespace.container", 0, ""),
 		Entry("logdriver.container", "logdriver.container", 0, ""),
 		Entry("mask.container", "mask.container", 0, ""),
 		Entry("mount.container", "mount.container", 0, ""),
@@ -800,16 +712,12 @@ BOGUS=foo
 		Entry("network.quadlet.container", "network.quadlet.container", 0, ""),
 		Entry("noimage.container", "noimage.container", 1, "converting \"noimage.container\": no Image or Rootfs key specified"),
 		Entry("notify.container", "notify.container", 0, ""),
-		Entry("notify-healthy.container", "notify-healthy.container", 0, ""),
 		Entry("oneshot.container", "oneshot.container", 0, ""),
 		Entry("other-sections.container", "other-sections.container", 0, ""),
-		Entry("pod.non-quadlet.container", "pod.non-quadlet.container", 1, "converting \"pod.non-quadlet.container\": pod test-pod is not Quadlet based"),
-		Entry("pod.not-found.container", "pod.not-found.container", 1, "converting \"pod.not-found.container\": quadlet pod unit not-found.pod does not exist"),
 		Entry("podmanargs.container", "podmanargs.container", 0, ""),
 		Entry("ports.container", "ports.container", 0, ""),
 		Entry("ports_ipv6.container", "ports_ipv6.container", 0, ""),
 		Entry("pull.container", "pull.container", 0, ""),
-		Entry("quotes.container", "quotes.container", 0, ""),
 		Entry("readonly.container", "readonly.container", 0, ""),
 		Entry("readonly-tmpfs.container", "readonly-tmpfs.container", 0, ""),
 		Entry("readonly-notmpfs.container", "readonly-notmpfs.container", 0, ""),
@@ -827,12 +735,10 @@ BOGUS=foo
 		Entry("selinux.container", "selinux.container", 0, ""),
 		Entry("shmsize.container", "shmsize.container", 0, ""),
 		Entry("shortname.container", "shortname.container", 0, "Warning: shortname.container specifies the image \"shortname\" which not a fully qualified image name. This is not ideal for performance and security reasons. See the podman-pull manpage discussion of short-name-aliases.conf for details."),
-		Entry("stoptimeout.container", "stoptimeout.container", 0, ""),
 		Entry("subidmapping.container", "subidmapping.container", 0, ""),
 		Entry("subidmapping-with-remap.container", "subidmapping-with-remap.container", 1, "converting \"subidmapping-with-remap.container\": deprecated Remap keys are set along with explicit mapping keys"),
 		Entry("sysctl.container", "sysctl.container", 0, ""),
 		Entry("timezone.container", "timezone.container", 0, ""),
-		Entry("ulimit.container", "ulimit.container", 0, ""),
 		Entry("unmask.container", "unmask.container", 0, ""),
 		Entry("user.container", "user.container", 0, ""),
 		Entry("userns.container", "userns.container", 0, ""),
@@ -841,10 +747,6 @@ BOGUS=foo
 		Entry("workingdir.container", "workingdir.container", 0, ""),
 		Entry("Container - global args", "globalargs.container", 0, ""),
 		Entry("Container - Containers Conf Modules", "containersconfmodule.container", 0, ""),
-		Entry("merged.container", "merged.container", 0, ""),
-		Entry("merged-override.container", "merged-override.container", 0, ""),
-		Entry("template@.container", "template@.container", 0, ""),
-		Entry("template@instance.container", "template@instance.container", 0, ""),
 
 		Entry("basic.volume", "basic.volume", 0, ""),
 		Entry("device-copy.volume", "device-copy.volume", 0, ""),
@@ -919,13 +821,6 @@ BOGUS=foo
 		Entry("Image - Arch and OS", "arch-os.image", 0, ""),
 		Entry("Image - global args", "globalargs.image", 0, ""),
 		Entry("Image - Containers Conf Modules", "containersconfmodule.image", 0, ""),
-
-		Entry("basic.pod", "basic.pod", 0, ""),
-		Entry("name.pod", "name.pod", 0, ""),
-		Entry("network.pod", "network.pod", 0, ""),
-		Entry("network-quadlet.pod", "network.quadlet.pod", 0, ""),
-		Entry("podmanargs.pod", "podmanargs.pod", 0, ""),
-		Entry("volume.pod", "volume.pod", 0, ""),
 	)
 
 })

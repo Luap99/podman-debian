@@ -59,7 +59,7 @@ EOF
             rm -f $pause_pid_file
         fi
     fi
-    systemctl_start "$SERVICE_NAME.socket"
+    systemctl start "$SERVICE_NAME.socket"
 }
 
 function teardown() {

@@ -83,16 +83,6 @@ verify_iid_and_name() {
 @test "podman image scp transfer" {
     skip_if_remote "only applicable under local podman"
 
-    # See https://github.com/containers/podman/pull/21300 for details
-    if [[ "$CI_DESIRED_DATABASE" = "boltdb" ]]; then
-        skip "impossible due to pitfalls in our SSH implementation"
-    fi
-
-    # See https://github.com/containers/podman/pull/21431
-    if [[ -n "$PODMAN_IGNORE_CGROUPSV1_WARNING" ]]; then
-        skip "impossible to test due to pitfalls in our SSH implementation"
-    fi
-
     # The testing is the same whether we're root or rootless; all that
     # differs is the destination (not-me) username.
     if is_rootless; then
@@ -114,8 +104,8 @@ verify_iid_and_name() {
     _sudo true || skip "cannot sudo to $notme"
 
     # Preserve digest of original image; we will compare against it later
-    run_podman image inspect --format '{{.RepoDigests}}' $IMAGE
-    src_digests=$output
+    run_podman image inspect --format '{{.Digest}}' $IMAGE
+    src_digest=$output
 
     # image name that is not likely to exist in the destination
     newname=foo.bar/nonesuch/c_$(random_string 10 | tr A-Z a-z):mytag
@@ -137,14 +127,14 @@ verify_iid_and_name() {
 
     # Confirm that we have it, and that its digest matches our original
     run_podman image inspect --format '{{.Digest}}' $newname
-    assert "$output" =~ "$src_digests" "Digest of re-fetched image is in list of original image digests"
+    is "$output" "$src_digest" "Digest of re-fetched image matches original"
 
     # test tagging capability
     run_podman untag $IMAGE $newname
     run_podman image scp ${notme}@localhost::$newname foobar:123
 
     run_podman image inspect --format '{{.Digest}}' foobar:123
-    assert "$output" =~ "$src_digest" "Digest of re-fetched image is in list of original image digests"
+    is "$output" "$src_digest" "Digest of re-fetched image matches original"
 
     # remove root img for transfer back with another name
     _sudo $PODMAN image rm $newname

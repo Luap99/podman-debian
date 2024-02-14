@@ -1,4 +1,5 @@
 //go:build amd64 || arm64
+// +build amd64 arm64
 
 package machine
 
@@ -12,8 +13,8 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/containers/podman/v5/pkg/machine/compression"
-	"github.com/containers/podman/v5/pkg/machine/define"
+	"github.com/containers/podman/v4/pkg/machine/compression"
+	"github.com/containers/podman/v4/pkg/machine/define"
 	"github.com/coreos/stream-metadata-go/fedoracoreos"
 	"github.com/coreos/stream-metadata-go/release"
 	"github.com/coreos/stream-metadata-go/stream"

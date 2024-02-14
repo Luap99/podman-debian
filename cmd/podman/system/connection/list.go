@@ -8,12 +8,12 @@ import (
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/report"
-	"github.com/containers/podman/v5/cmd/podman/common"
-	"github.com/containers/podman/v5/cmd/podman/registry"
-	"github.com/containers/podman/v5/cmd/podman/system"
-	"github.com/containers/podman/v5/cmd/podman/validate"
+	"github.com/containers/common/pkg/util"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/system"
+	"github.com/containers/podman/v4/cmd/podman/validate"
 	"github.com/spf13/cobra"
-	"golang.org/x/exp/slices"
 )
 
 var (
@@ -41,7 +41,7 @@ var (
 func init() {
 	initFlags := func(cmd *cobra.Command) {
 		cmd.Flags().StringP("format", "f", "", "Custom Go template for printing connections")
-		_ = cmd.RegisterFlagCompletionFunc("format", common.AutocompleteFormat(&config.Connection{}))
+		_ = cmd.RegisterFlagCompletionFunc("format", common.AutocompleteFormat(&namedDestination{}))
 		cmd.Flags().BoolP("quiet", "q", false, "Custom Go template for printing connections")
 	}
 
@@ -62,11 +62,22 @@ func init() {
 	initFlags(inspectCmd)
 }
 
+type namedDestination struct {
+	Name string
+	config.Destination
+	Default bool
+}
+
 func list(cmd *cobra.Command, _ []string) error {
 	return inspect(cmd, nil)
 }
 
 func inspect(cmd *cobra.Command, args []string) error {
+	cfg, err := config.ReadCustomConfig()
+	if err != nil {
+		return err
+	}
+
 	format := cmd.Flag("format").Value.String()
 	if format == "" && args != nil {
 		format = "json"
@@ -76,23 +87,31 @@ func inspect(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-
-	cons, err := registry.PodmanConfig().ContainersConfDefaultsRO.GetAllConnections()
-	if err != nil {
-		return err
-	}
-	rows := make([]config.Connection, 0, len(cons))
-	for _, con := range cons {
-		if args != nil && !slices.Contains(args, con.Name) {
+	rows := make([]namedDestination, 0)
+	for k, v := range cfg.Engine.ServiceDestinations {
+		if args != nil && !util.StringInSlice(k, args) {
 			continue
 		}
 
 		if quiet {
-			fmt.Println(con.Name)
+			fmt.Println(k)
 			continue
 		}
+		def := false
+		if k == cfg.Engine.ActiveService {
+			def = true
+		}
 
-		rows = append(rows, con)
+		r := namedDestination{
+			Name: k,
+			Destination: config.Destination{
+				Identity:  v.Identity,
+				URI:       v.URI,
+				IsMachine: v.IsMachine,
+			},
+			Default: def,
+		}
+		rows = append(rows, r)
 	}
 
 	if quiet {
@@ -118,7 +137,7 @@ func inspect(cmd *cobra.Command, args []string) error {
 		rpt, err = rpt.Parse(report.OriginUser, format)
 	} else {
 		rpt, err = rpt.Parse(report.OriginPodman,
-			"{{range .}}{{.Name}}\t{{.URI}}\t{{.Identity}}\t{{.Default}}\t{{.ReadWrite}}\n{{end -}}")
+			"{{range .}}{{.Name}}\t{{.URI}}\t{{.Identity}}\t{{.Default}}\n{{end -}}")
 	}
 	if err != nil {
 		return err
@@ -126,11 +145,10 @@ func inspect(cmd *cobra.Command, args []string) error {
 
 	if rpt.RenderHeaders {
 		err = rpt.Execute([]map[string]string{{
-			"Default":   "Default",
-			"Identity":  "Identity",
-			"Name":      "Name",
-			"URI":       "URI",
-			"ReadWrite": "ReadWrite",
+			"Default":  "Default",
+			"Identity": "Identity",
+			"Name":     "Name",
+			"URI":      "URI",
 		}})
 		if err != nil {
 			return err

@@ -5,7 +5,6 @@
 
 load helpers
 load helpers.network
-load helpers.registry
 
 # This is a long ugly way to clean up pods and remove the pause image
 function teardown() {
@@ -438,14 +437,11 @@ _EOF
 @test "podman kube --annotation" {
     TESTDIR=$PODMAN_TMPDIR/testdir
     RANDOMSTRING=$(random_string 15)
-    ANNOTATION_WITH_COMMA="comma,$(random_string 5)"
     mkdir -p $TESTDIR
     echo "$testYaml" | sed "s|TESTDIR|${TESTDIR}|g" > $PODMAN_TMPDIR/test.yaml
-    run_podman kube play --annotation "name=$RANDOMSTRING"  \
-        --annotation "anno=$ANNOTATION_WITH_COMMA" $PODMAN_TMPDIR/test.yaml
+    run_podman kube play --annotation "name=$RANDOMSTRING" $PODMAN_TMPDIR/test.yaml
     run_podman inspect --format "{{ .Config.Annotations }}" test_pod-test
     is "$output" ".*name:$RANDOMSTRING" "Annotation should be added to pod"
-    is "$output" ".*anno:$ANNOTATION_WITH_COMMA" "Annotation with comma should be added to pod"
 
     # invalid annotation
     run_podman 125 kube play --annotation "val" $PODMAN_TMPDIR/test.yaml
@@ -704,7 +700,7 @@ spec:
 }
 
 @test "podman kube play with configmaps" {
-    configmap_file=${PODMAN_TMPDIR}/play_kube_configmap_configmaps$(random_string 6),withcomma.yaml
+    configmap_file=${PODMAN_TMPDIR}/play_kube_configmap_configmaps$(random_string 6).yaml
     echo "
 ---
 apiVersion: v1
@@ -832,153 +828,4 @@ EOF
     run_podman kube down $yaml_source
 
     run_podman rmi $local_image
-}
-
-@test "podman kube play healthcheck should wait initialDelaySeconds before updating status (healthy)" {
-    fname="$PODMAN_TMPDIR/play_kube_healthy_$(random_string 6).yaml"
-    echo "
-apiVersion: v1
-kind: Pod
-metadata:
-  labels:
-  name: liveness-exec
-spec:
-  containers:
-  - name: liveness
-    image: $IMAGE
-    args:
-    - /bin/sh
-    - -c
-    - touch /tmp/healthy && sleep 100
-    livenessProbe:
-      exec:
-        command:
-        - cat
-        - /tmp/healthy
-      initialDelaySeconds: 3
-      failureThreshold: 1
-      periodSeconds: 1
-" > $fname
-
-    run_podman kube play $fname
-    ctrName="liveness-exec-liveness"
-
-    # Keep checking status. For the first 2 seconds it must be 'starting'
-    t0=$SECONDS
-    while [[ $SECONDS -le $((t0 + 2)) ]]; do
-        run_podman inspect $ctrName --format "1-{{.State.Health.Status}}"
-        assert "$output" == "1-starting" "Health.Status at $((SECONDS - t0))"
-        sleep 0.5
-    done
-
-    # After 3 seconds it may take another second to go healthy. Wait.
-    t0=$SECONDS
-    while [[ $SECONDS -le $((t0 + 3)) ]]; do
-        run_podman inspect $ctrName --format "2-{{.State.Health.Status}}"
-        if [[ "$output" = "2-healthy" ]]; then
-            break;
-        fi
-        sleep 0.5
-    done
-    assert $output == "2-healthy" "After 3 seconds"
-
-    run_podman kube down $fname
-    run_podman pod rm -a
-    run_podman rm -a
-}
-
-@test "podman kube play healthcheck should wait initialDelaySeconds before updating status (unhealthy)" {
-    fname="$PODMAN_TMPDIR/play_kube_unhealthy_$(random_string 6).yaml"
-    echo "
-apiVersion: v1
-kind: Pod
-metadata:
-  labels:
-  name: liveness-exec
-spec:
-  containers:
-  - name: liveness
-    image: $IMAGE
-    args:
-    - /bin/sh
-    - -c
-    - touch /tmp/healthy && sleep 100
-    livenessProbe:
-      exec:
-        command:
-        - cat
-        - /tmp/randomfile
-      initialDelaySeconds: 3
-      failureThreshold: 1
-      periodSeconds: 1
-" > $fname
-
-    run_podman kube play $fname
-    ctrName="liveness-exec-liveness"
-
-    # Keep checking status. For the first 2 seconds it must be 'starting'
-    t0=$SECONDS
-    while [[ $SECONDS -le $((t0 + 2)) ]]; do
-        run_podman inspect $ctrName --format "1-{{.State.Health.Status}}"
-        assert "$output" == "1-starting" "Health.Status at $((SECONDS - t0))"
-        sleep 0.5
-    done
-
-    # After 3 seconds it may take another second to go unhealthy. Wait.
-    t0=$SECONDS
-    while [[ $SECONDS -le $((t0 + 3)) ]]; do
-        run_podman inspect $ctrName --format "2-{{.State.Health.Status}}"
-        if [[ "$output" = "2-unhealthy" ]]; then
-            break;
-        fi
-        sleep 0.5
-    done
-    assert $output == "2-unhealthy" "After 3 seconds"
-
-    run_podman kube down $fname
-    run_podman pod rm -a
-    run_podman rm -a
-}
-
-@test "podman play --build private registry" {
-    skip_if_remote "--build is not supported in context remote"
-
-    local registry=localhost:${PODMAN_LOGIN_REGISTRY_PORT}
-    local from_image=$registry/quadlet_image_test:$(random_string)
-    local authfile=$PODMAN_TMPDIR/authfile.json
-
-    mkdir -p $PODMAN_TMPDIR/userimage
-    cat > $PODMAN_TMPDIR/userimage/Containerfile << _EOF
-from $from_image
-USER bin
-_EOF
-
-    # Start the registry and populate the authfile that we can use for the test.
-    start_registry
-    run_podman login --authfile=$authfile \
-        --tls-verify=false \
-        --username ${PODMAN_LOGIN_USER} \
-        --password ${PODMAN_LOGIN_PASS} \
-        $registry
-
-    # Push the test image to the registry
-    run_podman image tag $IMAGE $from_image
-    run_podman image push --tls-verify=false --authfile=$authfile $from_image
-
-    # Remove the local image to make sure it will be pulled again
-    run_podman image rm --ignore $from_image
-
-    _write_test_yaml command=id image=userimage
-    run_podman 125 play kube --build --start=false $PODMAN_TMPDIR/test.yaml
-    assert "$output" "=~" \
-        "Error: short-name resolution enforced but cannot prompt without a TTY|Resolving \"userimage\" using unqualified-search registries" \
-        "The error message does match any of the expected ones"
-
-    run_podman play kube --replace --context-dir=$PODMAN_TMPDIR --tls-verify=false --authfile=$authfile --build --start=false $PODMAN_TMPDIR/test.yaml
-    run_podman inspect --format "{{ .Config.User }}" test_pod-test
-    is "$output" bin "expect container within pod to run as the bin user"
-
-    run_podman stop -a -t 0
-    run_podman pod rm -t 0 -f test_pod
-    run_podman rmi -f userimage:latest $from_image
 }

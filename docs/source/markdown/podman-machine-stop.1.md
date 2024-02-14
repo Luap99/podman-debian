@@ -30,7 +30,6 @@ Print usage statement.
 
 ## EXAMPLES
 
-Stop a podman machine named myvm.
 ```
 $ podman machine stop myvm
 ```

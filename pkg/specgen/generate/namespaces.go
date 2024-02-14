@@ -1,4 +1,5 @@
 //go:build !remote
+// +build !remote
 
 package generate
 
@@ -9,12 +10,12 @@ import (
 	"github.com/containers/common/libimage"
 	"github.com/containers/common/libnetwork/types"
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v5/libpod"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/namespaces"
-	"github.com/containers/podman/v5/pkg/rootless"
-	"github.com/containers/podman/v5/pkg/specgen"
-	"github.com/containers/podman/v5/pkg/util"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/namespaces"
+	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/specgen"
+	"github.com/containers/podman/v4/pkg/util"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
 )
@@ -295,7 +296,7 @@ func namespaceOptions(s *specgen.SpecGenerator, rt *libpod.Runtime, pod *libpod.
 		toReturn = append(toReturn, libpod.WithCgroupsMode(s.CgroupsMode))
 	}
 
-	postConfigureNetNS := needPostConfigureNetNS(s)
+	postConfigureNetNS := !s.UserNS.IsHost()
 
 	switch s.NetNS.NSMode {
 	case specgen.FromPod:
@@ -367,7 +368,7 @@ func namespaceOptions(s *specgen.SpecGenerator, rt *libpod.Runtime, pod *libpod.
 		toReturn = append(toReturn, libpod.WithNetNS(portMappings, expose, postConfigureNetNS, "bridge", s.Networks))
 	}
 
-	if s.UseImageHosts != nil && *s.UseImageHosts {
+	if s.UseImageHosts {
 		toReturn = append(toReturn, libpod.WithUseImageHosts())
 	} else if len(s.HostAdd) > 0 {
 		toReturn = append(toReturn, libpod.WithHosts(s.HostAdd))
@@ -375,7 +376,7 @@ func namespaceOptions(s *specgen.SpecGenerator, rt *libpod.Runtime, pod *libpod.
 	if len(s.DNSSearch) > 0 {
 		toReturn = append(toReturn, libpod.WithDNSSearch(s.DNSSearch))
 	}
-	if s.UseImageResolvConf != nil && *s.UseImageResolvConf {
+	if s.UseImageResolvConf {
 		toReturn = append(toReturn, libpod.WithUseImageResolvConf())
 	} else if len(s.DNSServers) > 0 {
 		var dnsServers []string

@@ -33,15 +33,15 @@ var (
 // for add-host flag
 func ValidateExtraHost(val string) (string, error) {
 	// allow for IPv6 addresses in extra hosts by only splitting on first ":"
-	name, ip, hasIP := strings.Cut(val, ":")
-	if !hasIP || len(name) == 0 {
+	arr := strings.SplitN(val, ":", 2)
+	if len(arr) != 2 || len(arr[0]) == 0 {
 		return "", fmt.Errorf("bad format for add-host: %q", val)
 	}
-	if ip == etchosts.HostGateway {
+	if arr[1] == etchosts.HostGateway {
 		return val, nil
 	}
-	if _, err := validateIPAddress(ip); err != nil {
-		return "", fmt.Errorf("invalid IP address in add-host: %q", ip)
+	if _, err := validateIPAddress(arr[1]); err != nil {
+		return "", fmt.Errorf("invalid IP address in add-host: %q", arr[1])
 	}
 	return val, nil
 }
@@ -82,37 +82,45 @@ func GetAllLabels(labelFile, inputLabels []string) (map[string]string, error) {
 		}
 	}
 	for _, label := range inputLabels {
-		key, value, _ := strings.Cut(label, "=")
-		if key == "" {
+		split := strings.SplitN(label, "=", 2)
+		if split[0] == "" {
 			return nil, fmt.Errorf("invalid label format: %q", label)
 		}
-		labels[key] = value
+		value := ""
+		if len(split) > 1 {
+			value = split[1]
+		}
+		labels[split[0]] = value
 	}
 	return labels, nil
 }
 
 func parseEnvOrLabel(env map[string]string, line, configType string) error {
-	key, val, hasVal := strings.Cut(line, "=")
+	data := strings.SplitN(line, "=", 2)
 
 	// catch invalid variables such as "=" or "=A"
-	if key == "" {
+	if data[0] == "" {
 		return fmt.Errorf("invalid environment variable: %q", line)
 	}
 
 	// trim the front of a variable, but nothing else
-	name := strings.TrimLeft(key, whiteSpaces)
+	name := strings.TrimLeft(data[0], whiteSpaces)
 	if strings.ContainsAny(name, whiteSpaces) {
 		return fmt.Errorf("name %q has white spaces, poorly formatted name", name)
 	}
 
-	if hasVal {
-		env[name] = val
+	if len(data) > 1 {
+		env[name] = data[1]
 	} else {
-		if name, hasStar := strings.CutSuffix(name, "*"); hasStar {
+		if strings.HasSuffix(name, "*") {
+			name = strings.TrimSuffix(name, "*")
 			for _, e := range os.Environ() {
-				envKey, envVal, hasEq := strings.Cut(e, "=")
-				if hasEq && strings.HasPrefix(envKey, name) {
-					env[envKey] = envVal
+				part := strings.SplitN(e, "=", 2)
+				if len(part) < 2 {
+					continue
+				}
+				if strings.HasPrefix(part[0], name) {
+					env[part[0]] = part[1]
 				}
 			}
 		} else if configType == ENVType {

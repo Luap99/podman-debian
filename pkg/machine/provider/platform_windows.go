@@ -2,16 +2,16 @@ package provider
 
 import (
 	"fmt"
-	"github.com/containers/podman/v5/pkg/machine/vmconfigs"
 	"os"
 
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v5/pkg/machine/define"
-	"github.com/containers/podman/v5/pkg/machine/hyperv"
+	"github.com/containers/podman/v4/pkg/machine"
+	"github.com/containers/podman/v4/pkg/machine/hyperv"
+	"github.com/containers/podman/v4/pkg/machine/wsl"
 	"github.com/sirupsen/logrus"
 )
 
-func Get() (vmconfigs.VMProvider, error) {
+func Get() (machine.VirtProvider, error) {
 	cfg, err := config.Default()
 	if err != nil {
 		return nil, err
@@ -20,18 +20,17 @@ func Get() (vmconfigs.VMProvider, error) {
 	if providerOverride, found := os.LookupEnv("CONTAINERS_MACHINE_PROVIDER"); found {
 		provider = providerOverride
 	}
-	resolvedVMType, err := define.ParseVMType(provider, define.WSLVirt)
+	resolvedVMType, err := machine.ParseVMType(provider, machine.WSLVirt)
 	if err != nil {
 		return nil, err
 	}
 
 	logrus.Debugf("Using Podman machine with `%s` virtualization provider", resolvedVMType.String())
 	switch resolvedVMType {
-	// TODO re-enable this with WSL
-	//case define.WSLVirt:
-	//	return wsl.VirtualizationProvider(), nil
-	case define.HyperVVirt:
-		return new(hyperv.HyperVStubber), nil
+	case machine.WSLVirt:
+		return wsl.VirtualizationProvider(), nil
+	case machine.HyperVVirt:
+		return hyperv.VirtualizationProvider(), nil
 	default:
 		return nil, fmt.Errorf("unsupported virtualization provider: `%s`", resolvedVMType.String())
 	}

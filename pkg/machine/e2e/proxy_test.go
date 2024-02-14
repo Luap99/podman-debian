@@ -3,7 +3,7 @@ package e2e_test
 import (
 	"os"
 
-	"github.com/containers/podman/v5/pkg/machine/define"
+	"github.com/containers/podman/v4/pkg/machine"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -23,11 +23,8 @@ var _ = Describe("podman machine proxy settings propagation", func() {
 	})
 
 	It("ssh to running machine and check proxy settings", func() {
-		// TODO the proxy test is currently failing on applehv.  FIX ME
-		skipIfVmtype(define.AppleHvVirt, "TODO: this test fails on applehv")
-
 		// https://github.com/containers/podman/issues/20129
-		if testProvider.VMType() == define.HyperVVirt {
+		if testProvider.VMType() == machine.HyperVVirt {
 			Skip("proxy settings not yet supported")
 		}
 		name := randomString()

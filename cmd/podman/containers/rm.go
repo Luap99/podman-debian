@@ -8,12 +8,12 @@ import (
 	"strings"
 
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/podman/v5/cmd/podman/common"
-	"github.com/containers/podman/v5/cmd/podman/registry"
-	"github.com/containers/podman/v5/cmd/podman/utils"
-	"github.com/containers/podman/v5/cmd/podman/validate"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/domain/entities"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/utils"
+	"github.com/containers/podman/v4/cmd/podman/validate"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -116,16 +116,16 @@ func rm(cmd *cobra.Command, args []string) error {
 			}
 			return fmt.Errorf("reading CIDFile: %w", err)
 		}
-		id, _, _ := strings.Cut(string(content), "\n")
+		id := strings.Split(string(content), "\n")[0]
 		args = append(args, id)
 	}
 
 	for _, f := range filters {
-		fname, filter, hasFilter := strings.Cut(f, "=")
-		if !hasFilter {
+		split := strings.SplitN(f, "=", 2)
+		if len(split) < 2 {
 			return fmt.Errorf("invalid filter %q", f)
 		}
-		rmOptions.Filters[fname] = append(rmOptions.Filters[fname], filter)
+		rmOptions.Filters[split[0]] = append(rmOptions.Filters[split[0]], split[1])
 	}
 
 	if rmOptions.All {

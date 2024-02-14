@@ -7,17 +7,15 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/containers/podman/v5/pkg/machine"
-	"github.com/containers/podman/v5/pkg/machine/compression"
-	"github.com/containers/podman/v5/pkg/machine/define"
-	"github.com/containers/podman/v5/pkg/machine/provider"
-	"github.com/containers/podman/v5/pkg/machine/vmconfigs"
-	"github.com/containers/podman/v5/utils"
+	"github.com/containers/podman/v4/pkg/machine"
+	"github.com/containers/podman/v4/pkg/machine/compression"
+	"github.com/containers/podman/v4/pkg/machine/define"
+	"github.com/containers/podman/v4/pkg/machine/provider"
+	"github.com/containers/podman/v4/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -27,8 +25,7 @@ func TestMain(m *testing.M) {
 }
 
 const (
-	defaultStream        = machine.Testing
-	defaultDiskSize uint = 11
+	defaultStream = machine.Testing
 )
 
 var (
@@ -49,7 +46,7 @@ func TestMachine(t *testing.T) {
 	RunSpecs(t, "Podman Machine tests")
 }
 
-var testProvider vmconfigs.VMProvider
+var testProvider machine.VirtProvider
 
 var _ = BeforeSuite(func() {
 	var err error
@@ -59,27 +56,17 @@ var _ = BeforeSuite(func() {
 	}
 
 	downloadLocation := os.Getenv("MACHINE_IMAGE")
-	if downloadLocation == "" {
-		downloadLocation, err = GetDownload(testProvider.VMType())
-		if err != nil {
-			Fail("unable to derive download disk from fedora coreos")
+
+	if len(downloadLocation) < 1 {
+		downloadLocation = getDownloadLocation(testProvider)
+		// we cannot simply use OS here because hyperv uses fcos; so WSL is just
+		// special here
+		if testProvider.VMType() != machine.WSLVirt {
+			downloadLocation = getDownloadLocation(testProvider)
 		}
 	}
 
-	if downloadLocation == "" {
-		Fail("machine tests require a file reference to a disk image right now")
-	}
-
-	var compressionExtension string
-	switch testProvider.VMType() {
-	case define.AppleHvVirt:
-		compressionExtension = ".gz"
-	case define.HyperVVirt:
-		compressionExtension = ".zip"
-	default:
-		compressionExtension = ".xz"
-	}
-
+	compressionExtension := fmt.Sprintf(".%s", testProvider.Compression().String())
 	suiteImageName = strings.TrimSuffix(path.Base(downloadLocation), compressionExtension)
 	fqImageName = filepath.Join(tmpDir, suiteImageName)
 	if _, err := os.Stat(fqImageName); err != nil {
@@ -97,16 +84,13 @@ var _ = BeforeSuite(func() {
 			if err != nil {
 				Fail(fmt.Sprintf("unable to create vmfile %q: %v", fqImageName+compressionExtension, err))
 			}
-			compressionStart := time.Now()
 			if err := compression.Decompress(diskImage, fqImageName); err != nil {
 				Fail(fmt.Sprintf("unable to decompress image file: %q", err))
 			}
-			GinkgoWriter.Println("compression took: ", time.Since(compressionStart))
 		} else {
 			Fail(fmt.Sprintf("unable to check for cache image: %q", err))
 		}
 	}
-
 })
 
 var _ = SynchronizedAfterSuite(func() {}, func() {})
@@ -143,34 +127,20 @@ func setup() (string, *machineTestBuilder) {
 	if err != nil {
 		Fail(fmt.Sprintf("failed to create machine test: %q", err))
 	}
-	src, err := os.Open(fqImageName)
+	f, err := os.Open(fqImageName)
 	if err != nil {
 		Fail(fmt.Sprintf("failed to open file %s: %q", fqImageName, err))
 	}
-	defer func() {
-		if err := src.Close(); err != nil {
-			Fail(fmt.Sprintf("failed to close src reader %q: %q", src.Name(), err))
-		}
-	}()
 	mb.imagePath = filepath.Join(homeDir, suiteImageName)
-	dest, err := os.Create(mb.imagePath)
+	n, err := os.Create(mb.imagePath)
 	if err != nil {
 		Fail(fmt.Sprintf("failed to create file %s: %q", mb.imagePath, err))
 	}
-	defer func() {
-		if err := dest.Close(); err != nil {
-			Fail(fmt.Sprintf("failed to close destination file %q: %q", dest.Name(), err))
-		}
-	}()
-	fmt.Printf("--> copying %q to %q/n", src.Name(), dest.Name())
-	if runtime.GOOS != "darwin" {
-		if _, err := io.Copy(dest, src); err != nil {
-			Fail(fmt.Sprintf("failed to copy %ss to %s: %q", fqImageName, mb.imagePath, err))
-		}
-	} else {
-		if _, err := compression.CopySparse(dest, src); err != nil {
-			Fail(fmt.Sprintf("failed to copy %q to %q: %q", src.Name(), dest.Name(), err))
-		}
+	if _, err := io.Copy(n, f); err != nil {
+		Fail(fmt.Sprintf("failed to copy %ss to %s: %q", fqImageName, mb.imagePath, err))
+	}
+	if err := n.Close(); err != nil {
+		Fail(fmt.Sprintf("failed to close image copy handler: %q", err))
 	}
 	return homeDir, mb
 }

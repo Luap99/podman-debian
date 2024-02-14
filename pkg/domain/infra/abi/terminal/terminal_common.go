@@ -1,4 +1,5 @@
 //go:build linux || freebsd
+// +build linux freebsd
 
 package terminal
 
@@ -9,8 +10,8 @@ import (
 	"os"
 
 	"github.com/containers/common/pkg/resize"
-	"github.com/containers/podman/v5/libpod"
-	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/libpod/define"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/term"
 )

@@ -149,17 +149,9 @@ const (
 	// pod creation
 	InfraNameAnnotation = "io.podman.annotations.infra.name"
 
-	// UserNsAnnotation is used by play kube when playing a kube yaml to specify userns
-	// of the container
-	UserNsAnnotation = "io.podman.annotations.userns"
-
 	// UlimitAnnotation is used by kube play when playing a kube yaml to specify the ulimits
 	// of the container
 	UlimitAnnotation = "io.podman.annotations.ulimit"
-
-	// KubeHealthCheckAnnotation is used by kube play to tell podman that any health checks should follow
-	// the k8s behavior of waiting for the intialDelaySeconds to be over before updating the status
-	KubeHealthCheckAnnotation = "io.podman.annotations.kube.health.check"
 
 	// MaxKubeAnnotation is the max length of annotations allowed by Kubernetes.
 	MaxKubeAnnotation = 63

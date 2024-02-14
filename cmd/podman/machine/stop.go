@@ -1,17 +1,14 @@
 //go:build amd64 || arm64
+// +build amd64 arm64
 
 package machine
 
 import (
 	"fmt"
-	"time"
 
-	"github.com/containers/podman/v5/cmd/podman/registry"
-	"github.com/containers/podman/v5/libpod/events"
-	"github.com/containers/podman/v5/pkg/machine"
-	"github.com/containers/podman/v5/pkg/machine/shim"
-	"github.com/containers/podman/v5/pkg/machine/vmconfigs"
-	"github.com/sirupsen/logrus"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/libpod/events"
+	"github.com/containers/podman/v4/pkg/machine"
 	"github.com/spf13/cobra"
 )
 
@@ -39,6 +36,7 @@ func init() {
 func stop(cmd *cobra.Command, args []string) error {
 	var (
 		err error
+		vm  machine.VM
 	)
 
 	vmName := defaultMachineName
@@ -46,25 +44,13 @@ func stop(cmd *cobra.Command, args []string) error {
 		vmName = args[0]
 	}
 
-	dirs, err := machine.GetMachineDirs(provider.VMType())
+	vm, err = provider.LoadVMByName(vmName)
 	if err != nil {
 		return err
 	}
-	mc, err := vmconfigs.LoadMachineByName(vmName, dirs)
-	if err != nil {
+	if err := vm.Stop(vmName, machine.StopOptions{}); err != nil {
 		return err
 	}
-
-	if err := shim.Stop(mc, provider, dirs, false); err != nil {
-		return err
-	}
-
-	// Update last time up
-	mc.LastUp = time.Now()
-	if err := mc.Write(); err != nil {
-		logrus.Errorf("unable to write configuration file: %q", err)
-	}
-
 	fmt.Printf("Machine %q stopped successfully\n", vmName)
 	newMachineEvent(events.Stop, events.Event{Name: vmName})
 	return nil

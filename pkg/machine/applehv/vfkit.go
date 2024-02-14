@@ -1,13 +1,13 @@
 //go:build darwin
+// +build darwin
 
 package applehv
 
 import (
-	"github.com/containers/podman/v5/pkg/machine/vmconfigs"
+	"github.com/containers/podman/v4/pkg/machine"
 	vfConfig "github.com/crc-org/vfkit/pkg/config"
 )
 
-// TODO this signature could be an machineconfig
 func getDefaultDevices(imagePath, logPath, readyPath string) ([]vfConfig.VirtioDevice, error) {
 	var devices []vfConfig.VirtioDevice
 
@@ -54,14 +54,11 @@ func getIgnitionVsockDevice(path string) (vfConfig.VirtioDevice, error) {
 	return vfConfig.VirtioVsockNew(1024, path, true)
 }
 
-func virtIOFsToVFKitVirtIODevice(mounts []*vmconfigs.Mount) ([]vfConfig.VirtioDevice, error) {
-	var virtioDevices []vfConfig.VirtioDevice
-	for _, vol := range mounts {
-		virtfsDevice, err := vfConfig.VirtioFsNew(vol.Source, vol.Tag)
-		if err != nil {
-			return nil, err
-		}
-		virtioDevices = append(virtioDevices, virtfsDevice)
+func VirtIOFsToVFKitVirtIODevice(fs machine.VirtIoFs) vfConfig.VirtioFs {
+	return vfConfig.VirtioFs{
+		DirectorySharingConfig: vfConfig.DirectorySharingConfig{
+			MountTag: fs.Tag,
+		},
+		SharedDir: fs.Source,
 	}
-	return virtioDevices, nil
 }

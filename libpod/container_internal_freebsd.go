@@ -1,4 +1,5 @@
 //go:build !remote
+// +build !remote
 
 package libpod
 
@@ -12,7 +13,7 @@ import (
 	"time"
 
 	"github.com/containers/common/libnetwork/types"
-	"github.com/containers/podman/v5/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/rootless"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/runtime-tools/generate"
 	"github.com/sirupsen/logrus"
@@ -193,18 +194,15 @@ func openDirectory(path string) (fd int, err error) {
 
 func (c *Container) addNetworkNamespace(g *generate.Generator) error {
 	if c.config.CreateNetNS {
-		// If PostConfigureNetNS is set (which is true on FreeBSD 13.3
-		// and later), we can manage a container's network settings
-		// without an extra parent jail to own the vnew.
-		//
-		// In this case, the OCI runtime creates a new vnet for the
-		// container jail, otherwise it creates the container jail as a
-		// child of the jail owning the vnet.
-		if c.config.PostConfigureNetNS {
-			g.AddAnnotation("org.freebsd.jail.vnet", "new")
-		} else {
-			g.AddAnnotation("org.freebsd.parentJail", c.state.NetNS)
+		if c.state.NetNS == "" {
+			// This should not happen since network setup
+			// errors should be propagated correctly from
+			// (*Runtime).createNetNS. Check for it anyway
+			// since it caused nil pointer dereferences in
+			// the past (see #16333).
+			return fmt.Errorf("Inconsistent state: c.config.CreateNetNS is set but c.state.NetNS is nil")
 		}
+		g.AddAnnotation("org.freebsd.parentJail", c.state.NetNS)
 	}
 	return nil
 }
@@ -254,7 +252,7 @@ func (c *Container) addSharedNamespaces(g *generate.Generator) error {
 	}
 	needEnv := true
 	for _, checkEnv := range g.Config.Process.Env {
-		if strings.HasPrefix(checkEnv, "HOSTNAME=") {
+		if strings.SplitN(checkEnv, "=", 2)[0] == "HOSTNAME" {
 			needEnv = false
 			break
 		}

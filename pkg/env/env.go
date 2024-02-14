@@ -40,9 +40,14 @@ func Slice(m map[string]string) []string {
 // map.
 func Map(slice []string) map[string]string {
 	envmap := make(map[string]string, len(slice))
-	for _, line := range slice {
-		key, val, _ := strings.Cut(line, "=")
-		envmap[key] = val
+	for _, val := range slice {
+		data := strings.SplitN(val, "=", 2)
+
+		if len(data) > 1 {
+			envmap[data[0]] = data[1]
+		} else {
+			envmap[data[0]] = ""
+		}
 	}
 	return envmap
 }
@@ -89,25 +94,26 @@ func ParseFile(path string) (_ map[string]string, err error) {
 }
 
 func parseEnv(env map[string]string, line string) error {
-	key, val, hasVal := strings.Cut(line, "=")
+	data := strings.SplitN(line, "=", 2)
 
 	// catch invalid variables such as "=" or "=A"
-	if key == "" {
+	if data[0] == "" {
 		return fmt.Errorf("invalid variable: %q", line)
 	}
 	// trim the front of a variable, but nothing else
-	name := strings.TrimLeft(key, whiteSpaces)
-	if hasVal {
-		env[name] = val
+	name := strings.TrimLeft(data[0], whiteSpaces)
+	if len(data) > 1 {
+		env[name] = data[1]
 	} else {
-		if name, hasStar := strings.CutSuffix(name, "*"); hasStar {
+		if strings.HasSuffix(name, "*") {
+			name = strings.TrimSuffix(name, "*")
 			for _, e := range os.Environ() {
-				envKey, envVal, hasEq := strings.Cut(e, "=")
-				if !hasEq {
+				part := strings.SplitN(e, "=", 2)
+				if len(part) < 2 {
 					continue
 				}
-				if strings.HasPrefix(envKey, name) {
-					env[envKey] = envVal
+				if strings.HasPrefix(part[0], name) {
+					env[part[0]] = part[1]
 				}
 			}
 		} else if val, ok := os.LookupEnv(name); ok {

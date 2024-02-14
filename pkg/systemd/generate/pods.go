@@ -1,4 +1,5 @@
 //go:build !remote
+// +build !remote
 
 package generate
 
@@ -12,10 +13,10 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/containers/podman/v5/libpod"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	"github.com/containers/podman/v5/pkg/systemd/define"
-	"github.com/containers/podman/v5/version"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/systemd/define"
+	"github.com/containers/podman/v4/version"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/pflag"
 )

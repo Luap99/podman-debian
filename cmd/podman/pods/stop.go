@@ -5,12 +5,12 @@ import (
 	"fmt"
 
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/podman/v5/cmd/podman/common"
-	"github.com/containers/podman/v5/cmd/podman/registry"
-	"github.com/containers/podman/v5/cmd/podman/utils"
-	"github.com/containers/podman/v5/cmd/podman/validate"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	"github.com/containers/podman/v5/pkg/specgenutil"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/utils"
+	"github.com/containers/podman/v4/cmd/podman/validate"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/specgenutil"
 	"github.com/spf13/cobra"
 )
 
@@ -40,6 +40,7 @@ var (
 		},
 		ValidArgsFunction: common.AutocompletePodsRunning,
 		Example: `podman pod stop mywebserverpod
+  podman pod stop --latest
   podman pod stop --time 0 490eb 3557fb`,
 	}
 )

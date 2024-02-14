@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v5/pkg/machine/compression"
-	"github.com/containers/podman/v5/pkg/machine/define"
-	"github.com/containers/podman/v5/utils"
+	"github.com/containers/podman/v4/pkg/machine/compression"
+	"github.com/containers/podman/v4/pkg/machine/define"
+	"github.com/containers/podman/v4/utils"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/sirupsen/logrus"
 )
@@ -19,21 +20,20 @@ type Versioned struct {
 	blobDirPath     string
 	cacheDir        string
 	ctx             context.Context
+	imageFormat     define.ImageFormat
 	imageName       string
 	machineImageDir string
 	machineVersion  *OSVersion
 	vmName          string
-	vmType          string
-	finalPath       *define.VMFile
 }
 
-func NewVersioned(ctx context.Context, machineImageDir *define.VMFile, vmName string, vmType string, finalPath *define.VMFile) (*Versioned, error) {
-	imageCacheDir := filepath.Join(machineImageDir.GetPath(), "cache")
+func NewVersioned(ctx context.Context, machineImageDir, vmName string) (*Versioned, error) {
+	imageCacheDir := filepath.Join(machineImageDir, "cache")
 	if err := os.MkdirAll(imageCacheDir, 0777); err != nil {
 		return nil, err
 	}
 	o := getVersion()
-	return &Versioned{ctx: ctx, cacheDir: imageCacheDir, machineImageDir: machineImageDir.GetPath(), machineVersion: o, vmName: vmName, vmType: vmType, finalPath: finalPath}, nil
+	return &Versioned{ctx: ctx, cacheDir: imageCacheDir, machineImageDir: machineImageDir, machineVersion: o, vmName: vmName}, nil
 }
 
 func (d *Versioned) LocalBlob() *types.BlobInfo {
@@ -41,7 +41,7 @@ func (d *Versioned) LocalBlob() *types.BlobInfo {
 }
 
 func (d *Versioned) DiskEndpoint() string {
-	return d.machineVersion.diskImage(d.vmType)
+	return d.machineVersion.diskImage(d.imageFormat)
 }
 
 func (d *Versioned) versionedOCICacheDir() string {
@@ -74,7 +74,7 @@ func (d *Versioned) Pull() error {
 		remoteDescriptor *v1.Descriptor
 	)
 
-	remoteDiskImage := d.machineVersion.diskImage(d.vmType)
+	remoteDiskImage := d.machineVersion.diskImage(define.Qcow)
 	logrus.Debugf("podman disk image name: %s", remoteDiskImage)
 
 	// is there a valid oci dir in our cache
@@ -136,8 +136,14 @@ func (d *Versioned) Unpack() (*define.VMFile, error) {
 	return unpackedFile, nil
 }
 
-func (d *Versioned) Decompress(compressedFile *define.VMFile) error {
-	return compression.Decompress(compressedFile, d.finalPath.GetPath())
+func (d *Versioned) Decompress(compressedFile *define.VMFile) (*define.VMFile, error) {
+	imageCompression := compression.KindFromFile(d.imageName)
+	strippedImageName := strings.TrimSuffix(d.imageName, fmt.Sprintf(".%s", imageCompression.String()))
+	finalName := finalFQImagePathName(d.vmName, strippedImageName)
+	if err := compression.Decompress(compressedFile, finalName); err != nil {
+		return nil, err
+	}
+	return define.NewMachineFile(finalName, nil)
 }
 
 func (d *Versioned) localOCIDiskImageDir(localBlob *types.BlobInfo) string {
@@ -147,23 +153,4 @@ func (d *Versioned) localOCIDiskImageDir(localBlob *types.BlobInfo) string {
 func (d *Versioned) localOCIDirExists() bool {
 	_, indexErr := os.Stat(filepath.Join(d.versionedOCICacheDir(), "index.json"))
 	return indexErr == nil
-}
-
-func (d *Versioned) Get() error {
-	if err := d.Pull(); err != nil {
-		return err
-	}
-	unpacked, err := d.Unpack()
-	if err != nil {
-		return err
-	}
-
-	defer func() {
-		logrus.Debugf("cleaning up %q", unpacked.GetPath())
-		if err := unpacked.Delete(); err != nil {
-			logrus.Errorf("unable to delete local compressed file %q:%v", unpacked.GetPath(), err)
-		}
-	}()
-
-	return d.Decompress(unpacked)
 }
