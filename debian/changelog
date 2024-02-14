@@ -1,3 +1,9 @@
+libpod (4.9.3+ds1-1) unstable; urgency=medium
+
+  * New upstream release
+
+ -- Reinhard Tartler <siretart@tauware.de>  Tue, 13 Feb 2024 20:52:08 -0500
+
 libpod (4.9.2+ds1-2) unstable; urgency=medium
 
   * Upload to unstable
