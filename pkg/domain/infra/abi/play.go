@@ -23,8 +23,10 @@ import (
 	"github.com/containers/podman/v5/cmd/podman/parse"
 	"github.com/containers/podman/v5/libpod"
 	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/pkg/annotations"
 	"github.com/containers/podman/v5/pkg/domain/entities"
 	entitiesTypes "github.com/containers/podman/v5/pkg/domain/entities/types"
+	"github.com/containers/podman/v5/pkg/domain/infra/abi/internal/expansion"
 	v1apps "github.com/containers/podman/v5/pkg/k8s.io/api/apps/v1"
 	v1 "github.com/containers/podman/v5/pkg/k8s.io/api/core/v1"
 	metav1 "github.com/containers/podman/v5/pkg/k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -40,7 +42,6 @@ import (
 	"github.com/opencontainers/selinux/go-selinux"
 	"github.com/sirupsen/logrus"
 	yamlv3 "gopkg.in/yaml.v3"
-	"k8s.io/kubernetes/third_party/forked/golang/expansion"
 	"sigs.k8s.io/yaml"
 )
 
@@ -122,6 +123,51 @@ func (ic *ContainerEngine) createServiceContainer(ctx context.Context, name stri
 	}
 
 	return ctr, nil
+}
+
+func prepareVolumesFrom(forContainer, podName string, ctrNames, annotations map[string]string) ([]string, error) {
+	annotationVolsFrom := define.VolumesFromAnnotation + "/" + forContainer
+
+	volsFromCtrs, ok := annotations[annotationVolsFrom]
+
+	// No volumes-from specified
+	if !ok || volsFromCtrs == "" {
+		return nil, nil
+	}
+
+	// The volumes-from string is a semicolon-separated container names
+	// optionally with respective mount options.
+	volumesFrom := strings.Split(volsFromCtrs, ";")
+	for idx, volsFromCtr := range volumesFrom {
+		// Each entry is of format "container[:mount-options]"
+		fields := strings.Split(volsFromCtr, ":")
+		if len(fields) != 1 && len(fields) != 2 {
+			return nil, fmt.Errorf("invalid annotation %s value", annotationVolsFrom)
+		}
+
+		if fields[0] == "" {
+			return nil, fmt.Errorf("from container name cannot be empty in annotation %s", annotationVolsFrom)
+		}
+
+		// Source and target containers cannot be same
+		if fields[0] == forContainer {
+			return nil, fmt.Errorf("to and from container names cannot be same in annotation %s", annotationVolsFrom)
+		}
+
+		// Update the source container name if it belongs to the pod
+		// the source container must exist before the target container
+		// in the kube yaml. Otherwise, the source container will be
+		// treated as an external container. This also helps in avoiding
+		// cyclic dependencies between containers within the pod.
+		if _, ok := ctrNames[fields[0]]; ok {
+			volumesFrom[idx] = podName + "-" + fields[0]
+			if len(fields) == 2 {
+				volumesFrom[idx] = volumesFrom[idx] + ":" + fields[1]
+			}
+		}
+	}
+
+	return volumesFrom, nil
 }
 
 // Creates the name for a k8s entity based on the provided content of a
@@ -244,16 +290,16 @@ func (ic *ContainerEngine) PlayKube(ctx context.Context, body io.Reader, options
 
 			podTemplateSpec.ObjectMeta = podYAML.ObjectMeta
 			podTemplateSpec.Spec = podYAML.Spec
-			for name, val := range podYAML.Annotations {
-				if len(val) > define.MaxKubeAnnotation && !options.UseLongAnnotations {
-					return nil, fmt.Errorf("annotation %q=%q value length exceeds Kubernetes max %d", name, val, define.MaxKubeAnnotation)
-				}
-			}
+
 			for name, val := range options.Annotations {
 				if podYAML.Annotations == nil {
 					podYAML.Annotations = make(map[string]string)
 				}
 				podYAML.Annotations[name] = val
+			}
+
+			if err := annotations.ValidateAnnotations(podYAML.Annotations); err != nil {
+				return nil, err
 			}
 
 			r, proxies, err := ic.playKubePod(ctx, podTemplateSpec.ObjectMeta.Name, &podTemplateSpec, options, &ipIndex, podYAML.Annotations, configMaps, serviceContainer)
@@ -475,6 +521,10 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 		return nil, nil, fmt.Errorf("pod does not have a name")
 	}
 
+	if _, ok := annotations[define.VolumesFromAnnotation]; ok {
+		return nil, nil, fmt.Errorf("annotation %s without target volume is reserved for internal use", define.VolumesFromAnnotation)
+	}
+
 	podOpt := entities.PodCreateOptions{
 		Infra:      true,
 		Net:        &entities.NetOptions{NoHosts: options.NoHosts},
@@ -491,14 +541,7 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 	}
 
 	if len(options.Networks) > 0 {
-		var pastaNetworkNameExists bool
-
-		_, err := ic.Libpod.Network().NetworkInspect("pasta")
-		if err == nil {
-			pastaNetworkNameExists = true
-		}
-
-		ns, networks, netOpts, err := specgen.ParseNetworkFlag(options.Networks, pastaNetworkNameExists)
+		ns, networks, netOpts, err := specgen.ParseNetworkFlag(options.Networks)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -785,6 +828,13 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 			initCtrType = define.OneShotInitContainer
 		}
 
+		var volumesFrom []string
+		if list, err := prepareVolumesFrom(initCtr.Name, podName, ctrNames, annotations); err != nil {
+			return nil, nil, err
+		} else if list != nil {
+			volumesFrom = list
+		}
+
 		specgenOpts := kube.CtrSpecGenOptions{
 			Annotations:        annotations,
 			ConfigMaps:         configMaps,
@@ -805,6 +855,7 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 			SecretsManager:     secretsManager,
 			UserNSIsHost:       p.Userns.IsHost(),
 			Volumes:            volumes,
+			VolumesFrom:        volumesFrom,
 			UtsNSIsHost:        p.UtsNs.IsHost(),
 		}
 		specGen, err := kube.ToSpecGen(ctx, &specgenOpts)
@@ -861,6 +912,13 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 			labels[k] = v
 		}
 
+		var volumesFrom []string
+		if list, err := prepareVolumesFrom(container.Name, podName, ctrNames, annotations); err != nil {
+			return nil, nil, err
+		} else if list != nil {
+			volumesFrom = list
+		}
+
 		specgenOpts := kube.CtrSpecGenOptions{
 			Annotations:        annotations,
 			ConfigMaps:         configMaps,
@@ -881,6 +939,7 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 			SecretsManager:     secretsManager,
 			UserNSIsHost:       p.Userns.IsHost(),
 			Volumes:            volumes,
+			VolumesFrom:        volumesFrom,
 			UtsNSIsHost:        p.UtsNs.IsHost(),
 		}
 

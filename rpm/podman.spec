@@ -39,7 +39,7 @@
 %global container_base_url https://%{container_base_path}
 
 # For LDFLAGS
-%global ld_project %{container_base_path}/%{name}/v4
+%global ld_project %{container_base_path}/%{name}/v5
 %global ld_libpod %{ld_project}/libpod
 
 # %%{name}
@@ -81,7 +81,7 @@ BuildRequires: glibc-devel
 BuildRequires: glibc-static
 BuildRequires: golang
 BuildRequires: git-core
-%if !%{defined gobuild}
+%if %{undefined rhel} || 0%{?rhel} >= 10
 BuildRequires: go-rpm-macros
 %endif
 BuildRequires: gpgme-devel
@@ -219,7 +219,7 @@ export CGO_CFLAGS+=" -m64 -mtune=generic -fcf-protection=full"
 
 export GOPROXY=direct
 
-LDFLAGS="-X %{ld_libpod}/define.buildInfo=$(date +%s) \
+LDFLAGS="-X %{ld_libpod}/define.buildInfo=${SOURCE_DATE_EPOCH:-$(date +%s)} \
          -X %{ld_libpod}/config._installPrefix=%{_prefix} \
          -X %{ld_libpod}/config._etcDir=%{_sysconfdir} \
          -X %{ld_project}/pkg/systemd/quadlet._binDir=%{_bindir}"
@@ -248,7 +248,7 @@ LDFLAGS=''
 
 %install
 install -dp %{buildroot}%{_unitdir}
-PODMAN_VERSION=%{version} %{__make} PREFIX=%{buildroot}%{_prefix} ETCDIR=%{_sysconfdir} \
+PODMAN_VERSION=%{version} %{__make} DESTDIR=%{buildroot} PREFIX=%{_prefix} ETCDIR=%{_sysconfdir} \
        install.bin \
        install.man \
        install.systemd \
@@ -263,8 +263,8 @@ PODMAN_VERSION=%{version} %{__make} PREFIX=%{buildroot}%{_prefix} ETCDIR=%{_sysc
 sed -i 's;%{buildroot};;g' %{buildroot}%{_bindir}/docker
 
 # do not include docker and podman-remote man pages in main package
-for file in `find %{buildroot}%{_mandir}/man[15] -type f | sed "s,%{buildroot},," | grep -v -e remote -e docker`; do
-    echo "$file*" >> podman.file-list
+for file in `find %{buildroot}%{_mandir}/man[15] -type f | sed "s,%{buildroot},," | grep -v -e %{name}sh.1 -e remote -e docker`; do
+    echo "$file*" >> %{name}.file-list
 done
 
 rm -f %{buildroot}%{_mandir}/man5/docker*.5
@@ -300,6 +300,7 @@ cp -pav test/system %{buildroot}/%{_datadir}/%{name}/test/
 %files docker
 %{_bindir}/docker
 %{_mandir}/man1/docker*.1*
+%{_sysconfdir}/profile.d/%{name}-docker.*
 %{_tmpfilesdir}/%{name}-docker.conf
 %{_user_tmpfilesdir}/%{name}-docker.conf
 
@@ -318,6 +319,7 @@ cp -pav test/system %{buildroot}/%{_datadir}/%{name}/test/
 
 %files -n %{name}sh
 %{_bindir}/%{name}sh
+%{_mandir}/man1/%{name}sh.1*
 
 %changelog
 %if %{defined autochangelog}

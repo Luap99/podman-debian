@@ -1,24 +1,27 @@
+//go:build linux || freebsd
+
 package qemu
 
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/containers/podman/v5/pkg/machine/ignition"
 
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/strongunits"
 	gvproxy "github.com/containers/gvisor-tap-vsock/pkg/types"
 	"github.com/containers/podman/v5/pkg/machine"
 	"github.com/containers/podman/v5/pkg/machine/define"
+	"github.com/containers/podman/v5/pkg/machine/ignition"
 	"github.com/containers/podman/v5/pkg/machine/qemu/command"
+	"github.com/containers/podman/v5/pkg/machine/shim/diskpull"
 	"github.com/containers/podman/v5/pkg/machine/sockets"
 	"github.com/containers/podman/v5/pkg/machine/vmconfigs"
 	"github.com/sirupsen/logrus"
@@ -28,6 +31,23 @@ type QEMUStubber struct {
 	vmconfigs.QEMUConfig
 	// Command describes the final QEMU command line
 	Command command.QemuCmd
+}
+
+var (
+	gvProxyWaitBackoff        = 500 * time.Millisecond
+	gvProxyMaxBackoffAttempts = 6
+)
+
+func (q QEMUStubber) UserModeNetworkEnabled(*vmconfigs.MachineConfig) bool {
+	return true
+}
+
+func (q QEMUStubber) UseProviderNetworkSetup() bool {
+	return false
+}
+
+func (q QEMUStubber) RequireExclusiveActive() bool {
+	return true
 }
 
 func (q *QEMUStubber) setQEMUCommandLine(mc *vmconfigs.MachineConfig) error {
@@ -54,7 +74,13 @@ func (q *QEMUStubber) setQEMUCommandLine(mc *vmconfigs.MachineConfig) error {
 	q.Command.SetCPUs(mc.Resources.CPUs)
 	q.Command.SetIgnitionFile(*ignitionFile)
 	q.Command.SetQmpMonitor(mc.QEMUHypervisor.QMPMonitor)
-	q.Command.SetNetwork()
+	gvProxySock, err := mc.GVProxySocket()
+	if err != nil {
+		return err
+	}
+	if err := q.Command.SetNetwork(gvProxySock); err != nil {
+		return err
+	}
 	q.Command.SetSerialPort(*readySocket, *mc.QEMUHypervisor.QEMUPidPath, mc.Name)
 
 	// Add volumes to qemu command line
@@ -64,13 +90,12 @@ func (q *QEMUStubber) setQEMUCommandLine(mc *vmconfigs.MachineConfig) error {
 		q.Command.SetVirtfsMount(mount.Source, mount.Tag, securityModel, mount.ReadOnly)
 	}
 
-	// TODO
-	// v.QEMUConfig.Command.SetUSBHostPassthrough(v.USBs)
+	q.Command.SetUSBHostPassthrough(mc.Resources.USBs)
 
 	return nil
 }
 
-func (q *QEMUStubber) CreateVM(opts define.CreateVMOpts, mc *vmconfigs.MachineConfig, _ *ignition.IgnitionBuilder) error {
+func (q *QEMUStubber) CreateVM(opts define.CreateVMOpts, mc *vmconfigs.MachineConfig, builder *ignition.IgnitionBuilder) error {
 	monitor, err := command.NewQMPMonitor(opts.Name, opts.Dirs.RuntimeDir)
 	if err != nil {
 		return err
@@ -91,7 +116,7 @@ func (q *QEMUStubber) CreateVM(opts define.CreateVMOpts, mc *vmconfigs.MachineCo
 
 	mc.QEMUHypervisor = &qemuConfig
 	mc.QEMUHypervisor.QEMUPidPath = qemuPidPath
-	return q.resizeDisk(strongunits.GiB(mc.Resources.DiskSize), mc.ImagePath)
+	return q.resizeDisk(mc.Resources.DiskSize, mc.ImagePath)
 }
 
 func runStartVMCommand(cmd *exec.Cmd) error {
@@ -121,31 +146,20 @@ func (q *QEMUStubber) StartVM(mc *vmconfigs.MachineConfig) (func() error, func()
 		return nil, nil, fmt.Errorf("unable to generate qemu command line: %q", err)
 	}
 
-	defaultBackoff := 500 * time.Millisecond
-	maxBackoffs := 6
-
 	readySocket, err := mc.ReadySocket()
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// If the qemusocketpath exists and the vm is off/down, we should rm
-	// it before the dial as to avoid a segv
-
-	if err := mc.QEMUHypervisor.QMPMonitor.Address.Delete(); err != nil {
-		return nil, nil, err
-	}
-	qemuSocketConn, err := sockets.DialSocketWithBackoffs(maxBackoffs, defaultBackoff, mc.QEMUHypervisor.QMPMonitor.Address.GetPath())
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to connect to qemu monitor socket: %w", err)
-	}
-	defer qemuSocketConn.Close()
-
-	fd, err := qemuSocketConn.(*net.UnixConn).File()
+	gvProxySock, err := mc.GVProxySocket()
 	if err != nil {
 		return nil, nil, err
 	}
-	defer fd.Close()
+
+	// Wait on gvproxy to be running and aware
+	if err := sockets.WaitForSocketWithBackoffs(gvProxyMaxBackoffAttempts, gvProxyWaitBackoff, gvProxySock.GetPath(), "gvproxy"); err != nil {
+		return nil, nil, err
+	}
 
 	dnr, dnw, err := machine.GetDevNullFiles()
 	if err != nil {
@@ -154,12 +168,7 @@ func (q *QEMUStubber) StartVM(mc *vmconfigs.MachineConfig) (func() error, func()
 	defer dnr.Close()
 	defer dnw.Close()
 
-	attr := new(os.ProcAttr)
-	files := []*os.File{dnr, dnw, dnw, fd}
-	attr.Files = files
 	cmdLine := q.Command
-
-	cmdLine.SetPropagatedHostEnvs()
 
 	// Disable graphic window when not in debug mode
 	// Done in start, so we're not suck with the debug level we used on init
@@ -173,12 +182,11 @@ func (q *QEMUStubber) StartVM(mc *vmconfigs.MachineConfig) (func() error, func()
 
 	// actually run the command that starts the virtual machine
 	cmd := &exec.Cmd{
-		Args:       cmdLine,
-		Path:       cmdLine[0],
-		Stdin:      dnr,
-		Stdout:     dnw,
-		Stderr:     stderrBuf,
-		ExtraFiles: []*os.File{fd},
+		Args:   cmdLine,
+		Path:   cmdLine[0],
+		Stdin:  dnr,
+		Stdout: dnw,
+		Stderr: stderrBuf,
 	}
 
 	if err := runStartVMCommand(cmd); err != nil {
@@ -207,8 +215,8 @@ func waitForReady(readySocket *define.VMFile, pid int, stdErrBuffer *bytes.Buffe
 	return err
 }
 
-func (q *QEMUStubber) GetHyperVisorVMs() ([]string, error) {
-	return nil, nil
+func (q *QEMUStubber) Exists(name string) (bool, error) {
+	return false, nil
 }
 
 func (q *QEMUStubber) VMType() define.VMType {
@@ -243,17 +251,33 @@ func (q *QEMUStubber) resizeDisk(newSize strongunits.GiB, diskPath *define.VMFil
 	return nil
 }
 
-func (q *QEMUStubber) SetProviderAttrs(mc *vmconfigs.MachineConfig, cpus, memory *uint64, newDiskSize *strongunits.GiB, newRootful *bool) error {
-	if newDiskSize != nil {
-		if err := q.resizeDisk(*newDiskSize, mc.ImagePath); err != nil {
+func (q *QEMUStubber) SetProviderAttrs(mc *vmconfigs.MachineConfig, opts define.SetOptions) error {
+	state, err := q.State(mc, false)
+	if err != nil {
+		return err
+	}
+	if state != define.Stopped {
+		return errors.New("unable to change settings unless vm is stopped")
+	}
+
+	if opts.DiskSize != nil {
+		if err := q.resizeDisk(*opts.DiskSize, mc.ImagePath); err != nil {
 			return err
 		}
 	}
 
-	if newRootful != nil && mc.HostUser.Rootful != *newRootful {
-		if err := mc.SetRootful(*newRootful); err != nil {
+	if opts.Rootful != nil && mc.HostUser.Rootful != *opts.Rootful {
+		if err := mc.SetRootful(*opts.Rootful); err != nil {
 			return err
 		}
+	}
+
+	if opts.USBs != nil {
+		usbs, err := define.ParseUSBs(*opts.USBs)
+		if err != nil {
+			return err
+		}
+		mc.Resources.USBs = usbs
 	}
 
 	// Because QEMU does nothing with these hardware attributes, we can simply return
@@ -261,7 +285,15 @@ func (q *QEMUStubber) SetProviderAttrs(mc *vmconfigs.MachineConfig, cpus, memory
 }
 
 func (q *QEMUStubber) StartNetworking(mc *vmconfigs.MachineConfig, cmd *gvproxy.GvproxyCommand) error {
-	cmd.AddQemuSocket(fmt.Sprintf("unix://%s", mc.QEMUHypervisor.QMPMonitor.Address.GetPath()))
+	gvProxySock, err := mc.GVProxySocket()
+	if err != nil {
+		return err
+	}
+	// make sure it does not exist before gvproxy is called
+	if err := gvProxySock.Delete(); err != nil {
+		logrus.Error(err)
+	}
+	cmd.AddQemuSocket(fmt.Sprintf("unix://%s", filepath.ToSlash(gvProxySock.GetPath())))
 	return nil
 }
 
@@ -316,6 +348,15 @@ func (q *QEMUStubber) MountType() vmconfigs.VolumeMountType {
 	return vmconfigs.NineP
 }
 
-func (q *QEMUStubber) PostStartNetworking(mc *vmconfigs.MachineConfig) error {
+func (q *QEMUStubber) PostStartNetworking(mc *vmconfigs.MachineConfig, noInfo bool) error {
 	return nil
+}
+
+func (q *QEMUStubber) UpdateSSHPort(mc *vmconfigs.MachineConfig, port int) error {
+	// managed by gvproxy on this backend, so nothing to do
+	return nil
+}
+
+func (q *QEMUStubber) GetDisk(userInputPath string, dirs *define.MachineDirs, mc *vmconfigs.MachineConfig) error {
+	return diskpull.GetDisk(userInputPath, dirs, mc.ImagePath, q.VMType(), mc.Name)
 }

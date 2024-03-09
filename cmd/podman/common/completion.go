@@ -980,12 +980,12 @@ func AutocompleteImageVolume(cmd *cobra.Command, args []string, toComplete strin
 }
 
 // AutocompleteLogDriver - Autocomplete log-driver options.
-// -> "journald", "none", "k8s-file", "passthrough"
+// -> "journald", "none", "k8s-file", "passthrough", "passthrough-tty"
 func AutocompleteLogDriver(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	// don't show json-file
 	logDrivers := []string{define.JournaldLogging, define.NoLogging, define.KubernetesLogging}
 	if !registry.IsRemote() {
-		logDrivers = append(logDrivers, define.PassthroughLogging)
+		logDrivers = append(logDrivers, define.PassthroughLogging, define.PassthroughTTYLogging)
 	}
 	return logDrivers, cobra.ShellCompDirectiveNoFileComp
 }
@@ -1298,7 +1298,7 @@ func getEntityType(cmd *cobra.Command, args []string, o interface{}) interface{}
 	}
 	// network logic
 	if networks, _ := getNetworks(cmd, args[0], completeDefault); len(networks) > 0 {
-		return &types.Network{}
+		return &entities.NetworkInspectReport{}
 	}
 	return o
 }
@@ -1420,10 +1420,10 @@ func AutocompleteEventFilter(cmd *cobra.Command, args []string, toComplete strin
 			events.Exited.String(), events.Export.String(), events.Import.String(), events.Init.String(), events.Kill.String(),
 			events.LoadFromArchive.String(), events.Mount.String(), events.NetworkConnect.String(),
 			events.NetworkDisconnect.String(), events.Pause.String(), events.Prune.String(), events.Pull.String(),
-			events.Push.String(), events.Refresh.String(), events.Remove.String(), events.Rename.String(),
-			events.Renumber.String(), events.Restart.String(), events.Restore.String(), events.Save.String(),
-			events.Start.String(), events.Stop.String(), events.Sync.String(), events.Tag.String(), events.Unmount.String(),
-			events.Unpause.String(), events.Untag.String(),
+			events.PullError.String(), events.Push.String(), events.Refresh.String(), events.Remove.String(),
+			events.Rename.String(), events.Renumber.String(), events.Restart.String(), events.Restore.String(),
+			events.Save.String(), events.Start.String(), events.Stop.String(), events.Sync.String(), events.Tag.String(),
+			events.Unmount.String(), events.Unpause.String(), events.Untag.String(),
 		}, cobra.ShellCompDirectiveNoFileComp
 	}
 	eventTypes := func(_ string) ([]string, cobra.ShellCompDirective) {

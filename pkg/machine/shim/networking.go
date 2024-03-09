@@ -1,10 +1,9 @@
 package shim
 
 import (
+	"errors"
 	"fmt"
-	"io/fs"
 	"net"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -12,7 +11,10 @@ import (
 	"github.com/containers/common/pkg/config"
 	gvproxy "github.com/containers/gvisor-tap-vsock/pkg/types"
 	"github.com/containers/podman/v5/pkg/machine"
+	"github.com/containers/podman/v5/pkg/machine/connection"
 	"github.com/containers/podman/v5/pkg/machine/define"
+	"github.com/containers/podman/v5/pkg/machine/env"
+	"github.com/containers/podman/v5/pkg/machine/ports"
 	"github.com/containers/podman/v5/pkg/machine/vmconfigs"
 	"github.com/sirupsen/logrus"
 )
@@ -23,16 +25,17 @@ const (
 	dockerConnectTimeout = 5 * time.Second
 )
 
-func startNetworking(mc *vmconfigs.MachineConfig, provider vmconfigs.VMProvider) (string, machine.APIForwardingState, error) {
-	var (
-		forwardingState machine.APIForwardingState
-		forwardSock     string
-	)
-	// the guestSock is "inside" the guest machine
-	guestSock := fmt.Sprintf(defaultGuestSock, mc.HostUser.UID)
+var (
+	ErrNotRunning      = errors.New("machine not in running state")
+	ErrSSHNotListening = errors.New("machine is not listening on ssh port")
+)
+
+func startHostForwarder(mc *vmconfigs.MachineConfig, provider vmconfigs.VMProvider, dirs *define.MachineDirs, hostSocks []string) error {
 	forwardUser := mc.SSH.RemoteUsername
 
-	// TODO should this go up the stack higher
+	// TODO should this go up the stack higher or
+	// the guestSock is "inside" the guest machine
+	guestSock := fmt.Sprintf(defaultGuestSock, mc.HostUser.UID)
 	if mc.HostUser.Rootful {
 		guestSock = "/run/podman/podman.sock"
 		forwardUser = "root"
@@ -40,51 +43,33 @@ func startNetworking(mc *vmconfigs.MachineConfig, provider vmconfigs.VMProvider)
 
 	cfg, err := config.Default()
 	if err != nil {
-		return "", 0, err
+		return err
 	}
 
 	binary, err := cfg.FindHelperBinary(machine.ForwarderBinaryName, false)
 	if err != nil {
-		return "", 0, err
-	}
-
-	dataDir, err := mc.DataDir()
-	if err != nil {
-		return "", 0, err
-	}
-	hostSocket, err := dataDir.AppendToNewVMFile("podman.sock", nil)
-	if err != nil {
-		return "", 0, err
-	}
-
-	runDir, err := mc.RuntimeDir()
-	if err != nil {
-		return "", 0, err
-	}
-
-	linkSocketPath := filepath.Dir(dataDir.GetPath())
-	linkSocket, err := define.NewMachineFile(filepath.Join(linkSocketPath, "podman.sock"), nil)
-	if err != nil {
-		return "", 0, err
+		return err
 	}
 
 	cmd := gvproxy.NewGvproxyCommand()
 
 	// GvProxy PID file path is now derived
+	runDir := dirs.RuntimeDir
 	cmd.PidFile = filepath.Join(runDir.GetPath(), "gvproxy.pid")
 
-	// TODO This can be re-enabled when gvisor-tap-vsock #305 is merged
-	// debug is set, we dump to a logfile as well
-	// if logrus.IsLevelEnabled(logrus.DebugLevel) {
-	// 	cmd.LogFile = filepath.Join(runDir.GetPath(), "gvproxy.log")
-	// }
+	if logrus.IsLevelEnabled(logrus.DebugLevel) {
+		cmd.LogFile = filepath.Join(runDir.GetPath(), "gvproxy.log")
+	}
 
 	cmd.SSHPort = mc.SSH.Port
 
-	cmd.AddForwardSock(hostSocket.GetPath())
-	cmd.AddForwardDest(guestSock)
-	cmd.AddForwardUser(forwardUser)
-	cmd.AddForwardIdentity(mc.SSH.IdentityPath)
+	// Windows providers listen on multiple sockets since they do not involve links
+	for _, hostSock := range hostSocks {
+		cmd.AddForwardSock(hostSock)
+		cmd.AddForwardDest(guestSock)
+		cmd.AddForwardUser(forwardUser)
+		cmd.AddForwardIdentity(mc.SSH.IdentityPath)
+	}
 
 	if logrus.IsLevelEnabled(logrus.DebugLevel) {
 		cmd.Debug = true
@@ -94,80 +79,48 @@ func startNetworking(mc *vmconfigs.MachineConfig, provider vmconfigs.VMProvider)
 	// This allows a provider to perform additional setup as well as
 	// add in any provider specific options for gvproxy
 	if err := provider.StartNetworking(mc, &cmd); err != nil {
-		return "", 0, err
-	}
-
-	if mc.HostUser.UID != -1 {
-		forwardSock, forwardingState = setupAPIForwarding(hostSocket, linkSocket)
+		return err
 	}
 
 	c := cmd.Cmd(binary)
 
 	logrus.Debugf("gvproxy command-line: %s %s", binary, strings.Join(cmd.ToCmdline(), " "))
 	if err := c.Start(); err != nil {
-		return forwardSock, 0, fmt.Errorf("unable to execute: %q: %w", cmd.ToCmdline(), err)
+		return fmt.Errorf("unable to execute: %q: %w", cmd.ToCmdline(), err)
+	}
+
+	return nil
+}
+
+func startNetworking(mc *vmconfigs.MachineConfig, provider vmconfigs.VMProvider) (string, machine.APIForwardingState, error) {
+	// Check if SSH port is in use, and reassign if necessary
+	if !ports.IsLocalPortAvailable(mc.SSH.Port) {
+		logrus.Warnf("detected port conflict on machine ssh port [%d], reassigning", mc.SSH.Port)
+		if err := reassignSSHPort(mc, provider); err != nil {
+			return "", 0, err
+		}
+	}
+
+	// Provider has its own networking code path (e.g. WSL)
+	if provider.UseProviderNetworkSetup() {
+		return "", 0, provider.StartNetworking(mc, nil)
+	}
+
+	dirs, err := env.GetMachineDirs(provider.VMType())
+	if err != nil {
+		return "", 0, err
+	}
+
+	hostSocks, forwardSock, forwardingState, err := setupMachineSockets(mc.Name, dirs)
+	if err != nil {
+		return "", 0, err
+	}
+
+	if err := startHostForwarder(mc, provider, dirs, hostSocks); err != nil {
+		return "", 0, err
 	}
 
 	return forwardSock, forwardingState, nil
-}
-
-type apiOptions struct { //nolint:unused
-	socketpath, destinationSocketPath *define.VMFile
-	fowardUser                        string
-}
-
-func setupAPIForwarding(hostSocket, linkSocket *define.VMFile) (string, machine.APIForwardingState) {
-	// The linking pattern is /var/run/docker.sock -> user global sock (link) -> machine sock (socket)
-	// This allows the helper to only have to maintain one constant target to the user, which can be
-	// repositioned without updating docker.sock.
-
-	if !dockerClaimSupported() {
-		return hostSocket.GetPath(), machine.ClaimUnsupported
-	}
-
-	if !dockerClaimHelperInstalled() {
-		return hostSocket.GetPath(), machine.NotInstalled
-	}
-
-	if !alreadyLinked(hostSocket.GetPath(), linkSocket.GetPath()) {
-		if checkSockInUse(linkSocket.GetPath()) {
-			return hostSocket.GetPath(), machine.MachineLocal
-		}
-
-		_ = linkSocket.Delete()
-
-		if err := os.Symlink(hostSocket.GetPath(), linkSocket.GetPath()); err != nil {
-			logrus.Warnf("could not create user global API forwarding link: %s", err.Error())
-			return hostSocket.GetPath(), machine.MachineLocal
-		}
-	}
-
-	if !alreadyLinked(linkSocket.GetPath(), dockerSock) {
-		if checkSockInUse(dockerSock) {
-			return hostSocket.GetPath(), machine.MachineLocal
-		}
-
-		if !claimDockerSock() {
-			logrus.Warn("podman helper is installed, but was not able to claim the global docker sock")
-			return hostSocket.GetPath(), machine.MachineLocal
-		}
-	}
-
-	return dockerSock, machine.DockerGlobal
-}
-
-func alreadyLinked(target string, link string) bool {
-	read, err := os.Readlink(link)
-	return err == nil && read == target
-}
-
-func checkSockInUse(sock string) bool {
-	if info, err := os.Stat(sock); err == nil && info.Mode()&fs.ModeSocket == fs.ModeSocket {
-		_, err = net.DialTimeout("unix", dockerSock, dockerConnectTimeout)
-		return err == nil
-	}
-
-	return false
 }
 
 // conductVMReadinessCheck checks to make sure the machine is in the proper state
@@ -182,24 +135,79 @@ func conductVMReadinessCheck(mc *vmconfigs.MachineConfig, maxBackoffs int, backo
 		if err != nil {
 			return false, nil, err
 		}
-		if state == define.Running && isListening(mc.SSH.Port) {
-			// Also make sure that SSH is up and running.  The
-			// ready service's dependencies don't fully make sure
-			// that clients can SSH into the machine immediately
-			// after boot.
-			//
-			// CoreOS users have reported the same observation but
-			// the underlying source of the issue remains unknown.
-
-			if sshError = machine.CommonSSH(mc.SSH.RemoteUsername, mc.SSH.IdentityPath, mc.Name, mc.SSH.Port, []string{"true"}); sshError != nil {
-				logrus.Debugf("SSH readiness check for machine failed: %v", sshError)
-				continue
-			}
-			connected = true
-			break
+		if state != define.Running {
+			sshError = ErrNotRunning
+			continue
 		}
+		if !isListening(mc.SSH.Port) {
+			sshError = ErrSSHNotListening
+			continue
+		}
+
+		// Also make sure that SSH is up and running.  The
+		// ready service's dependencies don't fully make sure
+		// that clients can SSH into the machine immediately
+		// after boot.
+		//
+		// CoreOS users have reported the same observation but
+		// the underlying source of the issue remains unknown.
+
+		if sshError = machine.CommonSSHSilent(mc.SSH.RemoteUsername, mc.SSH.IdentityPath, mc.Name, mc.SSH.Port, []string{"true"}); sshError != nil {
+			logrus.Debugf("SSH readiness check for machine failed: %v", sshError)
+			continue
+		}
+		connected = true
+		sshError = nil
+		break
 	}
 	return
+}
+
+func reassignSSHPort(mc *vmconfigs.MachineConfig, provider vmconfigs.VMProvider) error {
+	newPort, err := ports.AllocateMachinePort()
+	if err != nil {
+		return err
+	}
+
+	success := false
+	defer func() {
+		if !success {
+			if err := ports.ReleaseMachinePort(newPort); err != nil {
+				logrus.Warnf("could not release port allocation as part of failure rollback (%d): %s", newPort, err.Error())
+			}
+		}
+	}()
+
+	// Write a transient invalid port, to force a retry on failure
+	oldPort := mc.SSH.Port
+	mc.SSH.Port = 0
+	if err := mc.Write(); err != nil {
+		return err
+	}
+
+	if err := ports.ReleaseMachinePort(oldPort); err != nil {
+		logrus.Warnf("could not release current ssh port allocation (%d): %s", oldPort, err.Error())
+	}
+
+	// Update the backend's settings if relevant (e.g. WSL)
+	if err := provider.UpdateSSHPort(mc, newPort); err != nil {
+		return err
+	}
+
+	mc.SSH.Port = newPort
+	if err := connection.UpdateConnectionPairPort(mc.Name, newPort, mc.HostUser.UID, mc.SSH.RemoteUsername, mc.SSH.IdentityPath); err != nil {
+		return fmt.Errorf("could not update remote connection configuration: %w", err)
+	}
+
+	// Write updated port back
+	if err := mc.Write(); err != nil {
+		return err
+	}
+
+	// inform defer routine not to release the port
+	success = true
+
+	return nil
 }
 
 func isListening(port int) bool {

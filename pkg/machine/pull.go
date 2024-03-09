@@ -15,6 +15,7 @@ import (
 
 	"github.com/containers/podman/v5/pkg/machine/compression"
 	"github.com/containers/podman/v5/pkg/machine/define"
+	"github.com/containers/podman/v5/pkg/machine/env"
 	"github.com/containers/podman/v5/pkg/machine/ocipull"
 	"github.com/containers/podman/v5/utils"
 	"github.com/sirupsen/logrus"
@@ -31,11 +32,11 @@ func NewGenericDownloader(vmType define.VMType, vmName, pullPath string) (Distri
 	var (
 		imageName string
 	)
-	dataDir, err := GetDataDir(vmType)
+	dataDir, err := env.GetDataDir(vmType)
 	if err != nil {
 		return nil, err
 	}
-	cacheDir, err := GetCacheDir(vmType)
+	cacheDir, err := env.GetCacheDir(vmType)
 	if err != nil {
 		return nil, err
 	}
@@ -231,61 +232,3 @@ func isOci(input string) (bool, *ocipull.OCIKind, error) { //nolint:unused
 	}
 	return false, nil, nil
 }
-
-// func Pull(input, machineName string, vp VirtProvider) (*define.VMFile, FCOSStream, error) {
-//	var (
-//		disk ocipull.Disker
-//	)
-//
-//	ociBased, ociScheme, err := isOci(input)
-//	if err != nil {
-//		return nil, 0, err
-//	}
-//	if !ociBased {
-//		// Business as usual
-//		dl, err := vp.NewDownload(machineName)
-//		if err != nil {
-//			return nil, 0, err
-//		}
-//		return dl.AcquireVMImage(input)
-//	}
-//	oopts := ocipull.OCIOpts{
-//		Scheme: ociScheme,
-//	}
-//	dataDir, err := GetDataDir(vp.VMType())
-//	if err != nil {
-//		return nil, 0, err
-//	}
-//	if ociScheme.IsOCIDir() {
-//		strippedOCIDir := ocipull.StripOCIReference(input)
-//		oopts.Dir = &strippedOCIDir
-//		disk = ocipull.NewOCIDir(context.Background(), input, dataDir, machineName)
-//	} else {
-//		// a use of a containers image type here might be
-//		// tighter
-//		strippedInput := strings.TrimPrefix(input, "docker://")
-//		// this is the next piece of work
-//		if len(strippedInput) > 0 {
-//			return nil, 0, errors.New("image names are not supported yet")
-//		}
-//		disk, err = ocipull.NewVersioned(context.Background(), dataDir, machineName, vp.VMType().String())
-//		if err != nil {
-//			return nil, 0, err
-//		}
-//	}
-//	if err := disk.Pull(); err != nil {
-//		return nil, 0, err
-//	}
-//	unpacked, err := disk.Unpack()
-//	if err != nil {
-//		return nil, 0, err
-//	}
-//	defer func() {
-//		logrus.Debugf("cleaning up %q", unpacked.GetPath())
-//		if err := unpacked.Delete(); err != nil {
-//			logrus.Errorf("unable to delete local compressed file %q:%v", unpacked.GetPath(), err)
-//		}
-//	}()
-//	imagePath, err := disk.Decompress(unpacked)
-//	return imagePath, UnknownStream, err
-//}

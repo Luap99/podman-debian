@@ -1,5 +1,3 @@
-//go:build windows
-
 package wsl
 
 import (
@@ -10,12 +8,11 @@ import (
 	"net/url"
 	"os"
 	"path"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/containers/podman/v5/pkg/machine"
-	"github.com/containers/podman/v5/pkg/machine/define"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -25,40 +22,6 @@ const (
 
 type FedoraDownload struct {
 	machine.Download
-}
-
-func NewFedoraDownloader(vmType define.VMType, vmName, releaseStream string) (machine.DistributionDownload, error) {
-	downloadURL, version, arch, size, err := getFedoraDownload()
-	if err != nil {
-		return nil, err
-	}
-
-	cacheDir, err := machine.GetCacheDir(vmType)
-	if err != nil {
-		return nil, err
-	}
-
-	imageName := fmt.Sprintf("fedora-podman-%s-%s.tar.xz", arch, version)
-
-	f := FedoraDownload{
-		Download: machine.Download{
-			Arch:      machine.GetFcosArch(),
-			Artifact:  define.None,
-			CacheDir:  cacheDir,
-			Format:    define.Tar,
-			ImageName: imageName,
-			LocalPath: filepath.Join(cacheDir, imageName),
-			URL:       downloadURL,
-			VMName:    vmName,
-			Size:      size,
-		},
-	}
-	dataDir, err := machine.GetDataDir(vmType)
-	if err != nil {
-		return nil, err
-	}
-	f.Download.LocalUncompressedFile = f.GetLocalUncompressedFile(dataDir)
-	return f, nil
 }
 
 func (f FedoraDownload) Get() *machine.Download {
@@ -82,7 +45,7 @@ func (f FedoraDownload) CleanCache() error {
 	return machine.RemoveImageAfterExpire(f.CacheDir, expire)
 }
 
-func getFedoraDownload() (*url.URL, string, string, int64, error) {
+func GetFedoraDownloadForWSL() (*url.URL, string, string, int64, error) {
 	var releaseURL string
 	arch := machine.DetermineMachineArch()
 	switch arch {
@@ -118,11 +81,14 @@ func getFedoraDownload() (*url.URL, string, string, int64, error) {
 		return nil, "", "", -1, fmt.Errorf("get request failed: %s: %w", verURL.String(), err)
 	}
 
-	defer resp.Body.Close()
-	bytes, err := io.ReadAll(&io.LimitedReader{R: resp.Body, N: 1024})
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			logrus.Errorf("error closing http body: %q", err)
+		}
+	}()
+	b, err := io.ReadAll(&io.LimitedReader{R: resp.Body, N: 1024})
 	if err != nil {
 		return nil, "", "", -1, fmt.Errorf("failed reading: %s: %w", verURL.String(), err)
 	}
-
-	return downloadURL, strings.TrimSpace(string(bytes)), arch, contentLen, nil
+	return downloadURL, strings.TrimSpace(string(b)), arch, contentLen, nil
 }

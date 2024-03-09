@@ -336,8 +336,7 @@ load helpers.network
 
     # create second network
     netname2=testnet-$(random_string 10)
-    # TODO add --ipv6 and uncomment the ipv6 checks below once cni plugins 1.0 is available on ubuntu CI VMs.
-    run_podman network create $netname2
+    run_podman network create --ipv6 $netname2
     is "$output" "$netname2" "output of 'network create'"
 
     # connect the container to the second network
@@ -345,9 +344,9 @@ load helpers.network
 
     run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname2\").IPAddress}}"
     ip2="$output"
-    #run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname2\").GlobalIPv6Address}}"
-    #is "$output" "fd.*:.*" "IPv6 address should start with fd..."
-    #ipv6="$output"
+    run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname2\").GlobalIPv6Address}}"
+    is "$output" "fd.*:.*" "IPv6 address should start with fd..."
+    ipv6="$output"
     run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname2\").MacAddress}}"
     mac2="$output"
 
@@ -363,8 +362,8 @@ load helpers.network
     is "$output" "$mac1" "MAC address changed after podman network reload ($netname)"
     run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname2\").IPAddress}}"
     is "$output" "$ip2" "IP address changed after podman network reload ($netname2)"
-    #run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname2\").GlobalIPv6Address}}"
-    #is "$output" "$ipv6" "IPv6 address changed after podman network reload ($netname2)"
+    run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname2\").GlobalIPv6Address}}"
+    is "$output" "$ipv6" "IPv6 address changed after podman network reload ($netname2)"
     run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname2\").MacAddress}}"
     is "$output" "$mac2" "MAC address changed after podman network reload ($netname2)"
 
@@ -716,7 +715,16 @@ nameserver 8.8.8.8" "nameserver order is correct"
 }
 
 @test "podman run port forward range" {
-    for netmode in bridge slirp4netns:port_handler=slirp4netns slirp4netns:port_handler=rootlesskit; do
+    # we run a long loop of tests lets run all combinations before bailing out
+    defer-assertion-failures
+
+    # pasta only works rootless
+    local pasta=
+    if is_rootless; then
+        pasta=pasta
+    fi
+
+    for netmode in bridge slirp4netns:port_handler=slirp4netns slirp4netns:port_handler=rootlesskit $pasta; do
         local range=$(random_free_port_range 3)
         # die() inside $(...) does not actually stop us.
         assert "$range" != "" "Could not find free port range"
@@ -729,10 +737,22 @@ nameserver 8.8.8.8" "nameserver order is correct"
         cid="$output"
         for port in $(seq $port $end_port); do
             run_podman exec -d $cid nc -l -p $port -e /bin/cat
-            # -w 1 adds a 1 second timeout. For some reason, ubuntu's ncat
-            # doesn't close the connection on EOF, and other options to
-            # change this are not portable across distros. -w seems to work.
-            run nc -w 1 127.0.0.1 $port <<<$random
+
+            # we have to rety ncat as it can flake as we exec in the background so nc -l
+            # might not have bound the port yet, retry seems simpler than checking if the
+            # port is bound in the container, https://github.com/containers/podman/issues/21561.
+            retries=5
+            while [[ $retries -gt 0 ]]; do
+                # -w 1 adds a 1 second timeout. For some reason, ubuntu's ncat
+                # doesn't close the connection on EOF, and other options to
+                # change this are not portable across distros. -w seems to work.
+                run nc -w 1 127.0.0.1 $port <<<$random
+                if [[ $status -eq 0 ]]; then
+                    break
+                fi
+                sleep 0.5
+                retries=$((retries -1))
+            done
             is "$output" "$random" "ncat got data back (netmode=$netmode port=$port)"
         done
 
@@ -837,7 +857,7 @@ EOF
     cid=${output}
     run_podman inspect --format '{{ .NetworkSettings.Networks }}' $cid
     if is_rootless; then
-        is "$output" "map\[slirp4netns:.*" "NeworkSettings should contain one network named slirp4netns"
+        is "$output" "map\[pasta:.*" "NeworkSettings should contain one network named pasta"
     else
         is "$output" "map\[podman:.*" "NeworkSettings should contain one network named podman"
     fi
@@ -900,7 +920,7 @@ EOF
     run_podman run --rm --network $net1 $IMAGE true
 
     # And now because of all the fun we have to check the same with slirp4netns and pasta because
-    # that uses slighlty different code paths. Note this would dealock before the fix.
+    # that uses slightly different code paths. Note this would deadlock before the fix.
     # https://github.com/containers/podman/issues/21477
     run_podman 1 run --name $cname2 --network slirp4netns --restart on-failure:2 --userns keep-id $IMAGE false
     run_podman inspect --format "{{.RestartCount}}" $cname2
@@ -931,6 +951,54 @@ EOF
 
     run_podman run --rm --net=host --uts=host $IMAGE cat /etc/hostname
     assert "$output" = $hostname "/etc/hostname with --uts=host --net=host must be equal to 'uname -n'"
+}
+
+@test "podman network inspect running containers" {
+    local cname1=c1-$(random_string 10)
+    local cname2=c2-$(random_string 10)
+    local cname3=c3-$(random_string 10)
+
+    local netname=net-$(random_string 10)
+    local subnet=$(random_rfc1918_subnet)
+
+    run_podman network create --subnet "${subnet}.0/24" $netname
+
+    run_podman network inspect --format "{{json .Containers}}" $netname
+    assert "$output" == "{}" "no containers on the network"
+
+    run_podman create --name $cname1 --network $netname $IMAGE top
+    cid1="$output"
+    run_podman create --name $cname2 --network $netname $IMAGE top
+    cid2="$output"
+
+    # containers should only be part of the output when they are running
+    run_podman network inspect --format "{{json .Containers}}" $netname
+    assert "$output" == "{}" "no running containers on the network"
+
+    # start the containers to setup the network info
+    run_podman start $cname1 $cname2
+
+    # also run a third container on different network (should not be part of inspect then)
+    run_podman run -d --name $cname3 --network podman $IMAGE top
+    cid3="$output"
+
+    # Map ordering is not deterministic so we check each container one by one
+    local expect="\{\"name\":\"$cname1\",\"interfaces\":\{\"eth0\":\{\"subnets\":\[\{\"ipnet\":\"${subnet}.2/24\"\,\"gateway\":\"${subnet}.1\"\}\],\"mac_address\":\"[0-9a-f]{2}:.*\"\}\}\}"
+    run_podman network inspect --format "{{json (index .Containers \"$cid1\")}}" $netname
+    assert "$output" =~ "$expect" "container 1 on the network"
+
+    local expect="\{\"name\":\"$cname2\",\"interfaces\":\{\"eth0\":\{\"subnets\":\[\{\"ipnet\":\"${subnet}.3/24\"\,\"gateway\":\"${subnet}.1\"\}\],\"mac_address\":\"[0-9a-f]{2}:.*\"\}\}\}"
+    run_podman network inspect --format "{{json (index .Containers \"$cid2\")}}" $netname
+    assert "$output" =~ "$expect" "container 2 on the network"
+
+    # container 3 should not be part of the inspect, index does not error if the key does not
+    # exists so just make sure the cid3 and cname3 are not in the json.
+    run_podman network inspect --format "{{json .Containers}}" $netname
+    assert "$output" !~ "$cid3" "container 3 on the network (cid)"
+    assert "$output" !~ "$cname3" "container 3 on the network (name)"
+
+    run_podman rm -f -t0 $cname1 $cname2 $cname3
+    run_podman network rm $netname
 }
 
 # vim: filetype=sh

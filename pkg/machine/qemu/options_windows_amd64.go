@@ -1,3 +1,5 @@
+//go:build tempoff
+
 package qemu
 
 var (
@@ -9,12 +11,4 @@ func (q *QEMUStubber) addArchOptions(_ *setNewMachineCMDOpts) []string {
 	// It is a stable choice for running on bare metal and inside Hyper-V machine with nested virtualization.
 	opts := []string{"-machine", "q35,accel=whpx:tcg", "-cpu", "qemu64"}
 	return opts
-}
-
-func (v *MachineVM) prepare() error {
-	return nil
-}
-
-func (v *MachineVM) archRemovalFiles() []string {
-	return []string{}
 }

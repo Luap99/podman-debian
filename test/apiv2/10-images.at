@@ -54,8 +54,8 @@ t POST "libpod/images/pull?reference=alpine&compatMode=true" 200 .error~null .st
 t POST "images/create?fromImage=alpine&tag=latest" 200
 
 # 10977 - handle platform parameter correctly
-t POST "images/create?fromImage=quay.io/libpod/testimage:20210610&platform=linux/arm64" 200
-t GET  "images/testimage:20210610/json" 200 \
+t POST "images/create?fromImage=quay.io/libpod/testimage:20240123&platform=linux/arm64" 200
+t GET  "images/testimage:20240123/json" 200 \
   .Architecture=arm64
 
 # Make sure that new images are pulled
@@ -342,5 +342,15 @@ t GET libpod/images/no-alias-for-sure/resolve 200 \
 # Test invalid input.
 t GET libpod/images/noCAPITALcharAllowed/resolve 400 \
   .cause="repository name must be lowercase"
+
+
+START=$(date +%s.%N)
+# test pull-error API response
+podman pull --retry 0 localhost:5000/idonotexist || true
+t GET "libpod/events?stream=false&since=$START"  200  \
+  .status=pull-error \
+  .Action=pull-error \
+  .Actor.Attributes.name="localhost:5000/idonotexist" \
+  .Actor.Attributes.error~".*connection refused"
 
 # vim: filetype=sh

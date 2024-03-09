@@ -123,6 +123,12 @@ func (ir *ImageEngine) Pull(ctx context.Context, rawImage string, opts entities.
 			options.WithSkipTLSVerify(false)
 		}
 	}
+	if opts.Retry != nil {
+		options.WithRetry(*opts.Retry)
+	}
+	if opts.RetryDelay != "" {
+		options.WithRetryDelay(opts.RetryDelay)
+	}
 	pulledImages, err := images.Pull(ir.ClientCtx, rawImage, options)
 	if err != nil {
 		return nil, err
@@ -266,6 +272,12 @@ func (ir *ImageEngine) Push(ctx context.Context, source string, destination stri
 		} else {
 			options.WithSkipTLSVerify(false)
 		}
+	}
+	if opts.Retry != nil {
+		options.WithRetry(*opts.Retry)
+	}
+	if opts.RetryDelay != "" {
+		options.WithRetryDelay(opts.RetryDelay)
 	}
 	if err := images.Push(ir.ClientCtx, source, destination, options); err != nil {
 		return nil, err

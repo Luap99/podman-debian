@@ -23,7 +23,7 @@ type initMachine struct {
 	diskSize           *uint
 	ignitionPath       string
 	username           string
-	imagePath          string
+	image              string
 	memory             *uint
 	now                bool
 	timezone           string
@@ -50,8 +50,8 @@ func (i *initMachine) buildCmd(m *machineTestBuilder) []string {
 	if l := len(i.username); l > 0 {
 		cmd = append(cmd, "--username", i.username)
 	}
-	if l := len(i.imagePath); l > 0 {
-		cmd = append(cmd, "--image-path", i.imagePath)
+	if l := len(i.image); l > 0 {
+		cmd = append(cmd, "--image", i.image)
 	}
 	if i.memory != nil {
 		cmd = append(cmd, "--memory", strconv.Itoa(int(*i.memory)))
@@ -95,8 +95,8 @@ func (i *initMachine) withUsername(username string) *initMachine {
 	return i
 }
 
-func (i *initMachine) withImagePath(path string) *initMachine {
-	i.imagePath = path
+func (i *initMachine) withImage(path string) *initMachine {
+	i.image = path
 	return i
 }
 
@@ -125,7 +125,7 @@ func (i *initMachine) withRootful(r bool) *initMachine {
 	return i
 }
 
-func (i *initMachine) withUserModeNetworking(r bool) *initMachine {
+func (i *initMachine) withUserModeNetworking(r bool) *initMachine { //nolint:unused
 	i.userModeNetworking = r
 	return i
 }

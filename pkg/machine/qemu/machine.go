@@ -1,4 +1,4 @@
-//go:build amd64 || arm64
+//go:build linux || freebsd
 
 package qemu
 
@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/containers/common/pkg/config"
+	"github.com/containers/podman/v5/pkg/errorhandling"
 	"github.com/containers/podman/v5/pkg/machine/define"
 	"github.com/containers/podman/v5/pkg/machine/vmconfigs"
 	"github.com/digitalocean/go-qemu/qmp"
@@ -112,9 +114,6 @@ func (q *QEMUStubber) waitForMachineToStop(mc *vmconfigs.MachineConfig) error {
 
 // Stop uses the qmp monitor to call a system_powerdown
 func (q *QEMUStubber) StopVM(mc *vmconfigs.MachineConfig, _ bool) error {
-	mc.Lock()
-	defer mc.Unlock()
-
 	if err := mc.Refresh(); err != nil {
 		return err
 	}
@@ -148,9 +147,9 @@ func (q *QEMUStubber) StopVM(mc *vmconfigs.MachineConfig, _ bool) error {
 // stopLocked stops the machine and expects the caller to hold the machine's lock.
 func (q *QEMUStubber) stopLocked(mc *vmconfigs.MachineConfig) error {
 	// check if the qmp socket is there. if not, qemu instance is gone
-	if _, err := os.Stat(q.QMPMonitor.Address.GetPath()); errors.Is(err, fs.ErrNotExist) {
+	if _, err := os.Stat(mc.QEMUHypervisor.QMPMonitor.Address.GetPath()); errors.Is(err, fs.ErrNotExist) {
 		// Right now it is NOT an error to stop a stopped machine
-		logrus.Debugf("QMP monitor socket %v does not exist", q.QMPMonitor.Address)
+		logrus.Debugf("QMP monitor socket %v does not exist", mc.QEMUHypervisor.QMPMonitor.Address)
 		// Fix incorrect starting state in case of crash during start
 		if mc.Starting {
 			mc.Starting = false
@@ -161,7 +160,7 @@ func (q *QEMUStubber) stopLocked(mc *vmconfigs.MachineConfig) error {
 		return nil
 	}
 
-	qmpMonitor, err := qmp.NewSocketMonitor(q.QMPMonitor.Network, q.QMPMonitor.Address.GetPath(), q.QMPMonitor.Timeout)
+	qmpMonitor, err := qmp.NewSocketMonitor(mc.QEMUHypervisor.QMPMonitor.Network, mc.QEMUHypervisor.QMPMonitor.Address.GetPath(), mc.QEMUHypervisor.QMPMonitor.Timeout)
 	if err != nil {
 		return err
 	}
@@ -195,7 +194,7 @@ func (q *QEMUStubber) stopLocked(mc *vmconfigs.MachineConfig) error {
 	}
 
 	// Remove socket
-	if err := q.QMPMonitor.Address.Delete(); err != nil {
+	if err := mc.QEMUHypervisor.QMPMonitor.Address.Delete(); err != nil {
 		return err
 	}
 
@@ -205,14 +204,14 @@ func (q *QEMUStubber) stopLocked(mc *vmconfigs.MachineConfig) error {
 	}
 	disconnected = true
 
-	if q.QEMUPidPath.GetPath() == "" {
+	if mc.QEMUHypervisor.QEMUPidPath.GetPath() == "" {
 		// no vm pid file path means it's probably a machine created before we
 		// started using it, so we revert to the old way of waiting for the
 		// machine to stop
 		return q.waitForMachineToStop(mc)
 	}
 
-	vmPid, err := q.QEMUPidPath.ReadPIDFrom()
+	vmPid, err := mc.QEMUHypervisor.QEMUPidPath.ReadPIDFrom()
 	if err != nil {
 		return err
 	}
@@ -227,16 +226,21 @@ func (q *QEMUStubber) stopLocked(mc *vmconfigs.MachineConfig) error {
 
 // Remove deletes all the files associated with a machine including the image itself
 func (q *QEMUStubber) Remove(mc *vmconfigs.MachineConfig) ([]string, func() error, error) {
-	mc.Lock()
-	defer mc.Unlock()
-
 	qemuRmFiles := []string{
 		mc.QEMUHypervisor.QEMUPidPath.GetPath(),
 		mc.QEMUHypervisor.QMPMonitor.Address.GetPath(),
 	}
 
 	return qemuRmFiles, func() error {
-		return nil
+		var errs []error
+		if err := mc.QEMUHypervisor.QEMUPidPath.Delete(); err != nil {
+			errs = append(errs, err)
+		}
+
+		if err := mc.QEMUHypervisor.QMPMonitor.Address.Delete(); err != nil {
+			errs = append(errs, err)
+		}
+		return errorhandling.JoinErrors(errs)
 	}, nil
 }
 
@@ -266,6 +270,22 @@ func (q *QEMUStubber) State(mc *vmconfigs.MachineConfig, bypass bool) (define.St
 		return "", err
 	}
 	if err := monitor.Connect(); err != nil {
+		// There is a case where if we stop the same vm (from running) two
+		// consecutive times we can get an econnreset when trying to get the
+		// state
+		if errors.Is(err, syscall.ECONNRESET) {
+			// try again
+			logrus.Debug("received ECCONNRESET from QEMU monitor; trying again")
+			secondTry := monitor.Connect()
+			if errors.Is(secondTry, io.EOF) {
+				return define.Stopped, nil
+			}
+			if secondTry != nil {
+				logrus.Debugf("second attempt to connect to QEMU monitor failed")
+				return "", secondTry
+			}
+		}
+
 		return "", err
 	}
 	defer func() {

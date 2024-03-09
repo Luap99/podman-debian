@@ -1,3 +1,5 @@
+//go:build windows && arm64
+
 package qemu
 
 var (
@@ -8,12 +10,4 @@ func (q *QEMUStubber) addArchOptions(_ *setNewMachineCMDOpts) []string {
 	// stub to fix compilation issues
 	opts := []string{}
 	return opts
-}
-
-func (v *MachineVM) prepare() error {
-	return nil
-}
-
-func (v *MachineVM) archRemovalFiles() []string {
-	return []string{}
 }

@@ -29,7 +29,7 @@ var _ = Describe("podman machine set", func() {
 		skipIfWSL("WSL cannot change set properties of disk, processor, or memory")
 		name := randomString()
 		i := new(initMachine)
-		session, err := mb.setName(name).setCmd(i.withImagePath(mb.imagePath)).run()
+		session, err := mb.setName(name).setCmd(i.withImage(mb.imagePath)).run()
 		Expect(err).ToNot(HaveOccurred())
 		Expect(session).To(Exit(0))
 
@@ -79,7 +79,7 @@ var _ = Describe("podman machine set", func() {
 		skipIfNotVmtype(define.WSLVirt, "tests are only for WSL provider")
 		name := randomString()
 		i := new(initMachine)
-		session, err := mb.setName(name).setCmd(i.withImagePath(mb.imagePath)).run()
+		session, err := mb.setName(name).setCmd(i.withImage(mb.imagePath)).run()
 		Expect(err).ToNot(HaveOccurred())
 		Expect(session).To(Exit(0))
 
@@ -104,7 +104,7 @@ var _ = Describe("podman machine set", func() {
 		skipIfWSL("WSL cannot change set properties of disk, processor, or memory")
 		name := randomString()
 		i := new(initMachine)
-		session, err := mb.setName(name).setCmd(i.withImagePath(mb.imagePath)).run()
+		session, err := mb.setName(name).setCmd(i.withImage(mb.imagePath)).run()
 		Expect(err).ToNot(HaveOccurred())
 		Expect(session).To(Exit(0))
 
@@ -138,7 +138,7 @@ var _ = Describe("podman machine set", func() {
 	It("set rootful with docker sock change", func() {
 		name := randomString()
 		i := new(initMachine)
-		session, err := mb.setName(name).setCmd(i.withImagePath(mb.imagePath)).run()
+		session, err := mb.setName(name).setCmd(i.withImage(mb.imagePath)).run()
 		Expect(err).ToNot(HaveOccurred())
 		Expect(session).To(Exit(0))
 
@@ -171,9 +171,12 @@ var _ = Describe("podman machine set", func() {
 		if testProvider.VMType() != define.WSLVirt {
 			Skip("Test is only for WSL")
 		}
+		// TODO - this currently fails
+		Skip("test fails bc usermode network needs plumbing for WSL")
+
 		name := randomString()
 		i := new(initMachine)
-		session, err := mb.setName(name).setCmd(i.withImagePath(mb.imagePath)).run()
+		session, err := mb.setName(name).setCmd(i.withImage(mb.imagePath)).run()
 		Expect(err).ToNot(HaveOccurred())
 		Expect(session).To(Exit(0))
 
@@ -188,5 +191,24 @@ var _ = Describe("podman machine set", func() {
 		Expect(err).ToNot(HaveOccurred())
 		Expect(inspectSession).To(Exit(0))
 		Expect(inspectSession.outputToString()).To(Equal("true"))
+	})
+
+	It("set while machine already running", func() {
+		name := randomString()
+		i := new(initMachine)
+		session, err := mb.setName(name).setCmd(i.withImage(mb.imagePath)).run()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(session).To(Exit(0))
+
+		s := new(startMachine)
+		startSession, err := mb.setCmd(s).run()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(startSession).To(Exit(0))
+
+		set := setMachine{}
+		setSession, err := mb.setName(name).setCmd(set.withRootful(true)).run()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(setSession).To(Exit(125))
+		Expect(setSession.errorToString()).To(ContainSubstring("Error: unable to change settings unless vm is stopped"))
 	})
 })

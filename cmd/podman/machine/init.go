@@ -8,11 +8,13 @@ import (
 
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/podman/v5/cmd/podman/registry"
+	ldefine "github.com/containers/podman/v5/libpod/define"
 	"github.com/containers/podman/v5/libpod/events"
 	"github.com/containers/podman/v5/pkg/machine"
 	"github.com/containers/podman/v5/pkg/machine/define"
 	"github.com/containers/podman/v5/pkg/machine/shim"
 	"github.com/containers/podman/v5/pkg/machine/vmconfigs"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
 
@@ -100,9 +102,17 @@ func init() {
 	flags.StringVar(&initOpts.Username, UsernameFlagName, cfg.ContainersConfDefaultsRO.Machine.User, "Username used in image")
 	_ = initCmd.RegisterFlagCompletionFunc(UsernameFlagName, completion.AutocompleteDefault)
 
+	ImageFlagName := "image"
+	flags.StringVar(&initOpts.Image, ImageFlagName, cfg.ContainersConfDefaultsRO.Machine.Image, "Bootable image for machine")
+	_ = initCmd.RegisterFlagCompletionFunc(ImageFlagName, completion.AutocompleteDefault)
+
+	// Deprecate image-path option, use --image instead
 	ImagePathFlagName := "image-path"
-	flags.StringVar(&initOpts.ImagePath, ImagePathFlagName, "", "Path to bootable image")
+	flags.StringVar(&initOpts.Image, ImagePathFlagName, cfg.ContainersConfDefaultsRO.Machine.Image, "Bootable image for machine")
 	_ = initCmd.RegisterFlagCompletionFunc(ImagePathFlagName, completion.AutocompleteDefault)
+	if err := flags.MarkDeprecated(ImagePathFlagName, "use --image instead"); err != nil {
+		logrus.Error("unable to mark image-path flag deprecated")
+	}
 
 	VolumeFlagName := "volume"
 	flags.StringArrayVarP(&initOpts.Volumes, VolumeFlagName, "v", cfg.ContainersConfDefaultsRO.Machine.Volumes.Get(), "Volumes to mount, source:target")
@@ -136,11 +146,19 @@ func initMachine(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("machine name %q must be %d characters or less", args[0], maxMachineNameSize)
 		}
 		initOpts.Name = args[0]
+
+		if !ldefine.NameRegex.MatchString(initOpts.Name) {
+			return fmt.Errorf("invalid name %q: %w", initOpts.Name, ldefine.RegexError)
+		}
 	}
 
 	// The vmtype names need to be reserved and cannot be used for podman machine names
 	if _, err := define.ParseVMType(initOpts.Name, define.UnknownVirt); err == nil {
 		return fmt.Errorf("cannot use %q for a machine name", initOpts.Name)
+	}
+
+	if !ldefine.NameRegex.MatchString(initOpts.Username) {
+		return fmt.Errorf("invalid username %q: %w", initOpts.Username, ldefine.RegexError)
 	}
 
 	// Check if machine already exists
@@ -190,13 +208,8 @@ func initMachine(cmd *cobra.Command, args []string) error {
 	// 	return err
 	// }
 
-	mc, err := shim.Init(initOpts, provider)
+	err = shim.Init(initOpts, provider)
 	if err != nil {
-		return err
-	}
-
-	// TODO callback needed for the configuration file
-	if err := mc.Write(); err != nil {
 		return err
 	}
 

@@ -3,16 +3,11 @@ package e2e_test
 import (
 	"fmt"
 	"io"
-	url2 "net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
-	"time"
 
-	"github.com/containers/podman/v5/pkg/machine"
 	"github.com/containers/podman/v5/pkg/machine/compression"
 	"github.com/containers/podman/v5/pkg/machine/define"
 	"github.com/containers/podman/v5/pkg/machine/provider"
@@ -27,7 +22,6 @@ func TestMain(m *testing.M) {
 }
 
 const (
-	defaultStream        = machine.Testing
 	defaultDiskSize uint = 11
 )
 
@@ -52,59 +46,21 @@ func TestMachine(t *testing.T) {
 var testProvider vmconfigs.VMProvider
 
 var _ = BeforeSuite(func() {
-	var err error
+	var (
+		err       error
+		pullError error
+	)
 	testProvider, err = provider.Get()
 	if err != nil {
 		Fail("unable to create testProvider")
 	}
-
-	downloadLocation := os.Getenv("MACHINE_IMAGE")
-	if downloadLocation == "" {
-		downloadLocation, err = GetDownload(testProvider.VMType())
-		if err != nil {
-			Fail("unable to derive download disk from fedora coreos")
-		}
+	if testProvider.VMType() == define.WSLVirt {
+		pullError = pullWSLDisk()
+	} else {
+		pullError = pullOCITestDisk(tmpDir, testProvider.VMType())
 	}
-
-	if downloadLocation == "" {
-		Fail("machine tests require a file reference to a disk image right now")
-	}
-
-	var compressionExtension string
-	switch testProvider.VMType() {
-	case define.AppleHvVirt:
-		compressionExtension = ".gz"
-	case define.HyperVVirt:
-		compressionExtension = ".zip"
-	default:
-		compressionExtension = ".xz"
-	}
-
-	suiteImageName = strings.TrimSuffix(path.Base(downloadLocation), compressionExtension)
-	fqImageName = filepath.Join(tmpDir, suiteImageName)
-	if _, err := os.Stat(fqImageName); err != nil {
-		if os.IsNotExist(err) {
-			getMe, err := url2.Parse(downloadLocation)
-			if err != nil {
-				Fail(fmt.Sprintf("unable to create url for download: %q", err))
-			}
-			now := time.Now()
-			if err := machine.DownloadVMImage(getMe, suiteImageName, fqImageName+compressionExtension); err != nil {
-				Fail(fmt.Sprintf("unable to download machine image: %q", err))
-			}
-			GinkgoWriter.Println("Download took: ", time.Since(now).String())
-			diskImage, err := define.NewMachineFile(fqImageName+compressionExtension, nil)
-			if err != nil {
-				Fail(fmt.Sprintf("unable to create vmfile %q: %v", fqImageName+compressionExtension, err))
-			}
-			compressionStart := time.Now()
-			if err := compression.Decompress(diskImage, fqImageName); err != nil {
-				Fail(fmt.Sprintf("unable to decompress image file: %q", err))
-			}
-			GinkgoWriter.Println("compression took: ", time.Since(compressionStart))
-		} else {
-			Fail(fmt.Sprintf("unable to check for cache image: %q", err))
-		}
+	if pullError != nil {
+		Fail(fmt.Sprintf("failed to pull wsl disk: %q", pullError))
 	}
 
 })
@@ -133,6 +89,11 @@ func setup() (string, *machineTestBuilder) {
 	if err := os.Setenv("HOME", homeDir); err != nil {
 		Fail("failed to set home dir")
 	}
+	if runtime.GOOS == "windows" {
+		if err := os.Setenv("USERPROFILE", homeDir); err != nil {
+			Fail("unable to set home dir on windows")
+		}
+	}
 	if err := os.Setenv("XDG_RUNTIME_DIR", homeDir); err != nil {
 		Fail("failed to set xdg_runtime dir")
 	}
@@ -159,16 +120,16 @@ func setup() (string, *machineTestBuilder) {
 	}
 	defer func() {
 		if err := dest.Close(); err != nil {
-			Fail(fmt.Sprintf("failed to close destination file %q: %q", dest.Name(), err))
+			Fail(fmt.Sprintf("failed to close destination file %q: %q\n", dest.Name(), err))
 		}
 	}()
-	fmt.Printf("--> copying %q to %q/n", src.Name(), dest.Name())
+	fmt.Printf("--> copying %q to %q\n", src.Name(), dest.Name())
 	if runtime.GOOS != "darwin" {
 		if _, err := io.Copy(dest, src); err != nil {
 			Fail(fmt.Sprintf("failed to copy %ss to %s: %q", fqImageName, mb.imagePath, err))
 		}
 	} else {
-		if _, err := compression.CopySparse(dest, src); err != nil {
+		if err := copySparse(dest, src); err != nil {
 			Fail(fmt.Sprintf("failed to copy %q to %q: %q", src.Name(), dest.Name(), err))
 		}
 	}
@@ -182,6 +143,7 @@ func teardown(origHomeDir string, testDir string, mb *machineTestBuilder) {
 			GinkgoWriter.Printf("error occurred rm'ing machine: %q\n", err)
 		}
 	}
+
 	if err := utils.GuardedRemoveAll(testDir); err != nil {
 		Fail(fmt.Sprintf("failed to remove test dir: %q", err))
 	}
@@ -189,4 +151,21 @@ func teardown(origHomeDir string, testDir string, mb *machineTestBuilder) {
 	if err := os.Setenv("HOME", origHomeDir); err != nil {
 		Fail("failed to set home dir")
 	}
+	if runtime.GOOS == "windows" {
+		if err := os.Setenv("USERPROFILE", origHomeDir); err != nil {
+			Fail("failed to set windows home dir back to original")
+		}
+	}
+}
+
+// copySparse is a helper method for tests only; caller is responsible for closures
+func copySparse(dst io.WriteSeeker, src io.Reader) (retErr error) {
+	spWriter := compression.NewSparseWriter(dst)
+	defer func() {
+		if err := spWriter.Close(); err != nil && retErr == nil {
+			retErr = err
+		}
+	}()
+	_, err := io.Copy(spWriter, src)
+	return err
 }

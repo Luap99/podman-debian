@@ -6,27 +6,27 @@ ifeq ($(ARCH), aarch64)
 else
 	GOARCH:=$(ARCH)
 endif
-GVPROXY_VERSION ?= 0.7.2
-QEMU_VERSION ?= 8.2.1-1
+GVPROXY_VERSION ?= 0.7.3
+VFKIT_VERSION ?= 0.5.1
 GVPROXY_RELEASE_URL ?= https://github.com/containers/gvisor-tap-vsock/releases/download/v$(GVPROXY_VERSION)/gvproxy-darwin
-QEMU_RELEASE_URL ?= https://github.com/containers/podman-machine-qemu/releases/download/v$(QEMU_VERSION)/podman-machine-qemu-$(ARCH)-$(QEMU_VERSION).tar.xz
+VFKIT_RELEASE_URL ?= https://github.com/crc-org/vfkit/releases/download/v$(VFKIT_VERSION)/vfkit-unsigned
 PACKAGE_DIR ?= out/packaging
-TMP_DOWNLOAD ?= tmp-download
+TMP_BIN ?= tmp-bin
 PACKAGE_ROOT ?= root
 PKG_NAME := podman-installer-macos-$(GOARCH).pkg
 
 default: pkginstaller
 
 podman_version:
-	make -C ../../ test/version/version
+	make -B -C ../../ test/version/version
 
-$(TMP_DOWNLOAD)/gvproxy:
-	mkdir -p $(TMP_DOWNLOAD)
-	cd $(TMP_DOWNLOAD) && curl -sLo gvproxy $(GVPROXY_RELEASE_URL)
+$(TMP_BIN)/gvproxy:
+	mkdir -p $(TMP_BIN)
+	cd $(TMP_BIN) && curl -sLo gvproxy $(GVPROXY_RELEASE_URL)
 
-$(TMP_DOWNLOAD)/podman-machine-qemu-$(ARCH)-$(QEMU_VERSION).tar.xz:
-	mkdir -p $(TMP_DOWNLOAD)
-	cd $(TMP_DOWNLOAD) && curl -sLO $(QEMU_RELEASE_URL)
+$(TMP_BIN)/vfkit:
+	mkdir -p $(TMP_BIN)
+	cd $(TMP_BIN) && curl -sLo vfkit $(VFKIT_RELEASE_URL)
 
 packagedir: podman_version package_root Distribution welcome.html
 	mkdir -p $(PACKAGE_DIR)
@@ -40,13 +40,15 @@ packagedir: podman_version package_root Distribution welcome.html
 	../../test/version/version > $(PACKAGE_DIR)/VERSION
 	echo -n $(ARCH) > $(PACKAGE_DIR)/ARCH
 	cp ../../LICENSE $(PACKAGE_DIR)/Resources/LICENSE.txt
-	cp hvf.entitlements $(PACKAGE_DIR)/
+	cp vfkit.entitlements $(PACKAGE_DIR)/
 
-package_root: clean-pkgroot $(TMP_DOWNLOAD)/podman-machine-qemu-$(ARCH)-$(QEMU_VERSION).tar.xz $(TMP_DOWNLOAD)/gvproxy
-	mkdir -p $(PACKAGE_ROOT)/podman/bin $(PACKAGE_ROOT)/podman/qemu
-	tar -C $(PACKAGE_ROOT)/podman/qemu -xf $(TMP_DOWNLOAD)/podman-machine-qemu-$(ARCH)-$(QEMU_VERSION).tar.xz
-	cp $(TMP_DOWNLOAD)/gvproxy $(PACKAGE_ROOT)/podman/bin/
+package_root: clean-pkgroot $(TMP_BIN)/gvproxy $(TMP_BIN)/vfkit
+	mkdir -p $(PACKAGE_ROOT)/podman/bin
+	cp $(TMP_BIN)/gvproxy $(PACKAGE_ROOT)/podman/bin/
+	cp $(TMP_BIN)/vfkit $(PACKAGE_ROOT)/podman/bin/
 	chmod a+x $(PACKAGE_ROOT)/podman/bin/*
+	mkdir $(PACKAGE_ROOT)/podman/config
+	cp ../../pkg/machine/ocipull/policy.json $(PACKAGE_ROOT)/podman/config/policy.json
 
 %: %.in podman_version
 	@sed -e 's/__VERSION__/'$(shell ../../test/version/version)'/g' $< >$@
@@ -62,7 +64,7 @@ notarize: _notarize
 
 .PHONY: clean clean-pkgroot
 clean:
-	rm -rf $(TMP_DOWNLOAD) $(PACKAGE_ROOT) $(PACKAGE_DIR) Distribution welcome.html ../../test/version/version
+	rm -rf $(TMP_BIN) $(PACKAGE_ROOT) $(PACKAGE_DIR) out Distribution welcome.html ../../test/version/version
 
 clean-pkgroot:
 	rm -rf $(PACKAGE_ROOT) $(PACKAGE_DIR) Distribution welcome.html

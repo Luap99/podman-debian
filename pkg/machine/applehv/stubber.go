@@ -4,24 +4,24 @@ package applehv
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
 	"time"
 
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/common/pkg/strongunits"
 	gvproxy "github.com/containers/gvisor-tap-vsock/pkg/types"
 	"github.com/containers/podman/v5/pkg/machine"
 	"github.com/containers/podman/v5/pkg/machine/applehv/vfkit"
 	"github.com/containers/podman/v5/pkg/machine/define"
 	"github.com/containers/podman/v5/pkg/machine/ignition"
+	"github.com/containers/podman/v5/pkg/machine/shim/diskpull"
 	"github.com/containers/podman/v5/pkg/machine/sockets"
 	"github.com/containers/podman/v5/pkg/machine/vmconfigs"
 	"github.com/containers/podman/v5/utils"
 	vfConfig "github.com/crc-org/vfkit/pkg/config"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/sys/unix"
 )
 
 // applehcMACAddress is a pre-defined mac address that vfkit recognizes
@@ -38,11 +38,23 @@ type AppleHVStubber struct {
 	vmconfigs.AppleHVConfig
 }
 
+func (a AppleHVStubber) UserModeNetworkEnabled(_ *vmconfigs.MachineConfig) bool {
+	return true
+}
+
+func (a AppleHVStubber) UseProviderNetworkSetup() bool {
+	return false
+}
+
+func (a AppleHVStubber) RequireExclusiveActive() bool {
+	return true
+}
+
 func (a AppleHVStubber) CreateVM(opts define.CreateVMOpts, mc *vmconfigs.MachineConfig, ignBuilder *ignition.IgnitionBuilder) error {
 	mc.AppleHypervisor = new(vmconfigs.AppleHVConfig)
 	mc.AppleHypervisor.Vfkit = vfkit.VfkitHelper{}
 	bl := vfConfig.NewEFIBootloader(fmt.Sprintf("%s/efi-bl-%s", opts.Dirs.DataDir.GetPath(), opts.Name), true)
-	mc.AppleHypervisor.Vfkit.VirtualMachine = vfConfig.NewVirtualMachine(uint(mc.Resources.CPUs), mc.Resources.Memory, bl)
+	mc.AppleHypervisor.Vfkit.VirtualMachine = vfConfig.NewVirtualMachine(uint(mc.Resources.CPUs), uint64(mc.Resources.Memory), bl)
 
 	randPort, err := utils.GetRandomPort()
 	if err != nil {
@@ -50,7 +62,7 @@ func (a AppleHVStubber) CreateVM(opts define.CreateVMOpts, mc *vmconfigs.Machine
 	}
 	mc.AppleHypervisor.Vfkit.Endpoint = localhostURI + ":" + strconv.Itoa(randPort)
 
-	var virtiofsMounts []machine.VirtIoFs
+	virtiofsMounts := make([]machine.VirtIoFs, 0, len(mc.Mounts))
 	for _, mnt := range mc.Mounts {
 		virtiofsMounts = append(virtiofsMounts, machine.MountToVirtIOFs(mnt))
 	}
@@ -58,12 +70,12 @@ func (a AppleHVStubber) CreateVM(opts define.CreateVMOpts, mc *vmconfigs.Machine
 	// Populate the ignition file with virtiofs stuff
 	ignBuilder.WithUnit(generateSystemDFilesForVirtiofsMounts(virtiofsMounts)...)
 
-	return resizeDisk(mc, strongunits.GiB(mc.Resources.DiskSize))
+	return resizeDisk(mc, mc.Resources.DiskSize)
 }
 
-func (a AppleHVStubber) GetHyperVisorVMs() ([]string, error) {
+func (a AppleHVStubber) Exists(name string) (bool, error) {
 	// not applicable for applehv
-	return nil, nil
+	return false, nil
 }
 
 func (a AppleHVStubber) MountType() vmconfigs.VolumeMountType {
@@ -79,17 +91,29 @@ func (a AppleHVStubber) RemoveAndCleanMachines(_ *define.MachineDirs) error {
 	return nil
 }
 
-func (a AppleHVStubber) SetProviderAttrs(mc *vmconfigs.MachineConfig, cpus, memory *uint64, newDiskSize *strongunits.GiB, newRootful *bool) error {
-	if newDiskSize != nil {
-		if err := resizeDisk(mc, *newDiskSize); err != nil {
+func (a AppleHVStubber) SetProviderAttrs(mc *vmconfigs.MachineConfig, opts define.SetOptions) error {
+	state, err := a.State(mc, false)
+	if err != nil {
+		return err
+	}
+	if state != define.Stopped {
+		return errors.New("unable to change settings unless vm is stopped")
+	}
+
+	if opts.DiskSize != nil {
+		if err := resizeDisk(mc, *opts.DiskSize); err != nil {
 			return err
 		}
 	}
 
-	if newRootful != nil && mc.HostUser.Rootful != *newRootful {
-		if err := mc.SetRootful(*newRootful); err != nil {
+	if opts.Rootful != nil && mc.HostUser.Rootful != *opts.Rootful {
+		if err := mc.SetRootful(*opts.Rootful); err != nil {
 			return err
 		}
+	}
+
+	if opts.USBs != nil {
+		return fmt.Errorf("changing USBs not supported for applehv machines")
 	}
 
 	// VFKit does not require saving memory, disk, or cpu
@@ -131,27 +155,17 @@ func (a AppleHVStubber) StartVM(mc *vmconfigs.MachineConfig) (func() error, func
 	}
 
 	// Wait on gvproxy to be running and aware
-	if err := waitForGvProxy(gvproxySocket); err != nil {
+	if err := sockets.WaitForSocketWithBackoffs(gvProxyMaxBackoffAttempts, gvProxyWaitBackoff, gvproxySocket.GetPath(), "gvproxy"); err != nil {
 		return nil, nil, err
 	}
 
 	netDevice.SetUnixSocketPath(gvproxySocket.GetPath())
 
-	readySocket, err := mc.ReadySocket()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	logfile, err := mc.LogFile()
-	if err != nil {
-		return nil, nil, err
-	}
-
 	// create a one-time virtual machine for starting because we dont want all this information in the
 	// machineconfig if possible.  the preference was to derive this stuff
-	vm := vfConfig.NewVirtualMachine(uint(mc.Resources.CPUs), mc.Resources.Memory, mc.AppleHypervisor.Vfkit.VirtualMachine.Bootloader)
+	vm := vfConfig.NewVirtualMachine(uint(mc.Resources.CPUs), uint64(mc.Resources.Memory), mc.AppleHypervisor.Vfkit.VirtualMachine.Bootloader)
 
-	defaultDevices, err := getDefaultDevices(mc.ImagePath.GetPath(), logfile.GetPath(), readySocket.GetPath())
+	defaultDevices, readySocket, err := getDefaultDevices(mc)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -298,28 +312,23 @@ func (a AppleHVStubber) StopHostNetworking(_ *vmconfigs.MachineConfig, _ define.
 	return nil
 }
 
-func (a AppleHVStubber) VMType() define.VMType {
-	return define.AppleHvVirt
+func (a AppleHVStubber) UpdateSSHPort(mc *vmconfigs.MachineConfig, port int) error {
+	// managed by gvproxy on this backend, so nothing to do
+	return nil
 }
 
-func waitForGvProxy(gvproxySocket *define.VMFile) error {
-	backoffWait := gvProxyWaitBackoff
-	logrus.Debug("checking that gvproxy is running")
-	for i := 0; i < gvProxyMaxBackoffAttempts; i++ {
-		err := unix.Access(gvproxySocket.GetPath(), unix.W_OK)
-		if err == nil {
-			return nil
-		}
-		time.Sleep(backoffWait)
-		backoffWait *= 2
-	}
-	return fmt.Errorf("unable to connect to gvproxy %q", gvproxySocket.GetPath())
+func (a AppleHVStubber) VMType() define.VMType {
+	return define.AppleHvVirt
 }
 
 func (a AppleHVStubber) PrepareIgnition(_ *vmconfigs.MachineConfig, _ *ignition.IgnitionBuilder) (*ignition.ReadyUnitOpts, error) {
 	return nil, nil
 }
 
-func (a AppleHVStubber) PostStartNetworking(mc *vmconfigs.MachineConfig) error {
+func (a AppleHVStubber) PostStartNetworking(mc *vmconfigs.MachineConfig, noInfo bool) error {
 	return nil
+}
+
+func (a AppleHVStubber) GetDisk(userInputPath string, dirs *define.MachineDirs, mc *vmconfigs.MachineConfig) error {
+	return diskpull.GetDisk(userInputPath, dirs, mc.ImagePath, a.VMType(), mc.Name)
 }

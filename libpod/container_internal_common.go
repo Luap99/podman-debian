@@ -45,6 +45,7 @@ import (
 	"github.com/containers/storage/pkg/archive"
 	"github.com/containers/storage/pkg/idtools"
 	"github.com/containers/storage/pkg/lockfile"
+	"github.com/containers/storage/pkg/unshare"
 	stypes "github.com/containers/storage/types"
 	securejoin "github.com/cyphar/filepath-securejoin"
 	runcuser "github.com/moby/sys/user"
@@ -632,14 +633,15 @@ func (c *Container) generateSpec(ctx context.Context) (s *spec.Spec, cleanupFunc
 	nofileSet := false
 	nprocSet := false
 	isRootless := rootless.IsRootless()
-	if isRootless {
-		if g.Config.Process != nil && g.Config.Process.OOMScoreAdj != nil {
-			var err error
-			*g.Config.Process.OOMScoreAdj, err = maybeClampOOMScoreAdj(*g.Config.Process.OOMScoreAdj)
-			if err != nil {
-				return nil, nil, err
-			}
+	isRunningInUserNs := unshare.IsRootless()
+	if isRunningInUserNs && g.Config.Process != nil && g.Config.Process.OOMScoreAdj != nil {
+		var err error
+		*g.Config.Process.OOMScoreAdj, err = maybeClampOOMScoreAdj(*g.Config.Process.OOMScoreAdj)
+		if err != nil {
+			return nil, nil, err
 		}
+	}
+	if isRootless {
 		for _, rlimit := range c.config.Spec.Process.Rlimits {
 			if rlimit.Type == "RLIMIT_NOFILE" {
 				nofileSet = true
@@ -2865,7 +2867,22 @@ func (c *Container) fixVolumePermissions(v *ContainerNamedVolume) error {
 		st, err := os.Lstat(filepath.Join(c.state.Mountpoint, v.Dest))
 		if err == nil {
 			if stat, ok := st.Sys().(*syscall.Stat_t); ok {
-				if err := idtools.SafeLchown(mountPoint, int(stat.Uid), int(stat.Gid)); err != nil {
+				uid, gid := int(stat.Uid), int(stat.Gid)
+
+				if c.config.IDMappings.UIDMap != nil {
+					p := idtools.IDPair{
+						UID: uid,
+						GID: gid,
+					}
+					mappings := idtools.NewIDMappingsFromMaps(c.config.IDMappings.UIDMap, c.config.IDMappings.GIDMap)
+					newUID, newGID, err := mappings.ToContainer(p)
+					if err != nil {
+						return fmt.Errorf("mapping user %d:%d: %w", uid, gid, err)
+					}
+					uid, gid = newUID, newGID
+				}
+
+				if err := idtools.SafeLchown(mountPoint, uid, gid); err != nil {
 					return err
 				}
 			}

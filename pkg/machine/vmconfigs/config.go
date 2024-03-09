@@ -1,17 +1,16 @@
 package vmconfigs
 
 import (
-	"errors"
-	"net/url"
 	"time"
 
 	"github.com/containers/common/pkg/strongunits"
 	gvproxy "github.com/containers/gvisor-tap-vsock/pkg/types"
 	"github.com/containers/podman/v5/pkg/machine/define"
 	"github.com/containers/podman/v5/pkg/machine/ignition"
-	"github.com/containers/podman/v5/pkg/machine/qemu/command"
 	"github.com/containers/storage/pkg/lockfile"
 )
+
+const MachineConfigVersion = 1
 
 type MachineConfig struct {
 	// Common stuff
@@ -53,23 +52,6 @@ type MachineConfig struct {
 	Starting bool
 }
 
-// MachineImage describes a podman machine image
-type MachineImage struct {
-	OCI  *OCIMachineImage
-	FCOS *fcosMachineImage
-}
-
-// Pull downloads a machine image
-func (m *MachineImage) Pull() error {
-	if m.OCI != nil {
-		return m.OCI.download()
-	}
-	if m.FCOS != nil {
-		return m.FCOS.download()
-	}
-	return errors.New("no valid machine image provider detected")
-}
-
 type machineImage interface { //nolint:unused
 	download() error
 	path() string
@@ -92,36 +74,30 @@ func (o OCIMachineImage) download() error {
 	return nil
 }
 
-type fcosMachineImage struct {
-	// TODO JSON serial/deserial will write string to disk
-	// but in code is url.URL
-	Location url.URL // file://path/.qcow2  https://path/qcow2
-}
-
-func (f fcosMachineImage) download() error {
-	return nil
-}
-
-func (f fcosMachineImage) path() string {
-	return ""
-}
-
 type VMProvider interface { //nolint:interfacebloat
 	CreateVM(opts define.CreateVMOpts, mc *MachineConfig, builder *ignition.IgnitionBuilder) error
+	// GetDisk should be only temporary.  It is largely here only because WSL disk pulling is different
+	// TODO
+	// Let's deprecate this ASAP
+	GetDisk(userInputPath string, dirs *define.MachineDirs, mc *MachineConfig) error
 	PrepareIgnition(mc *MachineConfig, ignBuilder *ignition.IgnitionBuilder) (*ignition.ReadyUnitOpts, error)
-	GetHyperVisorVMs() ([]string, error)
+	Exists(name string) (bool, error)
 	MountType() VolumeMountType
 	MountVolumesToVM(mc *MachineConfig, quiet bool) error
 	Remove(mc *MachineConfig) ([]string, func() error, error)
 	RemoveAndCleanMachines(dirs *define.MachineDirs) error
-	SetProviderAttrs(mc *MachineConfig, cpus, memory *uint64, newDiskSize *strongunits.GiB, newRootful *bool) error
+	SetProviderAttrs(mc *MachineConfig, opts define.SetOptions) error
 	StartNetworking(mc *MachineConfig, cmd *gvproxy.GvproxyCommand) error
-	PostStartNetworking(mc *MachineConfig) error
+	PostStartNetworking(mc *MachineConfig, noInfo bool) error
 	StartVM(mc *MachineConfig) (func() error, func() error, error)
 	State(mc *MachineConfig, bypass bool) (define.Status, error)
 	StopVM(mc *MachineConfig, hardStop bool) error
 	StopHostNetworking(mc *MachineConfig, vmType define.VMType) error
 	VMType() define.VMType
+	UserModeNetworkEnabled(mc *MachineConfig) bool
+	UseProviderNetworkSetup() bool
+	RequireExclusiveActive() bool
+	UpdateSSHPort(mc *MachineConfig, port int) error
 }
 
 // HostUser describes the host user
@@ -149,11 +125,11 @@ type ResourceConfig struct {
 	// CPUs to be assigned to the VM
 	CPUs uint64
 	// Disk size in gigabytes assigned to the vm
-	DiskSize uint64
+	DiskSize strongunits.GiB
 	// Memory in megabytes assigned to the vm
-	Memory uint64
+	Memory strongunits.MiB
 	// Usbs
-	USBs []command.USBConfig
+	USBs []define.USBConfig
 }
 
 // SSHConfig contains remote access information for SSH

@@ -25,10 +25,9 @@ Print results with a Go template.
 
 | **Placeholder**     | **Description**                                                       |
 | ------------------- | --------------------------------------------------------------------- |
-| .ConfigPath ...     | Machine configuration file location                                   |
+| .ConfigDir ...      | Machine configuration directory location                                   |
 | .ConnectionInfo ... | Machine connection information                                        |
 | .Created ...        | Machine creation time (string, ISO3601)                               |
-| .Image ...          | Machine image config                                                  |
 | .LastUp ...         | Time when machine was last booted                                     |
 | .Name               | Name of the machine                                                   |
 | .Resources ...      | Resources used by the machine                                         |

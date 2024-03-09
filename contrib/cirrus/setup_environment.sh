@@ -40,12 +40,8 @@ done
 
 cp hack/podman-registry /bin
 
-# Some test operations & checks require a git "identity"
-_gc='git config --file /root/.gitconfig'
-showrun $_gc user.email "TMcTestFace@example.com"
-showrun $_gc user.name "Testy McTestface"
 # Bypass git safety/security checks when operating in a throwaway environment
-showrun git config --system --add safe.directory $GOSRC
+showrun git config --global --add safe.directory $GOSRC
 
 # Ensure that all lower-level contexts and child-processes have
 # ready access to higher level orchestration (e.g Cirrus-CI)
@@ -99,15 +95,13 @@ case "$CG_FS_TYPE" in
     *) die_unknown CG_FS_TYPE
 esac
 
-# Force the requested database backend without having to use command-line args
-# As of #20318 (2023-10-10) sqlite is the default, but for complicated reasons
-# we still (2023-11-01) have to explicitly create a containers.conf. See
-# comments in #20559.
-# FIXME: some day, when new CI VMs are in place with podman >= 4.8 installed
-# from RPM, un-comment the 'if' below. That will confirm that sqlite is default.
+# For testing boltdb without having to use --db-backend.
+# As of #20318 (2023-10-10) sqlite is the default, so do not create
+# a containers.conf file in that condition.
 # shellcheck disable=SC2154
-#if [[ "${CI_DESIRED_DATABASE:-sqlite}" != "sqlite" ]]; then
-printf "[engine]\ndatabase_backend=\"$CI_DESIRED_DATABASE\"\n" > /etc/containers/containers.conf.d/92-db.conf
+if [[ "${CI_DESIRED_DATABASE:-sqlite}" != "sqlite" ]]; then
+    printf "[engine]\ndatabase_backend=\"$CI_DESIRED_DATABASE\"\n" > /etc/containers/containers.conf.d/92-db.conf
+fi
 
 if ((CONTAINER==0)); then  # Not yet running inside a container
     showrun echo "conditional setup for CONTAINER == 0"

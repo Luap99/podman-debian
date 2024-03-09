@@ -455,32 +455,7 @@ _EOF
     run_podman pod rm -t 0 -f test_pod
 }
 
-@test "podman play --annotation > Max" {
-    TESTDIR=$PODMAN_TMPDIR/testdir
-    RANDOMSTRING=$(random_string 65)
-    mkdir -p $TESTDIR
-    echo "$testYaml" | sed "s|TESTDIR|${TESTDIR}|g" > $PODMAN_TMPDIR/test.yaml
-    run_podman 125 play kube --annotation "name=$RANDOMSTRING" $PODMAN_TMPDIR/test.yaml
-    assert "$output" =~ "annotation exceeds maximum size, 63, of kubernetes annotation:" "Expected to fail with Length greater than 63"
-}
-
-@test "podman play --no-trunc --annotation > Max" {
-    TESTDIR=$PODMAN_TMPDIR/testdir
-    RANDOMSTRING=$(random_string 65)
-    mkdir -p $TESTDIR
-    echo "$testYaml" | sed "s|TESTDIR|${TESTDIR}|g" > $PODMAN_TMPDIR/test.yaml
-    run_podman play kube --no-trunc --annotation "name=$RANDOMSTRING" $PODMAN_TMPDIR/test.yaml
-}
-
-@test "podman play Yaml with annotation > Max" {
-   RANDOMSTRING=$(random_string 65)
-
-   _write_test_yaml "annotations=test: ${RANDOMSTRING}" command=id
-   run_podman 125 play kube - < $PODMAN_TMPDIR/test.yaml
-   assert "$output" =~ "annotation \"test\"=\"$RANDOMSTRING\" value length exceeds Kubernetes max 63" "Expected to fail with annotation length greater than 63"
-}
-
-@test "podman play Yaml --no-trunc with annotation > Max" {
+@test "podman play Yaml deprecated --no-trunc annotation" {
    RANDOMSTRING=$(random_string 65)
 
    _write_test_yaml "annotations=test: ${RANDOMSTRING}" command=id
@@ -511,15 +486,19 @@ _EOF
     TESTDIR=$PODMAN_TMPDIR/testdir
     mkdir -p $TESTDIR
     echo "$testYaml" | sed "s|TESTDIR|${TESTDIR}|g" > $PODMAN_TMPDIR/test.yaml
+    echo READY                                      > $PODMAN_TMPDIR/ready
 
     HOST_PORT=$(random_free_port)
     SERVER=http://127.0.0.1:$HOST_PORT
 
     run_podman run -d --name myyaml -p "$HOST_PORT:80" \
                -v $PODMAN_TMPDIR/test.yaml:/var/www/testpod.yaml:Z \
+               -v $PODMAN_TMPDIR/ready:/var/www/ready:Z \
                -w /var/www \
                $IMAGE /bin/busybox-extras httpd -f -p 80
+
     wait_for_port 127.0.0.1 $HOST_PORT
+    wait_for_command_output "curl -s -S $SERVER/ready" "READY"
 
     run_podman kube play $SERVER/testpod.yaml
     run_podman inspect test_pod-test --format "{{.State.Running}}"
@@ -569,7 +548,7 @@ EOF
 
     run_podman kube play $PODMAN_TMPDIR/test.yaml
     run_podman pod inspect test_pod --format "{{.InfraConfig.PortBindings}}"
-    assert "$output" = "map[$HOST_PORT/tcp:[{ $HOST_PORT}]]"
+    assert "$output" = "map[$HOST_PORT/tcp:[{0.0.0.0 $HOST_PORT}]]"
     run_podman kube down $PODMAN_TMPDIR/test.yaml
 
     run_podman pod rm -a -f
@@ -790,9 +769,16 @@ EOF
     CONTAINERS_CONF_OVERRIDE="$containersConf" run_podman kube play $YAML
     run_podman container inspect --format '{{ .Config.Umask }}' $ctrInPod
     is "${output}" "0472"
-    # Confirm that umask actually takes effect
-    run_podman logs $ctrInPod
-    is "$output" "204" "stat() on created file"
+    # Confirm that umask actually takes effect. Might take a second or so.
+    local retries=10
+    while [[ $retries -gt 0 ]]; do
+        run_podman logs $ctrInPod
+        test -n "$output" && break
+        sleep 0.1
+        retries=$((retries - 1))
+    done
+    assert "$retries" -gt 0 "Timed out waiting for container output"
+    assert "$output" = "204" "stat() on created file"
 
     run_podman kube down $YAML
     run_podman pod rm -a
