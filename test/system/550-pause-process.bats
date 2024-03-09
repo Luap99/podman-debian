@@ -4,7 +4,16 @@
 #
 
 load helpers
+load helpers.registry
 load helpers.sig-proxy
+
+function setup_file() {
+    # We have to stop the background registry here. These tests kill the podman pause
+    # process which means commands after that are in a new one and when the cleanup
+    # later tries to stop the registry container it will be in the wrong ns and can fail.
+    # https://github.com/containers/podman/pull/21563#issuecomment-1960047648
+    stop_registry
+}
 
 function _check_pause_process() {
     pause_pid=
@@ -60,10 +69,7 @@ function _check_pause_process() {
         test $status -eq 0 && die "Pause process $pause_pid is still running even after podman system migrate"
     fi
 
-    run_podman --root    $PODMAN_TMPDIR/root \
-               --runroot $PODMAN_TMPDIR/runroot \
-               --tmpdir  $PODMAN_TMPDIR/tmp \
-               $getns
+    run_podman $(podman_isolation_opts ${PODMAN_TMPDIR}) $getns
     tmpdir_userns="$output"
 
     # And now we should once again have a pause process

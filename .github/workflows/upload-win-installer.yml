@@ -40,6 +40,8 @@ jobs:
     - name: Dry Run Status
       run: |
         Write-Output "::notice::This workflow execution will be a dry-run: ${{ steps.actual_dryrun.outputs.dryrun }}"
+    - name: Install Wix
+      run: choco install wixtoolset --version=3.14.0
     - name: Determine version
       id: getversion
       run: |
@@ -85,7 +87,7 @@ jobs:
           Write-Output "::error::check.ps1 script failed to find manually uploaded podman-remote-release-windows_md64.zip github release asset for version ${{steps.getversion.outputs.version}}."
           Exit 1
     - name: Set up Go
-      uses: actions/setup-go@v4
+      uses: actions/setup-go@v5
       # N/B: already-exists may be an empty-string or "false", handle both cases.
       if: steps.check.outputs.already-exists != 'true' || steps.actual_dryrun.outputs.dryrun == 'true'
       with:
@@ -115,7 +117,7 @@ jobs:
         Exit $code
     - name: Artifact
       if: steps.check.outputs.already-exists != 'true' || steps.actual_dryrun.outputs.dryrun == 'true'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: installer
         path: |

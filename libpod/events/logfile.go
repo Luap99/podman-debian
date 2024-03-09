@@ -1,5 +1,4 @@
 //go:build linux || freebsd
-// +build linux freebsd
 
 package events
 
@@ -14,7 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v5/pkg/util"
 	"github.com/containers/storage/pkg/lockfile"
 	"github.com/nxadm/tail"
 	"github.com/sirupsen/logrus"

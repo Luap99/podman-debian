@@ -1,5 +1,4 @@
 //go:build !remote
-// +build !remote
 
 package generate
 
@@ -12,11 +11,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/containers/podman/v4/libpod"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/containers/podman/v4/pkg/specgen"
-	"github.com/containers/podman/v4/pkg/specgenutil"
+	"github.com/containers/podman/v5/libpod"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	"github.com/containers/podman/v5/pkg/specgen"
+	"github.com/containers/podman/v5/pkg/specgenutil"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
 )
@@ -251,7 +250,8 @@ func MapSpec(p *specgen.PodSpecGenerator) (*specgen.SpecGenerator, error) {
 		spec.DNSSearch = p.DNSSearch
 	}
 	if p.NoManageResolvConf {
-		spec.UseImageResolvConf = true
+		localTrue := true
+		spec.UseImageResolvConf = &localTrue
 	}
 	if len(p.Networks) > 0 {
 		spec.Networks = p.Networks
@@ -261,7 +261,7 @@ func MapSpec(p *specgen.PodSpecGenerator) (*specgen.SpecGenerator, error) {
 		spec.CNINetworks = p.CNINetworks
 	}
 	if p.NoManageHosts {
-		spec.UseImageHosts = p.NoManageHosts
+		spec.UseImageHosts = &p.NoManageHosts
 	}
 
 	if len(p.InfraConmonPidFile) > 0 {

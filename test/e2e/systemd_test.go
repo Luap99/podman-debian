@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	. "github.com/containers/podman/v4/test/utils"
+	. "github.com/containers/podman/v5/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -64,8 +64,11 @@ WantedBy=default.target
 		start := SystemExec("systemctl", []string{dashWhat, "start", serviceName})
 		Expect(start).Should(ExitCleanly())
 
-		logs := SystemExec("journalctl", []string{dashWhat, "-n", "20", "-u", serviceName})
-		Expect(logs).Should(ExitCleanly())
+		checkAvailableJournald()
+		if !journald.journaldSkip {
+			logs := SystemExec("journalctl", []string{dashWhat, "-n", "20", "-u", serviceName})
+			Expect(logs).Should(ExitCleanly())
+		}
 
 		status := SystemExec("systemctl", []string{dashWhat, "status", serviceName})
 		Expect(status.OutputToString()).To(ContainSubstring("active (running)"))

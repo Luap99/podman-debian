@@ -24,7 +24,7 @@ const (
 type Event struct {
 	// ContainerExitCode is for storing the exit code of a container which can
 	// be used for "internal" event notification
-	ContainerExitCode int `json:",omitempty"`
+	ContainerExitCode *int `json:",omitempty"`
 	// ID can be for the container, image, volume, etc
 	ID string `json:",omitempty"`
 	// Image used where applicable
@@ -41,6 +41,8 @@ type Event struct {
 	Type Type
 	// Health status of the current container
 	HealthStatus string `json:"health_status,omitempty"`
+	// Error code for certain events involving errors.
+	Error string `json:"error,omitempty"`
 
 	Details
 }
@@ -48,8 +50,6 @@ type Event struct {
 // Details describes specifics about certain events, specifically around
 // container events
 type Details struct {
-	// ID is the event ID
-	ID string
 	// ContainerInspectData includes the payload of the container's inspect
 	// data. Only set when events_container_create_inspect_data is set true
 	// in containers.conf.
@@ -172,6 +172,8 @@ const (
 	Prune Status = "prune"
 	// Pull ...
 	Pull Status = "pull"
+	// PullError is an error pulling an image
+	PullError Status = "pull-error"
 	// Push ...
 	Push Status = "push"
 	// Refresh indicates that the system refreshed the state after a

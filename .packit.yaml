@@ -66,14 +66,15 @@ jobs:
   - job: propose_downstream
     trigger: release
     update_release: false
-    dist_git_branches: &stable_fedora
-      - fedora-39
-      - fedora-38
+    dist_git_branches:
+      - fedora-development # Implies fedora-rawhide and any branched but unreleased version, will include f40 before f40 is marked stable.
 
   - job: koji_build
     trigger: commit
-    dist_git_branches: *stable_fedora
+    dist_git_branches:
+      - fedora-all
 
   - job: bodhi_update
     trigger: commit
-    dist_git_branches: *stable_fedora
+    dist_git_branches:
+      - fedora-branched # rawhide updates are created automatically

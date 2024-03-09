@@ -14,17 +14,18 @@ import (
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/filters"
 	"github.com/containers/image/v5/manifest"
-	"github.com/containers/podman/v4/libpod"
-	"github.com/containers/podman/v4/pkg/api/handlers"
-	"github.com/containers/podman/v4/pkg/api/handlers/utils"
-	api "github.com/containers/podman/v4/pkg/api/types"
-	"github.com/containers/podman/v4/pkg/auth"
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/containers/podman/v4/pkg/domain/infra/abi"
-	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v5/libpod"
+	"github.com/containers/podman/v5/pkg/api/handlers"
+	"github.com/containers/podman/v5/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v5/pkg/api/types"
+	"github.com/containers/podman/v5/pkg/auth"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	"github.com/containers/podman/v5/pkg/domain/infra/abi"
+	"github.com/containers/podman/v5/pkg/util"
 	"github.com/containers/storage"
 	docker "github.com/docker/docker/api/types"
 	dockerContainer "github.com/docker/docker/api/types/container"
+	dockerImage "github.com/docker/docker/api/types/image"
 	"github.com/docker/go-connections/nat"
 	"github.com/opencontainers/go-digest"
 	"github.com/sirupsen/logrus"
@@ -256,9 +257,11 @@ func CreateImageFromImage(w http.ResponseWriter, r *http.Request) {
 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 
 	query := struct {
-		FromImage string `schema:"fromImage"`
-		Tag       string `schema:"tag"`
-		Platform  string `schema:"platform"`
+		FromImage  string `schema:"fromImage"`
+		Tag        string `schema:"tag"`
+		Platform   string `schema:"platform"`
+		Retry      uint   `schema:"retry"`
+		RetryDelay string `schema:"retryDelay"`
 	}{
 		// This is where you can override the golang default value for one of fields
 	}
@@ -288,6 +291,19 @@ func CreateImageFromImage(w http.ResponseWriter, r *http.Request) {
 		pullOptions.IdentityToken = authConf.IdentityToken
 	}
 	pullOptions.Writer = os.Stderr // allows for debugging on the server
+
+	if _, found := r.URL.Query()["retry"]; found {
+		pullOptions.MaxRetries = &query.Retry
+	}
+
+	if _, found := r.URL.Query()["retryDelay"]; found {
+		duration, err := time.ParseDuration(query.RetryDelay)
+		if err != nil {
+			utils.Error(w, http.StatusBadRequest, err)
+			return
+		}
+		pullOptions.RetryDelay = &duration
+	}
 
 	// Handle the platform.
 	platformSpecs := strings.Split(query.Platform, "/")
@@ -381,7 +397,7 @@ func imageDataToImageInspect(ctx context.Context, l *libimage.Image) (*handlers.
 		DockerVersion:   info.Version,
 		GraphDriver:     graphDriver,
 		ID:              "sha256:" + l.ID(),
-		Metadata:        docker.ImageMetadata{},
+		Metadata:        dockerImage.Metadata{},
 		Os:              info.Os,
 		OsVersion:       info.Version,
 		Parent:          info.Parent,

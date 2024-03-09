@@ -1,5 +1,4 @@
 //go:build !remote
-// +build !remote
 
 package generate
 
@@ -8,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/containers/podman/v4/pkg/systemd/define"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	"github.com/containers/podman/v5/pkg/systemd/define"
 	"github.com/stretchr/testify/assert"
 )
 

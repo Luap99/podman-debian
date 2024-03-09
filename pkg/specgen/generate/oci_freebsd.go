@@ -1,5 +1,4 @@
 //go:build !remote
-// +build !remote
 
 package generate
 
@@ -10,9 +9,9 @@ import (
 
 	"github.com/containers/common/libimage"
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v4/libpod"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/specgen"
+	"github.com/containers/podman/v5/libpod"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/pkg/specgen"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/runtime-tools/generate"
@@ -44,7 +43,9 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 
 	g.SetProcessArgs(finalCmd)
 
-	g.SetProcessTerminal(s.Terminal)
+	if s.Terminal != nil {
+		g.SetProcessTerminal(*s.Terminal)
+	}
 
 	for key, val := range s.Annotations {
 		g.AddAnnotation(key, val)
@@ -52,7 +53,7 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 
 	// Devices
 	var userDevices []spec.LinuxDevice
-	if !s.Privileged {
+	if !s.IsPrivileged() {
 		// add default devices from containers.conf
 		for _, device := range rtc.Containers.Devices.Get() {
 			if err = DevicesFromPath(&g, device); err != nil {
@@ -146,19 +147,19 @@ func SpecGenToOCI(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Runt
 		configSpec.Annotations = make(map[string]string)
 	}
 
-	if s.Remove {
+	if s.Remove != nil && *s.Remove {
 		configSpec.Annotations[define.InspectAnnotationAutoremove] = define.InspectResponseTrue
 	}
 
 	if len(s.VolumesFrom) > 0 {
-		configSpec.Annotations[define.InspectAnnotationVolumesFrom] = strings.Join(s.VolumesFrom, ",")
+		configSpec.Annotations[define.VolumesFromAnnotation] = strings.Join(s.VolumesFrom, ";")
 	}
 
-	if s.Privileged {
+	if s.IsPrivileged() {
 		configSpec.Annotations[define.InspectAnnotationPrivileged] = define.InspectResponseTrue
 	}
 
-	if s.Init {
+	if s.Init != nil && *s.Init {
 		configSpec.Annotations[define.InspectAnnotationInit] = define.InspectResponseTrue
 	}
 

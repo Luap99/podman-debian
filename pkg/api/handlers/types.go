@@ -1,15 +1,17 @@
 package handlers
 
 import (
-	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v5/pkg/domain/entities"
 	docker "github.com/docker/docker/api/types"
+	dockerBackend "github.com/docker/docker/api/types/backend"
 	dockerContainer "github.com/docker/docker/api/types/container"
 	dockerNetwork "github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/registry"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
 type AuthConfig struct {
-	docker.AuthConfig
+	registry.AuthConfig
 }
 
 type ImageInspect struct {
@@ -30,6 +32,12 @@ type LibpodImagesRemoveReport struct {
 	entities.ImageRemoveReport
 	// Image removal requires is to return data and an error.
 	Errors []string
+}
+
+// LibpodImagesResolveReport includes a list of fully-qualified image references.
+type LibpodImagesResolveReport struct {
+	// Fully-qualified image references.
+	Names []string
 }
 
 type ContainersPruneReport struct {
@@ -79,7 +87,7 @@ type Info struct {
 
 type Container struct {
 	docker.Container
-	docker.ContainerCreateConfig
+	dockerBackend.ContainerCreateConfig
 }
 
 type DiskUsage struct {

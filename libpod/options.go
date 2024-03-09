@@ -1,5 +1,4 @@
 //go:build !remote
-// +build !remote
 
 package libpod
 
@@ -18,12 +17,11 @@ import (
 	"github.com/containers/common/pkg/secrets"
 	"github.com/containers/image/v5/manifest"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/libpod/events"
-	"github.com/containers/podman/v4/pkg/namespaces"
-	"github.com/containers/podman/v4/pkg/rootless"
-	"github.com/containers/podman/v4/pkg/specgen"
-	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/libpod/events"
+	"github.com/containers/podman/v5/pkg/namespaces"
+	"github.com/containers/podman/v5/pkg/specgen"
+	"github.com/containers/podman/v5/pkg/util"
 	"github.com/containers/storage"
 	"github.com/containers/storage/pkg/idtools"
 	"github.com/containers/storage/pkg/regexp"
@@ -89,7 +87,7 @@ func WithStorageConfig(config storage.StoreOptions) RuntimeOption {
 		// or graphdriveroptions are set, then GraphRoot and RunRoot
 		// must be set
 		if setField {
-			storeOpts, err := storage.DefaultStoreOptions(rootless.IsRootless(), rootless.GetRootlessUID())
+			storeOpts, err := storage.DefaultStoreOptions()
 			if err != nil {
 				return err
 			}
@@ -362,15 +360,6 @@ func WithTmpDir(dir string) RuntimeOption {
 		}
 		rt.config.Engine.TmpDir = dir
 
-		return nil
-	}
-}
-
-// WithNoStore sets a bool on the runtime that we do not need
-// any containers storage.
-func WithNoStore() RuntimeOption {
-	return func(rt *Runtime) error {
-		rt.noStore = true
 		return nil
 	}
 }
@@ -1112,7 +1101,7 @@ func WithLogDriver(driver string) CtrCreateOption {
 		switch driver {
 		case "":
 			return fmt.Errorf("log driver must be set: %w", define.ErrInvalidArg)
-		case define.JournaldLogging, define.KubernetesLogging, define.JSONLogging, define.NoLogging, define.PassthroughLogging:
+		case define.JournaldLogging, define.KubernetesLogging, define.JSONLogging, define.NoLogging, define.PassthroughLogging, define.PassthroughTTYLogging:
 			break
 		default:
 			return fmt.Errorf("invalid log driver: %w", define.ErrInvalidArg)
@@ -1523,6 +1512,18 @@ func WithPreserveFDs(fd uint) CtrCreateOption {
 			return define.ErrCtrFinalized
 		}
 		ctr.config.PreserveFDs = fd
+		return nil
+	}
+}
+
+// WithPreserveFD forwards from the process running Libpod into the container
+// the given list of extra FDs to the created container
+func WithPreserveFD(fds []uint) CtrCreateOption {
+	return func(ctr *Container) error {
+		if ctr.valid {
+			return define.ErrCtrFinalized
+		}
+		ctr.config.PreserveFD = fds
 		return nil
 	}
 }
@@ -2328,6 +2329,19 @@ func WithGroupEntry(groupEntry string) CtrCreateOption {
 		}
 
 		ctr.config.GroupEntry = groupEntry
+
+		return nil
+	}
+}
+
+// WithBaseHostsFile sets the option to copy /etc/hosts file.
+func WithBaseHostsFile(baseHostsFile string) CtrCreateOption {
+	return func(ctr *Container) error {
+		if ctr.valid {
+			return define.ErrCtrFinalized
+		}
+
+		ctr.config.BaseHostsFile = baseHostsFile
 
 		return nil
 	}

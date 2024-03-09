@@ -25,16 +25,15 @@ Print results with a Go template.
 
 | **Placeholder**     | **Description**                                                       |
 | ------------------- | --------------------------------------------------------------------- |
-| .ConfigPath ...     | Machine configuration file location                                   |
+| .ConfigDir ...      | Machine configuration directory location                                   |
 | .ConnectionInfo ... | Machine connection information                                        |
-| .Created            | Machine creation time (string, ISO3601)                               |
-| .Image ...          | Machine image config                                                  |
-| .LastUp             | Time when machine was last booted                                     |
+| .Created ...        | Machine creation time (string, ISO3601)                               |
+| .LastUp ...         | Time when machine was last booted                                     |
 | .Name               | Name of the machine                                                   |
 | .Resources ...      | Resources used by the machine                                         |
 | .Rootful            | Whether the machine prefers rootful or rootless container execution   |
-| .SSHConfig ...      | SSH configuration info for communitating with machine                 |
-| .State ...          | Machine state                                                         |
+| .SSHConfig ...      | SSH configuration info for communicating with machine                 |
+| .State              | Machine state                                                         |
 | .UserModeNetworking | Whether this machine uses user-mode networking                        |
 
 #### **--help**
@@ -43,6 +42,7 @@ Print usage statement.
 
 ## EXAMPLES
 
+Inspect the specified Podman machine.
 ```
 $ podman machine inspect podman-machine-default
 ```

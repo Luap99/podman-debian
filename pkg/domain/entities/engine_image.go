@@ -5,7 +5,7 @@ import (
 
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/ssh"
-	"github.com/containers/podman/v4/pkg/domain/entities/reports"
+	"github.com/containers/podman/v5/pkg/domain/entities/reports"
 )
 
 type ImageEngine interface { //nolint:interfacebloat
@@ -36,6 +36,7 @@ type ImageEngine interface { //nolint:interfacebloat
 	ManifestExists(ctx context.Context, name string) (*BoolReport, error)
 	ManifestInspect(ctx context.Context, name string, opts ManifestInspectOptions) ([]byte, error)
 	ManifestAdd(ctx context.Context, listName string, imageNames []string, opts ManifestAddOptions) (string, error)
+	ManifestAddArtifact(ctx context.Context, name string, files []string, opts ManifestAddArtifactOptions) (string, error)
 	ManifestAnnotate(ctx context.Context, names, image string, opts ManifestAnnotateOptions) (string, error)
 	ManifestRemoveDigest(ctx context.Context, names, image string) (string, error)
 	ManifestRm(ctx context.Context, names []string) (*ImageRemoveReport, []error)

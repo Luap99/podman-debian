@@ -13,9 +13,9 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/containers/podman/v4/pkg/systemd/parser"
-	"github.com/containers/podman/v4/pkg/systemd/quadlet"
-	"github.com/containers/podman/v4/version/rawversion"
+	"github.com/containers/podman/v5/pkg/systemd/parser"
+	"github.com/containers/podman/v5/pkg/systemd/quadlet"
+	"github.com/containers/podman/v5/version/rawversion"
 )
 
 // This commandline app is the systemd generator (system and user,
@@ -54,6 +54,7 @@ var (
 		".kube":      3,
 		".network":   2,
 		".image":     1,
+		".pod":       4,
 	}
 )
 
@@ -229,7 +230,9 @@ func loadUnitsFromDir(sourcePath string) ([]*parser.UnitFile, error) {
 
 			if f, err := parser.ParseUnitFile(path); err != nil {
 				err = fmt.Errorf("error loading %q, %w", path, err)
-				if prevError != nil {
+				if prevError == nil {
+					prevError = err
+				} else {
 					prevError = fmt.Errorf("%s\n%s", prevError, err)
 				}
 			} else {
@@ -240,6 +243,79 @@ func loadUnitsFromDir(sourcePath string) ([]*parser.UnitFile, error) {
 	}
 
 	return units, prevError
+}
+
+func loadUnitDropins(unit *parser.UnitFile, sourcePaths []string) error {
+	var prevError error
+	reportError := func(err error) {
+		if prevError != nil {
+			err = fmt.Errorf("%s\n%s", prevError, err)
+		}
+		prevError = err
+	}
+
+	dropinDirs := []string{}
+
+	for _, sourcePath := range sourcePaths {
+		dropinDirs = append(dropinDirs, path.Join(sourcePath, unit.Filename+".d"))
+	}
+
+	// For instantiated templates, also look in the non-instanced template dropin dirs
+	templateBase, templateInstance := unit.GetTemplateParts()
+	if templateBase != "" && templateInstance != "" {
+		for _, sourcePath := range sourcePaths {
+			dropinDirs = append(dropinDirs, path.Join(sourcePath, templateBase+".d"))
+		}
+	}
+
+	var dropinPaths = make(map[string]string)
+	for _, dropinDir := range dropinDirs {
+		dropinFiles, err := os.ReadDir(dropinDir)
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				reportError(fmt.Errorf("error reading directory %q, %w", dropinDir, err))
+			}
+
+			continue
+		}
+
+		for _, dropinFile := range dropinFiles {
+			dropinName := dropinFile.Name()
+			if filepath.Ext(dropinName) != ".conf" {
+				continue // Only *.conf supported
+			}
+
+			if _, ok := dropinPaths[dropinName]; ok {
+				continue // We already saw this name
+			}
+
+			dropinPaths[dropinName] = path.Join(dropinDir, dropinName)
+		}
+	}
+
+	dropinFiles := make([]string, len(dropinPaths))
+	i := 0
+	for k := range dropinPaths {
+		dropinFiles[i] = k
+		i++
+	}
+
+	// Merge in alpha-numerical order
+	sort.Strings(dropinFiles)
+
+	for _, dropinFile := range dropinFiles {
+		dropinPath := dropinPaths[dropinFile]
+
+		Debugf("Loading source drop-in file %s", dropinPath)
+
+		if f, err := parser.ParseUnitFile(dropinPath); err != nil {
+			reportError(fmt.Errorf("error loading %q, %w", dropinPath, err))
+		} else {
+			unit.Merge(f)
+		}
+	}
+
+	return prevError
 }
 
 func generateServiceFile(service *parser.UnitFile) error {
@@ -281,19 +357,36 @@ func enableServiceFile(outputPath string, service *parser.UnitFile) {
 		symlinks = append(symlinks, filepath.Clean(alias))
 	}
 
-	wantedBy := service.LookupAllStrv(quadlet.InstallGroup, "WantedBy")
-	for _, wantedByUnit := range wantedBy {
-		// Only allow filenames, not paths
-		if !strings.Contains(wantedByUnit, "/") {
-			symlinks = append(symlinks, fmt.Sprintf("%s.wants/%s", wantedByUnit, service.Filename))
+	serviceFilename := service.Filename
+	templateBase, templateInstance := service.GetTemplateParts()
+
+	// For non-instantiated template service we only support installs if a
+	// DefaultInstance is given. Otherwise we ignore the Install group, but
+	// it is still useful when instantiating the unit via a symlink.
+	if templateBase != "" && templateInstance == "" {
+		if defaultInstance, ok := service.Lookup(quadlet.InstallGroup, "DefaultInstance"); ok {
+			parts := strings.SplitN(templateBase, "@", 2)
+			serviceFilename = parts[0] + "@" + defaultInstance + parts[1]
+		} else {
+			serviceFilename = ""
 		}
 	}
 
-	requiredBy := service.LookupAllStrv(quadlet.InstallGroup, "RequiredBy")
-	for _, requiredByUnit := range requiredBy {
-		// Only allow filenames, not paths
-		if !strings.Contains(requiredByUnit, "/") {
-			symlinks = append(symlinks, fmt.Sprintf("%s.requires/%s", requiredByUnit, service.Filename))
+	if serviceFilename != "" {
+		wantedBy := service.LookupAllStrv(quadlet.InstallGroup, "WantedBy")
+		for _, wantedByUnit := range wantedBy {
+			// Only allow filenames, not paths
+			if !strings.Contains(wantedByUnit, "/") {
+				symlinks = append(symlinks, fmt.Sprintf("%s.wants/%s", wantedByUnit, serviceFilename))
+			}
+		}
+
+		requiredBy := service.LookupAllStrv(quadlet.InstallGroup, "RequiredBy")
+		for _, requiredByUnit := range requiredBy {
+			// Only allow filenames, not paths
+			if !strings.Contains(requiredByUnit, "/") {
+				symlinks = append(symlinks, fmt.Sprintf("%s.requires/%s", requiredByUnit, serviceFilename))
+			}
 		}
 	}
 
@@ -389,6 +482,23 @@ func warnIfAmbiguousName(unit *parser.UnitFile, group string) {
 	}
 }
 
+func generatePodsInfoMap(units []*parser.UnitFile) map[string]*quadlet.PodInfo {
+	podsInfoMap := make(map[string]*quadlet.PodInfo)
+	for _, unit := range units {
+		if !strings.HasSuffix(unit.Filename, ".pod") {
+			continue
+		}
+
+		serviceName := quadlet.GetPodServiceName(unit)
+		podsInfoMap[unit.Filename] = &quadlet.PodInfo{
+			ServiceName: serviceName,
+			Containers:  make([]string, 0),
+		}
+	}
+
+	return podsInfoMap
+}
+
 func main() {
 	if err := process(); err != nil {
 		Logf("%s", err.Error())
@@ -456,6 +566,12 @@ func process() error {
 		return prevError
 	}
 
+	for _, unit := range units {
+		if err := loadUnitDropins(unit, sourcePaths); err != nil {
+			reportError(err)
+		}
+	}
+
 	if !dryRunFlag {
 		err := os.MkdirAll(outputPath, os.ModePerm)
 		if err != nil {
@@ -478,6 +594,9 @@ func process() error {
 		return getOrder(i) < getOrder(j)
 	})
 
+	// Generate the PodsInfoMap to allow containers to link to their pods and add themselves to the pod's containers list
+	podsInfoMap := generatePodsInfoMap(units)
+
 	// A map of network/volume unit file-names, against their calculated names, as needed by Podman.
 	var resourceNames = make(map[string]string)
 
@@ -489,7 +608,7 @@ func process() error {
 		switch {
 		case strings.HasSuffix(unit.Filename, ".container"):
 			warnIfAmbiguousName(unit, quadlet.ContainerGroup)
-			service, err = quadlet.ConvertContainer(unit, resourceNames, isUserFlag)
+			service, err = quadlet.ConvertContainer(unit, resourceNames, isUserFlag, podsInfoMap)
 		case strings.HasSuffix(unit.Filename, ".volume"):
 			warnIfAmbiguousName(unit, quadlet.VolumeGroup)
 			service, name, err = quadlet.ConvertVolume(unit, unit.Filename, resourceNames)
@@ -500,6 +619,8 @@ func process() error {
 		case strings.HasSuffix(unit.Filename, ".image"):
 			warnIfAmbiguousName(unit, quadlet.ImageGroup)
 			service, name, err = quadlet.ConvertImage(unit)
+		case strings.HasSuffix(unit.Filename, ".pod"):
+			service, err = quadlet.ConvertPod(unit, unit.Filename, podsInfoMap, resourceNames)
 		default:
 			Logf("Unsupported file type %q", unit.Filename)
 			continue

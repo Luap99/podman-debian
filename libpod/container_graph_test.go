@@ -1,12 +1,11 @@
 //go:build !remote
-// +build !remote
 
 package libpod
 
 import (
 	"testing"
 
-	"github.com/containers/podman/v4/libpod/lock"
+	"github.com/containers/podman/v5/libpod/lock"
 	"github.com/stretchr/testify/assert"
 )
 

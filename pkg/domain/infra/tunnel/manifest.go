@@ -7,15 +7,16 @@ import (
 	"strings"
 
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v4/pkg/bindings/images"
-	"github.com/containers/podman/v4/pkg/bindings/manifests"
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	envLib "github.com/containers/podman/v4/pkg/env"
+	"github.com/containers/podman/v5/pkg/bindings/images"
+	"github.com/containers/podman/v5/pkg/bindings/manifests"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	envLib "github.com/containers/podman/v5/pkg/env"
+	"golang.org/x/exp/slices"
 )
 
 // ManifestCreate implements manifest create via ImageEngine
 func (ir *ImageEngine) ManifestCreate(ctx context.Context, name string, images []string, opts entities.ManifestCreateOptions) (string, error) {
-	options := new(manifests.CreateOptions).WithAll(opts.All).WithAmend(opts.Amend)
+	options := new(manifests.CreateOptions).WithAll(opts.All).WithAmend(opts.Amend).WithAnnotation(opts.Annotations)
 	imageID, err := manifests.Create(ir.ClientCtx, name, images, options)
 	if err != nil {
 		return imageID, fmt.Errorf("creating manifest: %w", err)
@@ -57,6 +58,13 @@ func (ir *ImageEngine) ManifestInspect(ctx context.Context, name string, opts en
 
 // ManifestAdd adds images to the manifest list
 func (ir *ImageEngine) ManifestAdd(_ context.Context, name string, imageNames []string, opts entities.ManifestAddOptions) (string, error) {
+	imageNames = slices.Clone(imageNames)
+	for _, image := range opts.Images {
+		if !slices.Contains(imageNames, image) {
+			imageNames = append(imageNames, image)
+		}
+	}
+
 	options := new(manifests.AddOptions).WithAll(opts.All).WithArch(opts.Arch).WithVariant(opts.Variant)
 	options.WithFeatures(opts.Features).WithImages(imageNames).WithOS(opts.OS).WithOSVersion(opts.OSVersion)
 	options.WithUsername(opts.Username).WithPassword(opts.Password).WithAuthfile(opts.Authfile)
@@ -64,11 +72,11 @@ func (ir *ImageEngine) ManifestAdd(_ context.Context, name string, imageNames []
 	if len(opts.Annotation) != 0 {
 		annotations := make(map[string]string)
 		for _, annotationSpec := range opts.Annotation {
-			spec := strings.SplitN(annotationSpec, "=", 2)
-			if len(spec) != 2 {
-				return "", fmt.Errorf("no value given for annotation %q", spec[0])
+			key, val, hasVal := strings.Cut(annotationSpec, "=")
+			if !hasVal {
+				return "", fmt.Errorf("no value given for annotation %q", key)
 			}
-			annotations[spec[0]] = spec[1]
+			annotations[key] = val
 		}
 		opts.Annotations = envLib.Join(opts.Annotations, annotations)
 	}
@@ -89,6 +97,39 @@ func (ir *ImageEngine) ManifestAdd(_ context.Context, name string, imageNames []
 	return id, nil
 }
 
+// ManifestAddArtifact creates artifact manifests and adds them to the manifest list
+func (ir *ImageEngine) ManifestAddArtifact(_ context.Context, name string, files []string, opts entities.ManifestAddArtifactOptions) (string, error) {
+	files = slices.Clone(files)
+	for _, file := range opts.Files {
+		if !slices.Contains(files, file) {
+			files = append(files, file)
+		}
+	}
+	options := new(manifests.AddArtifactOptions).WithArch(opts.Arch).WithVariant(opts.Variant)
+	options.WithFeatures(opts.Features).WithOS(opts.OS).WithOSVersion(opts.OSVersion).WithOSFeatures(opts.OSFeatures)
+	if len(opts.Annotation) != 0 {
+		annotations := make(map[string]string)
+		for _, annotationSpec := range opts.Annotation {
+			key, val, hasVal := strings.Cut(annotationSpec, "=")
+			if !hasVal {
+				return "", fmt.Errorf("no value given for annotation %q", key)
+			}
+			annotations[key] = val
+		}
+		options.WithAnnotation(annotations)
+	}
+	options.WithType(opts.Type).WithConfigType(opts.ConfigType).WithLayerType(opts.LayerType)
+	options.WithConfig(opts.Config)
+	options.WithExcludeTitles(opts.ExcludeTitles).WithSubject(opts.Subject)
+	options.WithAnnotations(opts.Annotations)
+	options.WithFiles(files)
+	id, err := manifests.AddArtifact(ir.ClientCtx, name, options)
+	if err != nil {
+		return id, fmt.Errorf("adding to manifest list %s: %w", name, err)
+	}
+	return id, nil
+}
+
 // ManifestAnnotate updates an entry of the manifest list
 func (ir *ImageEngine) ManifestAnnotate(ctx context.Context, name, images string, opts entities.ManifestAnnotateOptions) (string, error) {
 	options := new(manifests.ModifyOptions).WithArch(opts.Arch).WithVariant(opts.Variant)
@@ -97,11 +138,11 @@ func (ir *ImageEngine) ManifestAnnotate(ctx context.Context, name, images string
 	if len(opts.Annotation) != 0 {
 		annotations := make(map[string]string)
 		for _, annotationSpec := range opts.Annotation {
-			spec := strings.SplitN(annotationSpec, "=", 2)
-			if len(spec) != 2 {
-				return "", fmt.Errorf("no value given for annotation %q", spec[0])
+			key, val, hasVal := strings.Cut(annotationSpec, "=")
+			if !hasVal {
+				return "", fmt.Errorf("no value given for annotation %q", key)
 			}
-			annotations[spec[0]] = spec[1]
+			annotations[key] = val
 		}
 		opts.Annotations = envLib.Join(opts.Annotations, annotations)
 	}

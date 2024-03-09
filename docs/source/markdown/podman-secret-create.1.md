@@ -78,10 +78,25 @@ delete =
 
 ## EXAMPLES
 
+Create the specified secret based on local file.
 ```
-$ podman secret create my_secret ./secret.json
-$ podman secret create --driver=file my_secret ./secret.json
+echo -n mysecret > ./secret.txt
+$ podman secret create my_secret ./secret.txt
+```
+
+Create the specified secret via stdin.
+```
 $ printf <secret> | podman secret create my_secret -
+```
+
+Create gpg encrypted secret based on local file using the pass driver.
+```
+$ podman secret create --driver=pass my_secret ./secret.txt.gpg
+```
+
+Create a secret from an environment variable called 'MYSECRET'.
+```
+$ podman secret create --env=true my_secret MYSECRET
 ```
 
 ## SEE ALSO
@@ -89,3 +104,4 @@ $ printf <secret> | podman secret create my_secret -
 
 ## HISTORY
 January 2021, Originally compiled by Ashley Cui <acui@redhat.com>
+February 2024, Added example showing secret creation from an environment variable by Brett Calliss <brett@obligatory.email>

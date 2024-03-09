@@ -8,14 +8,14 @@ import (
 
 	"github.com/containers/common/pkg/auth"
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/podman/v4/cmd/podman/common"
-	"github.com/containers/podman/v4/cmd/podman/registry"
-	"github.com/containers/podman/v4/cmd/podman/utils"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/containers/podman/v4/pkg/rootless"
-	"github.com/containers/podman/v4/pkg/specgen"
-	"github.com/containers/podman/v4/pkg/specgenutil"
+	"github.com/containers/podman/v5/cmd/podman/common"
+	"github.com/containers/podman/v5/cmd/podman/registry"
+	"github.com/containers/podman/v5/cmd/podman/utils"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	"github.com/containers/podman/v5/pkg/rootless"
+	"github.com/containers/podman/v5/pkg/specgen"
+	"github.com/containers/podman/v5/pkg/specgenutil"
 	"github.com/containers/storage/types"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -67,8 +67,12 @@ func runFlags(cmd *cobra.Command) {
 	flags.BoolVar(&runRmi, "rmi", false, "Remove image unless used by other containers, implies --rm")
 
 	preserveFdsFlagName := "preserve-fds"
-	flags.UintVar(&runOpts.PreserveFDs, "preserve-fds", 0, "Pass a number of additional file descriptors into the container")
+	flags.UintVar(&runOpts.PreserveFDs, preserveFdsFlagName, 0, "Pass a number of additional file descriptors into the container")
 	_ = cmd.RegisterFlagCompletionFunc(preserveFdsFlagName, completion.AutocompleteNone)
+
+	preserveFdFlagName := "preserve-fd"
+	flags.UintSliceVar(&runOpts.PreserveFD, preserveFdFlagName, nil, "Pass a file descriptor into the container")
+	_ = cmd.RegisterFlagCompletionFunc(preserveFdFlagName, completion.AutocompleteNone)
 
 	flags.BoolVarP(&runOpts.Detach, "detach", "d", false, "Run container in background and print container ID")
 
@@ -76,16 +80,12 @@ func runFlags(cmd *cobra.Command) {
 	flags.StringVar(&runOpts.DetachKeys, detachKeysFlagName, containerConfig.DetachKeys(), "Override the key sequence for detaching a container. Format is a single character `[a-Z]` or a comma separated sequence of `ctrl-<value>`, where `<value>` is one of: `a-cf`, `@`, `^`, `[`, `\\`, `]`, `^` or `_`")
 	_ = cmd.RegisterFlagCompletionFunc(detachKeysFlagName, common.AutocompleteDetachKeys)
 
-	gpuFlagName := "gpus"
-	flags.String(gpuFlagName, "", "This is a Docker specific option and is a NOOP")
-	_ = cmd.RegisterFlagCompletionFunc(gpuFlagName, completion.AutocompleteNone)
-	_ = flags.MarkHidden("gpus")
-
 	passwdFlagName := "passwd"
 	flags.BoolVar(&runOpts.Passwd, passwdFlagName, true, "add entries to /etc/passwd and /etc/group")
 
 	if registry.IsRemote() {
-		_ = flags.MarkHidden("preserve-fds")
+		_ = flags.MarkHidden(preserveFdsFlagName)
+		_ = flags.MarkHidden(preserveFdFlagName)
 		_ = flags.MarkHidden("conmon-pidfile")
 		_ = flags.MarkHidden("pidfile")
 	}
@@ -135,6 +135,11 @@ func run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	for _, fd := range runOpts.PreserveFD {
+		if !rootless.IsFdInherited(int(fd)) {
+			return fmt.Errorf("file descriptor %d is not available - the preserve-fd option requires that file descriptors must be passed", fd)
+		}
+	}
 	for fd := 3; fd < int(3+runOpts.PreserveFDs); fd++ {
 		if !rootless.IsFdInherited(fd) {
 			return fmt.Errorf("file descriptor %d is not available - the preserve-fds option requires that file descriptors must be passed", fd)
@@ -145,7 +150,7 @@ func run(cmd *cobra.Command, args []string) error {
 	rawImageName := ""
 	if !cliVals.RootFS {
 		rawImageName = args[0]
-		name, err := PullImage(args[0], &cliVals)
+		name, err := pullImage(cmd, args[0], &cliVals)
 		if err != nil {
 			return err
 		}
@@ -168,7 +173,7 @@ func run(cmd *cobra.Command, args []string) error {
 		runOpts.InputStream = nil
 	}
 
-	passthrough := cliVals.LogDriver == define.PassthroughLogging
+	passthrough := cliVals.LogDriver == define.PassthroughLogging || cliVals.LogDriver == define.PassthroughTTYLogging
 
 	// If attach is set, clear stdin/stdout/stderr and only attach requested
 	if cmd.Flag("attach").Changed {
@@ -196,6 +201,7 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 	cliVals.PreserveFDs = runOpts.PreserveFDs
+	cliVals.PreserveFD = runOpts.PreserveFD
 	s := specgen.NewSpecGenerator(imageName, cliVals.RootFS)
 	if err := specgenutil.FillOutSpecGen(s, &cliVals, args); err != nil {
 		return err
@@ -217,6 +223,13 @@ func run(cmd *cobra.Command, args []string) error {
 		registry.SetExitCode(report.ExitCode)
 	}
 	if err != nil {
+		// if pod was created as part of run
+		// remove it in case ctr creation fails
+		if err := rmPodIfNecessary(cmd, s); err != nil {
+			if !errors.Is(err, define.ErrNoSuchPod) {
+				logrus.Error(err.Error())
+			}
+		}
 		return err
 	}
 

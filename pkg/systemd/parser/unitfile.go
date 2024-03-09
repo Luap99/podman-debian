@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/user"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"unicode"
@@ -182,7 +183,7 @@ func (f *UnitFile) ensureGroup(groupName string) *unitGroup {
 	return g
 }
 
-func (f *UnitFile) merge(source *UnitFile) {
+func (f *UnitFile) Merge(source *UnitFile) {
 	for _, srcGroup := range source.groups {
 		group := f.ensureGroup(srcGroup.name)
 		group.merge(srcGroup)
@@ -193,7 +194,7 @@ func (f *UnitFile) merge(source *UnitFile) {
 func (f *UnitFile) Dup() *UnitFile {
 	copy := NewUnitFile()
 
-	copy.merge(f)
+	copy.Merge(f)
 	copy.Filename = f.Filename
 	return copy
 }
@@ -378,24 +379,37 @@ func nextLine(data string, afterPos int) (string, string) {
 	return data, ""
 }
 
+func trimSpacesFromLines(data string) string {
+	lines := strings.Split(data, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimSpace(line)
+	}
+	return strings.Join(lines, "\n")
+}
+
 // Parse an already loaded unit file (in the form of a string)
 func (f *UnitFile) Parse(data string) error {
 	p := &UnitFileParser{
 		file:   f,
 		lineNr: 1,
 	}
+
+	data = trimSpacesFromLines(data)
+
 	for len(data) > 0 {
 		origdata := data
 		nLines := 1
 		var line string
 		line, data = nextLine(data, 0)
 
-		// Handle multi-line continuations
-		// Note: This doesn't support comments in the middle of the continuation, which systemd does
-		if lineIsKeyValuePair(line) {
-			for len(data) > 0 && line[len(line)-1] == '\\' {
-				line, data = nextLine(origdata, len(line)+1)
-				nLines++
+		if !lineIsComment(line) {
+			// Handle multi-line continuations
+			// Note: This doesn't support comments in the middle of the continuation, which systemd does
+			if lineIsKeyValuePair(line) {
+				for len(data) > 0 && line[len(line)-1] == '\\' {
+					line, data = nextLine(origdata, len(line)+1)
+					nLines++
+				}
 			}
 		}
 
@@ -611,7 +625,7 @@ func (f *UnitFile) Lookup(groupName string, key string) (string, bool) {
 		return "", false
 	}
 
-	return strings.TrimRightFunc(v, unicode.IsSpace), true
+	return strings.Trim(strings.TrimRightFunc(v, unicode.IsSpace), "\""), true
 }
 
 // Lookup the last instance of a key and convert the value to a bool
@@ -907,4 +921,14 @@ func (f *UnitFile) PrependComment(groupName string, comments ...string) {
 	for i := len(comments) - 1; i >= 0; i-- {
 		group.prependComment(newUnitLine("", "# "+comments[i], true))
 	}
+}
+
+func (f *UnitFile) GetTemplateParts() (string, string) {
+	ext := filepath.Ext(f.Filename)
+	basename := strings.TrimSuffix(f.Filename, ext)
+	parts := strings.SplitN(basename, "@", 2)
+	if len(parts) < 2 {
+		return "", ""
+	}
+	return parts[0] + "@" + ext, parts[1]
 }

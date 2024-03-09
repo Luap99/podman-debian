@@ -1,5 +1,4 @@
-//go:build windows
-// +build windows
+//go:build tempoff
 
 package wsl
 
@@ -10,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containers/podman/v4/pkg/machine"
-	"github.com/containers/podman/v4/pkg/machine/compression"
-	"github.com/containers/podman/v4/pkg/machine/define"
-	"github.com/containers/podman/v4/utils"
+	"github.com/containers/podman/v5/pkg/machine"
+	"github.com/containers/podman/v5/pkg/machine/compression"
+	"github.com/containers/podman/v5/pkg/machine/define"
+	"github.com/containers/podman/v5/utils"
 	"github.com/sirupsen/logrus"
 )
 
@@ -28,10 +27,10 @@ func VirtualizationProvider() machine.VirtProvider {
 }
 
 // NewMachine initializes an instance of a wsl machine
-func (p *WSLVirtualization) NewMachine(opts machine.InitOptions) (machine.VM, error) {
+func (p *WSLVirtualization) NewMachine(opts define.InitOptions) (machine.VM, error) {
 	vm := new(MachineVM)
 	if len(opts.USBs) > 0 {
-		return nil, fmt.Errorf("USB host passtrough not supported for WSL machines")
+		return nil, fmt.Errorf("USB host passthrough is not supported for WSL machines")
 	}
 	if len(opts.Name) > 0 {
 		vm.Name = opts.Name
@@ -231,6 +230,6 @@ func (p *WSLVirtualization) RemoveAndCleanMachines() error {
 	return prevErr
 }
 
-func (p *WSLVirtualization) VMType() machine.VMType {
+func (p *WSLVirtualization) VMType() define.VMType {
 	return vmtype
 }

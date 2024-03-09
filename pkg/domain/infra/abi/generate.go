@@ -7,13 +7,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/containers/podman/v4/libpod"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	k8sAPI "github.com/containers/podman/v4/pkg/k8s.io/api/core/v1"
-	"github.com/containers/podman/v4/pkg/specgen"
-	generateUtils "github.com/containers/podman/v4/pkg/specgen/generate"
-	"github.com/containers/podman/v4/pkg/systemd/generate"
+	"github.com/containers/podman/v5/libpod"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	k8sAPI "github.com/containers/podman/v5/pkg/k8s.io/api/core/v1"
+	"github.com/containers/podman/v5/pkg/specgen"
+	generateUtils "github.com/containers/podman/v5/pkg/specgen/generate"
+	"github.com/containers/podman/v5/pkg/systemd/generate"
 	"sigs.k8s.io/yaml"
 )
 
@@ -207,7 +207,7 @@ func (ic *ContainerEngine) GenerateKube(ctx context.Context, nameOrIDs []string,
 
 	// Generate the kube pods from containers.
 	if len(ctrs) >= 1 {
-		po, err := libpod.GenerateForKube(ctx, ctrs, options.Service, options.UseLongAnnotations, options.PodmanOnly)
+		po, err := libpod.GenerateForKube(ctx, ctrs, options.Service, options.PodmanOnly)
 		if err != nil {
 			return nil, err
 		}
@@ -283,7 +283,7 @@ func getKubePods(ctx context.Context, pods []*libpod.Pod, options entities.Gener
 	svcs := [][]byte{}
 
 	for _, p := range pods {
-		po, sp, err := p.GenerateForKube(ctx, options.Service, options.UseLongAnnotations, options.PodmanOnly)
+		po, sp, err := p.GenerateForKube(ctx, options.Service, options.PodmanOnly)
 		if err != nil {
 			return nil, nil, err
 		}

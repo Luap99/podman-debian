@@ -3,7 +3,7 @@ package e2e_test
 import (
 	"time"
 
-	"github.com/containers/podman/v4/pkg/machine"
+	"github.com/containers/podman/v5/pkg/machine/define"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -23,7 +23,7 @@ var _ = Describe("podman machine start", func() {
 
 	It("start simple machine", func() {
 		i := new(initMachine)
-		session, err := mb.setCmd(i.withImagePath(mb.imagePath)).run()
+		session, err := mb.setCmd(i.withImage(mb.imagePath)).run()
 		Expect(err).ToNot(HaveOccurred())
 		Expect(session).To(Exit(0))
 		s := new(startMachine)
@@ -34,7 +34,7 @@ var _ = Describe("podman machine start", func() {
 		info, ec, err := mb.toQemuInspectInfo()
 		Expect(err).ToNot(HaveOccurred())
 		Expect(ec).To(BeZero())
-		Expect(info[0].State).To(Equal(machine.Running))
+		Expect(info[0].State).To(Equal(define.Running))
 
 		stop := new(stopMachine)
 		stopSession, err := mb.setCmd(stop).run()
@@ -68,7 +68,7 @@ var _ = Describe("podman machine start", func() {
 
 	It("start machine already started", func() {
 		i := new(initMachine)
-		session, err := mb.setCmd(i.withImagePath(mb.imagePath)).run()
+		session, err := mb.setCmd(i.withImage(mb.imagePath)).run()
 		Expect(err).ToNot(HaveOccurred())
 		Expect(session).To(Exit(0))
 		s := new(startMachine)
@@ -79,23 +79,24 @@ var _ = Describe("podman machine start", func() {
 		info, ec, err := mb.toQemuInspectInfo()
 		Expect(err).ToNot(HaveOccurred())
 		Expect(ec).To(BeZero())
-		Expect(info[0].State).To(Equal(machine.Running))
+		Expect(info[0].State).To(Equal(define.Running))
 
 		startSession, err = mb.setCmd(s).run()
 		Expect(err).ToNot(HaveOccurred())
 		Expect(startSession).To(Exit(125))
 		Expect(startSession.errorToString()).To(ContainSubstring("VM already running or starting"))
 	})
+
 	It("start only starts specified machine", func() {
 		i := initMachine{}
 		startme := randomString()
-		session, err := mb.setName(startme).setCmd(i.withImagePath(mb.imagePath)).run()
+		session, err := mb.setName(startme).setCmd(i.withImage(mb.imagePath)).run()
 		Expect(err).ToNot(HaveOccurred())
 		Expect(session).To(Exit(0))
 
 		j := initMachine{}
 		dontstartme := randomString()
-		session2, err := mb.setName(dontstartme).setCmd(j.withImagePath(mb.imagePath)).run()
+		session2, err := mb.setName(dontstartme).setCmd(j.withImage(mb.imagePath)).run()
 		Expect(err).ToNot(HaveOccurred())
 		Expect(session2).To(Exit(0))
 
@@ -109,13 +110,13 @@ var _ = Describe("podman machine start", func() {
 		inspectSession, err := mb.setName(startme).setCmd(inspect).run()
 		Expect(err).ToNot(HaveOccurred())
 		Expect(inspectSession).To(Exit(0))
-		Expect(inspectSession.outputToString()).To(Equal(machine.Running))
+		Expect(inspectSession.outputToString()).To(Equal(define.Running))
 
 		inspect2 := new(inspectMachine)
 		inspect2 = inspect2.withFormat("{{.State}}")
 		inspectSession2, err := mb.setName(dontstartme).setCmd(inspect2).run()
 		Expect(err).ToNot(HaveOccurred())
 		Expect(inspectSession2).To(Exit(0))
-		Expect(inspectSession2.outputToString()).To(Not(Equal(machine.Running)))
+		Expect(inspectSession2.outputToString()).To(Not(Equal(define.Running)))
 	})
 })

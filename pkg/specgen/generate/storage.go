@@ -1,5 +1,4 @@
 //go:build !remote
-// +build !remote
 
 package generate
 
@@ -15,10 +14,10 @@ import (
 	"github.com/containers/common/libimage"
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/parse"
-	"github.com/containers/podman/v4/libpod"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/specgen"
-	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v5/libpod"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/pkg/specgen"
+	"github.com/containers/podman/v5/pkg/util"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
 )
@@ -129,7 +128,7 @@ func finalizeMounts(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Ru
 	}
 
 	// If requested, add container init binary
-	if s.Init {
+	if s.Init != nil && *s.Init {
 		initPath := s.InitPath
 		if initPath == "" {
 			initPath, err = rtc.FindInitBinary()
@@ -181,7 +180,7 @@ func finalizeMounts(ctx context.Context, s *specgen.SpecGenerator, rt *libpod.Ru
 		}
 	}
 
-	if s.ReadWriteTmpfs {
+	if s.ReadWriteTmpfs != nil && *s.ReadWriteTmpfs {
 		runPath, err := imageRunPath(ctx, img)
 		if err != nil {
 			return nil, nil, nil, err
@@ -263,9 +262,9 @@ func getVolumesFrom(volumesFrom []string, runtime *libpod.Runtime) (map[string]s
 	for _, volume := range volumesFrom {
 		var options []string
 
-		splitVol := strings.SplitN(volume, ":", 2)
-		if len(splitVol) == 2 {
-			splitOpts := strings.Split(splitVol[1], ",")
+		idOrName, volOpts, hasVolOpts := strings.Cut(volume, ":")
+		if hasVolOpts {
+			splitOpts := strings.Split(volOpts, ",")
 			setRORW := false
 			setZ := false
 			for _, opt := range splitOpts {
@@ -287,9 +286,9 @@ func getVolumesFrom(volumesFrom []string, runtime *libpod.Runtime) (map[string]s
 			options = splitOpts
 		}
 
-		ctr, err := runtime.LookupContainer(splitVol[0])
+		ctr, err := runtime.LookupContainer(idOrName)
 		if err != nil {
-			return nil, nil, fmt.Errorf("looking up container %q for volumes-from: %w", splitVol[0], err)
+			return nil, nil, fmt.Errorf("looking up container %q for volumes-from: %w", idOrName, err)
 		}
 
 		logrus.Debugf("Adding volumes from container %s", ctr.ID())

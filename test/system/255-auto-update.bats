@@ -8,27 +8,33 @@ load helpers.network
 load helpers.registry
 load helpers.systemd
 
-SNAME_FILE=$BATS_TMPDIR/services
+export SNAME_FILE
 
 function setup() {
     skip_if_remote "systemd tests are meaningless over remote"
     basic_setup
+
+    SNAME_FILE=${PODMAN_TMPDIR}/services
 }
 
 function teardown() {
-    while read line; do
-        if [[ "$line" =~ "podman-auto-update" ]]; then
-            echo "Stop timer: $line.timer"
-            systemctl stop $line.timer
-            systemctl disable $line.timer
-        else
-            systemctl stop $line
-        fi
-        rm -f $UNIT_DIR/$line.{service,timer}
-    done < $SNAME_FILE
+    if [[ -e $SNAME_FILE ]]; then
+        while read line; do
+            if [[ "$line" =~ "podman-auto-update" ]]; then
+                echo "Stop timer: $line.timer"
+                systemctl stop $line.timer
+                systemctl disable $line.timer
+            else
+                systemctl stop $line
+            fi
+            rm -f $UNIT_DIR/$line.{service,timer}
+        done < $SNAME_FILE
 
-    rm -f $SNAME_FILE
-    run_podman '?' rmi -f                            \
+        rm -f $SNAME_FILE
+    fi
+    SNAME_FILE=
+
+    run_podman rmi -f                              \
             quay.io/libpod/alpine:latest           \
             quay.io/libpod/busybox:latest          \
             quay.io/libpod/localtest:latest        \
@@ -37,7 +43,7 @@ function teardown() {
 
     # The rollback tests may leave some dangling images behind, so let's prune
     # them to leave a clean state.
-    run_podman '?' image prune -f
+    run_podman image prune -f
     basic_teardown
 }
 
@@ -92,7 +98,7 @@ function generate_service() {
     run_podman rm -t 0 -f $cname
 
     systemctl daemon-reload
-    systemctl start container-$cname
+    systemctl_start container-$cname
     systemctl status container-$cname
 
     # Original image ID.
@@ -530,7 +536,7 @@ EOF
 
     # Dispatch the YAML file
     service_name="podman-kube@$(systemd-escape $yaml_source).service"
-    systemctl start $service_name
+    systemctl_start $service_name
     systemctl is-active $service_name
 
     # Make sure the containers are properly configured
@@ -588,8 +594,7 @@ EOF
 
     systemctl daemon-reload
 
-    run systemctl start pod-$podname.service
-    assert $status -eq 0 "Error starting pod systemd unit: $output"
+    systemctl_start pod-$podname.service
     _wait_service_ready container-$ctrname.service
 
     run_podman pod inspect --format "{{.State}}" $podname

@@ -19,7 +19,7 @@ outdated) example of it's output can be seen below:
   While it's arguably easier to read that `only_if`, it leads to a cluttered
   status output that's harder to page through when reviewing PRs.  As opposed
   to `only_if` which will bypass creation of the task (at runtime) completely.
-  Also, by sticking to one conditional style, it's easier to re-use the YAML
+  Also, by sticking to one conditional style, it's easier to reuse the YAML
   statements across multiple tasks.
 
 + The only variables which can be used as part of conditions are defined by
@@ -86,7 +86,25 @@ of this document, it's not possible to override the behavior of `$CIRRUS_PR`.
 + *alt_build*
 + osx_alt_build
 + freebsd_alt_build
-+ test_image_build
++ meta
++ success
++ artifacts
+
+### Intended `[CI:MACHINE]` PR Tasks:
+
+If and only if the PR is in **draft-mode**, run only the following
+tasks.  The draft-mode check is necessary to remove the risk of
+merging a change that affects the untested aspects of podman.
+
++ *build*
++ validate
++ *alt_build*
++ win_installer
++ osx_alt_build
++ podman_machine_task
++ podman_machine_aarch64_task
++ podman_machine_windows_task
++ podman_machine_mac_task
 + meta
 + success
 + artifacts
