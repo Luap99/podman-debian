@@ -60,7 +60,7 @@ func getConfigPathExt(name string, extension string) (string, error) {
 // TODO like provisionWSL, i think this needs to be pushed to use common
 // paths and types where possible
 func unprovisionWSL(mc *vmconfigs.MachineConfig) error {
-	dist := machine.ToDist(mc.Name)
+	dist := env.WithPodmanPrefix(mc.Name)
 	if err := terminateDist(dist); err != nil {
 		logrus.Error(err)
 	}
@@ -92,7 +92,7 @@ func provisionWSLDist(name string, imagePath string, prompt string) (string, err
 		return "", fmt.Errorf("could not create wsldist directory: %w", err)
 	}
 
-	dist := machine.ToDist(name)
+	dist := env.WithPodmanPrefix(name)
 	fmt.Println(prompt)
 	if err = runCmdPassThrough(wutil.FindWSL(), "--import", dist, distTarget, imagePath, "--version", "2"); err != nil {
 		return "", fmt.Errorf("the WSL import of guest OS failed: %w", err)
@@ -101,6 +101,14 @@ func provisionWSLDist(name string, imagePath string, prompt string) (string, err
 	// Fixes newuidmap
 	if err = wslInvoke(dist, "rpm", "--restore", "shadow-utils"); err != nil {
 		return "", fmt.Errorf("package permissions restore of shadow-utils on guest OS failed: %w", err)
+	}
+
+	if err = wslInvoke(dist, "mkdir", "-p", "/usr/local/bin"); err != nil {
+		return "", fmt.Errorf("could not create /usr/local/bin: %w", err)
+	}
+
+	if err = wslInvoke(dist, "ln", "-f", "-s", gvForwarderPath, "/usr/local/bin/vm"); err != nil {
+		return "", fmt.Errorf("could not setup compatibility link: %w", err)
 	}
 
 	return dist, nil
@@ -684,7 +692,7 @@ func unregisterDist(dist string) error {
 }
 
 func isRunning(name string) (bool, error) {
-	dist := machine.ToDist(name)
+	dist := env.WithPodmanPrefix(name)
 	wsl, err := isWSLRunning(dist)
 	if err != nil {
 		return false, err
@@ -719,7 +727,7 @@ func getDiskSize(name string) strongunits.GiB {
 
 //nolint:unused
 func getCPUs(name string) (uint64, error) {
-	dist := machine.ToDist(name)
+	dist := env.WithPodmanPrefix(name)
 	if run, _ := isWSLRunning(dist); !run {
 		return 0, nil
 	}
@@ -744,7 +752,7 @@ func getCPUs(name string) (uint64, error) {
 
 //nolint:unused
 func getMem(name string) (strongunits.MiB, error) {
-	dist := machine.ToDist(name)
+	dist := env.WithPodmanPrefix(name)
 	if run, _ := isWSLRunning(dist); !run {
 		return 0, nil
 	}
