@@ -101,7 +101,14 @@ BuildRequires: python3
 %endif
 Requires: catatonit
 Requires: conmon >= 2:2.1.7-2
+%if %{defined fedora} && 0%{?fedora} >= 40
+# TODO: Remove the f40 conditional after a few releases to keep conditionals to
+# a minimum
+# Ref: https://bugzilla.redhat.com/show_bug.cgi?id=2269148
+Requires: containers-common-extra >= 5:0.58.0-1
+%else
 Requires: containers-common-extra
+%endif
 %if %{defined rhel} && !%{defined eln}
 Recommends: gvisor-tap-vsock-gvforwarder
 %else
@@ -276,7 +283,7 @@ cp -pav test/system %{buildroot}/%{_datadir}/%{name}/test/
 %{!?_licensedir:%global license %doc}
 
 %files -f %{name}.file-list
-%license LICENSE
+%license LICENSE vendor/modules.txt
 %doc README.md CONTRIBUTING.md install.md transfer.md
 %{_bindir}/%{name}
 %dir %{_libexecdir}/%{name}
