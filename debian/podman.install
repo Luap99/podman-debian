@@ -9,3 +9,6 @@ usr/bin/rootlessport               /usr/libexec/podman/
 # during buster->bullseye (as reported by dumat). Moving them files back to
 # /usr may cause more problems, though.
 usr/lib/systemd                    /lib/
+
+# added in podman 5.0
+etc/profile.d
