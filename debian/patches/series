@@ -1,5 +1,6 @@
 system-goimports.patch
 downgrade-checkpoint-restore-criu.patch
+sigstore-tests.patch
 revert-newer-docker.patch
 revert-newer-docker2.patch
-sigstore-tests.patch
+revert-newer-docker3.patch
