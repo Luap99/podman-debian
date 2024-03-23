@@ -63,7 +63,7 @@ Index: libpod/pkg/specgen/generate/kube/kube.go
  	"github.com/docker/go-units"
  	spec "github.com/opencontainers/runtime-spec/specs-go"
  	"github.com/sirupsen/logrus"
-@@ -1134,7 +1134,7 @@ func getContainerResources(container v1.
+@@ -1138,7 +1138,7 @@ func getContainerResources(container v1.
  	requests := container.Resources.Requests
  
  	if limits == nil || limits.Memory().IsZero() {
