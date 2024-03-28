@@ -6,12 +6,12 @@ import (
 	"net/http"
 
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v5/libpod"
-	"github.com/containers/podman/v5/pkg/api/handlers/utils"
-	api "github.com/containers/podman/v5/pkg/api/types"
-	"github.com/containers/podman/v5/pkg/auth"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	"github.com/containers/podman/v5/pkg/domain/infra/abi"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v4/pkg/api/types"
+	"github.com/containers/podman/v4/pkg/auth"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/domain/infra/abi"
 	"github.com/gorilla/schema"
 )
 
@@ -27,7 +27,6 @@ func KubePlay(w http.ResponseWriter, r *http.Request) {
 		NoTrunc          bool              `schema:"noTrunc"`
 		Replace          bool              `schema:"replace"`
 		PublishPorts     []string          `schema:"publishPorts"`
-		PublishAllPorts  bool              `schema:"publishAllPorts"`
 		ServiceContainer bool              `schema:"serviceContainer"`
 		Start            bool              `schema:"start"`
 		StaticIPs        []string          `schema:"staticIPs"`
@@ -98,7 +97,6 @@ func KubePlay(w http.ResponseWriter, r *http.Request) {
 		NoHosts:            query.NoHosts,
 		Password:           password,
 		PublishPorts:       query.PublishPorts,
-		PublishAllPorts:    query.PublishAllPorts,
 		Quiet:              true,
 		Replace:            query.Replace,
 		ServiceContainer:   query.ServiceContainer,

@@ -1,4 +1,5 @@
 //go:build !remote
+// +build !remote
 
 package libpod
 
@@ -18,8 +19,9 @@ import (
 	"github.com/containers/common/libnetwork/types"
 	"github.com/containers/common/pkg/cgroups"
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/rootless"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/utils"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/runtime-tools/generate"
 	"github.com/opencontainers/selinux/go-selinux/label"
@@ -175,6 +177,7 @@ func (c *Container) cleanupNetwork() error {
 
 	c.state.NetNS = ""
 	c.state.NetworkStatus = nil
+	c.state.NetworkStatusOld = nil
 
 	if c.valid {
 		return c.save()
@@ -387,7 +390,7 @@ func (c *Container) getOCICgroupPath() (string, error) {
 	case c.config.NoCgroups:
 		return "", nil
 	case c.config.CgroupsMode == cgroupSplit:
-		selfCgroup, err := cgroups.GetOwnCgroupDisallowRoot()
+		selfCgroup, err := utils.GetOwnCgroupDisallowRoot()
 		if err != nil {
 			return "", err
 		}

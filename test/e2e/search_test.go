@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"text/template"
 
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	. "github.com/containers/podman/v5/test/utils"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -75,20 +75,19 @@ registries = []`
 	})
 
 	It("podman search format flag", func() {
-		search := podmanTest.Podman([]string{"search", "--format", "table {{.Index}} {{.Name}}", "testdigest_v2s2"})
+		search := podmanTest.Podman([]string{"search", "--format", "table {{.Index}} {{.Name}}", "alpine"})
 		search.WaitWithDefaultTimeout()
 		Expect(search).Should(ExitCleanly())
 		Expect(len(search.OutputToStringArray())).To(BeNumerically(">", 1))
-		Expect(search.OutputToString()).To(ContainSubstring("quay.io/libpod/testdigest_v2s2"))
+		Expect(search.OutputToString()).To(ContainSubstring("docker.io/library/alpine"))
 	})
 
 	It("podman search format json", func() {
-		search := podmanTest.Podman([]string{"search", "--format", "json", "testdigest_v2s1"})
+		search := podmanTest.Podman([]string{"search", "--format", "json", "busybox"})
 		search.WaitWithDefaultTimeout()
 		Expect(search).Should(ExitCleanly())
 		Expect(search.OutputToString()).To(BeValidJSON())
-		Expect(search.OutputToString()).To(ContainSubstring("quay.io/libpod/testdigest_v2s1"))
-		Expect(search.OutputToString()).To(ContainSubstring("Test image used by buildah regression tests"))
+		Expect(search.OutputToString()).To(ContainSubstring("docker.io/library/busybox"))
 
 		// Test for https://github.com/containers/podman/issues/11894
 		contents := make([]entities.ImageSearchReport, 0)
@@ -124,17 +123,17 @@ registries = []`
 	})
 
 	It("podman search limit flag", func() {
-		search := podmanTest.Podman([]string{"search", "quay.io/alpine"})
+		search := podmanTest.Podman([]string{"search", "docker.io/alpine"})
 		search.WaitWithDefaultTimeout()
 		Expect(search).Should(ExitCleanly())
 		Expect(len(search.OutputToStringArray())).To(BeNumerically(">", 10))
 
-		search = podmanTest.Podman([]string{"search", "--limit", "3", "quay.io/alpine"})
+		search = podmanTest.Podman([]string{"search", "--limit", "3", "docker.io/alpine"})
 		search.WaitWithDefaultTimeout()
 		Expect(search).Should(ExitCleanly())
 		Expect(search.OutputToStringArray()).To(HaveLen(4))
 
-		search = podmanTest.Podman([]string{"search", "--limit", "30", "quay.io/alpine"})
+		search = podmanTest.Podman([]string{"search", "--limit", "30", "docker.io/alpine"})
 		search.WaitWithDefaultTimeout()
 		Expect(search).Should(ExitCleanly())
 		Expect(search.OutputToStringArray()).To(HaveLen(31))
@@ -383,34 +382,23 @@ registries = []`
 	})
 
 	It("podman search repository tags", func() {
-		search := podmanTest.Podman([]string{"search", "--list-tags", "--limit", "30", "quay.io/podman/stable"})
+		search := podmanTest.Podman([]string{"search", "--list-tags", "--limit", "30", "docker.io/library/alpine"})
 		search.WaitWithDefaultTimeout()
 		Expect(search).Should(ExitCleanly())
 		Expect(search.OutputToStringArray()).To(HaveLen(31))
 
-		search = podmanTest.Podman([]string{"search", "--list-tags", "quay.io/podman/stable"})
+		search = podmanTest.Podman([]string{"search", "--list-tags", "docker.io/library/alpine"})
 		search.WaitWithDefaultTimeout()
 		Expect(search).Should(ExitCleanly())
 		Expect(len(search.OutputToStringArray())).To(BeNumerically(">", 2))
 
-		search = podmanTest.Podman([]string{"search", "--filter=is-official", "--list-tags", "quay.io/podman/stable"})
+		search = podmanTest.Podman([]string{"search", "--filter=is-official", "--list-tags", "docker.io/library/alpine"})
 		search.WaitWithDefaultTimeout()
-		Expect(search).To(Exit(125))
-		Expect(search.ErrorToString()).To(ContainSubstring("filters are not applicable to list tags result"))
+		Expect(search).To(ExitWithError())
 
-		// With trailing slash
-		search = podmanTest.Podman([]string{"search", "--list-tags", "quay.io/podman/"})
+		search = podmanTest.Podman([]string{"search", "--list-tags", "docker.io/library/"})
 		search.WaitWithDefaultTimeout()
-		Expect(search).To(Exit(125))
 		Expect(search.OutputToStringArray()).To(BeEmpty())
-		Expect(search.ErrorToString()).To(ContainSubstring("must be a docker reference"))
-
-		// No trailing slash
-		search = podmanTest.Podman([]string{"search", "--list-tags", "quay.io/podman"})
-		search.WaitWithDefaultTimeout()
-		Expect(search).To(Exit(125))
-		Expect(search.OutputToStringArray()).To(BeEmpty())
-		Expect(search.ErrorToString()).To(ContainSubstring("fetching tags list: StatusCode: 404"))
 	})
 
 	It("podman search with limit over 100", func() {

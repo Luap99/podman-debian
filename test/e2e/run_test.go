@@ -11,9 +11,8 @@ import (
 	"time"
 
 	"github.com/containers/common/pkg/cgroups"
-	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v5/libpod/define"
-	. "github.com/containers/podman/v5/test/utils"
+	"github.com/containers/podman/v4/libpod/define"
+	. "github.com/containers/podman/v4/test/utils"
 	"github.com/containers/storage/pkg/stringid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -302,7 +301,9 @@ var _ = Describe("Podman run", func() {
 		Expect(osession).Should(ExitCleanly())
 		Expect(osession.OutputToString()).To(Equal("hello"))
 
-		podmanTest.StopContainer("overlay-foo")
+		osession = podmanTest.Podman([]string{"stop", "overlay-foo"})
+		osession.WaitWithDefaultTimeout()
+		Expect(osession).Should(ExitCleanly())
 
 		startsession := podmanTest.Podman([]string{"start", "--attach", "overlay-foo"})
 		startsession.WaitWithDefaultTimeout()
@@ -359,8 +360,8 @@ var _ = Describe("Podman run", func() {
 		Expect(conData[0].Config.Annotations).To(Not(HaveKey("io.podman.annotations.init")))
 	})
 
-	forbidLinkSeccompProfile := func() string {
-		in := []byte(`{"defaultAction":"SCMP_ACT_ALLOW","syscalls":[{"name":"link","action":"SCMP_ACT_ERRNO"}]}`)
+	forbidGetCWDSeccompProfile := func() string {
+		in := []byte(`{"defaultAction":"SCMP_ACT_ALLOW","syscalls":[{"name":"getcwd","action":"SCMP_ACT_ERRNO"}]}`)
 		jsonFile, err := podmanTest.CreateSeccompJSON(in)
 		if err != nil {
 			GinkgoWriter.Println(err)
@@ -368,36 +369,6 @@ var _ = Describe("Podman run", func() {
 		}
 		return jsonFile
 	}
-
-	It("podman run default mask test", func() {
-		session := podmanTest.Podman([]string{"run", "-d", "--name=maskCtr", ALPINE, "sleep", "200"})
-		session.WaitWithDefaultTimeout()
-		Expect(session).Should(ExitCleanly())
-		for _, mask := range config.DefaultMaskedPaths {
-			if st, err := os.Stat(mask); err == nil {
-				if st.IsDir() {
-					session = podmanTest.Podman([]string{"exec", "maskCtr", "ls", mask})
-					session.WaitWithDefaultTimeout()
-					Expect(session).Should(ExitCleanly())
-					Expect(session.OutputToString()).To(BeEmpty())
-				} else {
-					session = podmanTest.Podman([]string{"exec", "maskCtr", "cat", mask})
-					session.WaitWithDefaultTimeout()
-					// Call can fail with permission denied, ignoring error or Not exist.
-					// key factor is there is no information leak
-					Expect(session.OutputToString()).To(BeEmpty())
-				}
-			}
-		}
-		for _, mask := range config.DefaultReadOnlyPaths {
-			if _, err := os.Stat(mask); err == nil {
-				session = podmanTest.Podman([]string{"exec", "maskCtr", "touch", mask})
-				session.WaitWithDefaultTimeout()
-				Expect(session).Should(Exit(1))
-				Expect(session.ErrorToString()).To(Equal(fmt.Sprintf("touch: %s: Read-only file system", mask)))
-			}
-		}
-	})
 
 	It("podman run mask and unmask path test", func() {
 		session := podmanTest.Podman([]string{"run", "-d", "--name=maskCtr1", "--security-opt", "unmask=ALL", "--security-opt", "mask=/proc/acpi", ALPINE, "sleep", "200"})
@@ -515,27 +486,17 @@ var _ = Describe("Podman run", func() {
 	})
 
 	It("podman run seccomp test", func() {
-		secOpts := []string{"--security-opt", strings.Join([]string{"seccomp=", forbidLinkSeccompProfile()}, "")}
-		cmd := []string{ALPINE, "ln", "/etc/motd", "/linkNotAllowed"}
-
-		// Without seccomp, this should succeed
-		session := podmanTest.Podman(append([]string{"run"}, cmd...))
+		session := podmanTest.Podman([]string{"run", "--security-opt", strings.Join([]string{"seccomp=", forbidGetCWDSeccompProfile()}, ""), ALPINE, "pwd"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).To(ExitCleanly())
+		Expect(session).To(ExitWithError())
+		Expect(session.ErrorToString()).To(ContainSubstring("Operation not permitted"))
+	})
 
-		// With link syscall blocked, should fail
-		cmd = append(secOpts, cmd...)
-		session = podmanTest.Podman(append([]string{"run"}, cmd...))
+	It("podman run seccomp test --privileged", func() {
+		session := podmanTest.Podman([]string{"run", "--privileged", "--security-opt", strings.Join([]string{"seccomp=", forbidGetCWDSeccompProfile()}, ""), ALPINE, "pwd"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).To(Exit(1))
-		Expect(session.ErrorToString()).To(ContainSubstring("ln: /linkNotAllowed: Operation not permitted"))
-
-		// ...even with --privileged
-		cmd = append([]string{"--privileged"}, cmd...)
-		session = podmanTest.Podman(append([]string{"run"}, cmd...))
-		session.WaitWithDefaultTimeout()
-		Expect(session).To(Exit(1))
-		Expect(session.ErrorToString()).To(ContainSubstring("ln: /linkNotAllowed: Operation not permitted"))
+		Expect(session).To(ExitWithError())
+		Expect(session.ErrorToString()).To(ContainSubstring("Operation not permitted"))
 	})
 
 	It("podman run seccomp test --privileged no profile should be unconfined", func() {
@@ -924,7 +885,7 @@ USER bin`, BB)
 
 	It("podman test hooks", func() {
 		SkipIfRemote("--hooks-dir does not work with remote")
-		hooksDir := tempdir + "/hooks,withcomma"
+		hooksDir := tempdir + "/hooks"
 		err := os.Mkdir(hooksDir, 0755)
 		Expect(err).ToNot(HaveOccurred())
 		hookJSONPath := filepath.Join(hooksDir, "checkhooks.json")
@@ -1539,7 +1500,9 @@ VOLUME %s`, ALPINE, volPath, volPath)
 		ctr.WaitWithDefaultTimeout()
 		Expect(ctr).Should(ExitCleanly())
 
-		podmanTest.StopContainer(ctrName)
+		stop := podmanTest.Podman([]string{"stop", ctrName})
+		stop.WaitWithDefaultTimeout()
+		Expect(stop).Should(ExitCleanly())
 
 		// This is ugly, but I don't see a better way
 		time.Sleep(10 * time.Second)
@@ -1689,15 +1652,13 @@ VOLUME %s`, ALPINE, volPath, volPath)
 		session := podmanTest.Podman([]string{"create", "--replace", ALPINE, "/bin/sh"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(125))
-		Expect(session.ErrorToString()).To(ContainSubstring("cannot replace container without --name being set"))
 
 		// Run and replace 5 times in a row the "same" container.
 		ctrName := "testCtr"
 		for i := 0; i < 5; i++ {
 			session := podmanTest.Podman([]string{"run", "--detach", "--replace", "--name", ctrName, ALPINE, "top"})
 			session.WaitWithDefaultTimeout()
-			// FIXME - #20196: Cannot use ExitCleanly()
-			Expect(session).Should(Exit(0))
+			Expect(session).Should(ExitCleanly())
 
 			// make sure Podman prints only one ID
 			Expect(session.OutputToString()).To(HaveLen(64))
@@ -2089,7 +2050,9 @@ WORKDIR /madethis`, BB)
 		mainContainer.WaitWithDefaultTimeout()
 		Expect(mainContainer).Should(ExitCleanly())
 
-		podmanTest.StopContainer("--all")
+		stop := podmanTest.Podman([]string{"stop", "--all"})
+		stop.WaitWithDefaultTimeout()
+		Expect(stop).Should(ExitCleanly())
 
 		start := podmanTest.Podman([]string{"start", mainName})
 		start.WaitWithDefaultTimeout()
@@ -2147,9 +2110,9 @@ WORKDIR /madethis`, BB)
 
 		podmanTest.AddImageToRWStore(ALPINE)
 
-		lock := GetPortLock("5006")
+		lock := GetPortLock("5000")
 		defer lock.Unlock()
-		session := podmanTest.Podman([]string{"run", "-d", "--name", "registry", "-p", "5006:5000", REGISTRY_IMAGE, "/entrypoint.sh", "/etc/docker/registry/config.yml"})
+		session := podmanTest.Podman([]string{"run", "-d", "--name", "registry", "-p", "5000:5000", REGISTRY_IMAGE, "/entrypoint.sh", "/etc/docker/registry/config.yml"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(ExitCleanly())
 
@@ -2158,11 +2121,11 @@ WORKDIR /madethis`, BB)
 		}
 
 		bitSize := 1024
-		keyFileName := filepath.Join(podmanTest.TempDir, "key,withcomma")
+		keyFileName := filepath.Join(podmanTest.TempDir, "key")
 		publicKeyFileName, privateKeyFileName, err := WriteRSAKeyPair(keyFileName, bitSize)
 		Expect(err).ToNot(HaveOccurred())
 
-		imgPath := "localhost:5006/my-alpine"
+		imgPath := "localhost:5000/my-alpine"
 		session = podmanTest.Podman([]string{"push", "--encryption-key", "jwe:" + publicKeyFileName, "--tls-verify=false", "--remove-signatures", ALPINE, imgPath})
 		session.WaitWithDefaultTimeout()
 
@@ -2171,14 +2134,15 @@ WORKDIR /madethis`, BB)
 		Expect(session).Should(ExitCleanly())
 
 		// Must fail without --decryption-key
-		session = podmanTest.Podman([]string{"run", "--tls-verify=false", imgPath})
+		// NOTE: --tls-verify=false not needed, because localhost:5000 is in registries.conf
+		session = podmanTest.Podman([]string{"run", imgPath})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(125))
 		Expect(session.ErrorToString()).To(ContainSubstring("Trying to pull " + imgPath))
 		Expect(session.ErrorToString()).To(ContainSubstring("invalid tar header"))
 
 		// With
-		session = podmanTest.Podman([]string{"run", "--tls-verify=false", "--decryption-key", privateKeyFileName, imgPath})
+		session = podmanTest.Podman([]string{"run", "--decryption-key", privateKeyFileName, imgPath})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(session.ErrorToString()).To(ContainSubstring("Trying to pull " + imgPath))

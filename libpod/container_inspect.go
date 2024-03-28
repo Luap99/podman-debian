@@ -1,4 +1,5 @@
 //go:build !remote
+// +build !remote
 
 package libpod
 
@@ -7,10 +8,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/libpod/driver"
-	"github.com/containers/podman/v5/pkg/signal"
-	"github.com/containers/podman/v5/pkg/util"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/libpod/driver"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/containers/storage/types"
 	"github.com/docker/go-units"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
@@ -54,8 +54,8 @@ func (c *Container) volumesFrom() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if ctrs, ok := ctrSpec.Annotations[define.VolumesFromAnnotation]; ok {
-		return strings.Split(ctrs, ";"), nil
+	if ctrs, ok := ctrSpec.Annotations[define.InspectAnnotationVolumesFrom]; ok {
+		return strings.Split(ctrs, ","), nil
 	}
 	return nil, nil
 }
@@ -190,20 +190,15 @@ func (c *Container) getContainerInspectData(size bool, driverData *define.Driver
 		data.OCIConfigPath = c.state.ConfigPath
 	}
 
-	// Check if healthcheck is not nil and --no-healthcheck option is not set.
-	// If --no-healthcheck is set Test will be always set to `[NONE]`, so the
-	// inspect status should be set to nil.
-	if c.config.HealthCheckConfig != nil && !(len(c.config.HealthCheckConfig.Test) == 1 && c.config.HealthCheckConfig.Test[0] == "NONE") {
+	if c.config.HealthCheckConfig != nil {
 		// This container has a healthcheck defined in it; we need to add its state
 		healthCheckState, err := c.getHealthCheckLog()
 		if err != nil {
 			// An error here is not considered fatal; no health state will be displayed
 			logrus.Error(err)
 		} else {
-			data.State.Health = &healthCheckState
+			data.State.Health = healthCheckState
 		}
-	} else {
-		data.State.Health = nil
 	}
 
 	networkConfig, err := c.getContainerNetworkInfo()
@@ -321,7 +316,7 @@ func (c *Container) GetSecurityOptions() []string {
 	if apparmor, ok := ctrSpec.Annotations[define.InspectAnnotationApparmor]; ok {
 		SecurityOpt = append(SecurityOpt, fmt.Sprintf("apparmor=%s", apparmor))
 	}
-	if c.config.Spec != nil && c.config.Spec.Linux != nil && c.config.Spec.Linux.MaskedPaths == nil {
+	if c.config.Spec.Linux.MaskedPaths == nil {
 		SecurityOpt = append(SecurityOpt, "unmask=all")
 	}
 
@@ -389,7 +384,7 @@ func (c *Container) generateInspectContainerConfig(spec *spec.Spec) *define.Insp
 
 	// Leave empty if not explicitly overwritten by user
 	if len(c.config.Entrypoint) != 0 {
-		ctrConfig.Entrypoint = c.config.Entrypoint
+		ctrConfig.Entrypoint = strings.Join(c.config.Entrypoint, " ")
 	}
 
 	if len(c.config.Labels) != 0 {
@@ -405,7 +400,8 @@ func (c *Container) generateInspectContainerConfig(spec *spec.Spec) *define.Insp
 			ctrConfig.Annotations[k] = v
 		}
 	}
-	ctrConfig.StopSignal = signal.ToDockerFormat(c.config.StopSignal)
+
+	ctrConfig.StopSignal = c.config.StopSignal
 	// TODO: should JSON deep copy this to ensure internal pointers don't
 	// leak.
 	ctrConfig.Healthcheck = c.config.HealthCheckConfig
@@ -510,8 +506,8 @@ func (c *Container) generateInspectContainerHostConfig(ctrSpec *spec.Spec, named
 		if ctrSpec.Annotations[define.InspectAnnotationAutoremove] == define.InspectResponseTrue {
 			hostConfig.AutoRemove = true
 		}
-		if ctrs, ok := ctrSpec.Annotations[define.VolumesFromAnnotation]; ok {
-			hostConfig.VolumesFrom = strings.Split(ctrs, ";")
+		if ctrs, ok := ctrSpec.Annotations[define.InspectAnnotationVolumesFrom]; ok {
+			hostConfig.VolumesFrom = strings.Split(ctrs, ",")
 		}
 		if ctrSpec.Annotations[define.InspectAnnotationPrivileged] == define.InspectResponseTrue {
 			hostConfig.Privileged = true

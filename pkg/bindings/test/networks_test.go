@@ -7,13 +7,12 @@ import (
 	"time"
 
 	"github.com/containers/common/libnetwork/types"
-	"github.com/containers/podman/v5/pkg/bindings"
-	"github.com/containers/podman/v5/pkg/bindings/containers"
-	"github.com/containers/podman/v5/pkg/bindings/network"
+	"github.com/containers/podman/v4/pkg/bindings"
+	"github.com/containers/podman/v4/pkg/bindings/containers"
+	"github.com/containers/podman/v4/pkg/bindings/network"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
-	"golang.org/x/exp/slices"
 )
 
 var _ = Describe("Podman networks", func() {
@@ -149,7 +148,7 @@ var _ = Describe("Podman networks", func() {
 		Expect(len(list)).To(BeNumerically(">=", 5))
 		for _, n := range list {
 			if n.Name != "podman" {
-				Expect(slices.Contains(netNames, n.Name)).To(BeTrue())
+				Expect(StringInSlice(n.Name, netNames)).To(BeTrue())
 			}
 		}
 

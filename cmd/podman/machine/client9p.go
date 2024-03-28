@@ -1,4 +1,6 @@
 //go:build linux && (amd64 || arm64)
+// +build linux
+// +build amd64 arm64
 
 package machine
 
@@ -8,10 +10,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"time"
 
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/podman/v5/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/registry"
 	"github.com/mdlayher/vsock"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -70,22 +71,8 @@ func client9p(portNum uint32, mountPath string) error {
 
 	logrus.Infof("Going to mount 9p on vsock port %d to directory %s", portNum, mountPath)
 
-	// The server is starting at the same time.
-	// Perform up to 5 retries with a backoff.
-	var (
-		conn    *vsock.Conn
-		retries = 20
-	)
-	for i := 0; i < retries; i++ {
-		// Host connects to non-hypervisor processes on the host running the VM.
-		conn, err = vsock.Dial(vsock.Host, portNum, nil)
-		// If errors.Is worked on this error, we could detect non-timeout errors.
-		// But it doesn't. So retry 5 times regardless.
-		if err == nil {
-			break
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
+	// Host connects to non-hypervisor processes on the host running the VM.
+	conn, err := vsock.Dial(vsock.Host, portNum, nil)
 	if err != nil {
 		return fmt.Errorf("dialing vsock port %d: %w", portNum, err)
 	}

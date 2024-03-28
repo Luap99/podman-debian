@@ -1,4 +1,5 @@
 //go:build !remote
+// +build !remote
 
 package libpod
 
@@ -6,16 +7,14 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io/fs"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/containers/common/libnetwork/types"
-	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v4/libpod/define"
 	"github.com/sirupsen/logrus"
 	bolt "go.etcd.io/bbolt"
 )
@@ -79,19 +78,6 @@ func NewBoltState(path string, runtime *Runtime) (State, error) {
 	state.runtime = runtime
 
 	logrus.Debugf("Initializing boltdb state at %s", path)
-
-	// BoltDB is deprecated and, as of Podman 5.0, we no longer allow the
-	// creation of new Bolt states.
-	// If the DB does not already exist, error out.
-	// To continue testing in CI, allow creation iff an undocumented env
-	// var is set.
-	if os.Getenv("CI_DESIRED_DATABASE") != "boltdb" {
-		if _, err := os.Stat(path); err != nil && errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("the BoltDB backend has been deprecated, no new BoltDB databases can be created: %w", define.ErrInvalidArg)
-		}
-	} else {
-		logrus.Debugf("Allowing deprecated database backend due to CI_DESIRED_DATABASE.")
-	}
 
 	db, err := bolt.Open(path, 0600, nil)
 	if err != nil {

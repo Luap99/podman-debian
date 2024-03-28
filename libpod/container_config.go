@@ -1,4 +1,5 @@
 //go:build !remote
+// +build !remote
 
 package libpod
 
@@ -9,9 +10,9 @@ import (
 	"github.com/containers/common/libnetwork/types"
 	"github.com/containers/common/pkg/secrets"
 	"github.com/containers/image/v5/manifest"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/namespaces"
-	"github.com/containers/podman/v5/pkg/specgen"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/namespaces"
+	"github.com/containers/podman/v4/pkg/specgen"
 	"github.com/containers/storage"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 )
@@ -160,7 +161,7 @@ type ContainerRootFSConfig struct {
 	// pre-1.8, which was used in very old Podman versions to determine how
 	// image volumes were handled in Libpod (support for these eventually
 	// moved out of Libpod into pkg/specgen).
-	// Please DO NOT reuse the `imageVolumes` name in container JSON again.
+	// Please DO NOT re-use the `imageVolumes` name in container JSON again.
 	ImageVolumes []*ContainerImageVolume `json:"ctrImageVolumes,omitempty"`
 	// CreateWorkingDir indicates that Libpod should create the container's
 	// working directory if it does not exist. Some OCI runtimes do this by
@@ -290,12 +291,6 @@ type ContainerNetworkConfig struct {
 	// bind-mounted inside the container.
 	// Conflicts with HostAdd.
 	UseImageHosts bool
-	// BaseHostsFile is the path to a hosts file, the entries from this file
-	// are added to the containers hosts file. As special value "image" is
-	// allowed which uses the /etc/hosts file from within the image and "none"
-	// which uses no base file at all. If it is empty we should default
-	// to the base_hosts_file configuration in containers.conf.
-	BaseHostsFile string `json:"baseHostsFile,omitempty"`
 	// Hosts to add in container
 	// Will be appended to host's host file
 	HostAdd []string `json:"hostsAdd,omitempty"`
@@ -421,9 +416,6 @@ type ContainerMiscConfig struct {
 	// to 0, 1, 2) that will be passed to the executed process. The total FDs
 	// passed will be 3 + PreserveFDs.
 	PreserveFDs uint `json:"preserveFds,omitempty"`
-	// PreserveFD is a list of additional file descriptors (in addition
-	// to 0, 1, 2) that will be passed to the executed process.
-	PreserveFD []uint `json:"preserveFd,omitempty"`
 	// Timezone is the timezone inside the container.
 	// Local means it has the same timezone as the host machine
 	Timezone string `json:"timezone,omitempty"`

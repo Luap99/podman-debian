@@ -1,4 +1,5 @@
 //go:build !remote
+// +build !remote
 
 package libpod
 
@@ -9,7 +10,7 @@ import (
 	"sync"
 
 	"github.com/containers/common/pkg/resize"
-	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v4/libpod/define"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
 )
@@ -29,8 +30,6 @@ type MissingRuntime struct {
 	name string
 	// exitsDir is the directory for exit files.
 	exitsDir string
-	// persistDir is the directory for exit and oom files.
-	persistDir string
 }
 
 // Get a new MissingRuntime for the given name.
@@ -54,7 +53,6 @@ func getMissingRuntime(name string, r *Runtime) OCIRuntime {
 	newRuntime := new(MissingRuntime)
 	newRuntime.name = name
 	newRuntime.exitsDir = filepath.Join(r.config.Engine.TmpDir, "exits")
-	newRuntime.persistDir = filepath.Join(r.config.Engine.TmpDir, "persist")
 
 	missingRuntimes[name] = newRuntime
 
@@ -223,12 +221,6 @@ func (r *MissingRuntime) ExitFilePath(ctr *Container) (string, error) {
 		return "", fmt.Errorf("must provide a valid container to get exit file path: %w", define.ErrInvalidArg)
 	}
 	return filepath.Join(r.exitsDir, ctr.ID()), nil
-}
-
-// OOMFilePath returns the oom file path for a container.
-// The oom file will only exist if the container was oom killed.
-func (r *MissingRuntime) OOMFilePath(ctr *Container) (string, error) {
-	return filepath.Join(r.persistDir, ctr.ID(), "oom"), nil
 }
 
 // RuntimeInfo returns information on the missing runtime

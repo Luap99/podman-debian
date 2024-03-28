@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	. "github.com/containers/podman/v5/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -106,12 +106,12 @@ var _ = Describe("Podman port", func() {
 
 	It("podman port multiple ports", func() {
 		// Acquire and release locks
-		lock1 := GetPortLock("5010")
+		lock1 := GetPortLock("5000")
 		defer lock1.Unlock()
-		lock2 := GetPortLock("5011")
+		lock2 := GetPortLock("5001")
 		defer lock2.Unlock()
 
-		setup := podmanTest.Podman([]string{"run", "--name", "test", "-dt", "-p", "5010:5000", "-p", "5011:5001", ALPINE, "top"})
+		setup := podmanTest.Podman([]string{"run", "--name", "test", "-dt", "-p", "5000:5000", "-p", "5001:5001", ALPINE, "top"})
 		setup.WaitWithDefaultTimeout()
 		Expect(setup).Should(ExitCleanly())
 
@@ -119,12 +119,12 @@ var _ = Describe("Podman port", func() {
 		result1 := podmanTest.Podman([]string{"port", "test", "5000"})
 		result1.WaitWithDefaultTimeout()
 		Expect(result1).Should(ExitCleanly())
-		Expect(result1.OutputToStringArray()).To(ContainElement(HavePrefix("0.0.0.0:5010")))
+		Expect(result1.OutputToStringArray()).To(ContainElement(HavePrefix("0.0.0.0:5000")))
 
 		// Check that the second port was honored
 		result2 := podmanTest.Podman([]string{"port", "test", "5001"})
 		result2.WaitWithDefaultTimeout()
 		Expect(result2).Should(ExitCleanly())
-		Expect(result2.OutputToStringArray()).To(ContainElement(HavePrefix("0.0.0.0:5011")))
+		Expect(result2.OutputToStringArray()).To(ContainElement(HavePrefix("0.0.0.0:5001")))
 	})
 })

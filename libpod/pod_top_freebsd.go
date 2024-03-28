@@ -1,4 +1,5 @@
 //go:build !remote
+// +build !remote
 
 package libpod
 
@@ -6,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v4/libpod/define"
 )
 
 // GetPodPidInformation returns process-related data of all processes in

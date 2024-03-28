@@ -18,14 +18,14 @@ import (
 	"github.com/containers/buildah/pkg/parse"
 	"github.com/containers/image/v5/docker/reference"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v5/libpod"
-	"github.com/containers/podman/v5/pkg/api/handlers/utils"
-	api "github.com/containers/podman/v5/pkg/api/types"
-	"github.com/containers/podman/v5/pkg/auth"
-	"github.com/containers/podman/v5/pkg/bindings/images"
-	"github.com/containers/podman/v5/pkg/channel"
-	"github.com/containers/podman/v5/pkg/rootless"
-	"github.com/containers/podman/v5/pkg/util"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v4/pkg/api/types"
+	"github.com/containers/podman/v4/pkg/auth"
+	"github.com/containers/podman/v4/pkg/bindings/images"
+	"github.com/containers/podman/v4/pkg/channel"
+	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/containers/storage/pkg/archive"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/opencontainers/runtime-spec/specs-go"
@@ -330,15 +330,15 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 			if len(secretOpt) > 0 {
 				modifiedOpt := []string{}
 				for _, token := range secretOpt {
-					key, val, hasVal := strings.Cut(token, "=")
-					if hasVal {
-						if key == "src" {
+					arr := strings.SplitN(token, "=", 2)
+					if len(arr) > 1 {
+						if arr[0] == "src" {
 							/* move secret away from contextDir */
 							/* to make sure we dont accidentally commit temporary secrets to image*/
 							builderDirectory, _ := filepath.Split(contextDirectory)
 							// following path is outside build context
-							newSecretPath := filepath.Join(builderDirectory, val)
-							oldSecretPath := filepath.Join(contextDirectory, val)
+							newSecretPath := filepath.Join(builderDirectory, arr[1])
+							oldSecretPath := filepath.Join(contextDirectory, arr[1])
 							err := os.Rename(oldSecretPath, newSecretPath)
 							if err != nil {
 								utils.BadRequest(w, "secrets", query.Secrets, err)
@@ -551,19 +551,19 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 					utils.BadRequest(w, "securityopt", query.SecurityOpt, errors.New("no-new-privileges is not supported"))
 					return
 				}
-				name, value, hasValue := strings.Cut(opt, "=")
-				if !hasValue {
+				con := strings.SplitN(opt, "=", 2)
+				if len(con) != 2 {
 					utils.BadRequest(w, "securityopt", query.SecurityOpt, fmt.Errorf("invalid --security-opt name=value pair: %q", opt))
 					return
 				}
 
-				switch name {
+				switch con[0] {
 				case "label":
-					labelOpts = append(labelOpts, value)
+					labelOpts = append(labelOpts, con[1])
 				case "apparmor":
-					apparmor = value
+					apparmor = con[1]
 				case "seccomp":
-					seccomp = value
+					seccomp = con[1]
 				default:
 					utils.BadRequest(w, "securityopt", query.SecurityOpt, fmt.Errorf("invalid --security-opt 2: %q", opt))
 					return

@@ -11,15 +11,15 @@ import (
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/sysinfo"
 	"github.com/containers/image/v5/pkg/sysregistriesv2"
-	"github.com/containers/podman/v5/libpod"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/api/handlers"
-	"github.com/containers/podman/v5/pkg/api/handlers/utils"
-	api "github.com/containers/podman/v5/pkg/api/types"
-	"github.com/containers/podman/v5/pkg/rootless"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/api/handlers"
+	"github.com/containers/podman/v4/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v4/pkg/api/types"
+	"github.com/containers/podman/v4/pkg/rootless"
+	docker "github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/registry"
 	"github.com/docker/docker/api/types/swarm"
-	dockerSystem "github.com/docker/docker/api/types/system"
 	"github.com/google/uuid"
 	"github.com/opencontainers/selinux/go-selinux"
 	log "github.com/sirupsen/logrus"
@@ -53,7 +53,7 @@ func GetInfo(w http.ResponseWriter, r *http.Request) {
 	// liveRestoreEnabled := criu.CheckForCriu() && configInfo.RuntimeSupportsCheckpoint()
 
 	info := &handlers.Info{
-		Info: dockerSystem.Info{
+		Info: docker.Info{
 			Architecture:       goRuntime.GOARCH,
 			BridgeNfIP6tables:  !sysInfo.BridgeNFCallIP6TablesDisabled,
 			BridgeNfIptables:   !sysInfo.BridgeNFCallIPTablesDisabled,
@@ -62,7 +62,7 @@ func GetInfo(w http.ResponseWriter, r *http.Request) {
 			CPUSet:             sysInfo.Cpuset,
 			CPUShares:          sysInfo.CPUShares,
 			CgroupDriver:       configInfo.Engine.CgroupManager,
-			ContainerdCommit:   dockerSystem.Commit{},
+			ContainerdCommit:   docker.Commit{},
 			Containers:         infoData.Store.ContainerStore.Number,
 			ContainersPaused:   stateInfo[define.ContainerStatePaused],
 			ContainersRunning:  stateInfo[define.ContainerStateRunning],
@@ -81,7 +81,7 @@ func GetInfo(w http.ResponseWriter, r *http.Request) {
 			Images:             infoData.Store.ImageStore.Number,
 			IndexServerAddress: "",
 			InitBinary:         "",
-			InitCommit:         dockerSystem.Commit{},
+			InitCommit:         docker.Commit{},
 			Isolation:          "",
 			KernelMemoryTCP:    false,
 			KernelVersion:      infoData.Host.Kernel,
@@ -101,14 +101,14 @@ func GetInfo(w http.ResponseWriter, r *http.Request) {
 			OomKillDisable:     sysInfo.OomKillDisable,
 			OperatingSystem:    infoData.Host.Distribution.Distribution,
 			PidsLimit:          sysInfo.PidsLimit,
-			Plugins: dockerSystem.PluginsInfo{
+			Plugins: docker.PluginsInfo{
 				Volume:  infoData.Plugins.Volume,
 				Network: infoData.Plugins.Network,
 				Log:     infoData.Plugins.Log,
 			},
 			ProductLicense:  "Apache-2.0",
 			RegistryConfig:  getServiceConfig(runtime),
-			RuncCommit:      dockerSystem.Commit{},
+			RuncCommit:      docker.Commit{},
 			Runtimes:        getRuntimes(configInfo),
 			SecurityOptions: getSecOpts(sysInfo),
 			ServerVersion:   versionInfo.Version,
@@ -190,12 +190,13 @@ func getSecOpts(sysInfo *sysinfo.SysInfo) []string {
 	return secOpts
 }
 
-func getRuntimes(configInfo *config.Config) map[string]dockerSystem.RuntimeWithStatus {
-	runtimes := map[string]dockerSystem.RuntimeWithStatus{}
+func getRuntimes(configInfo *config.Config) map[string]docker.Runtime {
+	runtimes := map[string]docker.Runtime{}
 	for name, paths := range configInfo.Engine.OCIRuntimes {
-		runtime := dockerSystem.RuntimeWithStatus{}
-		runtime.Runtime = dockerSystem.Runtime{Path: paths[0], Args: nil}
-		runtimes[name] = runtime
+		runtimes[name] = docker.Runtime{
+			Path: paths[0],
+			Args: nil,
+		}
 	}
 	return runtimes
 }

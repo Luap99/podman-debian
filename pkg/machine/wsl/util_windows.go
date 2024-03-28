@@ -1,4 +1,5 @@
 //go:build windows
+// +build windows
 
 package wsl
 
@@ -19,6 +20,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
+// nolint
 type SHELLEXECUTEINFO struct {
 	cbSize         uint32
 	fMask          uint32
@@ -37,6 +39,7 @@ type SHELLEXECUTEINFO struct {
 	hProcess       syscall.Handle
 }
 
+// nolint
 type Luid struct {
 	lowPart  uint32
 	highPart int32
@@ -52,30 +55,19 @@ type TokenPrivileges struct {
 	privileges     [1]LuidAndAttributes
 }
 
-// Cleaner to refer to the official OS constant names, and consistent with syscall
+// nolint // Cleaner to refer to the official OS constant names, and consistent with syscall
 const (
-	//nolint:stylecheck
-	SEE_MASK_NOCLOSEPROCESS = 0x40
-	//nolint:stylecheck
-	EWX_FORCEIFHUNG = 0x10
-	//nolint:stylecheck
-	EWX_REBOOT = 0x02
-	//nolint:stylecheck
-	EWX_RESTARTAPPS = 0x40
-	//nolint:stylecheck
-	SHTDN_REASON_MAJOR_APPLICATION = 0x00040000
-	//nolint:stylecheck
+	SEE_MASK_NOCLOSEPROCESS         = 0x40
+	EWX_FORCEIFHUNG                 = 0x10
+	EWX_REBOOT                      = 0x02
+	EWX_RESTARTAPPS                 = 0x40
+	SHTDN_REASON_MAJOR_APPLICATION  = 0x00040000
 	SHTDN_REASON_MINOR_INSTALLATION = 0x00000002
-	//nolint:stylecheck
-	SHTDN_REASON_FLAG_PLANNED = 0x80000000
-	//nolint:stylecheck
-	TOKEN_ADJUST_PRIVILEGES = 0x0020
-	//nolint:stylecheck
-	TOKEN_QUERY = 0x0008
-	//nolint:stylecheck
-	SE_PRIVILEGE_ENABLED = 0x00000002
-	//nolint:stylecheck
-	SE_ERR_ACCESSDENIED = 0x05
+	SHTDN_REASON_FLAG_PLANNED       = 0x80000000
+	TOKEN_ADJUST_PRIVILEGES         = 0x0020
+	TOKEN_QUERY                     = 0x0008
+	SE_PRIVILEGE_ENABLED            = 0x00000002
+	SE_ERR_ACCESSDENIED             = 0x05
 )
 
 func winVersionAtLeast(major uint, minor uint, build uint) bool {
@@ -110,9 +102,7 @@ func hasAdminRights() bool {
 		logrus.Warnf("SID allocation error: %s", err)
 		return false
 	}
-	defer func() {
-		_ = windows.FreeSid(sid)
-	}()
+	defer windows.FreeSid(sid)
 
 	//  From MS docs:
 	// "If TokenHandle is NULL, CheckTokenMembership uses the impersonation
@@ -159,10 +149,8 @@ func relaunchElevatedWait() error {
 		return wrapMaybef(err, "could not launch process, ShellEX Error = %d", info.hInstApp)
 	}
 
-	handle := info.hProcess
-	defer func() {
-		_ = syscall.CloseHandle(handle)
-	}()
+	handle := syscall.Handle(info.hProcess)
+	defer syscall.CloseHandle(handle)
 
 	w, err := syscall.WaitForSingleObject(handle, syscall.INFINITE)
 	switch w {
@@ -278,7 +266,6 @@ func obtainShutdownPrivilege() error {
 	}
 
 	var privs TokenPrivileges
-	//nolint:staticcheck
 	if ret, _, err := LookupPrivilegeValue.Call(uintptr(0), uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(SeShutdownName))), uintptr(unsafe.Pointer(&(privs.privileges[0].luid)))); ret != 1 {
 		return fmt.Errorf("looking up shutdown privilege: %w", err)
 	}

@@ -4,11 +4,11 @@ import (
 	"errors"
 
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v5/cmd/podman/common"
-	"github.com/containers/podman/v5/cmd/podman/registry"
-	"github.com/containers/podman/v5/cmd/podman/system"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/system"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/spf13/cobra"
-	"golang.org/x/exp/slices"
 )
 
 var (
@@ -48,35 +48,43 @@ func init() {
 }
 
 func rm(cmd *cobra.Command, args []string) error {
-	return config.EditConnectionConfig(func(cfg *config.ConnectionsFile) error {
-		if rmOpts.All {
-			cfg.Connection.Connections = nil
-			cfg.Connection.Default = ""
+	cfg, err := config.ReadCustomConfig()
+	if err != nil {
+		return err
+	}
 
-			// Clear all the connections in any existing farms
-			for k := range cfg.Farm.List {
-				cfg.Farm.List[k] = []string{}
-			}
-			return nil
+	if rmOpts.All {
+		for k := range cfg.Engine.ServiceDestinations {
+			delete(cfg.Engine.ServiceDestinations, k)
 		}
+		cfg.Engine.ActiveService = ""
 
-		if len(args) != 1 {
-			return errors.New("accepts 1 arg(s), received 0")
+		// Clear all the connections in any existing farms
+		for k := range cfg.Farms.List {
+			cfg.Farms.List[k] = []string{}
 		}
+		return cfg.Write()
+	}
 
-		delete(cfg.Connection.Connections, args[0])
-		if cfg.Connection.Default == args[0] {
-			cfg.Connection.Default = ""
+	if len(args) != 1 {
+		return errors.New("accepts 1 arg(s), received 0")
+	}
+
+	if cfg.Engine.ServiceDestinations != nil {
+		delete(cfg.Engine.ServiceDestinations, args[0])
+	}
+
+	if cfg.Engine.ActiveService == args[0] {
+		cfg.Engine.ActiveService = ""
+	}
+
+	// If there are existing farm, remove the deleted connection that might be part of a farm
+	for k, v := range cfg.Farms.List {
+		index := util.IndexOfStringInSlice(args[0], v)
+		if index > -1 {
+			cfg.Farms.List[k] = append(v[:index], v[index+1:]...)
 		}
+	}
 
-		// If there are existing farm, remove the deleted connection that might be part of a farm
-		for k, v := range cfg.Farm.List {
-			index := slices.Index(v, args[0])
-			if index > -1 {
-				cfg.Farm.List[k] = append(v[:index], v[index+1:]...)
-			}
-		}
-
-		return nil
-	})
+	return cfg.Write()
 }

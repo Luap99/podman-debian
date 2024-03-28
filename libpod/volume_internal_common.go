@@ -1,4 +1,6 @@
 //go:build !remote && (linux || freebsd)
+// +build !remote
+// +build linux freebsd
 
 package libpod
 
@@ -8,7 +10,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v4/libpod/define"
 	pluginapi "github.com/docker/go-plugins-helpers/volume"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"

@@ -6,11 +6,11 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/containers/podman/v5/pkg/bindings"
-	"github.com/containers/podman/v5/pkg/domain/entities/types"
+	"github.com/containers/podman/v4/pkg/bindings"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 )
 
-func Systemd(ctx context.Context, nameOrID string, options *SystemdOptions) (*types.GenerateSystemdReport, error) {
+func Systemd(ctx context.Context, nameOrID string, options *SystemdOptions) (*entities.GenerateSystemdReport, error) {
 	if options == nil {
 		options = new(SystemdOptions)
 	}
@@ -29,14 +29,14 @@ func Systemd(ctx context.Context, nameOrID string, options *SystemdOptions) (*ty
 	}
 	defer response.Body.Close()
 
-	report := &types.GenerateSystemdReport{}
+	report := &entities.GenerateSystemdReport{}
 	return report, response.Process(&report.Units)
 }
 
 // Kube generate Kubernetes YAML (v1 specification)
 //
 // Note: Caller is responsible for closing returned reader
-func Kube(ctx context.Context, nameOrIDs []string, options *KubeOptions) (*types.GenerateKubeReport, error) {
+func Kube(ctx context.Context, nameOrIDs []string, options *KubeOptions) (*entities.GenerateKubeReport, error) {
 	if options == nil {
 		options = new(KubeOptions)
 	}
@@ -64,7 +64,7 @@ func Kube(ctx context.Context, nameOrIDs []string, options *KubeOptions) (*types
 	}
 
 	if response.StatusCode == http.StatusOK {
-		return &types.GenerateKubeReport{Reader: response.Body}, nil
+		return &entities.GenerateKubeReport{Reader: response.Body}, nil
 	}
 
 	// Unpack the error.

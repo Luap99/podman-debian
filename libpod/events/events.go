@@ -54,6 +54,13 @@ func NewEvent(status Status) Event {
 	}
 }
 
+// Recycle checks if the event log has reach a limit and if so
+// renames the current log and starts a new one.  The remove bool
+// indicates the old log file should be deleted.
+func (e *Event) Recycle(path string, remove bool) error {
+	return errors.New("not implemented")
+}
+
 // ToJSONString returns the event as a json'ified string
 func (e *Event) ToJSONString() (string, error) {
 	b, err := json.Marshal(e)
@@ -62,9 +69,6 @@ func (e *Event) ToJSONString() (string, error) {
 
 // ToHumanReadable returns human-readable event as a formatted string
 func (e *Event) ToHumanReadable(truncate bool) string {
-	if e == nil {
-		return ""
-	}
 	var humanFormat string
 	id := e.ID
 	if truncate {
@@ -90,9 +94,6 @@ func (e *Event) ToHumanReadable(truncate bool) string {
 		humanFormat = fmt.Sprintf("%s %s %s %s (container=%s, name=%s)", e.Time, e.Type, e.Status, id, id, e.Network)
 	case Image:
 		humanFormat = fmt.Sprintf("%s %s %s %s %s", e.Time, e.Type, e.Status, id, e.Name)
-		if e.Error != "" {
-			humanFormat += " " + e.Error
-		}
 	case System:
 		if e.Name != "" {
 			humanFormat = fmt.Sprintf("%s %s %s %s", e.Time, e.Type, e.Status, e.Name)
@@ -197,8 +198,6 @@ func StringToStatus(name string) (Status, error) {
 		return Prune, nil
 	case Pull.String():
 		return Pull, nil
-	case PullError.String():
-		return PullError, nil
 	case Push.String():
 		return Push, nil
 	case Refresh.String():

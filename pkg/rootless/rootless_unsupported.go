@@ -1,4 +1,5 @@
 //go:build !(linux || freebsd) || !cgo
+// +build !linux,!freebsd !cgo
 
 package rootless
 

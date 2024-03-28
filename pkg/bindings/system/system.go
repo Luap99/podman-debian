@@ -9,16 +9,16 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/bindings"
-	"github.com/containers/podman/v5/pkg/domain/entities/types"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/bindings"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/sirupsen/logrus"
 )
 
 // Events allows you to monitor libdpod related events like container creation and
 // removal.  The events are then passed to the eventChan provided. The optional cancelChan
 // can be used to cancel the read of events and close down the HTTP connection.
-func Events(ctx context.Context, eventChan chan types.Event, cancelChan chan bool, options *EventsOptions) error {
+func Events(ctx context.Context, eventChan chan entities.Event, cancelChan chan bool, options *EventsOptions) error {
 	conn, err := bindings.GetClient(ctx)
 	if err != nil {
 		return err
@@ -44,7 +44,7 @@ func Events(ctx context.Context, eventChan chan types.Event, cancelChan chan boo
 
 	dec := json.NewDecoder(response.Body)
 	for err = (error)(nil); err == nil; {
-		var e = types.Event{}
+		var e = entities.Event{}
 		err = dec.Decode(&e)
 		if err == nil {
 			eventChan <- e
@@ -62,9 +62,9 @@ func Events(ctx context.Context, eventChan chan types.Event, cancelChan chan boo
 }
 
 // Prune removes all unused system data.
-func Prune(ctx context.Context, options *PruneOptions) (*types.SystemPruneReport, error) {
+func Prune(ctx context.Context, options *PruneOptions) (*entities.SystemPruneReport, error) {
 	var (
-		report types.SystemPruneReport
+		report entities.SystemPruneReport
 	)
 	conn, err := bindings.GetClient(ctx)
 	if err != nil {
@@ -83,10 +83,10 @@ func Prune(ctx context.Context, options *PruneOptions) (*types.SystemPruneReport
 	return &report, response.Process(&report)
 }
 
-func Version(ctx context.Context, options *VersionOptions) (*types.SystemVersionReport, error) {
+func Version(ctx context.Context, options *VersionOptions) (*entities.SystemVersionReport, error) {
 	var (
-		component types.SystemComponentVersion
-		report    types.SystemVersionReport
+		component entities.ComponentVersion
+		report    entities.SystemVersionReport
 	)
 	if options == nil {
 		options = new(VersionOptions)
@@ -134,8 +134,8 @@ func Version(ctx context.Context, options *VersionOptions) (*types.SystemVersion
 
 // DiskUsage returns information about image, container, and volume disk
 // consumption
-func DiskUsage(ctx context.Context, options *DiskOptions) (*types.SystemDfReport, error) {
-	var report types.SystemDfReport
+func DiskUsage(ctx context.Context, options *DiskOptions) (*entities.SystemDfReport, error) {
+	var report entities.SystemDfReport
 	if options == nil {
 		options = new(DiskOptions)
 	}

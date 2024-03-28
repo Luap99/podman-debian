@@ -1,4 +1,5 @@
 //go:build !remote
+// +build !remote
 
 package generate
 
@@ -6,9 +7,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/containers/podman/v5/libpod"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/specgen"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/specgen"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/runtime-tools/generate"
 	"github.com/sirupsen/logrus"
@@ -152,13 +153,9 @@ func specConfigureNamespaces(s *specgen.SpecGenerator, g *generate.Generator, rt
 	if g.Config.Annotations == nil {
 		g.Config.Annotations = make(map[string]string)
 	}
-	if s.PublishExposedPorts != nil && *s.PublishExposedPorts {
+	if s.PublishExposedPorts {
 		g.Config.Annotations[define.InspectAnnotationPublishAll] = define.InspectResponseTrue
 	}
 
 	return nil
-}
-
-func needPostConfigureNetNS(s *specgen.SpecGenerator) bool {
-	return !s.UserNS.IsHost()
 }

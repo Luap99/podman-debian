@@ -14,8 +14,8 @@ import (
 	"github.com/containers/buildah/define"
 	lplatform "github.com/containers/common/libimage/platform"
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	"github.com/containers/podman/v5/pkg/domain/infra"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/domain/infra"
 	"github.com/hashicorp/go-multierror"
 	"github.com/sirupsen/logrus"
 )
@@ -32,7 +32,7 @@ type Schedule struct {
 	platformBuilders map[string]string // target->connection
 }
 
-func newFarmWithBuilders(_ context.Context, name string, cons []config.Connection, localEngine entities.ImageEngine, buildLocal bool) (*Farm, error) {
+func newFarmWithBuilders(_ context.Context, name string, destinations *map[string]config.Destination, localEngine entities.ImageEngine, buildLocal bool) (*Farm, error) {
 	farm := &Farm{
 		builders:    make(map[string]entities.ImageEngine),
 		localEngine: localEngine,
@@ -43,22 +43,22 @@ func newFarmWithBuilders(_ context.Context, name string, cons []config.Connectio
 		builderGroup multierror.Group
 	)
 	// Set up the remote connections to handle the builds
-	for _, con := range cons {
-		con := con
+	for name, dest := range *destinations {
+		name, dest := name, dest
 		builderGroup.Go(func() error {
-			fmt.Printf("Connecting to %q\n", con.Name)
+			fmt.Printf("Connecting to %q\n", name)
 			engine, err := infra.NewImageEngine(&entities.PodmanConfig{
 				EngineMode:   entities.TunnelMode,
-				URI:          con.URI,
-				Identity:     con.Identity,
-				MachineMode:  con.IsMachine,
-				FarmNodeName: con.Name,
+				URI:          dest.URI,
+				Identity:     dest.Identity,
+				MachineMode:  dest.IsMachine,
+				FarmNodeName: name,
 			})
 			if err != nil {
-				return fmt.Errorf("initializing image engine at %q: %w", con.URI, err)
+				return fmt.Errorf("initializing image engine at %q: %w", dest.URI, err)
 			}
 
-			defer fmt.Printf("Builder %q ready\n", con.Name)
+			defer fmt.Printf("Builder %q ready\n", name)
 			builderMutex.Lock()
 			defer builderMutex.Unlock()
 			farm.builders[name] = engine
@@ -90,12 +90,12 @@ func newFarmWithBuilders(_ context.Context, name string, cons []config.Connectio
 
 func NewFarm(ctx context.Context, name string, localEngine entities.ImageEngine, buildLocal bool) (*Farm, error) {
 	// Get the destinations of the connections specified in the farm
-	name, destinations, err := getFarmDestinations(name)
+	destinations, err := getFarmDestinations(name)
 	if err != nil {
 		return nil, err
 	}
 
-	return newFarmWithBuilders(ctx, name, destinations, localEngine, buildLocal)
+	return newFarmWithBuilders(ctx, name, &destinations, localEngine, buildLocal)
 }
 
 // Done performs any necessary end-of-process cleanup for the farm's members.
@@ -460,21 +460,22 @@ func (f *Farm) Build(ctx context.Context, schedule Schedule, options entities.Bu
 	return nil
 }
 
-func getFarmDestinations(name string) (string, []config.Connection, error) {
-	cfg, err := config.Default()
+func getFarmDestinations(name string) (map[string]config.Destination, error) {
+	dest := make(map[string]config.Destination)
+	cfg, err := config.ReadCustomConfig()
 	if err != nil {
-		return "", nil, err
+		return dest, err
 	}
 
+	// If no farm name is given, then grab all the service destinations available
 	if name == "" {
-		if name, cons, err := cfg.GetDefaultFarmConnections(); err == nil {
-			// Use default farm if is there is one
-			return name, cons, nil
-		}
-		// If no farm name is given, then grab all the service destinations available
-		cons, err := cfg.GetAllConnections()
-		return name, cons, err
+		return cfg.Engine.ServiceDestinations, nil
 	}
-	cons, err := cfg.GetFarmConnections(name)
-	return name, cons, err
+
+	// Go through the connections in the farm and get their destination
+	for _, c := range cfg.Farms.List[name] {
+		dest[c] = cfg.Engine.ServiceDestinations[c]
+	}
+
+	return dest, nil
 }

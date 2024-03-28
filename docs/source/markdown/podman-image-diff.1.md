@@ -25,18 +25,16 @@ Alter the output into a different format.  The only valid format for **podman im
 
 ## EXAMPLE
 
-Display image differences from images parent layer:
 ```
-$ podman image diff redis:old
+$ podman diff redis:old
 C /usr
 C /usr/local
 C /usr/local/bin
 A /usr/local/bin/docker-entrypoint.sh
 ```
 
-Display image differences between two different images in JSON format:
 ```
-$ podman image diff --format json redis:old redis:alpine
+$ podman diff --format json redis:old redis:alpine
 {
   "changed": [
     "/usr",

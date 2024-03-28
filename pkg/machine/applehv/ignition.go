@@ -1,4 +1,5 @@
 //go:build darwin
+// +build darwin
 
 package applehv
 
@@ -6,21 +7,15 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/containers/podman/v5/pkg/machine/define"
-	"github.com/containers/podman/v5/pkg/machine/vmconfigs"
+	"github.com/containers/podman/v4/pkg/machine/define"
 	"github.com/sirupsen/logrus"
 )
 
 // serveIgnitionOverSock allows podman to open a small httpd instance on the vsock between the host
 // and guest to inject the ignitionfile into fcos
-func serveIgnitionOverSock(ignitionSocket *define.VMFile, mc *vmconfigs.MachineConfig) error {
-	ignitionFile, err := mc.IgnitionFile()
-	if err != nil {
-		return err
-	}
-
-	logrus.Debugf("reading ignition file: %s", ignitionFile.GetPath())
-	ignFile, err := ignitionFile.Read()
+func (m *MacMachine) serveIgnitionOverSock(ignitionSocket *define.VMFile) error {
+	logrus.Debugf("reading ignition file: %s", m.IgnitionFile.GetPath())
+	ignFile, err := m.IgnitionFile.Read()
 	if err != nil {
 		return err
 	}
@@ -28,7 +23,7 @@ func serveIgnitionOverSock(ignitionSocket *define.VMFile, mc *vmconfigs.MachineC
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		_, err := w.Write(ignFile)
 		if err != nil {
-			logrus.Errorf("failed to serve ignition file: %v", err)
+			logrus.Error("failed to serve ignition file: %v", err)
 		}
 	})
 	listener, err := net.Listen("unix", ignitionSocket.GetPath())

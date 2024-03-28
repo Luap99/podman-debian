@@ -12,8 +12,8 @@ import (
 	"github.com/containers/common/pkg/apparmor"
 	"github.com/containers/common/pkg/seccomp"
 	"github.com/containers/common/pkg/sysinfo"
-	"github.com/containers/podman/v5/pkg/util"
-	. "github.com/containers/podman/v5/test/utils"
+	"github.com/containers/podman/v4/pkg/util"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -329,7 +329,7 @@ var _ = Describe("Podman pod create", func() {
 		check1 := podmanTest.Podman([]string{"container", "inspect", "--format", "{{.Config.Entrypoint}}", data.Containers[0].ID})
 		check1.WaitWithDefaultTimeout()
 		Expect(check1).Should(ExitCleanly())
-		Expect(check1.OutputToString()).To(Equal("[/catatonit -P]"))
+		Expect(check1.OutputToString()).To(Equal("/catatonit -P"))
 
 		// check the Path and Args
 		check2 := podmanTest.Podman([]string{"container", "inspect", "--format", "{{.Path}}:{{.Args}}", data.Containers[0].ID})
@@ -352,7 +352,7 @@ var _ = Describe("Podman pod create", func() {
 		check1 := podmanTest.Podman([]string{"container", "inspect", "--format", "{{.Config.Entrypoint}}", data.Containers[0].ID})
 		check1.WaitWithDefaultTimeout()
 		Expect(check1).Should(ExitCleanly())
-		Expect(check1.OutputToString()).To(Equal("[/pause1]"))
+		Expect(check1.OutputToString()).To(Equal("/pause1"))
 
 		// check the Path and Args
 		check2 := podmanTest.Podman([]string{"container", "inspect", "--format", "{{.Path}}:{{.Args}}", data.Containers[0].ID})
@@ -379,7 +379,7 @@ entrypoint ["/fromimage"]
 		check1 := podmanTest.Podman([]string{"container", "inspect", "--format", "{{.Config.Entrypoint}}", data.Containers[0].ID})
 		check1.WaitWithDefaultTimeout()
 		Expect(check1).Should(ExitCleanly())
-		Expect(check1.OutputToString()).To(Equal("[/fromimage]"))
+		Expect(check1.OutputToString()).To(Equal("/fromimage"))
 
 		// check the Path and Args
 		check2 := podmanTest.Podman([]string{"container", "inspect", "--format", "{{.Path}}:{{.Args}}", data.Containers[0].ID})
@@ -406,7 +406,7 @@ entrypoint ["/fromimage"]
 		check1 := podmanTest.Podman([]string{"container", "inspect", "--format", "{{.Config.Entrypoint}}", data.Containers[0].ID})
 		check1.WaitWithDefaultTimeout()
 		Expect(check1).Should(ExitCleanly())
-		Expect(check1.OutputToString()).To(Equal("[/fromcommand]"))
+		Expect(check1.OutputToString()).To(Equal("/fromcommand"))
 
 		// check the Path and Args
 		check2 := podmanTest.Podman([]string{"container", "inspect", "--format", "{{.Path}}:{{.Args}}", data.Containers[0].ID})

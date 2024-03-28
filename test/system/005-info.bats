@@ -23,8 +23,6 @@ runRoot:
 cgroupManager: \\\(systemd\\\|cgroupfs\\\)
 cgroupVersion: v[12]
 "
-    defer-assertion-failures
-
     while read expect; do
         is "$output" ".*$expect" "output includes '$expect'"
     done < <(parse_table "$expected_keys")
@@ -54,13 +52,11 @@ store.imageStore.number   | 1
 host.slirp4netns.executable | $expr_path
 "
 
-    defer-assertion-failures
-
-    while read field expect; do
+    parse_table "$tests" | while read field expect; do
         actual=$(echo "$output" | jq -r ".$field")
         dprint "# actual=<$actual> expect=<$expect>"
         is "$actual" "$expect" "jq .$field"
-    done < <(parse_table "$tests")
+    done
 }
 
 @test "podman info - confirm desired runtime" {
@@ -82,8 +78,21 @@ host.slirp4netns.executable | $expr_path
 }
 
 @test "podman info - confirm desired network backend" {
+    if [[ -z "$CI_DESIRED_NETWORK" ]]; then
+        # When running in Cirrus, CI_DESIRED_NETWORK *must* be defined
+        # in .cirrus.yml so we can double-check that all CI VMs are
+        # using netavark or cni as desired.
+        if [[ -n "$CIRRUS_CI" ]]; then
+            die "CIRRUS_CI is set, but CI_DESIRED_NETWORK is not! See #16389"
+        fi
+
+        # Not running under Cirrus (e.g., gating tests, or dev laptop).
+        # Totally OK to skip this test.
+        skip "CI_DESIRED_NETWORK is unset--OK, because we're not in Cirrus"
+    fi
+
     run_podman info --format '{{.Host.NetworkBackend}}'
-    is "$output" "netavark" "netavark backend"
+    is "$output" "$CI_DESIRED_NETWORK" "CI_DESIRED_NETWORK (from .cirrus.yml)"
 }
 
 @test "podman info - confirm desired database" {
@@ -240,22 +249,6 @@ EOF
     assert "$output" =~ "volplugin1" "CONTAINERS_CONF_OVERRIDE does not clobber volume_plugins from CONTAINERS_CONF"
     assert "$output" =~ "volplugin2" "volume_plugins seen from CONTAINERS_CONF_OVERRIDE"
 
-}
-
-@test "podman - BoltDB cannot create new databases" {
-    skip_if_remote "DB checks only work for local Podman"
-
-    safe_opts=$(podman_isolation_opts ${PODMAN_TMPDIR})
-
-    CI_DESIRED_DATABASE= run_podman 125 $safe_opts --db-backend=boltdb info
-    assert "$output" =~ "deprecated, no new BoltDB databases can be created" \
-           "without CI_DESIRED_DATABASE"
-
-    CI_DESIRED_DATABASE=boltdb run_podman $safe_opts --log-level=debug --db-backend=boltdb info
-    assert "$output" =~ "Allowing deprecated database backend" \
-           "with CI_DESIRED_DATABASE"
-
-    run_podman $safe_opts system reset --force
 }
 
 # vim: filetype=sh

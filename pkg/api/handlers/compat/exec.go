@@ -8,15 +8,15 @@ import (
 	"strings"
 
 	"github.com/containers/common/pkg/resize"
-	"github.com/containers/podman/v5/libpod"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/api/handlers"
-	"github.com/containers/podman/v5/pkg/api/handlers/utils"
-	"github.com/containers/podman/v5/pkg/api/server/idle"
-	api "github.com/containers/podman/v5/pkg/api/types"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	"github.com/containers/podman/v5/pkg/specgenutil"
-	"github.com/containers/podman/v5/pkg/util"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/api/handlers"
+	"github.com/containers/podman/v4/pkg/api/handlers/utils"
+	"github.com/containers/podman/v4/pkg/api/server/idle"
+	api "github.com/containers/podman/v4/pkg/api/types"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/specgenutil"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/gorilla/mux"
 	"github.com/sirupsen/logrus"
 )
@@ -49,12 +49,12 @@ func ExecCreateHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	libpodConfig.Environment = make(map[string]string)
 	for _, envStr := range input.Env {
-		key, val, hasVal := strings.Cut(envStr, "=")
-		if !hasVal {
+		split := strings.SplitN(envStr, "=", 2)
+		if len(split) != 2 {
 			utils.Error(w, http.StatusBadRequest, fmt.Errorf("environment variable %q badly formed, must be key=value", envStr))
 			return
 		}
-		libpodConfig.Environment[key] = val
+		libpodConfig.Environment[split[0]] = split[1]
 	}
 	libpodConfig.WorkDir = input.WorkingDir
 	libpodConfig.Privileged = input.Privileged

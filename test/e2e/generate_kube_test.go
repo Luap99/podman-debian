@@ -8,11 +8,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v4/libpod/define"
 
-	v1 "github.com/containers/podman/v5/pkg/k8s.io/api/core/v1"
-	"github.com/containers/podman/v5/pkg/util"
-	. "github.com/containers/podman/v5/test/utils"
+	v1 "github.com/containers/podman/v4/pkg/k8s.io/api/core/v1"
+	"github.com/containers/podman/v4/pkg/util"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -668,11 +668,11 @@ var _ = Describe("Podman kube generate", func() {
 	It("on pod with ports", func() {
 		podName := "test"
 
-		lock4 := GetPortLock("4008")
+		lock4 := GetPortLock("4000")
 		defer lock4.Unlock()
-		lock5 := GetPortLock("5008")
+		lock5 := GetPortLock("5000")
 		defer lock5.Unlock()
-		podSession := podmanTest.Podman([]string{"pod", "create", "--name", podName, "-p", "4008:4000", "-p", "5008:5000"})
+		podSession := podmanTest.Podman([]string{"pod", "create", "--name", podName, "-p", "4000:4000", "-p", "5000:5000"})
 		podSession.WaitWithDefaultTimeout()
 		Expect(podSession).Should(ExitCleanly())
 
@@ -694,8 +694,8 @@ var _ = Describe("Podman kube generate", func() {
 		err := yaml.Unmarshal(kube.Out.Contents(), pod)
 		Expect(err).ToNot(HaveOccurred())
 
-		foundPort400x := 0
-		foundPort500x := 0
+		foundPort4000 := 0
+		foundPort5000 := 0
 		foundOtherPort := 0
 		for _, ctr := range pod.Spec.Containers {
 			for _, port := range ctr.Ports {
@@ -703,17 +703,17 @@ var _ = Describe("Podman kube generate", func() {
 				// have anything for protocol under the ports as tcp is the default
 				// for k8s
 				Expect(port.Protocol).To(BeEmpty())
-				if port.HostPort == 4008 {
-					foundPort400x++
-				} else if port.HostPort == 5008 {
-					foundPort500x++
+				if port.HostPort == 4000 {
+					foundPort4000++
+				} else if port.HostPort == 5000 {
+					foundPort5000++
 				} else {
 					foundOtherPort++
 				}
 			}
 		}
-		Expect(foundPort400x).To(Equal(1))
-		Expect(foundPort500x).To(Equal(1))
+		Expect(foundPort4000).To(Equal(1))
+		Expect(foundPort5000).To(Equal(1))
 		Expect(foundOtherPort).To(Equal(0))
 
 		// Create container with UDP port and check the generated kube yaml
@@ -1562,6 +1562,117 @@ USER test1`
 		Expect(pod.Spec.Hostname).To(Equal(""))
 	})
 
+	It("--no-trunc on container with long annotation", func() {
+		ctrName := "demo"
+		vol1 := filepath.Join(podmanTest.TempDir, RandomString(99))
+		err := os.MkdirAll(vol1, 0755)
+		Expect(err).ToNot(HaveOccurred())
+
+		session := podmanTest.Podman([]string{"create", "-v", vol1 + ":/tmp/foo:Z", "--name", ctrName, CITEST_IMAGE})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(ExitCleanly())
+
+		kube := podmanTest.Podman([]string{"kube", "generate", "--no-trunc", ctrName})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(ExitCleanly())
+
+		pod := new(v1.Pod)
+		err = yaml.Unmarshal(kube.Out.Contents(), pod)
+		Expect(err).ToNot(HaveOccurred())
+
+		Expect(pod.Annotations).To(HaveKeyWithValue(define.BindMountPrefix, vol1+":Z"))
+		Expect(pod.Annotations).To(Not(HaveKeyWithValue(define.BindMountPrefix, vol1[:define.MaxKubeAnnotation])))
+	})
+
+	It("on container with long annotation", func() {
+		ctrName := "demo"
+		vol1 := filepath.Join(podmanTest.TempDir, RandomString(99))
+		err := os.MkdirAll(vol1, 0755)
+		Expect(err).ToNot(HaveOccurred())
+
+		session := podmanTest.Podman([]string{"create", "-v", vol1 + ":/tmp/foo:Z", "--name", ctrName, CITEST_IMAGE})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(ExitCleanly())
+
+		kube := podmanTest.Podman([]string{"kube", "generate", ctrName})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(Exit(0))
+		if IsRemote() {
+			Expect(kube.ErrorToString()).To(BeEmpty())
+		} else {
+			Expect(kube.ErrorToString()).To(ContainSubstring("Truncation Annotation:"))
+			Expect(kube.ErrorToString()).To(ContainSubstring("Kubernetes only allows 63 characters"))
+		}
+
+		pod := new(v1.Pod)
+		err = yaml.Unmarshal(kube.Out.Contents(), pod)
+		Expect(err).ToNot(HaveOccurred())
+
+		Expect(pod.Annotations).To(HaveKeyWithValue(define.BindMountPrefix, vol1[:define.MaxKubeAnnotation]))
+		Expect(pod.Annotations).To(Not(HaveKeyWithValue(define.BindMountPrefix, vol1+":Z")))
+	})
+
+	It("--no-trunc on pod with long annotation", func() {
+		ctrName := "demoCtr"
+		podName := "demoPod"
+		vol1 := filepath.Join(podmanTest.TempDir, RandomString(99))
+		err := os.MkdirAll(vol1, 0755)
+		Expect(err).ToNot(HaveOccurred())
+
+		session := podmanTest.Podman([]string{"pod", "create", podName})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(ExitCleanly())
+
+		session = podmanTest.Podman([]string{"create", "-v", vol1 + ":/tmp/foo:Z", "--name", ctrName, "--pod", podName, CITEST_IMAGE})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(ExitCleanly())
+
+		kube := podmanTest.Podman([]string{"kube", "generate", "--no-trunc", podName})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(ExitCleanly())
+
+		pod := new(v1.Pod)
+		err = yaml.Unmarshal(kube.Out.Contents(), pod)
+		Expect(err).ToNot(HaveOccurred())
+
+		Expect(pod.Annotations).To(HaveKeyWithValue(define.BindMountPrefix, vol1+":Z"))
+		Expect(pod.Annotations).To(Not(HaveKeyWithValue(define.BindMountPrefix, vol1[:define.MaxKubeAnnotation])))
+	})
+
+	It("on pod with long annotation", func() {
+		ctrName := "demoCtr"
+		podName := "demoPod"
+		vol1 := filepath.Join(podmanTest.TempDir, RandomString(99))
+		err := os.MkdirAll(vol1, 0755)
+		Expect(err).ToNot(HaveOccurred())
+
+		session := podmanTest.Podman([]string{"pod", "create", podName})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(ExitCleanly())
+
+		session = podmanTest.Podman([]string{"create", "-v", vol1 + ":/tmp/foo:Z", "--name", ctrName, "--pod", podName, CITEST_IMAGE})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(ExitCleanly())
+
+		kube := podmanTest.Podman([]string{"kube", "generate", podName})
+		kube.WaitWithDefaultTimeout()
+		Expect(kube).Should(Exit(0))
+
+		if IsRemote() {
+			Expect(kube.ErrorToString()).To(BeEmpty())
+		} else {
+			Expect(kube.ErrorToString()).To(ContainSubstring("Truncation Annotation:"))
+			Expect(kube.ErrorToString()).To(ContainSubstring("Kubernetes only allows 63 characters"))
+		}
+
+		pod := new(v1.Pod)
+		err = yaml.Unmarshal(kube.Out.Contents(), pod)
+		Expect(err).ToNot(HaveOccurred())
+
+		Expect(pod.Annotations).To(HaveKeyWithValue(define.BindMountPrefix, vol1[:define.MaxKubeAnnotation]))
+		Expect(pod.Annotations).To(Not(HaveKeyWithValue(define.BindMountPrefix, vol1+":Z")))
+	})
+
 	It("--podman-only on container with --volumes-from", func() {
 		ctr1 := "ctr1"
 		ctr2 := "ctr2"
@@ -1585,45 +1696,7 @@ USER test1`
 		pod := new(v1.Pod)
 		err = yaml.Unmarshal(kube.Out.Contents(), pod)
 		Expect(err).ToNot(HaveOccurred())
-		Expect(pod.Annotations).To(HaveKeyWithValue(define.VolumesFromAnnotation+"/"+ctr2, ctr1))
-	})
-
-	It("pod volumes-from annotation with semicolon as field separator", func() {
-		// Assert that volumes-from annotation for multiple source
-		// containers along with their mount options are getting
-		// generated with semicolon as the field separator.
-
-		srcctr1, srcctr2, tgtctr := "srcctr1", "srcctr2", "tgtctr"
-		frmopt1, frmopt2 := srcctr1+":ro", srcctr2+":ro"
-		vol1 := filepath.Join(podmanTest.TempDir, "vol-test1")
-		vol2 := filepath.Join(podmanTest.TempDir, "vol-test2")
-
-		err1 := os.MkdirAll(vol1, 0755)
-		Expect(err1).ToNot(HaveOccurred())
-
-		err2 := os.MkdirAll(vol2, 0755)
-		Expect(err2).ToNot(HaveOccurred())
-
-		session := podmanTest.Podman([]string{"create", "--name", srcctr1, "-v", vol1, CITEST_IMAGE})
-		session.WaitWithDefaultTimeout()
-		Expect(session).Should(ExitCleanly())
-
-		session = podmanTest.Podman([]string{"create", "--name", srcctr2, "-v", vol2, CITEST_IMAGE})
-		session.WaitWithDefaultTimeout()
-		Expect(session).Should(ExitCleanly())
-
-		session = podmanTest.Podman([]string{"create", "--volumes-from", frmopt1, "--volumes-from", frmopt2, "--name", tgtctr, CITEST_IMAGE})
-		session.WaitWithDefaultTimeout()
-		Expect(session).Should(ExitCleanly())
-
-		kube := podmanTest.Podman([]string{"kube", "generate", "--podman-only", tgtctr})
-		kube.WaitWithDefaultTimeout()
-		Expect(kube).Should(ExitCleanly())
-
-		pod := new(v1.Pod)
-		err3 := yaml.Unmarshal(kube.Out.Contents(), pod)
-		Expect(err3).ToNot(HaveOccurred())
-		Expect(pod.Annotations).To(HaveKeyWithValue(define.VolumesFromAnnotation+"/"+tgtctr, frmopt1+";"+frmopt2))
+		Expect(pod.Annotations).To(HaveKeyWithValue(define.InspectAnnotationVolumesFrom+"/"+ctr2, ctr1))
 	})
 
 	It("--podman-only on container with --rm", func() {

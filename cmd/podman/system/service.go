@@ -1,4 +1,6 @@
 //go:build (linux || freebsd) && !remote
+// +build linux freebsd
+// +build !remote
 
 package system
 
@@ -10,12 +12,12 @@ import (
 	"time"
 
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/podman/v5/cmd/podman/common"
-	"github.com/containers/podman/v5/cmd/podman/registry"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	"github.com/containers/podman/v5/pkg/rootless"
-	"github.com/containers/podman/v5/pkg/systemd"
-	"github.com/containers/podman/v5/pkg/util"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/systemd"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -128,7 +130,7 @@ func resolveAPIURI(uri []string) (string, error) {
 		logrus.Info("Using systemd socket activation to determine API endpoint")
 		return "", nil
 	case rootless.IsRootless():
-		xdg, err := util.GetRootlessRuntimeDir()
+		xdg, err := util.GetRuntimeDir()
 		if err != nil {
 			return "", err
 		}

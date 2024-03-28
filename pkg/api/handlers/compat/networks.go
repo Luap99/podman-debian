@@ -9,18 +9,48 @@ import (
 
 	nettypes "github.com/containers/common/libnetwork/types"
 	netutil "github.com/containers/common/libnetwork/util"
-	"github.com/containers/podman/v5/libpod"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/api/handlers/utils"
-	api "github.com/containers/podman/v5/pkg/api/types"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	"github.com/containers/podman/v5/pkg/domain/infra/abi"
-	"github.com/containers/podman/v5/pkg/util"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v4/pkg/api/types"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/domain/infra/abi"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/docker/docker/api/types"
 
 	dockerNetwork "github.com/docker/docker/api/types/network"
 	"github.com/sirupsen/logrus"
 )
+
+type containerNetStatus struct {
+	name   string
+	id     string
+	status map[string]nettypes.StatusBlock
+}
+
+func getContainerNetStatuses(rt *libpod.Runtime) ([]containerNetStatus, error) {
+	cons, err := rt.GetAllContainers()
+	if err != nil {
+		return nil, err
+	}
+	statuses := make([]containerNetStatus, 0, len(cons))
+	for _, con := range cons {
+		status, err := con.GetNetworkStatus()
+		if err != nil {
+			if errors.Is(err, define.ErrNoSuchCtr) || errors.Is(err, define.ErrCtrRemoved) {
+				continue
+			}
+			return nil, err
+		}
+
+		statuses = append(statuses, containerNetStatus{
+			id:     con.ID(),
+			name:   con.Name(),
+			status: status,
+		})
+	}
+	return statuses, nil
+}
 
 func normalizeNetworkName(rt *libpod.Runtime, name string) (string, bool) {
 	if name == nettypes.BridgeNetworkDriver {
@@ -56,8 +86,7 @@ func InspectNetwork(w http.ResponseWriter, r *http.Request) {
 		utils.NetworkNotFound(w, name, err)
 		return
 	}
-	ic := abi.ContainerEngine{Libpod: runtime}
-	statuses, err := ic.GetContainerNetStatuses()
+	statuses, err := getContainerNetStatuses(runtime)
 	if err != nil {
 		utils.InternalServerError(w, err)
 		return
@@ -66,10 +95,10 @@ func InspectNetwork(w http.ResponseWriter, r *http.Request) {
 	utils.WriteResponse(w, http.StatusOK, report)
 }
 
-func convertLibpodNetworktoDockerNetwork(runtime *libpod.Runtime, statuses []abi.ContainerNetStatus, network *nettypes.Network, changeDefaultName bool) *types.NetworkResource {
+func convertLibpodNetworktoDockerNetwork(runtime *libpod.Runtime, statuses []containerNetStatus, network *nettypes.Network, changeDefaultName bool) *types.NetworkResource {
 	containerEndpoints := make(map[string]types.EndpointResource, len(statuses))
 	for _, st := range statuses {
-		if netData, ok := st.Status[network.Name]; ok {
+		if netData, ok := st.status[network.Name]; ok {
 			ipv4Address := ""
 			ipv6Address := ""
 			macAddr := ""
@@ -87,12 +116,12 @@ func convertLibpodNetworktoDockerNetwork(runtime *libpod.Runtime, statuses []abi
 				break
 			}
 			containerEndpoint := types.EndpointResource{
-				Name:        st.Name,
+				Name:        st.name,
 				MacAddress:  macAddr,
 				IPv4Address: ipv4Address,
 				IPv6Address: ipv6Address,
 			}
-			containerEndpoints[st.ID] = containerEndpoint
+			containerEndpoints[st.id] = containerEndpoint
 		}
 	}
 	ipamConfigs := make([]dockerNetwork.IPAMConfig, 0, len(network.Subnets))
@@ -163,7 +192,7 @@ func ListNetworks(w http.ResponseWriter, r *http.Request) {
 		utils.InternalServerError(w, err)
 		return
 	}
-	statuses, err := ic.GetContainerNetStatuses()
+	statuses, err := getContainerNetStatuses(runtime)
 	if err != nil {
 		utils.InternalServerError(w, err)
 		return
@@ -279,10 +308,7 @@ func CreateNetwork(w http.ResponseWriter, r *http.Request) {
 	}
 
 	opts := nettypes.NetworkCreateOptions{
-		// networkCreate.CheckDuplicate is deprecated since API v1.44,
-		// but it defaults to true when sent by the client package to
-		// older daemons.
-		IgnoreIfExists: false,
+		IgnoreIfExists: !networkCreate.CheckDuplicate,
 	}
 	ic := abi.ContainerEngine{Libpod: runtime}
 	newNetwork, err := ic.NetworkCreate(r.Context(), network, &opts)

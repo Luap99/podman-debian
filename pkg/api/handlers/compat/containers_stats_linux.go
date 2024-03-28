@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/containers/common/pkg/cgroups"
-	"github.com/containers/podman/v5/libpod"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/api/handlers/utils"
-	api "github.com/containers/podman/v5/pkg/api/types"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v4/pkg/api/types"
 	"github.com/containers/storage/pkg/system"
 	docker "github.com/docker/docker/api/types"
 	runccgroups "github.com/opencontainers/runc/libcontainer/cgroups"
@@ -119,20 +119,23 @@ streamLabel: // A label to flatten the scope
 			return
 		}
 
+		// FIXME: network inspection does not yet work entirely
 		net := make(map[string]docker.NetworkStats)
-		for netName, netStats := range stats.Network {
-			net[netName] = docker.NetworkStats{
-				RxBytes:    netStats.RxBytes,
-				RxPackets:  netStats.RxPackets,
-				RxErrors:   netStats.RxErrors,
-				RxDropped:  netStats.RxDropped,
-				TxBytes:    netStats.TxBytes,
-				TxPackets:  netStats.TxPackets,
-				TxErrors:   netStats.TxErrors,
-				TxDropped:  netStats.TxDropped,
-				EndpointID: inspect.NetworkSettings.EndpointID,
-				InstanceID: "",
-			}
+		networkName := inspect.NetworkSettings.EndpointID
+		if networkName == "" {
+			networkName = "network"
+		}
+		net[networkName] = docker.NetworkStats{
+			RxBytes:    stats.NetInput,
+			RxPackets:  0,
+			RxErrors:   0,
+			RxDropped:  0,
+			TxBytes:    stats.NetOutput,
+			TxPackets:  0,
+			TxErrors:   0,
+			TxDropped:  0,
+			EndpointID: inspect.NetworkSettings.EndpointID,
+			InstanceID: "",
 		}
 
 		resources := ctnr.LinuxResources()

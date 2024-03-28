@@ -1,4 +1,5 @@
 //go:build darwin
+// +build darwin
 
 package main
 
@@ -72,7 +73,7 @@ func getUserInfo(name string) (string, string, string, error) {
 	entry := readCapped(output)
 	elements := strings.Split(entry, ":")
 	if len(elements) < 9 || elements[0] != name {
-		return "", "", "", errors.New("could not look up user")
+		return "", "", "", errors.New("Could not look up user")
 	}
 
 	return elements[0], elements[2], elements[8], nil

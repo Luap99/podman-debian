@@ -67,19 +67,13 @@ function teardown() {
     is "$output" "running:true:false:false" \
        "State. Status:Running:Pause:Checkpointed"
 
-    # Re-fetch logs, and ensure that they continue growing.
-    # Allow a short while for container process to actually restart.
-    local retries=10
-    while [[ $retries -gt 0 ]]; do
-        run_podman logs $cid
-        local nlines_after="${#lines[*]}"
-        if [[ $nlines_after -gt $nlines_before ]]; then
-            break
-        fi
-        sleep 0.1
-        retries=$((retries - 1))
-    done
-    assert "$retries" -gt 0 \
+    # Pause briefly to let restarted container emit some output
+    sleep 0.3
+
+    # Get full logs, and make sure something changed
+    run_podman logs $cid
+    local nlines_after="${#lines[*]}"
+    assert $nlines_after -gt $nlines_before \
            "Container failed to output new lines after first restore"
 
     # Same thing again: test for https://github.com/containers/crun/issues/756
@@ -89,18 +83,12 @@ function teardown() {
     nlines_before="${#lines[*]}"
     run_podman container restore $cid
 
-    # Same as above, confirm that we get new output
-    retries=10
-    while [[ $retries -gt 0 ]]; do
-        run_podman logs $cid
-        local nlines_after="${#lines[*]}"
-        if [[ $nlines_after -gt $nlines_before ]]; then
-            break
-        fi
-        sleep 0.1
-        retries=$((retries - 1))
-    done
-    assert "$retries" -gt 0 \
+    # Give container time to write new output; then confirm that something
+    # was emitted
+    sleep 0.3
+    run_podman container logs $cid
+    nlines_after="${#lines[*]}"
+    assert $nlines_after -gt $nlines_before \
            "stdout went away after second restore (crun issue 756)"
 
     run_podman rm -t 0 -f $cid
@@ -129,8 +117,13 @@ function teardown() {
 @test "podman checkpoint --export, with volumes" {
     skip_if_remote "Test uses --root/--runroot, which are N/A over remote"
 
+    # Create a root in tempdir. We will run a container here.
+    local p_root=${PODMAN_TMPDIR}/testroot/root
+    local p_runroot=${PODMAN_TMPDIR}/testroot/runroot
+    mkdir -p $p_root $p_runroot
+
     # To avoid network pull, copy $IMAGE straight to temp root
-    local p_opts="$(podman_isolation_opts ${PODMAN_TMPDIR}) --events-backend file"
+    local p_opts="--root $p_root --runroot $p_runroot --events-backend file"
     run_podman         save -o $PODMAN_TMPDIR/image.tar $IMAGE
     run_podman $p_opts load -i $PODMAN_TMPDIR/image.tar
 

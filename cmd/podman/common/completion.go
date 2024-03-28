@@ -16,14 +16,14 @@ import (
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/ssh"
 	"github.com/containers/image/v5/pkg/sysregistriesv2"
-	"github.com/containers/podman/v5/cmd/podman/registry"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/libpod/events"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	"github.com/containers/podman/v5/pkg/inspect"
-	"github.com/containers/podman/v5/pkg/signal"
-	systemdDefine "github.com/containers/podman/v5/pkg/systemd/define"
-	"github.com/containers/podman/v5/pkg/util"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/libpod/events"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/inspect"
+	"github.com/containers/podman/v4/pkg/signal"
+	systemdDefine "github.com/containers/podman/v4/pkg/systemd/define"
+	"github.com/containers/podman/v4/pkg/util"
 	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/spf13/cobra"
 )
@@ -423,9 +423,9 @@ func prefixSlice(pre string, slice []string) []string {
 
 func suffixCompSlice(suf string, slice []string) []string {
 	for i := range slice {
-		key, val, hasVal := strings.Cut(slice[i], "\t")
-		if hasVal {
-			slice[i] = key + suf + "\t" + val
+		split := strings.SplitN(slice[i], "\t", 2)
+		if len(split) > 1 {
+			slice[i] = split[0] + suf + "\t" + split[1]
 		} else {
 			slice[i] += suf
 		}
@@ -837,15 +837,15 @@ func AutoCompleteFarms(cmd *cobra.Command, args []string, toComplete string) ([]
 	if !validCurrentCmdLine(cmd, args, toComplete) {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	farms, err := podmanConfig.ContainersConfDefaultsRO.GetAllFarms()
+	suggestions := []string{}
+	cfg, err := config.ReadCustomConfig()
 	if err != nil {
 		cobra.CompErrorln(err.Error())
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 
-	suggestions := make([]string, 0, len(farms))
-	for _, farm := range farms {
-		suggestions = append(suggestions, farm.Name)
+	for k := range cfg.Farms.List {
+		suggestions = append(suggestions, k)
 	}
 
 	return suggestions, cobra.ShellCompDirectiveNoFileComp
@@ -856,17 +856,16 @@ func AutocompleteSystemConnections(cmd *cobra.Command, args []string, toComplete
 	if !validCurrentCmdLine(cmd, args, toComplete) {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-
-	cons, err := podmanConfig.ContainersConfDefaultsRO.GetAllConnections()
+	suggestions := []string{}
+	cfg, err := config.ReadCustomConfig()
 	if err != nil {
 		cobra.CompErrorln(err.Error())
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 
-	suggestions := make([]string, 0, len(cons))
-	for _, con := range cons {
+	for k, v := range cfg.Engine.ServiceDestinations {
 		// the URI will be show as description in shells like zsh
-		suggestions = append(suggestions, con.Name+"\t"+con.URI)
+		suggestions = append(suggestions, k+"\t"+v.URI)
 	}
 
 	return suggestions, cobra.ShellCompDirectiveNoFileComp
@@ -879,10 +878,10 @@ func AutocompleteScp(cmd *cobra.Command, args []string, toComplete string) ([]st
 	}
 	switch len(args) {
 	case 0:
-		prefix, imagesToComplete, isImages := strings.Cut(toComplete, "::")
-		if isImages {
-			imageSuggestions, _ := getImages(cmd, imagesToComplete)
-			return prefixSlice(prefix+"::", imageSuggestions), cobra.ShellCompDirectiveNoFileComp
+		split := strings.SplitN(toComplete, "::", 2)
+		if len(split) > 1 {
+			imageSuggestions, _ := getImages(cmd, split[1])
+			return prefixSlice(split[0]+"::", imageSuggestions), cobra.ShellCompDirectiveNoFileComp
 		}
 		connectionSuggestions, _ := AutocompleteSystemConnections(cmd, args, toComplete)
 		imageSuggestions, _ := getImages(cmd, toComplete)
@@ -894,9 +893,9 @@ func AutocompleteScp(cmd *cobra.Command, args []string, toComplete string) ([]st
 		}
 		return totalSuggestions, directive
 	case 1:
-		_, imagesToComplete, isImages := strings.Cut(args[0], "::")
-		if isImages {
-			if len(imagesToComplete) > 0 {
+		split := strings.SplitN(args[0], "::", 2)
+		if len(split) > 1 {
+			if len(split[1]) > 0 {
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			}
 			imageSuggestions, _ := getImages(cmd, toComplete)
@@ -980,12 +979,12 @@ func AutocompleteImageVolume(cmd *cobra.Command, args []string, toComplete strin
 }
 
 // AutocompleteLogDriver - Autocomplete log-driver options.
-// -> "journald", "none", "k8s-file", "passthrough", "passthrough-tty"
+// -> "journald", "none", "k8s-file", "passthrough"
 func AutocompleteLogDriver(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	// don't show json-file
 	logDrivers := []string{define.JournaldLogging, define.NoLogging, define.KubernetesLogging}
 	if !registry.IsRemote() {
-		logDrivers = append(logDrivers, define.PassthroughLogging, define.PassthroughTTYLogging)
+		logDrivers = append(logDrivers, define.PassthroughLogging)
 	}
 	return logDrivers, cobra.ShellCompDirectiveNoFileComp
 }
@@ -1077,7 +1076,7 @@ func AutocompleteUserFlag(cmd *cobra.Command, args []string, toComplete string) 
 
 		var groups []string
 		scanner := bufio.NewScanner(file)
-		user, _, _ := strings.Cut(toComplete, ":")
+		user := strings.SplitN(toComplete, ":", 2)[0]
 		for scanner.Scan() {
 			entries := strings.SplitN(scanner.Text(), ":", 4)
 			groups = append(groups, user+":"+entries[0])
@@ -1298,7 +1297,7 @@ func getEntityType(cmd *cobra.Command, args []string, o interface{}) interface{}
 	}
 	// network logic
 	if networks, _ := getNetworks(cmd, args[0], completeDefault); len(networks) > 0 {
-		return &entities.NetworkInspectReport{}
+		return &types.Network{}
 	}
 	return o
 }
@@ -1420,10 +1419,10 @@ func AutocompleteEventFilter(cmd *cobra.Command, args []string, toComplete strin
 			events.Exited.String(), events.Export.String(), events.Import.String(), events.Init.String(), events.Kill.String(),
 			events.LoadFromArchive.String(), events.Mount.String(), events.NetworkConnect.String(),
 			events.NetworkDisconnect.String(), events.Pause.String(), events.Prune.String(), events.Pull.String(),
-			events.PullError.String(), events.Push.String(), events.Refresh.String(), events.Remove.String(),
-			events.Rename.String(), events.Renumber.String(), events.Restart.String(), events.Restore.String(),
-			events.Save.String(), events.Start.String(), events.Stop.String(), events.Sync.String(), events.Tag.String(),
-			events.Unmount.String(), events.Unpause.String(), events.Untag.String(),
+			events.Push.String(), events.Refresh.String(), events.Remove.String(), events.Rename.String(),
+			events.Renumber.String(), events.Restart.String(), events.Restore.String(), events.Save.String(),
+			events.Start.String(), events.Stop.String(), events.Sync.String(), events.Tag.String(), events.Unmount.String(),
+			events.Unpause.String(), events.Untag.String(),
 		}, cobra.ShellCompDirectiveNoFileComp
 	}
 	eventTypes := func(_ string) ([]string, cobra.ShellCompDirective) {

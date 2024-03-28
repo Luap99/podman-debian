@@ -1,4 +1,5 @@
 //go:build !remote
+// +build !remote
 
 package libpod
 
@@ -8,7 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/containers/podman/v5/libpod/events"
+	"github.com/containers/podman/v4/libpod/events"
 	"github.com/sirupsen/logrus"
 )
 
@@ -43,6 +44,7 @@ func (c *Container) newContainerEventWithInspectData(status events.Status, inspe
 	e.Type = events.Container
 
 	e.Details = events.Details{
+		ID:         e.ID,
 		PodID:      c.PodID(),
 		Attributes: c.Labels(),
 	}
@@ -75,14 +77,6 @@ func (c *Container) newContainerEventWithInspectData(status events.Status, inspe
 		e.HealthStatus = containerHealthStatus
 	}
 
-	if status == events.Remove {
-		exitCode, err := c.runtime.state.GetContainerExitCode(c.ID())
-		if err == nil {
-			intExitCode := int(exitCode)
-			e.ContainerExitCode = &intExitCode
-		}
-	}
-
 	return c.runtime.eventer.Write(e)
 }
 
@@ -94,10 +88,10 @@ func (c *Container) newContainerExitedEvent(exitCode int32) {
 	e.Image = c.config.RootfsImageName
 	e.Type = events.Container
 	e.PodID = c.PodID()
-	intExitCode := int(exitCode)
-	e.ContainerExitCode = &intExitCode
+	e.ContainerExitCode = int(exitCode)
 
 	e.Details = events.Details{
+		ID:         e.ID,
 		Attributes: c.Labels(),
 	}
 
@@ -113,12 +107,12 @@ func (c *Container) newExecDiedEvent(sessionID string, exitCode int) {
 	e.Name = c.Name()
 	e.Image = c.config.RootfsImageName
 	e.Type = events.Container
-	intExitCode := exitCode
-	e.ContainerExitCode = &intExitCode
+	e.ContainerExitCode = exitCode
 	e.Attributes = make(map[string]string)
 	e.Attributes["execID"] = sessionID
 
 	e.Details = events.Details{
+		ID:         e.ID,
 		Attributes: c.Labels(),
 	}
 

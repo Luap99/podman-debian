@@ -1,4 +1,5 @@
 //go:build !remote
+// +build !remote
 
 package filters
 
@@ -10,9 +11,8 @@ import (
 
 	"github.com/containers/common/pkg/filters"
 	"github.com/containers/common/pkg/util"
-	"github.com/containers/podman/v5/libpod"
-	"github.com/containers/podman/v5/libpod/define"
-	"golang.org/x/exp/slices"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/libpod/define"
 )
 
 // GeneratePodFilterFunc takes a filter and filtervalue (key, value)
@@ -64,7 +64,7 @@ func GeneratePodFilterFunc(filter string, filterValues []string, r *libpod.Runti
 		}, nil
 	case "ctr-status":
 		for _, filterValue := range filterValues {
-			if !slices.Contains([]string{"created", "running", "paused", "stopped", "exited", "unknown"}, filterValue) {
+			if !util.StringInSlice(filterValue, []string{"created", "running", "paused", "stopped", "exited", "unknown"}) {
 				return nil, fmt.Errorf("%s is not a valid status", filterValue)
 			}
 		}
@@ -101,7 +101,7 @@ func GeneratePodFilterFunc(filter string, filterValues []string, r *libpod.Runti
 		}, nil
 	case "status":
 		for _, filterValue := range filterValues {
-			if !slices.Contains([]string{"stopped", "running", "paused", "exited", "dead", "created", "degraded"}, filterValue) {
+			if !util.StringInSlice(filterValue, []string{"stopped", "running", "paused", "exited", "dead", "created", "degraded"}) {
 				return nil, fmt.Errorf("%s is not a valid pod status", filterValue)
 			}
 		}
@@ -162,7 +162,7 @@ func GeneratePodFilterFunc(filter string, filterValues []string, r *libpod.Runti
 				return false
 			}
 			for _, net := range networks {
-				if slices.Contains(inputNetNames, net) {
+				if util.StringInSlice(net, inputNetNames) {
 					return true
 				}
 			}

@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	. "github.com/containers/podman/v5/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	"github.com/containers/storage/pkg/stringid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -101,7 +101,7 @@ var _ = Describe("Podman create", func() {
 	})
 
 	It("podman create adds annotation", func() {
-		session := podmanTest.Podman([]string{"create", "--annotation", "HELLO=WORLD,WithComma", "--name", "annotate_test", ALPINE, "ls"})
+		session := podmanTest.Podman([]string{"create", "--annotation", "HELLO=WORLD", "--name", "annotate_test", ALPINE, "ls"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(ExitCleanly())
 		Expect(podmanTest.NumberOfContainers()).To(Equal(1))
@@ -109,7 +109,7 @@ var _ = Describe("Podman create", func() {
 		check := podmanTest.Podman([]string{"inspect", "annotate_test"})
 		check.WaitWithDefaultTimeout()
 		data := check.InspectContainerToJSON()
-		Expect(data[0].Config.Annotations).To(HaveKeyWithValue("HELLO", "WORLD,WithComma"))
+		Expect(data[0].Config.Annotations).To(HaveKeyWithValue("HELLO", "WORLD"))
 	})
 
 	It("podman create --entrypoint command", func() {
@@ -121,7 +121,7 @@ var _ = Describe("Podman create", func() {
 		result := podmanTest.Podman([]string{"inspect", "entrypoint_test", "--format", "{{.Config.Entrypoint}}"})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(ExitCleanly())
-		Expect(result.OutputToString()).To(Equal("[/bin/foobar]"))
+		Expect(result.OutputToString()).To(Equal("/bin/foobar"))
 	})
 
 	It("podman create --entrypoint \"\"", func() {
@@ -133,7 +133,7 @@ var _ = Describe("Podman create", func() {
 		result := podmanTest.Podman([]string{"inspect", session.OutputToString(), "--format", "{{.Config.Entrypoint}}"})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(ExitCleanly())
-		Expect(result.OutputToString()).To(Equal("[]"))
+		Expect(result.OutputToString()).To(Equal(""))
 	})
 
 	It("podman create --entrypoint json", func() {
@@ -146,7 +146,7 @@ var _ = Describe("Podman create", func() {
 		result := podmanTest.Podman([]string{"inspect", "entrypoint_json", "--format", "{{.Config.Entrypoint}}"})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(ExitCleanly())
-		Expect(result.OutputToString()).To(Equal("[/bin/foo -c]"))
+		Expect(result.OutputToString()).To(Equal("/bin/foo -c"))
 	})
 
 	It("podman create --mount flag with multiple mounts", func() {
@@ -266,8 +266,7 @@ var _ = Describe("Podman create", func() {
 		Expect(ctrJSON).To(HaveLen(1))
 		Expect(ctrJSON[0].Config.Cmd).To(HaveLen(1))
 		Expect(ctrJSON[0].Config.Cmd[0]).To(Equal("redis-server"))
-		Expect(ctrJSON[0].Config.Entrypoint).To(HaveLen(1))
-		Expect(ctrJSON[0].Config.Entrypoint[0]).To(Equal("docker-entrypoint.sh"))
+		Expect(ctrJSON[0].Config).To(HaveField("Entrypoint", "docker-entrypoint.sh"))
 	})
 
 	It("podman create --pull", func() {
@@ -483,7 +482,7 @@ var _ = Describe("Podman create", func() {
 		inspect.WaitWithDefaultTimeout()
 		data := inspect.InspectContainerToJSON()
 		Expect(data).To(HaveLen(1))
-		Expect(data[0].Config).To(HaveField("StopSignal", "SIGTERM"))
+		Expect(data[0].Config).To(HaveField("StopSignal", uint(15)))
 	})
 
 	It("podman create --tz", func() {
@@ -718,7 +717,7 @@ var _ = Describe("Podman create", func() {
 	})
 
 	It("podman create --chrootdirs functionality test", func() {
-		session := podmanTest.Podman([]string{"create", "-t", "--chrootdirs", "/var/local/qwerty,withcomma", ALPINE, "/bin/cat"})
+		session := podmanTest.Podman([]string{"create", "-t", "--chrootdirs", "/var/local/qwerty", ALPINE, "/bin/cat"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(ExitCleanly())
 		ctrID := session.OutputToString()
@@ -727,7 +726,7 @@ var _ = Describe("Podman create", func() {
 		setup.WaitWithDefaultTimeout()
 		Expect(setup).Should(ExitCleanly())
 
-		setup = podmanTest.Podman([]string{"exec", ctrID, "cmp", "/etc/resolv.conf", "/var/local/qwerty,withcomma/etc/resolv.conf"})
+		setup = podmanTest.Podman([]string{"exec", ctrID, "cmp", "/etc/resolv.conf", "/var/local/qwerty/etc/resolv.conf"})
 		setup.WaitWithDefaultTimeout()
 		Expect(setup).Should(ExitCleanly())
 	})

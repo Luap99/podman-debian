@@ -3,7 +3,7 @@ package entities
 import (
 	"net"
 
-	entitiesTypes "github.com/containers/podman/v5/pkg/domain/entities/types"
+	"github.com/containers/common/libnetwork/types"
 )
 
 // NetworkListOptions describes options for listing networks in cli
@@ -21,7 +21,11 @@ type NetworkReloadOptions struct {
 }
 
 // NetworkReloadReport describes the results of reloading a container network.
-type NetworkReloadReport = entitiesTypes.NetworkReloadReport
+type NetworkReloadReport struct {
+	//nolint:stylecheck,revive
+	Id  string
+	Err error
+}
 
 // NetworkRmOptions describes options for removing networks
 type NetworkRmOptions struct {
@@ -30,7 +34,10 @@ type NetworkRmOptions struct {
 }
 
 // NetworkRmReport describes the results of network removal
-type NetworkRmReport = entitiesTypes.NetworkRmReport
+type NetworkRmReport struct {
+	Name string
+	Err  error
+}
 
 // NetworkCreateOptions describes options to create a network
 type NetworkCreateOptions struct {
@@ -60,7 +67,9 @@ type NetworkUpdateOptions struct {
 }
 
 // NetworkCreateReport describes a created network for the cli
-type NetworkCreateReport = entitiesTypes.NetworkCreateReport
+type NetworkCreateReport struct {
+	Name string
+}
 
 // NetworkDisconnectOptions describes options for disconnecting
 // containers from networks
@@ -71,17 +80,20 @@ type NetworkDisconnectOptions struct {
 
 // NetworkConnectOptions describes options for connecting
 // a container to a network
-type NetworkConnectOptions = entitiesTypes.NetworkConnectOptions
+type NetworkConnectOptions struct {
+	Container string `json:"container"`
+	types.PerNetworkOptions
+}
 
 // NetworkPruneReport containers the name of network and an error
 // associated in its pruning (removal)
 // swagger:model NetworkPruneReport
-type NetworkPruneReport = entitiesTypes.NetworkPruneReport
+type NetworkPruneReport struct {
+	Name  string
+	Error error
+}
 
 // NetworkPruneOptions describes options for pruning unused networks
 type NetworkPruneOptions struct {
 	Filters map[string][]string
 }
-
-type NetworkInspectReport = entitiesTypes.NetworkInspectReport
-type NetworkContainerInfo = entitiesTypes.NetworkContainerInfo

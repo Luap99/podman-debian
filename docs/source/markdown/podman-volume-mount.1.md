@@ -19,16 +19,8 @@ returned.
 
 ## EXAMPLE
 
-Mount specified volume. As Root:
 ```
-# podman volume mount foo
-/home/dwalsh/.local/share/containers/storage/volumes/foo/_data
-```
-
-In rootless mode, volume mounting only works after executing the podman unshare command to enter the user namespace.
-```
-$ podman unshare
-# podman volume mount foo
+podman volume mount foo
 /home/dwalsh/.local/share/containers/storage/volumes/foo/_data
 ```
 

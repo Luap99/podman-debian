@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/containers/podman/v5/libpod/define"
-	. "github.com/containers/podman/v5/test/utils"
+	"github.com/containers/podman/v4/libpod/define"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -34,10 +34,10 @@ var _ = Describe("Podman healthcheck run", func() {
 		session := podmanTest.Podman([]string{"run", "-dt", "--no-healthcheck", "--name", "hc", HEALTHCHECK_IMAGE})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(ExitCleanly())
-		hc := podmanTest.Podman([]string{"container", "inspect", "--format", "{{.State.Health}}", "hc"})
+		hc := podmanTest.Podman([]string{"container", "inspect", "--format", "{{.State.Health.Status}}", "hc"})
 		hc.WaitWithDefaultTimeout()
 		Expect(hc).Should(ExitCleanly())
-		Expect(hc.OutputToString()).To(Equal("<nil>"))
+		Expect(hc.OutputToString()).To(Not(ContainSubstring("starting")))
 	})
 
 	It("podman run healthcheck and logs should contain healthcheck output", func() {
@@ -282,7 +282,9 @@ var _ = Describe("Podman healthcheck run", func() {
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(ExitCleanly())
 
-		podmanTest.StopContainer("hc")
+		stop := podmanTest.Podman([]string{"stop", "-t0", "hc"})
+		stop.WaitWithDefaultTimeout()
+		Expect(stop).Should(ExitCleanly())
 
 		startAgain := podmanTest.Podman([]string{"start", "hc"})
 		startAgain.WaitWithDefaultTimeout()

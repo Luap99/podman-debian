@@ -6,24 +6,21 @@ import (
 
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v5/cmd/podman/common"
-	"github.com/containers/podman/v5/cmd/podman/registry"
-	"github.com/containers/podman/v5/cmd/podman/validate"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/spf13/cobra"
-	"golang.org/x/exp/slices"
 )
 
 var (
 	farmUpdateDescription = `Update an existing farm by adding a connection, removing a connection, or changing it to the default farm.`
 	updateCommand         = &cobra.Command{
-		Use:                "update [options] FARM",
-		Short:              "Update an existing farm",
-		Long:               farmUpdateDescription,
-		PersistentPreRunE:  validate.NoOp,
-		RunE:               farmUpdate,
-		PersistentPostRunE: validate.NoOp,
-		Args:               cobra.ExactArgs(1),
-		ValidArgsFunction:  common.AutoCompleteFarms,
+		Use:               "update [options] FARM",
+		Short:             "Update an existing farm",
+		Long:              farmUpdateDescription,
+		RunE:              farmUpdate,
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: common.AutoCompleteFarms,
 		Example: `podman farm update --add con1 farm1
 	podman farm update --remove con2 farm2
 	podman farm update --default farm3`,
@@ -63,59 +60,62 @@ func farmUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("nothing to update for farm %q, please use the --add, --remove, or --default flags to update a farm", farmName)
 	}
 
-	err := config.EditConnectionConfig(func(cfg *config.ConnectionsFile) error {
-		if len(cfg.Farm.List) == 0 {
-			return errors.New("no farms are created at this time, there is nothing to update")
-		}
-
-		if _, ok := cfg.Farm.List[farmName]; !ok {
-			return fmt.Errorf("cannot update farm, %q farm doesn't exist", farmName)
-		}
-
-		if defChanged {
-			// Change the default to the given farm if --default=true
-			if updateOpts.Default {
-				cfg.Farm.Default = farmName
-			} else {
-				// if --default=false, user doesn't want any farms to be default so clear the DefaultFarm
-				cfg.Farm.Default = ""
-			}
-		}
-
-		if val, ok := cfg.Farm.List[farmName]; ok {
-			cMap := make(map[string]int)
-			for _, c := range val {
-				cMap[c] = 0
-			}
-
-			for _, cRemove := range updateOpts.Remove {
-				connections := cfg.Farm.List[farmName]
-				if slices.Contains(connections, cRemove) {
-					delete(cMap, cRemove)
-				} else {
-					return fmt.Errorf("cannot remove from farm, %q is not a connection in the farm", cRemove)
-				}
-			}
-
-			for _, cAdd := range updateOpts.Add {
-				if _, ok := cfg.Connection.Connections[cAdd]; ok {
-					if _, ok := cMap[cAdd]; !ok {
-						cMap[cAdd] = 0
-					}
-				} else {
-					return fmt.Errorf("cannot add to farm, %q is not a system connection", cAdd)
-				}
-			}
-
-			updatedConnections := []string{}
-			for k := range cMap {
-				updatedConnections = append(updatedConnections, k)
-			}
-			cfg.Farm.List[farmName] = updatedConnections
-		}
-		return nil
-	})
+	cfg, err := config.ReadCustomConfig()
 	if err != nil {
+		return err
+	}
+
+	if len(cfg.Farms.List) == 0 {
+		return errors.New("no farms are created at this time, there is nothing to update")
+	}
+
+	if _, ok := cfg.Farms.List[farmName]; !ok {
+		return fmt.Errorf("cannot update farm, %q farm doesn't exist", farmName)
+	}
+
+	if defChanged {
+		// Change the default to the given farm if --default=true
+		if updateOpts.Default {
+			cfg.Farms.Default = farmName
+		} else {
+			// if --default=false, user doesn't want any farms to be default so clear the DefaultFarm
+			cfg.Farms.Default = ""
+		}
+	}
+
+	if val, ok := cfg.Farms.List[farmName]; ok {
+		cMap := make(map[string]int)
+		for _, c := range val {
+			cMap[c] = 0
+		}
+
+		for _, cRemove := range updateOpts.Remove {
+			connections := cfg.Farms.List[farmName]
+			if util.StringInSlice(cRemove, connections) {
+				delete(cMap, cRemove)
+			} else {
+				return fmt.Errorf("cannot remove from farm, %q is not a connection in the farm", cRemove)
+			}
+		}
+
+		for _, cAdd := range updateOpts.Add {
+			if _, ok := cfg.Engine.ServiceDestinations[cAdd]; ok {
+				if _, ok := cMap[cAdd]; !ok {
+					cMap[cAdd] = 0
+				}
+			} else {
+				return fmt.Errorf("cannot add to farm, %q is not a system connection", cAdd)
+			}
+		}
+
+		updatedConnections := []string{}
+		for k := range cMap {
+			updatedConnections = append(updatedConnections, k)
+		}
+		cfg.Farms.List[farmName] = updatedConnections
+	}
+
+	if err := cfg.Write(); err != nil {
 		return err
 	}
 	fmt.Printf("Farm %q updated\n", farmName)

@@ -4,7 +4,8 @@ import (
 	"os"
 	"path/filepath"
 
-	. "github.com/containers/podman/v5/test/utils"
+	"github.com/containers/common/pkg/config"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -12,20 +13,21 @@ import (
 
 func setupContainersConfWithSystemConnections() {
 	// make sure connections are not written to real user config on host
-	file := filepath.Join(podmanTest.TempDir, "containers.conf")
+	file := filepath.Join(podmanTest.TempDir, "containersconf")
 	f, err := os.Create(file)
 	Expect(err).ToNot(HaveOccurred())
-	f.Close()
-	os.Setenv("CONTAINERS_CONF", file)
-
-	file = filepath.Join(podmanTest.TempDir, "connections.conf")
-	f, err = os.Create(file)
-	Expect(err).ToNot(HaveOccurred())
-	connections := `{"connection":{"default":"QA","connections":{"QA":{"uri":"ssh://root@podman.test:2222/run/podman/podman.sock"},"QB":{"uri":"ssh://root@podman.test:3333/run/podman/podman.sock"}}}}`
+	connections := `
+[engine]
+active_service = "QA"
+[engine.service_destinations]
+	[engine.service_destinations.QA]
+	uri = "ssh://root@podman.test:2222/run/podman/podman.sock"
+	[engine.service_destinations.QB]
+	uri = "ssh://root@podman.test:3333/run/podman/podman.sock"`
 	_, err = f.WriteString(connections)
 	Expect(err).ToNot(HaveOccurred())
 	f.Close()
-	os.Setenv("PODMAN_CONNECTIONS_CONF", file)
+	os.Setenv("CONTAINERS_CONF", file)
 }
 
 var _ = Describe("podman farm", func() {
@@ -34,12 +36,19 @@ var _ = Describe("podman farm", func() {
 
 	Context("without running API service", func() {
 		It("verify system connections exist", func() {
-			session := podmanTest.Podman(systemConnectionListCmd)
-			session.WaitWithDefaultTimeout()
-			Expect(session).Should(ExitCleanly())
-			Expect(string(session.Out.Contents())).To(Equal(`QA ssh://root@podman.test:2222/run/podman/podman.sock  true true
-QB ssh://root@podman.test:3333/run/podman/podman.sock  false true
-`))
+			cfg, err := config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg).Should(HaveActiveService("QA"))
+			Expect(cfg).Should(VerifyService(
+				"QA",
+				"ssh://root@podman.test:2222/run/podman/podman.sock",
+				"",
+			))
+			Expect(cfg).Should(VerifyService(
+				"QB",
+				"ssh://root@podman.test:3333/run/podman/podman.sock",
+				"",
+			))
 		})
 
 		It("create farm", func() {
@@ -64,13 +73,12 @@ QB ssh://root@podman.test:3333/run/podman/podman.sock  false true
 			Expect(session).Should(ExitCleanly())
 			Expect(session.Out.Contents()).Should(ContainSubstring("Farm \"farm3\" created"))
 
-			session = podmanTest.Podman(farmListCmd)
-			session.WaitWithDefaultTimeout()
-			Expect(session).Should(ExitCleanly())
-			Expect(string(session.Out.Contents())).To(Equal(`farm1 [QA QB] true true
-farm2 [QA] false true
-farm3 [] false true
-`))
+			cfg, err := config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg.Farms.Default).Should(Equal("farm1"))
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("farm1", []string{"QA", "QB"}))
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("farm2", []string{"QA"}))
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("farm3", []string{}))
 
 			// create existing farm should exit with error
 			cmd = []string{"farm", "create", "farm3"}
@@ -101,13 +109,12 @@ farm3 [] false true
 			Expect(session).Should(ExitCleanly())
 			Expect(session.Out.Contents()).Should(ContainSubstring("Farm \"farm3\" created"))
 
-			session = podmanTest.Podman(farmListCmd)
-			session.WaitWithDefaultTimeout()
-			Expect(session).Should(ExitCleanly())
-			Expect(string(session.Out.Contents())).To(Equal(`farm1 [QA QB] true true
-farm2 [QA] false true
-farm3 [] false true
-`))
+			cfg, err := config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg.Farms.Default).Should(Equal("farm1"))
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("farm1", []string{"QA", "QB"}))
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("farm2", []string{"QA"}))
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("farm3", []string{}))
 
 			// update farm1 to remove the QA connection from it
 			cmd = []string{"farm", "update", "--remove", "QA,QB", "farm1"}
@@ -130,13 +137,12 @@ farm3 [] false true
 			Expect(session).Should(ExitCleanly())
 			Expect(session.Out.Contents()).Should(ContainSubstring("Farm \"farm2\" updated"))
 
-			session = podmanTest.Podman(farmListCmd)
-			session.WaitWithDefaultTimeout()
-			Expect(session).Should(ExitCleanly())
-			Expect(string(session.Out.Contents())).To(Equal(`farm1 [] false true
-farm2 [QA] true true
-farm3 [QB] false true
-`))
+			cfg, err = config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg.Farms.Default).Should(Equal("farm2"))
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("farm1", []string{}))
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("farm2", []string{"QA"}))
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("farm3", []string{"QB"}))
 
 			// update farm2 to not be the default, no farms should be the default
 			cmd = []string{"farm", "update", "--default=false", "farm2"}
@@ -145,13 +151,9 @@ farm3 [QB] false true
 			Expect(session).Should(ExitCleanly())
 			Expect(session.Out.Contents()).Should(ContainSubstring("Farm \"farm2\" updated"))
 
-			session = podmanTest.Podman(farmListCmd)
-			session.WaitWithDefaultTimeout()
-			Expect(session).Should(ExitCleanly())
-			Expect(string(session.Out.Contents())).To(Equal(`farm1 [] false true
-farm2 [QA] false true
-farm3 [QB] false true
-`))
+			cfg, err = config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg.Farms.Default).Should(BeEmpty())
 		})
 
 		It("update farm with non-existing connections", func() {
@@ -169,12 +171,11 @@ farm3 [QB] false true
 			Expect(session).Should(ExitCleanly())
 			Expect(session.Out.Contents()).Should(ContainSubstring("Farm \"farm2\" created"))
 
-			session = podmanTest.Podman(farmListCmd)
-			session.WaitWithDefaultTimeout()
-			Expect(session).Should(ExitCleanly())
-			Expect(string(session.Out.Contents())).To(Equal(`farm1 [QA QB] true true
-farm2 [QA] false true
-`))
+			cfg, err := config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg.Farms.Default).Should(Equal("farm1"))
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("farm1", []string{"QA", "QB"}))
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("farm2", []string{"QA"}))
 
 			// update farm1 to add no-node connection to it
 			cmd = []string{"farm", "update", "--add", "no-node", "farm1"}
@@ -188,13 +189,12 @@ farm2 [QA] false true
 			session.WaitWithDefaultTimeout()
 			Expect(session).Should(ExitWithError())
 
-			// check again to ensure that nothing has changed
-			session = podmanTest.Podman(farmListCmd)
-			session.WaitWithDefaultTimeout()
-			Expect(session).Should(ExitCleanly())
-			Expect(string(session.Out.Contents())).To(Equal(`farm1 [QA QB] true true
-farm2 [QA] false true
-`))
+			// read config again to ensure that nothing has changed
+			cfg, err = config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg.Farms.Default).Should(Equal("farm1"))
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("farm1", []string{"QA", "QB"}))
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("farm2", []string{"QA"}))
 		})
 
 		It("update non-existent farm", func() {
@@ -204,6 +204,11 @@ farm2 [QA] false true
 			session.WaitWithDefaultTimeout()
 			Expect(session).Should(ExitCleanly())
 			Expect(session.Out.Contents()).Should(ContainSubstring("Farm \"farm1\" created"))
+
+			cfg, err := config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg.Farms.Default).Should(Equal("farm1"))
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("farm1", []string{"QA", "QB"}))
 
 			// update non-existent farm to add QA connection to it
 			cmd = []string{"farm", "update", "--add", "no-node", "non-existent"}
@@ -217,10 +222,11 @@ farm2 [QA] false true
 			session.WaitWithDefaultTimeout()
 			Expect(session).Should(ExitWithError())
 
-			session = podmanTest.Podman(farmListCmd)
-			session.WaitWithDefaultTimeout()
-			Expect(session).Should(ExitCleanly())
-			Expect(session.OutputToString()).To(Equal(`farm1 [QA QB] true true`))
+			// read config again and ensure nothing has changed
+			cfg, err = config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg.Farms.Default).Should(Equal("farm1"))
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("farm1", []string{"QA", "QB"}))
 		})
 
 		It("remove farms", func() {
@@ -238,12 +244,11 @@ farm2 [QA] false true
 			Expect(session).Should(ExitCleanly())
 			Expect(session.Out.Contents()).Should(ContainSubstring("Farm \"farm2\" created"))
 
-			session = podmanTest.Podman(farmListCmd)
-			session.WaitWithDefaultTimeout()
-			Expect(session).Should(ExitCleanly())
-			Expect(string(session.Out.Contents())).To(Equal(`farm1 [QA QB] true true
-farm2 [QA] false true
-`))
+			cfg, err := config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg.Farms.Default).Should(Equal("farm1"))
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("farm1", []string{"QA", "QB"}))
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("farm2", []string{"QA"}))
 
 			// remove farm1 and a non-existent farm
 			// farm 1 should be removed and a warning printed for nonexistent-farm
@@ -254,10 +259,11 @@ farm2 [QA] false true
 			Expect(session.Out.Contents()).Should(ContainSubstring("Farm \"farm1\" deleted"))
 			Expect(session.ErrorToString()).Should(ContainSubstring("doesn't exist; nothing to remove"))
 
-			session = podmanTest.Podman(farmListCmd)
-			session.WaitWithDefaultTimeout()
-			Expect(session).Should(ExitCleanly())
-			Expect(session.OutputToString()).To(Equal(`farm2 [QA] true true`))
+			cfg, err = config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg.Farms.Default).Should(Equal("farm2"))
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("farm2", []string{"QA"}))
+			Expect(cfg.Farms.List).Should(Not(HaveKey("farm1")))
 
 			// remove all non-existent farms and expect an error
 			cmd = []string{"farm", "rm", "foo", "bar"}
@@ -281,6 +287,12 @@ farm2 [QA] false true
 			Expect(session).Should(ExitCleanly())
 			Expect(session.Out.Contents()).Should(ContainSubstring("Farm \"farm2\" created"))
 
+			cfg, err := config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg.Farms.Default).Should(Equal("farm1"))
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("farm1", []string{"QA", "QB"}))
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("farm2", []string{"QA"}))
+
 			// remove --all
 			cmd = []string{"farm", "rm", "--all"}
 			session = podmanTest.Podman(cmd)
@@ -288,10 +300,10 @@ farm2 [QA] false true
 			Expect(session).Should(ExitCleanly())
 			Expect(session.Out.Contents()).Should(ContainSubstring("All farms have been deleted"))
 
-			session = podmanTest.Podman(farmListCmd)
-			session.WaitWithDefaultTimeout()
-			Expect(session).Should(ExitCleanly())
-			Expect(session.OutputToString()).To(Equal(""))
+			cfg, err = config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg.Farms.Default).Should(BeEmpty())
+			Expect(cfg.Farms.List).Should(BeEmpty())
 		})
 	})
 })

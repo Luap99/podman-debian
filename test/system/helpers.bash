@@ -11,12 +11,12 @@ PODMAN_RUNTIME=
 PODMAN_TEST_IMAGE_REGISTRY=${PODMAN_TEST_IMAGE_REGISTRY:-"quay.io"}
 PODMAN_TEST_IMAGE_USER=${PODMAN_TEST_IMAGE_USER:-"libpod"}
 PODMAN_TEST_IMAGE_NAME=${PODMAN_TEST_IMAGE_NAME:-"testimage"}
-PODMAN_TEST_IMAGE_TAG=${PODMAN_TEST_IMAGE_TAG:-"20240123"}
+PODMAN_TEST_IMAGE_TAG=${PODMAN_TEST_IMAGE_TAG:-"20221018"}
 PODMAN_TEST_IMAGE_FQN="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/$PODMAN_TEST_IMAGE_NAME:$PODMAN_TEST_IMAGE_TAG"
 
 # Larger image containing systemd tools.
 PODMAN_SYSTEMD_IMAGE_NAME=${PODMAN_SYSTEMD_IMAGE_NAME:-"systemd-image"}
-PODMAN_SYSTEMD_IMAGE_TAG=${PODMAN_SYSTEMD_IMAGE_TAG:-"20240124"}
+PODMAN_SYSTEMD_IMAGE_TAG=${PODMAN_SYSTEMD_IMAGE_TAG:-"20230531"}
 PODMAN_SYSTEMD_IMAGE_FQN="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/$PODMAN_SYSTEMD_IMAGE_NAME:$PODMAN_SYSTEMD_IMAGE_TAG"
 
 # Remote image that we *DO NOT* fetch or keep by default; used for testing pull
@@ -209,47 +209,6 @@ function basic_setup() {
     # Test filenames must match ###-name.bats; use "[###] " as prefix
     run expr "$BATS_TEST_FILENAME" : "^.*/\([0-9]\{3\}\)-[^/]\+\.bats\$"
     BATS_TEST_NAME_PREFIX="[${output}] "
-
-    # By default, assert() and die() cause an immediate test failure.
-    # Under special circumstances (usually long test loops), tests
-    # can call defer-assertion-failures() to continue going, the
-    # idea being that a large number of failures can show patterns.
-    ASSERTION_FAILURES=
-    immediate-assertion-failures
-}
-
-# bail-now is how we terminate a test upon assertion failure.
-# By default, and the vast majority of the time, it just triggers
-# immediate test termination; but see defer-assertion-failures, below.
-function bail-now() {
-    # "false" does not apply to "bail now"! It means "nonzero exit",
-    # which BATS interprets as "yes, bail immediately".
-    false
-}
-
-# Invoked on teardown: will terminate immediately if there have been
-# any deferred test failures; otherwise will reset back to immediate
-# test termination on future assertions.
-function immediate-assertion-failures() {
-    function bail-now() {
-        false
-    }
-
-    # Any backlog?
-    if [[ -n "$ASSERTION_FAILURES" ]]; then
-        local n=${#ASSERTION_FAILURES}
-        ASSERTION_FAILURES=
-        die "$n test assertions failed. Search for 'FAIL:' above this line." >&2
-    fi
-}
-
-# Used in special test circumstances--typically multi-condition loops--to
-# continue going even on assertion failures. The test will fail afterward,
-# usually in teardown. This can be useful to show failure patterns.
-function defer-assertion-failures() {
-    function bail-now() {
-        ASSERTION_FAILURES+="!"
-    }
 }
 
 # Basic teardown: remove all pods and containers
@@ -286,7 +245,6 @@ function basic_teardown() {
     done
 
     command rm -rf $PODMAN_TMPDIR
-    immediate-assertion-failures
 }
 
 
@@ -452,7 +410,7 @@ function run_podman() {
 
 # Wait for certain output from a container, indicating that it's ready.
 function wait_for_output {
-    local sleep_delay=1
+    local sleep_delay=5
     local how_long=$PODMAN_TIMEOUT
     local expect=
     local cid=
@@ -614,20 +572,6 @@ function podman_storage_driver() {
         *)       die "Unknown storage driver '$output'; if this is a new driver, please review uses of this function in tests." ;;
     esac
     echo "$output"
-}
-
-# Given a (scratch) directory path, returns a set of command-line options
-# for running an isolated podman that will not step on system podman. Set:
-#  - rootdir, so we don't clobber real images or storage;
-#  - tmpdir, so we use an isolated DB; and
-#  - runroot, out of an abundance of paranoia
-function podman_isolation_opts() {
-    local path=${1?podman_isolation_opts: missing PATH arg}
-
-    for opt in root runroot tmpdir;do
-        mkdir -p $path/$opt
-        echo " --$opt $path/$opt"
-    done
 }
 
 # rhbz#1895105: rootless journald is unavailable except to users in
@@ -810,7 +754,7 @@ function die() {
     echo "#/vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv"  >&2
     echo "#| FAIL: $*"                                           >&2
     echo "#\\^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^" >&2
-    bail-now
+    false
 }
 
 ############
@@ -926,7 +870,7 @@ function assert() {
         printf "#|         > %s%s\n" "$ws" "$line"                >&2
     done
     printf "#\\^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n"   >&2
-    bail-now
+    false
 }
 
 ########
@@ -976,7 +920,7 @@ function is() {
         printf "#|         > '%s'\n" "$line"                   >&2
     done
     printf "#\\^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n" >&2
-    bail-now
+    false
 }
 
 ####################
@@ -1142,40 +1086,66 @@ function _podman_commands() {
     awk '/^Available Commands:/{ok=1;next}/^Options:/{ok=0}ok { print $1 }' <<<"$output" | grep .
 }
 
+###############################
+#  _build_health_check_image  #  Builds a container image with a configured health check
+###############################
+#
+# The health check will fail once the /uh-oh file exists.
+#
+# First argument is the desired name of the image
+# Second argument, if present and non-null, forces removal of the /uh-oh file once the check failed; this way the container can be restarted
+#
+
+function _build_health_check_image {
+    local imagename="$1"
+    local cleanfile=""
+
+    if [[ ! -z "$2" ]]; then
+        cleanfile="rm -f /uh-oh"
+    fi
+    # Create an image with a healthcheck script; said script will
+    # pass until the file /uh-oh gets created (by us, via exec)
+    cat >${PODMAN_TMPDIR}/healthcheck <<EOF
+#!/bin/sh
+
+if test -e /uh-oh; then
+    echo "Uh-oh on stdout!"
+    echo "Uh-oh on stderr!" >&2
+    ${cleanfile}
+    exit 1
+else
+    echo "Life is Good on stdout"
+    echo "Life is Good on stderr" >&2
+    exit 0
+fi
+EOF
+
+    cat >${PODMAN_TMPDIR}/entrypoint <<EOF
+#!/bin/sh
+
+trap 'echo Received SIGTERM, finishing; exit' SIGTERM; echo WAITING; while :; do sleep 0.1; done
+EOF
+
+    cat >${PODMAN_TMPDIR}/Containerfile <<EOF
+FROM $IMAGE
+
+COPY healthcheck /healthcheck
+COPY entrypoint  /entrypoint
+
+RUN  chmod 755 /healthcheck /entrypoint
+
+CMD ["/entrypoint"]
+EOF
+
+    run_podman build -t $imagename ${PODMAN_TMPDIR}
+}
+
 ##########################
 #  sleep_to_next_second  #  Sleep until second rolls over
 ##########################
 
 function sleep_to_next_second() {
     sleep 0.$(printf '%04d' $((10000 - 10#$(date +%4N))))
-}
-
-function wait_for_command_output() {
-    local cmd="$1"
-    local want="$2"
-    local tries=20
-    local sleep_delay=0.5
-
-    case "${#*}" in
-        2) ;;
-        4) tries="$3"
-           sleep_delay="$4"
-           ;;
-        *) die "Internal error: 'wait_for_command_output' requires two or four arguments" ;;
-    esac
-
-    while [[ $tries -gt 0 ]]; do
-        echo "$_LOG_PROMPT $cmd"
-        run $cmd
-        echo "$output"
-        if [[ "$output" = "$want" ]]; then
-            return
-        fi
-
-        sleep $sleep_delay
-        tries=$((tries - 1))
-    done
-    die "Timed out waiting for '$cmd' to return '$want'"
 }
 
 # END   miscellaneous tools

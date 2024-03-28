@@ -9,11 +9,11 @@ import (
 
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/parse"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/rootless"
-	"github.com/containers/podman/v5/pkg/specgen"
-	"github.com/containers/podman/v5/pkg/specgenutilexternal"
-	"github.com/containers/podman/v5/pkg/util"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/specgen"
+	"github.com/containers/podman/v4/pkg/specgenutilexternal"
+	"github.com/containers/podman/v4/pkg/util"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -30,7 +30,6 @@ var (
 // TODO: handle options parsing/processing via containers/storage/pkg/mount
 func parseVolumes(rtc *config.Config, volumeFlag, mountFlag, tmpfsFlag []string) ([]spec.Mount, []*specgen.NamedVolume, []*specgen.OverlayVolume, []*specgen.ImageVolume, error) {
 	// Get mounts from the --mounts flag.
-	// TODO: The runtime config part of this needs to move into pkg/specgen/generate to avoid querying containers.conf on the client.
 	unifiedMounts, unifiedVolumes, unifiedImageVolumes, err := Mounts(mountFlag, rtc.Mounts())
 	if err != nil {
 		return nil, nil, nil, nil, err
@@ -257,29 +256,29 @@ func parseMountOptions(mountType string, args []string) (*spec.Mount, error) {
 	var setTmpcopyup, setRORW, setSuid, setDev, setExec, setRelabel, setOwnership, setSwap bool
 
 	mnt := spec.Mount{}
-	for _, arg := range args {
-		name, value, hasValue := strings.Cut(arg, "=")
-		switch name {
+	for _, val := range args {
+		kv := strings.SplitN(val, "=", 2)
+		switch kv[0] {
 		case "bind-nonrecursive":
 			if mountType != define.TypeBind {
-				return nil, fmt.Errorf("%q option not supported for %q mount types", name, mountType)
+				return nil, fmt.Errorf("%q option not supported for %q mount types", kv[0], mountType)
 			}
 			mnt.Options = append(mnt.Options, define.TypeBind)
 		case "bind-propagation":
 			if mountType != define.TypeBind {
-				return nil, fmt.Errorf("%q option not supported for %q mount types", name, mountType)
+				return nil, fmt.Errorf("%q option not supported for %q mount types", kv[0], mountType)
 			}
-			if !hasValue {
-				return nil, fmt.Errorf("%v: %w", name, errOptionArg)
+			if len(kv) == 1 {
+				return nil, fmt.Errorf("%v: %w", kv[0], errOptionArg)
 			}
-			mnt.Options = append(mnt.Options, value)
+			mnt.Options = append(mnt.Options, kv[1])
 		case "consistency":
 			// Often used on MACs and mistakenly on Linux platforms.
 			// Since Docker ignores this option so shall we.
 			continue
 		case "idmap":
-			if hasValue {
-				mnt.Options = append(mnt.Options, fmt.Sprintf("idmap=%s", value))
+			if len(kv) > 1 {
+				mnt.Options = append(mnt.Options, fmt.Sprintf("idmap=%s", kv[1]))
 			} else {
 				mnt.Options = append(mnt.Options, "idmap")
 			}
@@ -295,41 +294,42 @@ func parseMountOptions(mountType string, args []string) (*spec.Mount, error) {
 			// ro=[true|false]
 			// rw
 			// rw=[true|false]
-			if name == "readonly" {
-				name = "ro"
+			if kv[0] == "readonly" {
+				kv[0] = "ro"
 			}
-			if hasValue {
-				switch strings.ToLower(value) {
+			switch len(kv) {
+			case 1:
+				mnt.Options = append(mnt.Options, kv[0])
+			case 2:
+				switch strings.ToLower(kv[1]) {
 				case "true":
-					mnt.Options = append(mnt.Options, name)
+					mnt.Options = append(mnt.Options, kv[0])
 				case "false":
 					// Set the opposite only for rw
 					// ro's opposite is the default
-					if name == "rw" {
+					if kv[0] == "rw" {
 						mnt.Options = append(mnt.Options, "ro")
 					}
 				}
-			} else {
-				mnt.Options = append(mnt.Options, name)
 			}
 		case "nodev", "dev":
 			if setDev {
 				return nil, fmt.Errorf("cannot pass 'nodev' and 'dev' mnt.Options more than once: %w", errOptionArg)
 			}
 			setDev = true
-			mnt.Options = append(mnt.Options, name)
+			mnt.Options = append(mnt.Options, kv[0])
 		case "noexec", "exec":
 			if setExec {
 				return nil, fmt.Errorf("cannot pass 'noexec' and 'exec' mnt.Options more than once: %w", errOptionArg)
 			}
 			setExec = true
-			mnt.Options = append(mnt.Options, name)
+			mnt.Options = append(mnt.Options, kv[0])
 		case "nosuid", "suid":
 			if setSuid {
 				return nil, fmt.Errorf("cannot pass 'nosuid' and 'suid' mnt.Options more than once: %w", errOptionArg)
 			}
 			setSuid = true
-			mnt.Options = append(mnt.Options, name)
+			mnt.Options = append(mnt.Options, kv[0])
 		case "noswap":
 			if setSwap {
 				return nil, fmt.Errorf("cannot pass 'noswap' mnt.Options more than once: %w", errOptionArg)
@@ -338,80 +338,80 @@ func parseMountOptions(mountType string, args []string) (*spec.Mount, error) {
 				return nil, fmt.Errorf("the 'noswap' option is only allowed with rootful tmpfs mounts: %w", errOptionArg)
 			}
 			setSwap = true
-			mnt.Options = append(mnt.Options, name)
+			mnt.Options = append(mnt.Options, kv[0])
 		case "relabel":
 			if setRelabel {
 				return nil, fmt.Errorf("cannot pass 'relabel' option more than once: %w", errOptionArg)
 			}
 			setRelabel = true
-			if !hasValue {
-				return nil, fmt.Errorf("%s mount option must be 'private' or 'shared': %w", name, util.ErrBadMntOption)
+			if len(kv) != 2 {
+				return nil, fmt.Errorf("%s mount option must be 'private' or 'shared': %w", kv[0], util.ErrBadMntOption)
 			}
-			switch value {
+			switch kv[1] {
 			case "private":
 				mnt.Options = append(mnt.Options, "Z")
 			case "shared":
 				mnt.Options = append(mnt.Options, "z")
 			default:
-				return nil, fmt.Errorf("%s mount option must be 'private' or 'shared': %w", name, util.ErrBadMntOption)
+				return nil, fmt.Errorf("%s mount option must be 'private' or 'shared': %w", kv[0], util.ErrBadMntOption)
 			}
-		case "shared", "rshared", "private", "rprivate", "slave", "rslave", "unbindable", "runbindable", "Z", "z", "no-dereference":
-			mnt.Options = append(mnt.Options, name)
+		case "shared", "rshared", "private", "rprivate", "slave", "rslave", "unbindable", "runbindable", "Z", "z":
+			mnt.Options = append(mnt.Options, kv[0])
 		case "src", "source":
 			if mountType == define.TypeTmpfs {
-				return nil, fmt.Errorf("%q option not supported for %q mount types", name, mountType)
+				return nil, fmt.Errorf("%q option not supported for %q mount types", kv[0], mountType)
 			}
 			if mnt.Source != "" {
-				return nil, fmt.Errorf("cannot pass %q option more than once: %w", name, errOptionArg)
+				return nil, fmt.Errorf("cannot pass %q option more than once: %w", kv[0], errOptionArg)
 			}
-			if !hasValue {
-				return nil, fmt.Errorf("%v: %w", name, errOptionArg)
+			if len(kv) == 1 {
+				return nil, fmt.Errorf("%v: %w", kv[0], errOptionArg)
 			}
-			if len(value) == 0 {
+			if len(kv[1]) == 0 {
 				return nil, fmt.Errorf("host directory cannot be empty: %w", errOptionArg)
 			}
-			mnt.Source = value
+			mnt.Source = kv[1]
 		case "target", "dst", "destination":
 			if mnt.Destination != "" {
-				return nil, fmt.Errorf("cannot pass %q option more than once: %w", name, errOptionArg)
+				return nil, fmt.Errorf("cannot pass %q option more than once: %w", kv[0], errOptionArg)
 			}
-			if !hasValue {
-				return nil, fmt.Errorf("%v: %w", name, errOptionArg)
+			if len(kv) == 1 {
+				return nil, fmt.Errorf("%v: %w", kv[0], errOptionArg)
 			}
-			if err := parse.ValidateVolumeCtrDir(value); err != nil {
+			if err := parse.ValidateVolumeCtrDir(kv[1]); err != nil {
 				return nil, err
 			}
-			mnt.Destination = unixPathClean(value)
+			mnt.Destination = unixPathClean(kv[1])
 		case "tmpcopyup", "notmpcopyup":
 			if mountType != define.TypeTmpfs {
-				return nil, fmt.Errorf("%q option not supported for %q mount types", name, mountType)
+				return nil, fmt.Errorf("%q option not supported for %q mount types", kv[0], mountType)
 			}
 			if setTmpcopyup {
 				return nil, fmt.Errorf("cannot pass 'tmpcopyup' and 'notmpcopyup' mnt.Options more than once: %w", errOptionArg)
 			}
 			setTmpcopyup = true
-			mnt.Options = append(mnt.Options, name)
+			mnt.Options = append(mnt.Options, kv[0])
 		case "tmpfs-mode":
 			if mountType != define.TypeTmpfs {
-				return nil, fmt.Errorf("%q option not supported for %q mount types", name, mountType)
+				return nil, fmt.Errorf("%q option not supported for %q mount types", kv[0], mountType)
 			}
-			if !hasValue {
-				return nil, fmt.Errorf("%v: %w", name, errOptionArg)
+			if len(kv) == 1 {
+				return nil, fmt.Errorf("%v: %w", kv[0], errOptionArg)
 			}
-			mnt.Options = append(mnt.Options, fmt.Sprintf("mode=%s", value))
+			mnt.Options = append(mnt.Options, fmt.Sprintf("mode=%s", kv[1]))
 		case "tmpfs-size":
 			if mountType != define.TypeTmpfs {
-				return nil, fmt.Errorf("%q option not supported for %q mount types", name, mountType)
+				return nil, fmt.Errorf("%q option not supported for %q mount types", kv[0], mountType)
 			}
-			if !hasValue {
-				return nil, fmt.Errorf("%v: %w", name, errOptionArg)
+			if len(kv) == 1 {
+				return nil, fmt.Errorf("%v: %w", kv[0], errOptionArg)
 			}
-			mnt.Options = append(mnt.Options, fmt.Sprintf("size=%s", value))
+			mnt.Options = append(mnt.Options, fmt.Sprintf("size=%s", kv[1]))
 		case "U", "chown":
 			if setOwnership {
 				return nil, fmt.Errorf("cannot pass 'U' or 'chown' option more than once: %w", errOptionArg)
 			}
-			ok, err := validChownFlag(value)
+			ok, err := validChownFlag(val)
 			if err != nil {
 				return nil, err
 			}
@@ -421,16 +421,16 @@ func parseMountOptions(mountType string, args []string) (*spec.Mount, error) {
 			setOwnership = true
 		case "volume-label":
 			if mountType != define.TypeVolume {
-				return nil, fmt.Errorf("%q option not supported for %q mount types", name, mountType)
+				return nil, fmt.Errorf("%q option not supported for %q mount types", kv[0], mountType)
 			}
 			return nil, fmt.Errorf("the --volume-label option is not presently implemented")
 		case "volume-opt":
 			if mountType != define.TypeVolume {
-				return nil, fmt.Errorf("%q option not supported for %q mount types", name, mountType)
+				return nil, fmt.Errorf("%q option not supported for %q mount types", kv[0], mountType)
 			}
-			mnt.Options = append(mnt.Options, arg)
+			mnt.Options = append(mnt.Options, val)
 		default:
-			return nil, fmt.Errorf("%s: %w", name, util.ErrBadMntOption)
+			return nil, fmt.Errorf("%s: %w", kv[0], util.ErrBadMntOption)
 		}
 	}
 	if mountType != "glob" && len(mnt.Destination) == 0 {
@@ -534,22 +534,22 @@ func getDevptsMount(args []string) (spec.Mount, error) {
 
 	var setDest bool
 
-	for _, arg := range args {
-		name, value, hasValue := strings.Cut(arg, "=")
-		switch name {
+	for _, val := range args {
+		kv := strings.SplitN(val, "=", 2)
+		switch kv[0] {
 		case "uid", "gid", "mode", "ptxmode", "newinstance", "max":
-			newMount.Options = append(newMount.Options, arg)
+			newMount.Options = append(newMount.Options, val)
 		case "target", "dst", "destination":
-			if !hasValue {
-				return newMount, fmt.Errorf("%v: %w", name, errOptionArg)
+			if len(kv) == 1 {
+				return newMount, fmt.Errorf("%v: %w", kv[0], errOptionArg)
 			}
-			if err := parse.ValidateVolumeCtrDir(value); err != nil {
+			if err := parse.ValidateVolumeCtrDir(kv[1]); err != nil {
 				return newMount, err
 			}
-			newMount.Destination = unixPathClean(value)
+			newMount.Destination = unixPathClean(kv[1])
 			setDest = true
 		default:
-			return newMount, fmt.Errorf("%s: %w", name, util.ErrBadMntOption)
+			return newMount, fmt.Errorf("%s: %w", kv[0], util.ErrBadMntOption)
 		}
 	}
 
@@ -586,37 +586,37 @@ func getNamedVolume(args []string) (*specgen.NamedVolume, error) {
 func getImageVolume(args []string) (*specgen.ImageVolume, error) {
 	newVolume := new(specgen.ImageVolume)
 
-	for _, arg := range args {
-		name, value, hasValue := strings.Cut(arg, "=")
-		switch name {
+	for _, val := range args {
+		kv := strings.SplitN(val, "=", 2)
+		switch kv[0] {
 		case "src", "source":
-			if !hasValue {
-				return nil, fmt.Errorf("%v: %w", name, errOptionArg)
+			if len(kv) == 1 {
+				return nil, fmt.Errorf("%v: %w", kv[0], errOptionArg)
 			}
-			newVolume.Source = value
+			newVolume.Source = kv[1]
 		case "target", "dst", "destination":
-			if !hasValue {
-				return nil, fmt.Errorf("%v: %w", name, errOptionArg)
+			if len(kv) == 1 {
+				return nil, fmt.Errorf("%v: %w", kv[0], errOptionArg)
 			}
-			if err := parse.ValidateVolumeCtrDir(value); err != nil {
+			if err := parse.ValidateVolumeCtrDir(kv[1]); err != nil {
 				return nil, err
 			}
-			newVolume.Destination = unixPathClean(value)
+			newVolume.Destination = unixPathClean(kv[1])
 		case "rw", "readwrite":
-			switch value {
+			switch kv[1] {
 			case "true":
 				newVolume.ReadWrite = true
 			case "false":
 				// Nothing to do. RO is default.
 			default:
-				return nil, fmt.Errorf("invalid rw value %q: %w", value, util.ErrBadMntOption)
+				return nil, fmt.Errorf("invalid rw value %q: %w", kv[1], util.ErrBadMntOption)
 			}
 		case "consistency":
 			// Often used on MACs and mistakenly on Linux platforms.
 			// Since Docker ignores this option so shall we.
 			continue
 		default:
-			return nil, fmt.Errorf("%s: %w", name, util.ErrBadMntOption)
+			return nil, fmt.Errorf("%s: %w", kv[0], util.ErrBadMntOption)
 		}
 	}
 
@@ -660,16 +660,24 @@ func getTmpfsMounts(tmpfsFlag []string) (map[string]spec.Mount, error) {
 }
 
 // validChownFlag ensures that the U or chown flag is correctly used
-func validChownFlag(value string) (bool, error) {
-	// U=[true|false]
-	switch {
-	case strings.EqualFold(value, "true"), value == "":
-		return true, nil
-	case strings.EqualFold(value, "false"):
-		return false, nil
+func validChownFlag(flag string) (bool, error) {
+	kv := strings.SplitN(flag, "=", 2)
+	switch len(kv) {
+	case 1:
+	case 2:
+		// U=[true|false]
+		switch strings.ToLower(kv[1]) {
+		case "true":
+		case "false":
+			return false, nil
+		default:
+			return false, fmt.Errorf("'U' or 'chown' must be set to true or false, instead received %q: %w", kv[1], errOptionArg)
+		}
 	default:
-		return false, fmt.Errorf("'U' or 'chown' must be set to true or false, instead received %q: %w", value, errOptionArg)
+		return false, fmt.Errorf("badly formatted option %q: %w", flag, errOptionArg)
 	}
+
+	return true, nil
 }
 
 // Use path instead of filepath to preserve Unix style paths on Windows

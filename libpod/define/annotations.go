@@ -18,6 +18,13 @@ const (
 	// the two supported boolean values (InspectResponseTrue and
 	// InspectResponseFalse) it will be used in the output of Inspect().
 	InspectAnnotationAutoremove = "io.podman.annotations.autoremove"
+	// InspectAnnotationVolumesFrom is used by Inspect to identify
+	// containers whose volumes are being used by this container.
+	// It is expected to be a comma-separated list of container names and/or
+	// IDs.
+	// If an annotation with this key is found in the OCI spec, it will be
+	// used in the output of Inspect().
+	InspectAnnotationVolumesFrom = "io.podman.annotations.volumes-from"
 	// InspectAnnotationPrivileged is used by Inspect to identify containers
 	// which are privileged (IE, running with elevated privileges).
 	// It is expected to be a boolean, populated by one of
@@ -142,33 +149,23 @@ const (
 	// pod creation
 	InfraNameAnnotation = "io.podman.annotations.infra.name"
 
-	// UserNsAnnotation is used by play kube when playing a kube yaml to specify userns
-	// of the container
-	UserNsAnnotation = "io.podman.annotations.userns"
-
 	// UlimitAnnotation is used by kube play when playing a kube yaml to specify the ulimits
 	// of the container
 	UlimitAnnotation = "io.podman.annotations.ulimit"
-
-	// VolumesFromAnnotation is used by by play kube when playing a kube
-	// yaml to specify volumes-from of the container
-	// It is expected to be a semicolon-separated list of container names and/or
-	// IDs optionally with colon separated mount options.
-	VolumesFromAnnotation = "io.podman.annotations.volumes-from"
 
 	// KubeHealthCheckAnnotation is used by kube play to tell podman that any health checks should follow
 	// the k8s behavior of waiting for the intialDelaySeconds to be over before updating the status
 	KubeHealthCheckAnnotation = "io.podman.annotations.kube.health.check"
 
-	// TotalAnnotationSizeLimitB is the max length of annotations allowed by Kubernetes.
-	TotalAnnotationSizeLimitB int = 256 * (1 << 10) // 256 kB
+	// MaxKubeAnnotation is the max length of annotations allowed by Kubernetes.
+	MaxKubeAnnotation = 63
 )
 
 // IsReservedAnnotation returns true if the specified value corresponds to an
 // already reserved annotation that Podman sets during container creation.
 func IsReservedAnnotation(value string) bool {
 	switch value {
-	case InspectAnnotationCIDFile, InspectAnnotationAutoremove, InspectAnnotationPrivileged, InspectAnnotationPublishAll, InspectAnnotationInit, InspectAnnotationLabel, InspectAnnotationSeccomp, InspectAnnotationApparmor, InspectResponseTrue, InspectResponseFalse, VolumesFromAnnotation:
+	case InspectAnnotationCIDFile, InspectAnnotationAutoremove, InspectAnnotationVolumesFrom, InspectAnnotationPrivileged, InspectAnnotationPublishAll, InspectAnnotationInit, InspectAnnotationLabel, InspectAnnotationSeccomp, InspectAnnotationApparmor, InspectResponseTrue, InspectResponseFalse:
 		return true
 
 	default:

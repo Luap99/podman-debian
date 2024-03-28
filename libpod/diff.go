@@ -1,12 +1,13 @@
 //go:build !remote
+// +build !remote
 
 package libpod
 
 import (
 	"fmt"
 
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/libpod/layers"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/libpod/layers"
 	"github.com/containers/storage/pkg/archive"
 )
 

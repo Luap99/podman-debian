@@ -104,8 +104,8 @@ See 'podman create --help'" "--module must be specified before the command"
 
     run_podman rm -f $cid
 
-    # Nonexistent module path with comma
-    nonesuch=${PODMAN_TMPDIR}/nonexistent,withcomma
+    # Nonexistent module path
+    nonesuch=${PODMAN_TMPDIR}/nonexistent
     run_podman 1 --module=$nonesuch sdfsdfdsf
     is "$output" "Failed to obtain podman configuration: could not resolve module \"$nonesuch\": stat $nonesuch: no such file or directory" \
        "--module=ENOENT"
@@ -244,7 +244,7 @@ EOF
     run_podman container exec $cname grep CapBnd /proc/self/status
     non_privileged_caps="$output"
     run_podman --module=$conf_tmp container exec $cname grep CapBnd /proc/self/status
-    assert "$output" != "$non_privileged_caps" "--module should enable a privileged exec session"
+    assert "$output" != "$non_privileged_caps" "--module should enable a prvileged exec session"
 
     run_podman rm -f -t0 $cname
 }

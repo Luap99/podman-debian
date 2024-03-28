@@ -1,4 +1,5 @@
 //go:build !remote
+// +build !remote
 
 package libpod
 
@@ -12,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/libpod/events"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/libpod/events"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 )

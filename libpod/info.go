@@ -1,4 +1,5 @@
 //go:build !remote
+// +build !remote
 
 package libpod
 
@@ -19,8 +20,9 @@ import (
 	"github.com/containers/buildah/pkg/util"
 	"github.com/containers/common/pkg/version"
 	"github.com/containers/image/v5/pkg/sysregistriesv2"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/libpod/linkmode"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/libpod/linkmode"
+	"github.com/containers/podman/v4/pkg/rootless"
 	"github.com/containers/storage"
 	"github.com/containers/storage/pkg/system"
 	"github.com/sirupsen/logrus"
@@ -212,7 +214,7 @@ func (r *Runtime) getContainerStoreInfo() (define.ContainerStore, error) {
 // top-level "store" info
 func (r *Runtime) storeInfo() (*define.StoreInfo, error) {
 	// let's say storage driver in use, number of images, number of containers
-	configFile, err := storage.DefaultConfigFile()
+	configFile, err := storage.DefaultConfigFile(rootless.IsRootless())
 	if err != nil {
 		return nil, err
 	}

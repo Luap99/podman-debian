@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	. "github.com/containers/podman/v5/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -34,7 +34,9 @@ var _ = Describe("Podman prune", func() {
 		Expect(top).Should(ExitCleanly())
 		cid := top.OutputToString()
 
-		podmanTest.StopContainer(cid)
+		stop := podmanTest.Podman([]string{"stop", cid})
+		stop.WaitWithDefaultTimeout()
+		Expect(stop).Should(ExitCleanly())
 
 		prune := podmanTest.Podman([]string{"container", "prune", "-f"})
 		prune.WaitWithDefaultTimeout()
@@ -218,7 +220,10 @@ var _ = Describe("Podman prune", func() {
 		session = podmanTest.Podman([]string{"pod", "start", podid1})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(ExitCleanly())
-		podmanTest.StopPod(podid1)
+
+		session = podmanTest.Podman([]string{"pod", "stop", podid1})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(ExitCleanly())
 
 		pods := podmanTest.Podman([]string{"pod", "ps"})
 		pods.WaitWithDefaultTimeout()
@@ -289,7 +294,10 @@ var _ = Describe("Podman prune", func() {
 		session = podmanTest.Podman([]string{"pod", "start", podid1})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(ExitCleanly())
-		podmanTest.StopPod(podid1)
+
+		session = podmanTest.Podman([]string{"pod", "stop", podid1})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(ExitCleanly())
 
 		// Create a container. This container should be pruned.
 		create := podmanTest.Podman([]string{"create", "--name", "test", BB})
@@ -319,7 +327,10 @@ var _ = Describe("Podman prune", func() {
 		session = podmanTest.Podman([]string{"pod", "start", podid1})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(ExitCleanly())
-		podmanTest.StopPod(podid1)
+
+		session = podmanTest.Podman([]string{"pod", "stop", podid1})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(ExitCleanly())
 
 		// Start a pod and leave it running
 		session = podmanTest.Podman([]string{"pod", "create"})
@@ -395,7 +406,9 @@ var _ = Describe("Podman prune", func() {
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(ExitCleanly())
 
-		podmanTest.StopPod(podid1)
+		session = podmanTest.Podman([]string{"pod", "stop", podid1})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(ExitCleanly())
 
 		// Create a container. This container should be pruned.
 		create := podmanTest.Podman([]string{"create", "--name", "test", BB})

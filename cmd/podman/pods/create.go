@@ -11,16 +11,16 @@ import (
 
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/sysinfo"
-	"github.com/containers/podman/v5/cmd/podman/common"
-	"github.com/containers/podman/v5/cmd/podman/containers"
-	"github.com/containers/podman/v5/cmd/podman/parse"
-	"github.com/containers/podman/v5/cmd/podman/registry"
-	"github.com/containers/podman/v5/cmd/podman/utils"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	"github.com/containers/podman/v5/pkg/specgen"
-	"github.com/containers/podman/v5/pkg/specgenutil"
-	"github.com/containers/podman/v5/pkg/util"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/containers"
+	"github.com/containers/podman/v4/cmd/podman/parse"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/utils"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/specgen"
+	"github.com/containers/podman/v4/pkg/specgenutil"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/docker/docker/pkg/parsers"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -133,12 +133,18 @@ func create(cmd *cobra.Command, args []string) error {
 		createOptions.Infra = false
 	}
 
+	report, err := registry.ContainerEngine().NetworkExists(registry.Context(), "pasta")
+	if err != nil {
+		return err
+	}
+	pastaNetworkNameExists := report.Value
+
 	if !createOptions.Infra {
 		if cmd.Flag("no-hosts").Changed {
 			return fmt.Errorf("cannot specify --no-hosts without an infra container")
 		}
 		flags := cmd.Flags()
-		createOptions.Net, err = common.NetFlagsToNetOptions(nil, *flags)
+		createOptions.Net, err = common.NetFlagsToNetOptions(nil, *flags, pastaNetworkNameExists)
 		if err != nil {
 			return err
 		}
@@ -164,7 +170,7 @@ func create(cmd *cobra.Command, args []string) error {
 	} else {
 		// reassign certain options for lbpod api, these need to be populated in spec
 		flags := cmd.Flags()
-		infraOptions.Net, err = common.NetFlagsToNetOptions(nil, *flags)
+		infraOptions.Net, err = common.NetFlagsToNetOptions(nil, *flags, pastaNetworkNameExists)
 		if err != nil {
 			return err
 		}
