@@ -1,13 +1,12 @@
 //go:build !remote
-// +build !remote
 
 package kube
 
 import (
 	"testing"
 
-	v1 "github.com/containers/podman/v4/pkg/k8s.io/api/core/v1"
-	"github.com/containers/podman/v4/pkg/k8s.io/apimachinery/pkg/util/intstr"
+	v1 "github.com/containers/podman/v5/pkg/k8s.io/api/core/v1"
+	"github.com/containers/podman/v5/pkg/k8s.io/apimachinery/pkg/util/intstr"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -42,6 +41,39 @@ func TestParseMountPathRO(t *testing.T) {
 	_, options, err = parseMountPath("/to", false, nil)
 	assert.NoError(t, err)
 	assert.NotContains(t, options, "ro")
+}
+
+func TestGetPodPorts(t *testing.T) {
+	c1 := v1.Container{
+		Name: "container1",
+		Ports: []v1.ContainerPort{{
+			ContainerPort: 5000,
+		}, {
+			ContainerPort: 5001,
+			HostPort:      5002,
+		}},
+	}
+	c2 := v1.Container{
+		Name: "container2",
+		Ports: []v1.ContainerPort{{
+			HostPort: 5004,
+		}},
+	}
+	r := getPodPorts([]v1.Container{c1, c2}, false)
+	assert.Equal(t, 2, len(r))
+	assert.Equal(t, uint16(5001), r[0].ContainerPort)
+	assert.Equal(t, uint16(5002), r[0].HostPort)
+	assert.Equal(t, uint16(5004), r[1].ContainerPort)
+	assert.Equal(t, uint16(5004), r[1].HostPort)
+
+	r = getPodPorts([]v1.Container{c1, c2}, true)
+	assert.Equal(t, 3, len(r))
+	assert.Equal(t, uint16(5000), r[0].ContainerPort)
+	assert.Equal(t, uint16(5000), r[0].HostPort)
+	assert.Equal(t, uint16(5001), r[1].ContainerPort)
+	assert.Equal(t, uint16(5002), r[1].HostPort)
+	assert.Equal(t, uint16(5004), r[2].ContainerPort)
+	assert.Equal(t, uint16(5004), r[2].HostPort)
 }
 
 func TestGetPortNumber(t *testing.T) {

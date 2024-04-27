@@ -1,5 +1,4 @@
 //go:build amd64 || arm64
-// +build amd64 arm64
 
 package machine
 
@@ -8,9 +7,14 @@ import (
 	"os"
 
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/podman/v4/cmd/podman/registry"
-	"github.com/containers/podman/v4/libpod/events"
-	"github.com/containers/podman/v4/pkg/machine"
+	"github.com/containers/podman/v5/cmd/podman/registry"
+	ldefine "github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/libpod/events"
+	"github.com/containers/podman/v5/pkg/machine"
+	"github.com/containers/podman/v5/pkg/machine/define"
+	"github.com/containers/podman/v5/pkg/machine/shim"
+	"github.com/containers/podman/v5/pkg/machine/vmconfigs"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
 
@@ -26,7 +30,7 @@ var (
 		ValidArgsFunction: completion.AutocompleteNone,
 	}
 
-	initOpts           = machine.InitOptions{}
+	initOpts           = define.InitOptions{}
 	initOptionalFlags  = InitOptionalFlags{}
 	defaultMachineName = machine.DefaultMachineName
 	now                bool
@@ -98,13 +102,26 @@ func init() {
 	flags.StringVar(&initOpts.Username, UsernameFlagName, cfg.ContainersConfDefaultsRO.Machine.User, "Username used in image")
 	_ = initCmd.RegisterFlagCompletionFunc(UsernameFlagName, completion.AutocompleteDefault)
 
+	ImageFlagName := "image"
+	flags.StringVar(&initOpts.Image, ImageFlagName, cfg.ContainersConfDefaultsRO.Machine.Image, "Bootable image for machine")
+	_ = initCmd.RegisterFlagCompletionFunc(ImageFlagName, completion.AutocompleteDefault)
+
+	// Deprecate image-path option, use --image instead
 	ImagePathFlagName := "image-path"
-	flags.StringVar(&initOpts.ImagePath, ImagePathFlagName, cfg.ContainersConfDefaultsRO.Machine.Image, "Path to bootable image")
+	flags.StringVar(&initOpts.Image, ImagePathFlagName, cfg.ContainersConfDefaultsRO.Machine.Image, "Bootable image for machine")
 	_ = initCmd.RegisterFlagCompletionFunc(ImagePathFlagName, completion.AutocompleteDefault)
+	if err := flags.MarkDeprecated(ImagePathFlagName, "use --image instead"); err != nil {
+		logrus.Error("unable to mark image-path flag deprecated")
+	}
 
 	VolumeFlagName := "volume"
-	flags.StringArrayVarP(&initOpts.Volumes, VolumeFlagName, "v", cfg.ContainersConfDefaultsRO.Machine.Volumes, "Volumes to mount, source:target")
+	flags.StringArrayVarP(&initOpts.Volumes, VolumeFlagName, "v", cfg.ContainersConfDefaultsRO.Machine.Volumes.Get(), "Volumes to mount, source:target")
 	_ = initCmd.RegisterFlagCompletionFunc(VolumeFlagName, completion.AutocompleteDefault)
+
+	USBFlagName := "usb"
+	flags.StringArrayVarP(&initOpts.USBs, USBFlagName, "", []string{},
+		"USB Host passthrough: bus=$1,devnum=$2 or vendor=$1,product=$2")
+	_ = initCmd.RegisterFlagCompletionFunc(USBFlagName, completion.AutocompleteDefault)
 
 	VolumeDriverFlagName := "volume-driver"
 	flags.StringVar(&initOpts.VolumeDriver, VolumeDriverFlagName, "", "Optional volume driver")
@@ -123,21 +140,53 @@ func init() {
 }
 
 func initMachine(cmd *cobra.Command, args []string) error {
-	var (
-		err error
-		vm  machine.VM
-	)
-
 	initOpts.Name = defaultMachineName
 	if len(args) > 0 {
 		if len(args[0]) > maxMachineNameSize {
 			return fmt.Errorf("machine name %q must be %d characters or less", args[0], maxMachineNameSize)
 		}
 		initOpts.Name = args[0]
+
+		if !ldefine.NameRegex.MatchString(initOpts.Name) {
+			return fmt.Errorf("invalid name %q: %w", initOpts.Name, ldefine.RegexError)
+		}
 	}
-	if _, err := provider.LoadVMByName(initOpts.Name); err == nil {
-		return fmt.Errorf("%s: %w", initOpts.Name, machine.ErrVMAlreadyExists)
+
+	// The vmtype names need to be reserved and cannot be used for podman machine names
+	if _, err := define.ParseVMType(initOpts.Name, define.UnknownVirt); err == nil {
+		return fmt.Errorf("cannot use %q for a machine name", initOpts.Name)
 	}
+
+	if !ldefine.NameRegex.MatchString(initOpts.Username) {
+		return fmt.Errorf("invalid username %q: %w", initOpts.Username, ldefine.RegexError)
+	}
+
+	// Check if machine already exists
+	_, exists, err := shim.VMExists(initOpts.Name, []vmconfigs.VMProvider{provider})
+	if err != nil {
+		return err
+	}
+
+	// machine exists, return error
+	if exists {
+		return fmt.Errorf("%s: %w", initOpts.Name, define.ErrVMAlreadyExists)
+	}
+
+	// check if a system connection already exists
+	cons, err := registry.PodmanConfig().ContainersConfDefaultsRO.GetAllConnections()
+	if err != nil {
+		return err
+	}
+	for _, con := range cons {
+		if con.ReadWrite {
+			for _, connection := range []string{initOpts.Name, fmt.Sprintf("%s-root", initOpts.Name)} {
+				if con.Name == connection {
+					return fmt.Errorf("system connection %q already exists. consider a different machine name or remove the connection with `podman system connection rm`", connection)
+				}
+			}
+		}
+	}
+
 	for idx, vol := range initOpts.Volumes {
 		initOpts.Volumes[idx] = os.ExpandEnv(vol)
 	}
@@ -147,20 +196,23 @@ func initMachine(cmd *cobra.Command, args []string) error {
 		initOpts.UserModeNetworking = &initOptionalFlags.UserModeNetworking
 	}
 
-	vm, err = provider.NewMachine(initOpts)
+	// TODO need to work this back in
+	// if finished, err := vm.Init(initOpts); err != nil || !finished {
+	// 	// Finished = true,  err  = nil  -  Success! Log a message with further instructions
+	// 	// Finished = false, err  = nil  -  The installation is partially complete and podman should
+	// 	//                                  exit gracefully with no error and no success message.
+	// 	//                                  Examples:
+	// 	//                                  - a user has chosen to perform their own reboot
+	// 	//                                  - reexec for limited admin operations, returning to parent
+	// 	// Finished = *,     err != nil  -  Exit with an error message
+	// 	return err
+	// }
+
+	err = shim.Init(initOpts, provider)
 	if err != nil {
 		return err
 	}
-	if finished, err := vm.Init(initOpts); err != nil || !finished {
-		// Finished = true,  err  = nil  -  Success! Log a message with further instructions
-		// Finished = false, err  = nil  -  The installation is partially complete and podman should
-		//                                  exit gracefully with no error and no success message.
-		//                                  Examples:
-		//                                  - a user has chosen to perform their own reboot
-		//                                  - reexec for limited admin operations, returning to parent
-		// Finished = *,     err != nil  -  Exit with an error message
-		return err
-	}
+
 	newMachineEvent(events.Init, events.Event{Name: initOpts.Name})
 	fmt.Println("Machine init complete")
 

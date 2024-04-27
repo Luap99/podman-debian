@@ -9,19 +9,13 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/containers/common/pkg/cgroups"
-	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/containers/podman/v4/pkg/domain/entities/reports"
-	"github.com/containers/podman/v4/pkg/rootless"
-	"github.com/containers/podman/v4/pkg/util"
-	"github.com/containers/podman/v4/utils"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	"github.com/containers/podman/v5/pkg/domain/entities/reports"
+	"github.com/containers/podman/v5/pkg/util"
 	"github.com/containers/storage"
 	"github.com/containers/storage/pkg/directory"
-	"github.com/containers/storage/pkg/unshare"
 	"github.com/sirupsen/logrus"
-	"github.com/spf13/pflag"
 )
 
 func (ic *ContainerEngine) Info(ctx context.Context) (*define.Info, error) {
@@ -36,7 +30,7 @@ func (ic *ContainerEngine) Info(ctx context.Context) (*define.Info, error) {
 	// service may be run with another URI.
 	if ic.Libpod.RemoteURI() == "" {
 		xdg := defaultRunPath
-		if path, err := util.GetRuntimeDir(); err != nil {
+		if path, err := util.GetRootlessRuntimeDir(); err != nil {
 			// Info is as good as we can guess...
 			return info, err
 		} else if path != "" {
@@ -64,94 +58,6 @@ func (ic *ContainerEngine) Info(ctx context.Context) (*define.Info, error) {
 	}
 
 	return info, err
-}
-
-func (ic *ContainerEngine) SetupRootless(_ context.Context, noMoveProcess bool) error {
-	runsUnderSystemd := utils.RunsOnSystemd()
-	if !runsUnderSystemd {
-		isPid1 := os.Getpid() == 1
-		if _, found := os.LookupEnv("container"); isPid1 || found {
-			if err := utils.MaybeMoveToSubCgroup(); err != nil {
-				// it is a best effort operation, so just print the
-				// error for debugging purposes.
-				logrus.Debugf("Could not move to subcgroup: %v", err)
-			}
-		}
-	}
-
-	if !rootless.IsRootless() {
-		return nil
-	}
-
-	// do it only after podman has already re-execed and running with uid==0.
-	hasCapSysAdmin, err := unshare.HasCapSysAdmin()
-	if err != nil {
-		return err
-	}
-	if hasCapSysAdmin {
-		ownsCgroup, err := cgroups.UserOwnsCurrentSystemdCgroup()
-		if err != nil {
-			logrus.Infof("Failed to detect the owner for the current cgroup: %v", err)
-		}
-		if !ownsCgroup {
-			conf, err := ic.Config(context.Background())
-			if err != nil {
-				return err
-			}
-			unitName := fmt.Sprintf("podman-%d.scope", os.Getpid())
-			if runsUnderSystemd || conf.Engine.CgroupManager == config.SystemdCgroupsManager {
-				if err := utils.RunUnderSystemdScope(os.Getpid(), "user.slice", unitName); err != nil {
-					logrus.Debugf("Failed to add podman to systemd sandbox cgroup: %v", err)
-				}
-			}
-		}
-		return nil
-	}
-
-	pausePidPath, err := util.GetRootlessPauseProcessPidPath()
-	if err != nil {
-		return fmt.Errorf("could not get pause process pid file path: %w", err)
-	}
-
-	became, ret, err := rootless.TryJoinPauseProcess(pausePidPath)
-	if err != nil {
-		return err
-	}
-	if became {
-		os.Exit(ret)
-	}
-	if noMoveProcess {
-		return nil
-	}
-
-	// if there is no pid file, try to join existing containers, and create a pause process.
-	ctrs, err := ic.Libpod.GetRunningContainers()
-	if err != nil {
-		logrus.Error(err.Error())
-		os.Exit(1)
-	}
-
-	paths := []string{}
-	for _, ctr := range ctrs {
-		paths = append(paths, ctr.ConfigNoCopy().ConmonPidFile)
-	}
-
-	if len(paths) > 0 {
-		became, ret, err = rootless.TryJoinFromFilePaths(pausePidPath, true, paths)
-	} else {
-		became, ret, err = rootless.BecomeRootInUserNS(pausePidPath)
-		if err == nil {
-			utils.MovePauseProcessToScope(pausePidPath)
-		}
-	}
-	if err != nil {
-		logrus.Error(fmt.Errorf("invalid internal status, try resetting the pause process with %q: %w", os.Args[0]+" system migrate", err))
-		os.Exit(1)
-	}
-	if became {
-		os.Exit(ret)
-	}
-	return nil
 }
 
 // SystemPrune removes unused data from the system. Pruning pods, containers, networks, volumes and images.
@@ -370,16 +276,16 @@ func (ic *ContainerEngine) SystemDf(ctx context.Context, options entities.System
 	}, nil
 }
 
-func (se *SystemEngine) Reset(ctx context.Context) error {
-	return nil
+func (ic *ContainerEngine) Reset(ctx context.Context) error {
+	return ic.Libpod.Reset(ctx)
 }
 
-func (se *SystemEngine) Renumber(ctx context.Context, flags *pflag.FlagSet, config *entities.PodmanConfig) error {
-	return nil
+func (ic *ContainerEngine) Renumber(ctx context.Context) error {
+	return ic.Libpod.RenumberLocks()
 }
 
-func (se SystemEngine) Migrate(ctx context.Context, flags *pflag.FlagSet, config *entities.PodmanConfig, options entities.SystemMigrateOptions) error {
-	return nil
+func (ic *ContainerEngine) Migrate(ctx context.Context, options entities.SystemMigrateOptions) error {
+	return ic.Libpod.Migrate(options.NewRuntime)
 }
 
 func (se SystemEngine) Shutdown(ctx context.Context) {
@@ -405,17 +311,7 @@ func (ic *ContainerEngine) Unshare(ctx context.Context, args []string, options e
 	}
 
 	if options.RootlessNetNS {
-		rootlessNetNS, err := ic.Libpod.GetRootlessNetNs(true)
-		if err != nil {
-			return err
-		}
-		// Make sure to unlock, unshare can run for a long time.
-		rootlessNetNS.Lock.Unlock()
-		// We do not want to clean up the netns after unshare.
-		// The problem is that we cannot know if we need to clean up and
-		// secondly unshare should allow user to set up the namespace with
-		// special things, e.g. potentially macvlan or something like that.
-		return rootlessNetNS.Do(unshare)
+		return ic.Libpod.Network().RunInRootlessNetns(unshare)
 	}
 	return unshare()
 }

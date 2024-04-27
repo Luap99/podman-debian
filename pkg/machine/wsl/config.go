@@ -1,15 +1,18 @@
-//go:build windows
-// +build windows
+//go:build tempoff
 
 package wsl
 
 import (
+	"fmt"
 	"io/fs"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/containers/podman/v4/pkg/machine"
+	"github.com/containers/podman/v5/pkg/machine"
+	"github.com/containers/podman/v5/pkg/machine/compression"
+	"github.com/containers/podman/v5/pkg/machine/define"
+	"github.com/containers/podman/v5/utils"
 	"github.com/sirupsen/logrus"
 )
 
@@ -19,13 +22,16 @@ type WSLVirtualization struct {
 
 func VirtualizationProvider() machine.VirtProvider {
 	return &WSLVirtualization{
-		machine.NewVirtualization(machine.None, machine.Xz, machine.Tar, vmtype),
+		machine.NewVirtualization(define.None, compression.Xz, define.Tar, vmtype),
 	}
 }
 
 // NewMachine initializes an instance of a wsl machine
-func (p *WSLVirtualization) NewMachine(opts machine.InitOptions) (machine.VM, error) {
+func (p *WSLVirtualization) NewMachine(opts define.InitOptions) (machine.VM, error) {
 	vm := new(MachineVM)
+	if len(opts.USBs) > 0 {
+		return nil, fmt.Errorf("USB host passthrough is not supported for WSL machines")
+	}
 	if len(opts.Name) > 0 {
 		vm.Name = opts.Name
 	}
@@ -46,7 +52,6 @@ func (p *WSLVirtualization) NewMachine(opts machine.InitOptions) (machine.VM, er
 	}
 
 	vm.Created = time.Now()
-	vm.LastUp = vm.Created
 
 	// Default is false
 	if opts.UserModeNetworking != nil {
@@ -72,6 +77,16 @@ func (p *WSLVirtualization) LoadVMByName(name string) (machine.VM, error) {
 	}
 
 	vm, err := readAndMigrate(configPath, name)
+	if err != nil {
+		return nil, err
+	}
+
+	lock, err := machine.GetLock(vm.Name, vmtype)
+	if err != nil {
+		return nil, err
+	}
+	vm.lock = lock
+
 	return vm, err
 }
 
@@ -135,10 +150,6 @@ func (p *WSLVirtualization) IsValidVMName(name string) (bool, error) {
 	return false, nil
 }
 
-func (p *WSLVirtualization) CheckExclusiveActiveVM() (bool, string, error) {
-	return false, "", nil
-}
-
 // RemoveAndCleanMachines removes all machine and cleans up any other files associated with podman machine
 func (p *WSLVirtualization) RemoveAndCleanMachines() error {
 	var (
@@ -187,7 +198,7 @@ func (p *WSLVirtualization) RemoveAndCleanMachines() error {
 		}
 		prevErr = err
 	} else {
-		err := machine.GuardedRemoveAll(dataDir)
+		err := utils.GuardedRemoveAll(dataDir)
 		if err != nil {
 			if prevErr != nil {
 				logrus.Error(prevErr)
@@ -204,7 +215,7 @@ func (p *WSLVirtualization) RemoveAndCleanMachines() error {
 		}
 		prevErr = err
 	} else {
-		err := machine.GuardedRemoveAll(confDir)
+		err := utils.GuardedRemoveAll(confDir)
 		if err != nil {
 			if prevErr != nil {
 				logrus.Error(prevErr)
@@ -215,6 +226,6 @@ func (p *WSLVirtualization) RemoveAndCleanMachines() error {
 	return prevErr
 }
 
-func (p *WSLVirtualization) VMType() machine.VMType {
+func (p *WSLVirtualization) VMType() define.VMType {
 	return vmtype
 }

@@ -53,7 +53,6 @@ BUILDTAGS ?= \
 	$(shell hack/apparmor_tag.sh) \
 	$(shell hack/btrfs_installed_tag.sh) \
 	$(shell hack/btrfs_tag.sh) \
-	$(shell hack/selinux_tag.sh) \
 	$(shell hack/systemd_tag.sh) \
 	$(shell hack/libsubid_tag.sh) \
 	exclude_graphdriver_devicemapper \
@@ -61,7 +60,7 @@ BUILDTAGS ?= \
 # N/B: This value is managed by Renovate, manual changes are
 # possible, as long as they don't disturb the formatting
 # (i.e. DO NOT ADD A 'v' prefix!)
-GOLANGCI_LINT_VERSION := 1.54.2
+GOLANGCI_LINT_VERSION := 1.56.2
 PYTHON ?= $(shell command -v python3 python|head -n1)
 PKG_MANAGER ?= $(shell command -v dnf yum|head -n1)
 # ~/.local/bin is not in PATH on all systems
@@ -70,6 +69,8 @@ ifeq ($(shell uname -s),FreeBSD)
 SED=gsed
 GREP=ggrep
 MAN_L=	mandoc
+# FreeBSD needs CNI until netavark is supported
+BUILDTAGS += cni
 else
 SED=sed
 GREP=grep
@@ -102,6 +103,7 @@ FISHINSTALLDIR=${PREFIX}/share/fish/vendor_completions.d
 
 SELINUXOPT ?= $(shell test -x /usr/sbin/selinuxenabled && selinuxenabled && echo -Z)
 
+
 COMMIT_NO ?= $(shell git rev-parse HEAD 2> /dev/null || true)
 GIT_COMMIT ?= $(if $(shell git status --porcelain --untracked-files=no),$(call err_if_empty,COMMIT_NO)-dirty,$(COMMIT_NO))
 DATE_FMT = %s
@@ -110,14 +112,14 @@ ifdef SOURCE_DATE_EPOCH
 else
 	BUILD_INFO ?= $(shell date "+$(DATE_FMT)")
 endif
-LIBPOD := ${PROJECT}/v4/libpod
+LIBPOD := ${PROJECT}/v5/libpod
 GOFLAGS ?= -trimpath
 LDFLAGS_PODMAN ?= \
 	$(if $(GIT_COMMIT),-X $(LIBPOD)/define.gitCommit=$(GIT_COMMIT),) \
 	$(if $(BUILD_INFO),-X $(LIBPOD)/define.buildInfo=$(BUILD_INFO),) \
 	-X $(LIBPOD)/config._installPrefix=$(PREFIX) \
 	-X $(LIBPOD)/config._etcDir=$(ETCDIR) \
-	-X $(PROJECT)/v4/pkg/systemd/quadlet._binDir=$(BINDIR) \
+	-X $(PROJECT)/v5/pkg/systemd/quadlet._binDir=$(BINDIR) \
 	-X github.com/containers/common/pkg/config.additionalHelperBinariesDir=$(HELPER_BINARIES_DIR)\
 	$(EXTRA_LDFLAGS)
 LDFLAGS_PODMAN_STATIC ?= \
@@ -135,6 +137,10 @@ GINKGO ?= ./test/tools/build/ginkgo
 # ginkgo json output is only useful in CI, not on developer runs
 GINKGO_JSON ?= $(if $(CI),--json-report ginkgo-e2e.json,)
 
+# Allow control over some Ginkgo parameters
+GINKGO_FLAKE_ATTEMPTS ?= 3
+GINKGO_NO_COLOR ?= y
+
 # Conditional required to produce empty-output if binary not built yet.
 RELEASE_VERSION = $(shell if test -x test/version/version; then test/version/version; fi)
 RELEASE_NUMBER = $(shell echo "$(call err_if_empty,RELEASE_VERSION)" | sed -e 's/^v\(.*\)/\1/')
@@ -149,6 +155,11 @@ export PATH := $(shell $(GO) env GOPATH)/bin:$(PATH)
 
 GOMD2MAN ?= ./test/tools/build/go-md2man
 
+# There are many possibly unexpected places where podman is used.  For example
+# by OpenWRT for routers and other similar small "edge" devices.  Testing builds
+# for otherwise non-mainstream architectures ensures we catch platform-specific
+# toolchain shenanigans early, for example:
+# https://github.com/containers/podman/issues/8782
 CROSS_BUILD_TARGETS := \
 	bin/podman.cross.linux.amd64 \
 	bin/podman.cross.linux.ppc64le \
@@ -204,12 +215,9 @@ ifdef HOMEBREW_PREFIX
 endif
 endif
 
-# win-sshproxy is checked out manually to keep from pulling in gvisor and it's transitive
-# dependencies. This is only used for the Windows client archives, which must
-# include this lightweight helper binary.
-#
-GV_GITURL=https://github.com/containers/gvisor-tap-vsock.git
-GV_SHA=db608827124caa71ba411cec8ea959bb942984fe
+# gvisor-tap-vsock version for gvproxy.exe and win-sshproxy.exe downloads
+# the upstream project ships pre-built binaries since version 0.7.1
+GV_VERSION=v0.7.3
 
 ###
 ### Primary entry-point targets
@@ -259,7 +267,7 @@ help: ## (Default) Print listing of key targets with their descriptions
 ###
 
 .PHONY: .gitvalidation
-.gitvalidation:
+.gitvalidation: .install.gitvalidation
 	@echo "Validating vs commit '$(call err_if_empty,EPOCH_TEST_COMMIT)'"
 	GIT_CHECK_EXCLUDE="./vendor:./test/tools/vendor:docs/make.bat:test/buildah-bud/buildah-tests.diff:test/e2e/quadlet/remap-keep-id2.container" ./test/tools/build/git-validation -run short-subject -range $(EPOCH_TEST_COMMIT)..$(HEAD)
 
@@ -299,10 +307,10 @@ test/version/version: version/version.go
 
 .PHONY: codespell
 codespell:
-	codespell -S bin,vendor,.git,go.sum,.cirrus.yml,"*.fish,RELEASE_NOTES.md,*.xz,*.gz,*.ps1,*.tar,swagger.yaml,*.tgz,bin2img,*ico,*.png,*.1,*.5,copyimg,*.orig,apidoc.go" -L passt,bu,hastable,te,clos,ans,pullrequest,uint,iff,od,seeked,splitted,marge,erro,hist,ether,specif -w
+	codespell -S bin,vendor,.git,go.sum,.cirrus.yml,"*.fish,RELEASE_NOTES.md,*.xz,*.gz,*.ps1,*.tar,swagger.yaml,*.tgz,bin2img,*ico,*.png,*.1,*.5,copyimg,*.orig,apidoc.go" -L secon,passt,bu,hastable,te,clos,ans,pullrequest,uint,iff,od,seeked,splitted,marge,erro,hist,ether,specif -w
 
 .PHONY: validate
-validate: lint .gitvalidation validate.completions man-page-check swagger-check tests-included tests-expect-exit pr-removes-fixed-skips
+validate: lint .gitvalidation validate.completions man-page-check swagger-check tests-expect-exit pr-removes-fixed-skips
 
 .PHONY: build-all-new-commits
 build-all-new-commits:
@@ -327,7 +335,7 @@ $(IN_CONTAINER): %-in-container:
 	$(PODMANCMD) run --rm --env HOME=/root \
 		-v $(CURDIR):/src -w /src \
 		--security-opt label=disable \
-		docker.io/library/golang:1.18 \
+		docker.io/library/golang:1.20 \
 		make $(*)
 
 
@@ -347,6 +355,7 @@ endif
 		$(GO_LDFLAGS) '$(LDFLAGS_PODMAN)' \
 		-tags "$(BUILDTAGS)" \
 		-o $@ ./cmd/podman
+	test -z "${SELINUXOPT}" || chcon -t container_runtime_exec_t $@
 
 # Disambiguate Linux vs Darwin/Windows platform binaries under distinct "bin" dirs
 $(SRCBINDIR):
@@ -470,7 +479,7 @@ completions: podman podman-remote
 ### Documentation targets
 ###
 
-pkg/api/swagger.yaml:
+pkg/api/swagger.yaml: .install.swagger
 	make -C pkg/api
 
 $(MANPAGES_MD_GENERATED): %.md: %.md.in $(MANPAGES_SOURCE_DIR)/options/*.md
@@ -539,6 +548,7 @@ man-page-check: bin/podman
 	hack/man-page-checker
 	hack/xref-helpmsgs-manpages
 	hack/man-page-table-check
+	hack/xref-quadlet-docs
 
 .PHONY: swagger-check
 swagger-check:
@@ -595,7 +605,8 @@ test: localunit localintegration remoteintegration localsystem remotesystem  ## 
 .PHONY: ginkgo-run
 ginkgo-run: .install.ginkgo
 	$(GINKGO) version
-	$(GINKGO) -vv $(TESTFLAGS) --tags "$(TAGS) remote" $(GINKGOTIMEOUT) --flake-attempts 3 --trace --no-color \
+	$(GINKGO) -vv $(TESTFLAGS) --tags "$(TAGS) remote" $(GINKGOTIMEOUT) --flake-attempts $(GINKGO_FLAKE_ATTEMPTS) \
+		--trace $(if $(findstring y,$(GINKGO_NO_COLOR)),--no-color,) \
 		$(GINKGO_JSON) $(if $(findstring y,$(GINKGO_PARALLEL)),-p,) $(if $(FOCUS),--focus "$(FOCUS)",) \
 		$(if $(FOCUS_FILE),--focus-file "$(FOCUS_FILE)",) $(GINKGOWHAT) $(HACK)
 
@@ -618,8 +629,10 @@ localintegration: test-binaries ginkgo
 remoteintegration: test-binaries ginkgo-remote
 
 .PHONY: localmachine
-localmachine: test-binaries .install.ginkgo
-	$(MAKE) ginkgo-run GINKGO_PARALLEL=n GINKGOWHAT=pkg/machine/e2e/. HACK=
+localmachine:
+	# gitCommit needed by logformatter, to link to sources
+	@echo /define.gitCommit=$(GIT_COMMIT)
+	$(MAKE) ginkgo-run GINKGO_PARALLEL=n TAGS="$(REMOTETAGS)" GINKGO_FLAKE_ATTEMPTS=0 FOCUS_FILE=$(FOCUS_FILE) GINKGOWHAT=pkg/machine/e2e/. HACK=
 
 .PHONY: localsystem
 localsystem:
@@ -637,7 +650,7 @@ remotesystem:
 	rc=0;\
 	if timeout -v 1 true; then \
 		SOCK_FILE=$(shell mktemp --dry-run --tmpdir podman_tmp_XXXX);\
-		export PODMAN_SOCKET=unix:$$SOCK_FILE; \
+		export PODMAN_SOCKET=unix://$$SOCK_FILE; \
 		./bin/podman system service --timeout=0 $$PODMAN_SOCKET > $(if $(PODMAN_SERVER_LOG),$(PODMAN_SERVER_LOG),/dev/null) 2>&1 & \
 		retry=5;\
 		while [ $$retry -ge 0 ]; do\
@@ -775,16 +788,9 @@ podman-remote-release-%.zip: test/version/version ## Build podman-remote for %=$
 # Checks out and builds win-sshproxy helper. See comment on GV_GITURL declaration
 .PHONY: win-gvproxy
 win-gvproxy: test/version/version
-	rm -rf tmp-gv; mkdir tmp-gv
-	(cd tmp-gv; \
-         git init; \
-         git remote add origin $(GV_GITURL); \
-         git fetch --depth 1 origin $(GV_SHA); \
-         git checkout FETCH_HEAD; make win-gvproxy win-sshproxy)
 	mkdir -p bin/windows/
-	cp tmp-gv/bin/win-sshproxy.exe bin/windows/
-	cp tmp-gv/bin/gvproxy.exe bin/windows/
-	rm -rf tmp-gv
+	curl -sSL -o bin/windows/gvproxy.exe --retry 5 https://github.com/containers/gvisor-tap-vsock/releases/download/$(GV_VERSION)/gvproxy-windowsgui.exe
+	curl -sSL -o bin/windows/win-sshproxy.exe --retry 5 https://github.com/containers/gvisor-tap-vsock/releases/download/$(GV_VERSION)/win-sshproxy.exe
 
 .PHONY: rpm
 rpm:  ## Build rpm packages
@@ -840,14 +846,14 @@ ifneq ($(shell uname -s),FreeBSD)
 	ln -sfr $(DESTDIR)$(LIBEXECPODMAN)/quadlet $(DESTDIR)$(SYSTEMDGENERATORSDIR)/podman-system-generator
 	install ${SELINUXOPT} -d -m 755 $(DESTDIR)$(USERSYSTEMDGENERATORSDIR)
 	ln -sfr $(DESTDIR)$(LIBEXECPODMAN)/quadlet $(DESTDIR)$(USERSYSTEMDGENERATORSDIR)/podman-user-generator
-	install ${SELINUXOPT} -m 755 -d ${DESTDIR}${TMPFILESDIR}
-	install ${SELINUXOPT} -m 644 contrib/tmpfile/podman.conf ${DESTDIR}${TMPFILESDIR}/podman.conf
+	install ${SELINUXOPT} -m 755 -d $(DESTDIR)${TMPFILESDIR}
+	install ${SELINUXOPT} -m 644 contrib/tmpfile/podman.conf $(DESTDIR)${TMPFILESDIR}/podman.conf
 endif
 
 .PHONY: install.modules-load
 install.modules-load: # This should only be used by distros which might use iptables-legacy, this is not needed on RHEL
-	install ${SELINUXOPT} -m 755 -d ${DESTDIR}${MODULESLOADDIR}
-	install ${SELINUXOPT} -m 644 contrib/modules-load.d/podman-iptables.conf ${DESTDIR}${MODULESLOADDIR}/podman-iptables.conf
+	install ${SELINUXOPT} -m 755 -d $(DESTDIR)${MODULESLOADDIR}
+	install ${SELINUXOPT} -m 644 contrib/modules-load.d/podman-iptables.conf $(DESTDIR)${MODULESLOADDIR}/podman-iptables.conf
 
 .PHONY: install.man
 install.man:
@@ -860,27 +866,30 @@ install.man:
 
 .PHONY: install.completions
 install.completions:
-	install ${SELINUXOPT} -d -m 755 ${DESTDIR}${BASHINSTALLDIR}
-	install ${SELINUXOPT} -m 644 completions/bash/podman ${DESTDIR}${BASHINSTALLDIR}
-	install ${SELINUXOPT} -m 644 completions/bash/podman-remote ${DESTDIR}${BASHINSTALLDIR}
-	install ${SELINUXOPT} -d -m 755 ${DESTDIR}${ZSHINSTALLDIR}
-	install ${SELINUXOPT} -m 644 completions/zsh/_podman ${DESTDIR}${ZSHINSTALLDIR}
-	install ${SELINUXOPT} -m 644 completions/zsh/_podman-remote ${DESTDIR}${ZSHINSTALLDIR}
-	install ${SELINUXOPT} -d -m 755 ${DESTDIR}${FISHINSTALLDIR}
-	install ${SELINUXOPT} -m 644 completions/fish/podman.fish ${DESTDIR}${FISHINSTALLDIR}
-	install ${SELINUXOPT} -m 644 completions/fish/podman-remote.fish ${DESTDIR}${FISHINSTALLDIR}
+	install ${SELINUXOPT} -d -m 755 $(DESTDIR)${BASHINSTALLDIR}
+	install ${SELINUXOPT} -m 644 completions/bash/podman $(DESTDIR)${BASHINSTALLDIR}
+	install ${SELINUXOPT} -m 644 completions/bash/podman-remote $(DESTDIR)${BASHINSTALLDIR}
+	install ${SELINUXOPT} -d -m 755 $(DESTDIR)${ZSHINSTALLDIR}
+	install ${SELINUXOPT} -m 644 completions/zsh/_podman $(DESTDIR)${ZSHINSTALLDIR}
+	install ${SELINUXOPT} -m 644 completions/zsh/_podman-remote $(DESTDIR)${ZSHINSTALLDIR}
+	install ${SELINUXOPT} -d -m 755 $(DESTDIR)${FISHINSTALLDIR}
+	install ${SELINUXOPT} -m 644 completions/fish/podman.fish $(DESTDIR)${FISHINSTALLDIR}
+	install ${SELINUXOPT} -m 644 completions/fish/podman-remote.fish $(DESTDIR)${FISHINSTALLDIR}
 	# There is no common location for powershell files so do not install them. Users have to source the file from their powershell profile.
 
 .PHONY: install.docker
 install.docker:
 	install ${SELINUXOPT} -d -m 755 $(DESTDIR)$(BINDIR)
 	$(eval INTERPOLATED_DOCKER_SCRIPT := $(shell mktemp))
-	env BINDIR=${BINDIR} ETCDIR=${ETCDIR} envsubst < docker.in > ${INTERPOLATED_DOCKER_SCRIPT}
+	env BINDIR=${BINDIR} ETCDIR=${ETCDIR} envsubst < docker/docker.in > ${INTERPOLATED_DOCKER_SCRIPT}
 	install ${SELINUXOPT} -m 755 ${INTERPOLATED_DOCKER_SCRIPT} $(DESTDIR)$(BINDIR)/docker
 	rm ${INTERPOLATED_DOCKER_SCRIPT}
-	install ${SELINUXOPT} -m 755 -d ${DESTDIR}${SYSTEMDDIR}  ${DESTDIR}${USERSYSTEMDDIR} ${DESTDIR}${TMPFILESDIR} ${DESTDIR}${USERTMPFILESDIR}
-	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman-docker.conf -t ${DESTDIR}${TMPFILESDIR}
-	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman-docker.conf -t ${DESTDIR}${USERTMPFILESDIR}
+	install ${SELINUXOPT} -m 755 -d $(DESTDIR)${SYSTEMDDIR}  $(DESTDIR)${USERSYSTEMDDIR} $(DESTDIR)${TMPFILESDIR} $(DESTDIR)${USERTMPFILESDIR}
+	install ${SELINUXOPT} -d -m 755 $(DESTDIR)${ETCDIR}/profile.d
+	install ${SELINUXOPT} -m 644 docker/podman-docker.sh $(DESTDIR)${ETCDIR}/profile.d/podman-docker.sh
+	install ${SELINUXOPT} -m 644 docker/podman-docker.csh $(DESTDIR)${ETCDIR}/profile.d/podman-docker.csh
+	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman-docker.conf -t $(DESTDIR)${TMPFILESDIR}
+	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman-docker.conf -t $(DESTDIR)${USERTMPFILESDIR}
 
 .PHONY: install.docker-docs
 install.docker-docs:
@@ -905,22 +914,22 @@ PODMAN_UNIT_FILES = contrib/systemd/auto-update/podman-auto-update.service \
 		&& mv -f $@.tmp.$$ $@
 
 install.systemd: $(PODMAN_UNIT_FILES)
-	install ${SELINUXOPT} -m 755 -d ${DESTDIR}${SYSTEMDDIR}  ${DESTDIR}${USERSYSTEMDDIR}
+	install ${SELINUXOPT} -m 755 -d $(DESTDIR)${SYSTEMDDIR}  $(DESTDIR)${USERSYSTEMDDIR}
 	# User services
-	install ${SELINUXOPT} -m 644 contrib/systemd/auto-update/podman-auto-update.service ${DESTDIR}${USERSYSTEMDDIR}/podman-auto-update.service
-	install ${SELINUXOPT} -m 644 contrib/systemd/auto-update/podman-auto-update.timer ${DESTDIR}${USERSYSTEMDDIR}/podman-auto-update.timer
-	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman.socket ${DESTDIR}${USERSYSTEMDDIR}/podman.socket
-	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman.service ${DESTDIR}${USERSYSTEMDDIR}/podman.service
-	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman-restart.service ${DESTDIR}${USERSYSTEMDDIR}/podman-restart.service
-	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman-kube@.service ${DESTDIR}${USERSYSTEMDDIR}/podman-kube@.service
+	install ${SELINUXOPT} -m 644 contrib/systemd/auto-update/podman-auto-update.service $(DESTDIR)${USERSYSTEMDDIR}/podman-auto-update.service
+	install ${SELINUXOPT} -m 644 contrib/systemd/auto-update/podman-auto-update.timer $(DESTDIR)${USERSYSTEMDDIR}/podman-auto-update.timer
+	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman.socket $(DESTDIR)${USERSYSTEMDDIR}/podman.socket
+	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman.service $(DESTDIR)${USERSYSTEMDDIR}/podman.service
+	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman-restart.service $(DESTDIR)${USERSYSTEMDDIR}/podman-restart.service
+	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman-kube@.service $(DESTDIR)${USERSYSTEMDDIR}/podman-kube@.service
 	# System services
-	install ${SELINUXOPT} -m 644 contrib/systemd/auto-update/podman-auto-update.service ${DESTDIR}${SYSTEMDDIR}/podman-auto-update.service
-	install ${SELINUXOPT} -m 644 contrib/systemd/auto-update/podman-auto-update.timer ${DESTDIR}${SYSTEMDDIR}/podman-auto-update.timer
-	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman.socket ${DESTDIR}${SYSTEMDDIR}/podman.socket
-	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman.service ${DESTDIR}${SYSTEMDDIR}/podman.service
-	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman-restart.service ${DESTDIR}${SYSTEMDDIR}/podman-restart.service
-	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman-kube@.service ${DESTDIR}${SYSTEMDDIR}/podman-kube@.service
-	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman-clean-transient.service ${DESTDIR}${SYSTEMDDIR}/podman-clean-transient.service
+	install ${SELINUXOPT} -m 644 contrib/systemd/auto-update/podman-auto-update.service $(DESTDIR)${SYSTEMDDIR}/podman-auto-update.service
+	install ${SELINUXOPT} -m 644 contrib/systemd/auto-update/podman-auto-update.timer $(DESTDIR)${SYSTEMDDIR}/podman-auto-update.timer
+	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman.socket $(DESTDIR)${SYSTEMDDIR}/podman.socket
+	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman.service $(DESTDIR)${SYSTEMDDIR}/podman.service
+	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman-restart.service $(DESTDIR)${SYSTEMDDIR}/podman-restart.service
+	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman-kube@.service $(DESTDIR)${SYSTEMDDIR}/podman-kube@.service
+	install ${SELINUXOPT} -m 644 contrib/systemd/system/podman-clean-transient.service $(DESTDIR)${SYSTEMDDIR}/podman-clean-transient.service
 	rm -f $(PODMAN_UNIT_FILES)
 else
 install.systemd:
@@ -948,11 +957,7 @@ install.tools: .install.golangci-lint ## Install needed tools
 
 .PHONY: .install.swagger
 .install.swagger:
-	env VERSION=0.30.3 \
-		BINDIR=$(BINDIR) \
-		GOOS=$(GOOS) \
-		GOARCH=$(GOARCH) \
-		./hack/install_swagger.sh
+	$(MAKE) -C test/tools build/swagger
 
 .PHONY: .install.md2man
 .install.md2man:
@@ -994,15 +999,15 @@ uninstall:
 	rm -f $(DESTDIR)$(BINDIR)/podman
 	rm -f $(DESTDIR)$(BINDIR)/podman-remote
 	# Remove related config files
-	rm -f ${DESTDIR}${ETCDIR}/cni/net.d/87-podman-bridge.conflist
-	rm -f ${DESTDIR}${TMPFILESDIR}/podman.conf
-	rm -f ${DESTDIR}${SYSTEMDDIR}/io.podman.socket
-	rm -f ${DESTDIR}${USERSYSTEMDDIR}/io.podman.socket
-	rm -f ${DESTDIR}${SYSTEMDDIR}/io.podman.service
-	rm -f ${DESTDIR}${SYSTEMDDIR}/podman.service
-	rm -f ${DESTDIR}${SYSTEMDDIR}/podman.socket
-	rm -f ${DESTDIR}${USERSYSTEMDDIR}/podman.socket
-	rm -f ${DESTDIR}${USERSYSTEMDDIR}/podman.service
+	rm -f $(DESTDIR)${ETCDIR}/cni/net.d/87-podman-bridge.conflist
+	rm -f $(DESTDIR)${TMPFILESDIR}/podman.conf
+	rm -f $(DESTDIR)${SYSTEMDDIR}/io.podman.socket
+	rm -f $(DESTDIR)${USERSYSTEMDDIR}/io.podman.socket
+	rm -f $(DESTDIR)${SYSTEMDDIR}/io.podman.service
+	rm -f $(DESTDIR)${SYSTEMDDIR}/podman.service
+	rm -f $(DESTDIR)${SYSTEMDDIR}/podman.socket
+	rm -f $(DESTDIR)${USERSYSTEMDDIR}/podman.socket
+	rm -f $(DESTDIR)${USERSYSTEMDDIR}/podman.service
 
 .PHONY: clean-binaries
 clean-binaries: ## Remove platform/architecture specific binary files

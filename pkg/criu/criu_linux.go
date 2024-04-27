@@ -1,5 +1,4 @@
 //go:build linux
-// +build linux
 
 package criu
 
@@ -37,11 +36,7 @@ func MemTrack() bool {
 		return false
 	}
 
-	if features == nil || features.MemTrack == nil {
-		return false
-	}
-
-	return *features.MemTrack
+	return features.GetMemTrack()
 }
 
 func GetCriuVersion() (int, error) {

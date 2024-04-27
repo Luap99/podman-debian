@@ -8,7 +8,8 @@ load helpers.network
 
 # Override standard setup! We don't yet trust podman-images or podman-rm
 function setup() {
-    :
+    # Makes test logs easier to read
+    BATS_TEST_NAME_PREFIX="[001] "
 }
 
 #### DO NOT ADD ANY TESTS HERE! ADD NEW TESTS AT BOTTOM!
@@ -34,9 +35,6 @@ function setup() {
 
     run_podman -v
     is "$output" "podman.*version \+"               "'Version line' in output"
-
-    run_podman 0+w --config foobar version
-    is "$output" ".*The --config flag is ignored by Podman. Exists for Docker compatibility\+"		  "verify warning for --config option"
 }
 
 # bats test_tags=distro-integration
@@ -53,6 +51,7 @@ function setup() {
         'Cgroups:{{.Host.CgroupsVersion}}+{{.Host.CgroupManager}}'
         'Net:{{.Host.NetworkBackend}}'
         'DB:{{.Host.DatabaseBackend}}'
+        'Store:{{.Store.GraphDriverName}}'
     )
     run_podman info --format "$(IFS='/' echo ${want[@]})"
     echo "# $output" >&3
@@ -67,9 +66,9 @@ function setup() {
     run_podman --context=default version
 
     # This one must fail
-    run_podman 125 --context=swarm version
+    PODMAN=${PODMAN%%--url*} run_podman 125 --context=swarm version
     is "$output" \
-       "Error: failed to resolve active destination: \"swarm\" service destination not found" \
+       "Error: read cli flags: connection \"swarm\" not found" \
        "--context=swarm should fail"
 }
 

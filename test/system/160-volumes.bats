@@ -155,7 +155,7 @@ Labels.l       | $mylabel
     cid=$output
     run_podman 2 volume rm myvol
     is "$output" "Error: volume myvol is being used by the following container(s): $cid: volume is being used" "should error since container is running"
-    run_podman volume rm myvol --force
+    run_podman volume rm myvol --force -t0
 }
 
 # Running scripts (executables) from a volume
@@ -431,11 +431,14 @@ EOF
 
 @test "podman volume type=tmpfs" {
     myvolume=myvol$(random_string)
-    run_podman volume create -o type=tmpfs -o device=tmpfs $myvolume
+    run_podman volume create -o type=tmpfs -o o=size=2M -o device=tmpfs $myvolume
     is "$output" "$myvolume" "should successfully create myvolume"
 
     run_podman run --rm -v $myvolume:/vol $IMAGE stat -f -c "%T" /vol
     is "$output" "tmpfs" "volume should be tmpfs"
+
+    run_podman run --rm -v $myvolume:/vol $IMAGE sh -c "mount| grep /vol"
+    is "$output" "tmpfs on /vol type tmpfs.*size=2048k.*" "size should be set to 2048k"
 }
 
 # Named volumes copyup
@@ -529,7 +532,7 @@ EOF
     CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm volume_image stat -f -c %T /data
     is "$output" "tmpfs" "Should be tmpfs"
 
-    CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --image-volume bind --rm volume_image stat -f -c %T /data
+    CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --image-volume anonymous --rm volume_image stat -f -c %T /data
     assert "$output" != "tmpfs" "Should match hosts $fs"
 
     CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --image-volume tmpfs --rm volume_image stat -f -c %T /data
@@ -574,5 +577,30 @@ EOF
     run_podman volume rm myvol --force
 }
 
+@test "podman volume create --ignore - do not chown" {
+    local user_id=2000
+    local group_id=2000
+    local volume_name=$(random_string)
+
+    # Create a volume and get its mount point
+    run_podman volume create --ignore ${volume_name}
+    run_podman volume inspect --format '{{.Mountpoint}}' $volume_name
+    mountpoint="$output"
+
+    # Run a container with the volume mounted
+    run_podman run --rm --user ${group_id}:${user_id} -v ${volume_name}:/vol $IMAGE
+
+    # Podman chowns the mount point according to the user used in the previous command
+    local original_owner=$(stat --format %g:%u ${mountpoint})
+
+    # Creating an existing volume with ignore should be a noop
+    run_podman volume create --ignore ${volume_name}
+
+    # Verify that the mountpoint was not chowned
+    owner=$(stat --format %g:%u ${mountpoint})
+    is "$owner" "${original_owner}" "The volume was chowned by podman volume create"
+
+    run_podman volume rm $volume_name --force
+}
 
 # vim: filetype=sh

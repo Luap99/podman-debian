@@ -32,6 +32,9 @@ The CGroup manager to use for container cgroups. Supported values are __cgroupfs
 Note: Setting this flag can cause certain commands to break when called on containers previously created by the other CGroup manager type.
 Note: CGroup manager is not supported in rootless mode when using CGroups Version V1.
 
+#### **--config**
+Location of config file. Mainly for docker compatibility, only the authentication parts of the config are supported.
+
 #### **--conmon**
 Path of the conmon binary (Default path is configured in `containers.conf`)
 
@@ -92,7 +95,8 @@ Log messages at and above specified level: __debug__, __info__, __warn__, __erro
 
 Load the specified `containers.conf(5)` module.  Can be an absolute or relative path.  Please refer to `containers.conf(5)` for details.
 
-This feature is not supported on the remote client, including Mac and Windows (excluding WSL2) machines
+This flag is not supported on the remote client, including Mac and Windows (excluding WSL2) machines.
+Further note that the flag is a root-level flag and must be specified before any Podman sub-command.
 
 #### **--network-cmd-path**=*path*
 Path to the `slirp4netns(1)` command binary to use for setting up a slirp4netns network.
@@ -105,7 +109,8 @@ Path to the directory where network configuration files are located.
 For the netavark backend "/etc/containers/networks" is used as root
 and "$graphroot/networks" as rootless.
 For the CNI backend the default is "/etc/cni/net.d" as root
-and "$HOME/.config/cni/net.d" as rootless. CNI is deprecated from Podman in the future, use netavark.
+and "$HOME/.config/cni/net.d" as rootless.
+CNI is deprecated and will be removed in the next major Podman version 5.0 in preference of Netavark.
 
 #### **--out**=*path*
 Redirect the output of podman to the specified path without affecting the container output or its logs. This parameter can be used to capture the output from any of podman's commands directly into a file and enable suppression of podman's output by specifying /dev/null as the path. To explicitly disable the container logging, the **--log-driver** option should be used.
@@ -179,7 +184,7 @@ it is not compatible with a traditional model where containers persist across re
 Default value for this is configured in `containers-storage.conf(5)`.
 
 #### **--url**=*value*
-URL to access Podman service (default from `containers.conf`, rootless `unix://run/user/$UID/podman/podman.sock` or as root `unix://run/podman/podman.sock`).
+URL to access Podman service (default from `containers.conf`, rootless `unix:///run/user/$UID/podman/podman.sock` or as root `unix:///run/podman/podman.sock`).
 Setting this option switches the **--remote** option to true.
 
  - `CONTAINER_HOST` is of the format `<schema>://[<user[:<password>]@]<host>[:<port>][<path>]`
@@ -199,13 +204,13 @@ URL value resolution precedence:
  - command line value
  - environment variable `CONTAINER_HOST`
  - `engine.service_destinations` table in containers.conf, excluding the /usr/share/containers directory
- - `unix://run/podman/podman.sock`
+ - `unix:///run/podman/podman.sock`
 
 Remote connections use local containers.conf for default.
 
 Some example URL values in valid formats:
- - unix://run/podman/podman.sock
- - unix://run/user/$UID/podman/podman.sock
+ - unix:///run/podman/podman.sock
+ - unix:///run/user/$UID/podman/podman.sock
  - ssh://notroot@localhost:22/run/user/$UID/podman/podman.sock
  - ssh://root@localhost:22/run/podman/podman.sock
  - tcp://localhost:34451
@@ -237,15 +242,20 @@ Set default location of the storage.conf file.
 
 #### **CONTAINER_CONNECTION**
 
-Override default `--connection` value to access Podman service. Also enabled --remote option.
+Override default `--connection` value to access Podman service. Automatically enables the --remote option.
 
 #### **CONTAINER_HOST**
 
-Set default `--url` value to access Podman service. Also enabled --remote option.
+Set default `--url` value to access Podman service. Automatically enables --remote option.
 
 #### **CONTAINER_SSHKEY**
 
 Set default `--identity` path to ssh key file value used to access Podman service.
+
+#### **PODMAN_CONNECTIONS_CONF**
+
+The path to the file where the system connections and farms created with `podman system connection add`
+and `podman farm add` are stored, by default it uses `~/.config/containers/podman-connections.json`.
 
 #### **STORAGE_DRIVER**
 
@@ -437,6 +447,10 @@ Or just add the content manually.
 	$ echo USERNAME:10000:65536 >> /etc/subgid
 
 See the `subuid(5)` and `subgid(5)` man pages for more information.
+
+
+
+Note: whitespace in any row of /etc/subuid or /etc/subgid, including trailing blanks, may result in no entry failures.
 
 Images are pulled under `XDG_DATA_HOME` when specified, otherwise in the home directory of the user under `.local/share/containers/storage`.
 

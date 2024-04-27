@@ -9,16 +9,18 @@ import (
 	"strings"
 	"time"
 
+	bdefine "github.com/containers/buildah/define"
 	"github.com/containers/common/libimage/filter"
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/ssh"
 	"github.com/containers/image/v5/docker/reference"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v4/pkg/bindings/images"
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/containers/podman/v4/pkg/domain/entities/reports"
-	"github.com/containers/podman/v4/pkg/domain/utils"
-	"github.com/containers/podman/v4/pkg/errorhandling"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/pkg/bindings/images"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	"github.com/containers/podman/v5/pkg/domain/entities/reports"
+	"github.com/containers/podman/v5/pkg/domain/utils"
+	"github.com/containers/podman/v5/pkg/errorhandling"
 	"github.com/containers/storage/pkg/archive"
 )
 
@@ -35,8 +37,8 @@ func (ir *ImageEngine) Remove(ctx context.Context, imagesArg []string, opts enti
 func (ir *ImageEngine) List(ctx context.Context, opts entities.ImageListOptions) ([]*entities.ImageSummary, error) {
 	filters := make(map[string][]string, len(opts.Filter))
 	for _, filter := range opts.Filter {
-		f := strings.Split(filter, "=")
-		filters[f[0]] = f[1:]
+		f := strings.SplitN(filter, "=", 2)
+		filters[f[0]] = append(filters[f[0]], f[1])
 	}
 	options := new(images.ListOptions).WithAll(opts.All).WithFilters(filters)
 	psImages, err := images.List(ir.ClientCtx, options)
@@ -120,6 +122,12 @@ func (ir *ImageEngine) Pull(ctx context.Context, rawImage string, opts entities.
 		} else {
 			options.WithSkipTLSVerify(false)
 		}
+	}
+	if opts.Retry != nil {
+		options.WithRetry(*opts.Retry)
+	}
+	if opts.RetryDelay != "" {
+		options.WithRetryDelay(opts.RetryDelay)
 	}
 	pulledImages, err := images.Pull(ir.ClientCtx, rawImage, options)
 	if err != nil {
@@ -265,6 +273,12 @@ func (ir *ImageEngine) Push(ctx context.Context, source string, destination stri
 			options.WithSkipTLSVerify(false)
 		}
 	}
+	if opts.Retry != nil {
+		options.WithRetry(*opts.Retry)
+	}
+	if opts.RetryDelay != "" {
+		options.WithRetryDelay(opts.RetryDelay)
+	}
 	if err := images.Push(ir.ClientCtx, source, destination, options); err != nil {
 		return nil, err
 	}
@@ -334,7 +348,7 @@ func (ir *ImageEngine) Save(ctx context.Context, nameOrID string, tags []string,
 		return err
 	}
 
-	return archive.Untar(f, opts.Output, nil)
+	return archive.Untar(f, opts.Output, &archive.TarOptions{NoLchown: true})
 }
 
 func (ir *ImageEngine) Search(ctx context.Context, term string, opts entities.ImageSearchOptions) ([]entities.ImageSearchReport, error) {
@@ -376,6 +390,10 @@ func (ir *ImageEngine) Build(_ context.Context, containerFiles []string, opts en
 	report, err := images.Build(ir.ClientCtx, containerFiles, opts)
 	if err != nil {
 		return nil, err
+	}
+	report.SaveFormat = define.OCIArchive
+	if opts.OutputFormat == bdefine.Dockerv2ImageManifest {
+		report.SaveFormat = define.V2s2Archive
 	}
 	return report, nil
 }

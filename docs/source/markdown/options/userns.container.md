@@ -30,9 +30,11 @@ Valid _mode_ values are:
 
 **auto**[:_OPTIONS,..._]: automatically create a unique user namespace.
 
-The `--userns=auto` flag requires that the user name __containers__ be specified in the /etc/subuid and /etc/subgid files, with an unused range of subordinate user IDs that Podman containers are allowed to allocate. See subuid(5).
+* `rootful mode`: The `--userns=auto` flag requires that the user name __containers__ be specified in the /etc/subuid and /etc/subgid files, with an unused range of subordinate user IDs that Podman containers are allowed to allocate.
 
-Example: `containers:2147483647:2147483648`.
+  	   Example: `containers:2147483647:2147483648`.
+
+* `rootless mode`: The users range from the /etc/subuid and /etc/subgid files will be used. Note running a single container without using --userns=auto will use the entire range of UIDs and not allow further subdividing. See subuid(5).
 
 Podman allocates unique ranges of UIDs and GIDs from the `containers` subordinate user IDs. The size of the ranges is based on the number of UIDs required in the image. The number of UIDs and GIDs can be overridden with the `size` option.
 
@@ -45,6 +47,10 @@ Using `--userns=auto` when starting new containers does not work as long as any 
   - *gidmapping*=_CONTAINER\_GID:HOST\_GID:SIZE_: to force a GID mapping to be present in the user namespace.
   - *size*=_SIZE_: to specify an explicit size for the automatic user namespace. e.g. `--userns=auto:size=8192`. If `size` is not specified, `auto` estimates a size for the user namespace.
   - *uidmapping*=_CONTAINER\_UID:HOST\_UID:SIZE_: to force a UID mapping to be present in the user namespace.
+
+The host UID and GID in *gidmapping* and *uidmapping* can optionally be prefixed with the `@` symbol.
+In this case, podman will look up the intermediate ID corresponding to host ID and it will map the found intermediate ID to the container id.
+For details see **--uidmap**.
 
 **container:**_id_: join the user namespace of the specified container.
 

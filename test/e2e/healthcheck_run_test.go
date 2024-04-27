@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"time"
 
-	define "github.com/containers/podman/v4/libpod/define"
-	. "github.com/containers/podman/v4/test/utils"
+	"github.com/containers/podman/v5/libpod/define"
+	. "github.com/containers/podman/v5/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -34,10 +34,10 @@ var _ = Describe("Podman healthcheck run", func() {
 		session := podmanTest.Podman([]string{"run", "-dt", "--no-healthcheck", "--name", "hc", HEALTHCHECK_IMAGE})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(ExitCleanly())
-		hc := podmanTest.Podman([]string{"container", "inspect", "--format", "{{.State.Health.Status}}", "hc"})
+		hc := podmanTest.Podman([]string{"container", "inspect", "--format", "{{.State.Health}}", "hc"})
 		hc.WaitWithDefaultTimeout()
 		Expect(hc).Should(ExitCleanly())
-		Expect(hc.OutputToString()).To(Not(ContainSubstring("starting")))
+		Expect(hc.OutputToString()).To(Equal("<nil>"))
 	})
 
 	It("podman run healthcheck and logs should contain healthcheck output", func() {
@@ -263,14 +263,26 @@ var _ = Describe("Podman healthcheck run", func() {
 		Expect(ps.OutputToString()).To(ContainSubstring("hc"))
 	})
 
+	It("hc logs do not include exec events", func() {
+		session := podmanTest.Podman([]string{"run", "-dt", "--name", "hc", "--health-cmd", "true", "--health-interval", "5s", "alpine", "sleep", "60"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(ExitCleanly())
+		hc := podmanTest.Podman([]string{"healthcheck", "run", "hc"})
+		hc.WaitWithDefaultTimeout()
+		Expect(hc).Should(ExitCleanly())
+		hcLogs := podmanTest.Podman([]string{"events", "--stream=false", "--filter", "container=hc", "--filter", "event=exec_died", "--filter", "event=exec", "--since", "1m"})
+		hcLogs.WaitWithDefaultTimeout()
+		Expect(hcLogs).Should(ExitCleanly())
+		hcLogsArray := hcLogs.OutputToStringArray()
+		Expect(hcLogsArray).To(BeEmpty())
+	})
+
 	It("stopping and then starting a container with healthcheck cmd", func() {
 		session := podmanTest.Podman([]string{"run", "-dt", "--name", "hc", "--health-cmd", "[\"ls\", \"/foo\"]", ALPINE, "top"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(ExitCleanly())
 
-		stop := podmanTest.Podman([]string{"stop", "-t0", "hc"})
-		stop.WaitWithDefaultTimeout()
-		Expect(stop).Should(ExitCleanly())
+		podmanTest.StopContainer("hc")
 
 		startAgain := podmanTest.Podman([]string{"start", "hc"})
 		startAgain.WaitWithDefaultTimeout()

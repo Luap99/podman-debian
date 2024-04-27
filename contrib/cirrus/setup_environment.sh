@@ -40,12 +40,8 @@ done
 
 cp hack/podman-registry /bin
 
-# Some test operations & checks require a git "identity"
-_gc='git config --file /root/.gitconfig'
-showrun $_gc user.email "TMcTestFace@example.com"
-showrun $_gc user.name "Testy McTestface"
 # Bypass git safety/security checks when operating in a throwaway environment
-showrun git config --system --add safe.directory $GOSRC
+showrun git config --global --add safe.directory $GOSRC
 
 # Ensure that all lower-level contexts and child-processes have
 # ready access to higher level orchestration (e.g Cirrus-CI)
@@ -99,24 +95,12 @@ case "$CG_FS_TYPE" in
     *) die_unknown CG_FS_TYPE
 esac
 
-# Force the requested database backend without having to use command-line args
+# For testing boltdb without having to use --db-backend.
+# As of #20318 (2023-10-10) sqlite is the default, so do not create
+# a containers.conf file in that condition.
 # shellcheck disable=SC2154
-printf "[engine]\ndatabase_backend=\"$CI_DESIRED_DATABASE\"\n" > /etc/containers/containers.conf.d/92-db.conf
-
-# For debian envs pre-configure storage driver as overlay.
-# See: Discussion here https://github.com/containers/podman/pull/18510#discussion_r1189812306
-# for more details.
-# TODO: remove this once all CI VM have newer buildah version. (i.e where buildah
-# does not defaults to using `vfs` as storage driver)
-# shellcheck disable=SC2154
-if [[ "$OS_RELEASE_ID" == "debian" ]]; then
-    showrun echo "conditional setup for debian"
-    conf=/etc/containers/storage.conf
-    if [[ -e $conf ]]; then
-        die "FATAL! INTERNAL ERROR! Cannot override $conf"
-    fi
-    msg "Overriding $conf, setting overlay (was: $buildah_storage)"
-    printf '[storage]\ndriver = "overlay"\nrunroot = "/run/containers/storage"\ngraphroot = "/var/lib/containers/storage"\n' >$conf
+if [[ "${CI_DESIRED_DATABASE:-sqlite}" != "sqlite" ]]; then
+    printf "[engine]\ndatabase_backend=\"$CI_DESIRED_DATABASE\"\n" > /etc/containers/containers.conf.d/92-db.conf
 fi
 
 if ((CONTAINER==0)); then  # Not yet running inside a container
@@ -156,11 +140,6 @@ case "$OS_RELEASE_ID" in
         # (Checked on 2023-08-08 and it's still too old: 1.1.5)
         # FIXME: please remove this once runc >= 1.2 makes it into debian.
         showrun modprobe tun
-
-        # TODO: move this into image build process
-        # We need the "en_US.UTF-8" locale for the "podman logs with non ASCII log tag" tests
-        showrun sed -i '/en_US.UTF-8/s/^#//g' /etc/locale.gen
-        showrun locale-gen
         ;;
     fedora)
         showrun echo "conditional setup for fedora"
@@ -173,18 +152,8 @@ case "$OS_RELEASE_ID" in
     *) die_unknown OS_RELEASE_ID
 esac
 
-# Networking: force CNI or Netavark as requested in .cirrus.yml
-# (this variable is mandatory).
-# shellcheck disable=SC2154
-showrun echo "about to set up for CI_DESIRED_NETWORK [=$CI_DESIRED_NETWORK]"
-case "$CI_DESIRED_NETWORK" in
-    netavark)   use_netavark ;;
-    cni)        use_cni ;;
-    *)          die_unknown CI_DESIRED_NETWORK ;;
-esac
-
 # Database: force SQLite or BoltDB as requested in .cirrus.yml.
-# If unset, will default to BoltDB.
+# If unset, will default to SQLite.
 # shellcheck disable=SC2154
 showrun echo "about to set up for CI_DESIRED_DATABASE [=$CI_DESIRED_DATABASE]"
 case "$CI_DESIRED_DATABASE" in
@@ -203,6 +172,31 @@ case "$CI_DESIRED_DATABASE" in
         die_unknown CI_DESIRED_DATABASE
         ;;
 esac
+
+# Force the requested storage driver for both system and e2e tests.
+# This is (sigh) different because e2e tests have their own special way
+# of ignoring system defaults.
+# shellcheck disable=SC2154
+showrun echo "Setting CI_DESIRED_STORAGE [=$CI_DESIRED_STORAGE] for *system* tests"
+conf=/etc/containers/storage.conf
+if [[ -e $conf ]]; then
+    die "FATAL! INTERNAL ERROR! Cannot override $conf"
+fi
+cat <<EOF >$conf
+[storage]
+driver = "$CI_DESIRED_STORAGE"
+runroot = "/run/containers/storage"
+graphroot = "/var/lib/containers/storage"
+EOF
+
+# Since we've potentially changed important config settings, reset.
+# This prevents `database graph driver "" does not match "overlay"`
+# on Debian.
+rm -rf /var/lib/containers/storage
+
+# shellcheck disable=SC2154
+showrun echo "Setting CI_DESIRED_STORAGE [=$CI_DESIRED_STORAGE] for *e2e* tests"
+echo "STORAGE_FS=$CI_DESIRED_STORAGE" >>/etc/ci_environment
 
 # Required to be defined by caller: The environment where primary testing happens
 # shellcheck disable=SC2154
@@ -274,13 +268,6 @@ case "$PRIV_NAME" in
     *) die_unknown PRIV_NAME
 esac
 
-# shellcheck disable=SC2154
-if [[ -n "$ROOTLESS_USER" ]]; then
-    showrun echo "conditional setup for ROOTLESS_USER [=$ROOTLESS_USER]"
-    echo "ROOTLESS_USER=$ROOTLESS_USER" >> /etc/ci_environment
-    echo "ROOTLESS_UID=$ROOTLESS_UID" >> /etc/ci_environment
-fi
-
 # FIXME! experimental workaround for #16973, the "lookup cdn03.quay.io" flake.
 #
 # If you are reading this on or after April 2023:
@@ -293,6 +280,10 @@ fi
 #
 # Either way, this block of code should be removed after March 31 2023
 # because it creates a system that is not representative of real-world Fedora.
+#
+# 2024-01-25 update: ha ha. This fix has proven so popular that it is
+# being used by other groups who were seeing the cdn03 flake. Looks like
+# we're stuck with it.
 if ((CONTAINER==0)); then
     nsswitch=/etc/authselect/nsswitch.conf
     if [[ -e $nsswitch ]]; then
@@ -410,6 +401,13 @@ case "$TEST_FLAVOR" in
 
         install_test_configs
         ;;
+    farm)
+        showrun loginctl enable-linger $ROOTLESS_USER
+        showrun ssh $ROOTLESS_USER@localhost systemctl --user enable --now podman.socket
+        remove_packaged_podman_files
+        showrun make install PREFIX=/usr ETCDIR=/etc
+        install_test_configs
+        ;;
     minikube)
         showrun dnf install -y $PACKAGE_DOWNLOAD_DIR/minikube-latest*
         remove_packaged_podman_files
@@ -418,7 +416,7 @@ case "$TEST_FLAVOR" in
         showrun minikube config set driver podman
         install_test_configs
         ;;
-    machine)
+    machine-linux)
         showrun dnf install -y podman-gvproxy*
         remove_packaged_podman_files
         showrun make install PREFIX=/usr ETCDIR=/etc
@@ -427,8 +425,6 @@ case "$TEST_FLAVOR" in
     swagger)
         showrun make .install.swagger
         ;;
-    #fcos_image_build)
-    #    ;;
     release) ;;
     *) die_unknown TEST_FLAVOR
 esac

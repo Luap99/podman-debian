@@ -1,3 +1,5 @@
+//go:build !remote
+
 package libpod
 
 import (
@@ -7,10 +9,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/libpod/events"
-	"github.com/containers/podman/v4/libpod/logs"
-	systemdDefine "github.com/containers/podman/v4/pkg/systemd/define"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/libpod/events"
+	"github.com/containers/podman/v5/libpod/logs"
+	systemdDefine "github.com/containers/podman/v5/pkg/systemd/define"
 	"github.com/nxadm/tail"
 	"github.com/nxadm/tail/watch"
 	"github.com/sirupsen/logrus"
@@ -155,7 +157,7 @@ func (c *Container) readFromLogFile(ctx context.Context, options *logs.LogOption
 			// before stopping the file logger (see #10675).
 			time.Sleep(watch.POLL_DURATION)
 			tailError := t.StopAtEOF()
-			if tailError != nil && fmt.Sprintf("%v", tailError) != "tail: stop at eof" {
+			if tailError != nil && tailError.Error() != "tail: stop at eof" {
 				logrus.Errorf("Stopping logger: %v", tailError)
 			}
 		}()

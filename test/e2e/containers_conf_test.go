@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containers/podman/v4/libpod/define"
-	. "github.com/containers/podman/v4/test/utils"
+	"github.com/containers/podman/v5/libpod/define"
+	. "github.com/containers/podman/v5/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gbytes"
@@ -292,7 +292,7 @@ var _ = Describe("Verify podman containers.conf usage", func() {
 		session = podmanTest.Podman([]string{"run", "--rm", "--net", "host", fedoraMinimal, "cat", "/proc/sys/net/ipv4/ping_group_range"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(ExitCleanly())
-		Expect(session.OutputToString()).ToNot((ContainSubstring("1000")))
+		Expect(session.OutputToString()).ToNot(ContainSubstring("1000"))
 	})
 
 	It("search domain", func() {

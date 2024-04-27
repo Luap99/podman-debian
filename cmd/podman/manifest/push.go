@@ -8,11 +8,11 @@ import (
 	"github.com/containers/common/pkg/auth"
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v4/cmd/podman/common"
-	"github.com/containers/podman/v4/cmd/podman/registry"
-	"github.com/containers/podman/v4/cmd/podman/utils"
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v5/cmd/podman/common"
+	"github.com/containers/podman/v5/cmd/podman/registry"
+	"github.com/containers/podman/v5/cmd/podman/utils"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	"github.com/containers/podman/v5/pkg/util"
 	"github.com/spf13/cobra"
 )
 
@@ -58,7 +58,7 @@ func init() {
 	_ = pushCmd.RegisterFlagCompletionFunc(authfileFlagName, completion.AutocompleteDefault)
 
 	addCompressionFlagName := "add-compression"
-	flags.StringSliceVar(&manifestPushOpts.AddCompression, addCompressionFlagName, podmanConfig.ContainersConfDefaultsRO.Engine.AddCompression, "add instances with selected compression while pushing")
+	flags.StringSliceVar(&manifestPushOpts.AddCompression, addCompressionFlagName, podmanConfig.ContainersConfDefaultsRO.Engine.AddCompression.Get(), "add instances with selected compression while pushing")
 	_ = pushCmd.RegisterFlagCompletionFunc(addCompressionFlagName, common.AutocompleteCompressionFormat)
 
 	certDirFlagName := "cert-dir"

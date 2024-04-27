@@ -1,3 +1,5 @@
+//go:build !remote
+
 package libpod
 
 import (
@@ -23,16 +25,17 @@ import (
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/hooks"
 	"github.com/containers/common/pkg/hooks/exec"
+	"github.com/containers/common/pkg/timezone"
 	cutil "github.com/containers/common/pkg/util"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/libpod/events"
-	"github.com/containers/podman/v4/libpod/shutdown"
-	"github.com/containers/podman/v4/pkg/ctime"
-	"github.com/containers/podman/v4/pkg/lookup"
-	"github.com/containers/podman/v4/pkg/rootless"
-	"github.com/containers/podman/v4/pkg/selinux"
-	"github.com/containers/podman/v4/pkg/systemd/notifyproxy"
-	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/libpod/events"
+	"github.com/containers/podman/v5/libpod/shutdown"
+	"github.com/containers/podman/v5/pkg/ctime"
+	"github.com/containers/podman/v5/pkg/lookup"
+	"github.com/containers/podman/v5/pkg/rootless"
+	"github.com/containers/podman/v5/pkg/selinux"
+	"github.com/containers/podman/v5/pkg/systemd/notifyproxy"
+	"github.com/containers/podman/v5/pkg/util"
 	"github.com/containers/storage"
 	"github.com/containers/storage/pkg/chrootarchive"
 	"github.com/containers/storage/pkg/idmap"
@@ -45,6 +48,7 @@ import (
 	"github.com/opencontainers/runtime-tools/generate"
 	"github.com/opencontainers/selinux/go-selinux/label"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/exp/slices"
 	"golang.org/x/sys/unix"
 )
 
@@ -142,6 +146,10 @@ func (c *Container) exitFilePath() (string, error) {
 	return c.ociRuntime.ExitFilePath(c)
 }
 
+func (c *Container) oomFilePath() (string, error) {
+	return c.ociRuntime.OOMFilePath(c)
+}
+
 // Wait for the container's exit file to appear.
 // When it does, update our state based on it.
 func (c *Container) waitForExitFileAndSync() error {
@@ -178,6 +186,7 @@ func (c *Container) waitForExitFileAndSync() error {
 // Handle the container exit file.
 // The exit file is used to supply container exit time and exit code.
 // This assumes the exit file already exists.
+// Also check for an oom file to determine if the container was oom killed or not.
 func (c *Container) handleExitFile(exitFile string, fi os.FileInfo) error {
 	c.state.FinishedTime = ctime.Created(fi)
 	statusCodeStr, err := os.ReadFile(exitFile)
@@ -191,7 +200,10 @@ func (c *Container) handleExitFile(exitFile string, fi os.FileInfo) error {
 	}
 	c.state.ExitCode = int32(statusCode)
 
-	oomFilePath := filepath.Join(c.bundlePath(), "oom")
+	oomFilePath, err := c.oomFilePath()
+	if err != nil {
+		return err
+	}
 	if _, err = os.Stat(oomFilePath); err == nil {
 		c.state.OOMKilled = true
 	}
@@ -288,12 +300,21 @@ func (c *Container) handleRestartPolicy(ctx context.Context) (_ bool, retErr err
 			}
 		}
 	}()
-	if err := c.prepare(); err != nil {
+
+	// Always teardown the network, trying to reuse the netns has caused
+	// a significant amount of bugs in this code here. It also never worked
+	// for containers with user namespaces. So once and for all simplify this
+	// by never reusing the netns. Originally this was done to have a faster
+	// restart of containers but with netavark now we are much faster so it
+	// shouldn't be that noticeable in practice. It also makes more sense to
+	// reconfigure the netns as it is likely that the container exited due
+	// some broken network state in which case reusing would just cause more
+	// harm than good.
+	if err := c.cleanupNetwork(); err != nil {
 		return false, err
 	}
 
-	// set up slirp4netns again because slirp4netns will die when conmon exits
-	if err := c.setupRootlessNetwork(); err != nil {
+	if err := c.prepare(); err != nil {
 		return false, err
 	}
 
@@ -496,6 +517,11 @@ func (c *Container) setupStorage(ctx context.Context) error {
 		}
 	}
 	if containerInfoErr != nil {
+		if errors.Is(containerInfoErr, storage.ErrDuplicateName) {
+			if _, err := c.runtime.LookupContainer(c.config.Name); errors.Is(err, define.ErrNoSuchCtr) {
+				return fmt.Errorf("creating container storage: %w by an external entity", containerInfoErr)
+			}
+		}
 		return fmt.Errorf("creating container storage: %w", containerInfoErr)
 	}
 
@@ -516,11 +542,11 @@ func (c *Container) setupStorage(ctx context.Context) error {
 	c.state.RunDir = containerInfo.RunDir
 
 	if len(c.config.IDMappings.UIDMap) != 0 || len(c.config.IDMappings.GIDMap) != 0 {
-		if err := os.Chown(containerInfo.RunDir, c.RootUID(), c.RootGID()); err != nil {
+		if err := idtools.SafeChown(containerInfo.RunDir, c.RootUID(), c.RootGID()); err != nil {
 			return err
 		}
 
-		if err := os.Chown(containerInfo.Dir, c.RootUID(), c.RootGID()); err != nil {
+		if err := idtools.SafeChown(containerInfo.Dir, c.RootUID(), c.RootGID()); err != nil {
 			return err
 		}
 	}
@@ -603,7 +629,19 @@ func resetContainerState(state *ContainerState) {
 	state.ConmonPID = 0
 	state.Mountpoint = ""
 	state.Mounted = false
-	if state.State != define.ContainerStateExited {
+	// Reset state.
+	// Almost all states are reset to either Configured or Exited,
+	// except ContainerStateRemoving which is preserved.
+	switch state.State {
+	case define.ContainerStateStopped, define.ContainerStateExited, define.ContainerStateStopping, define.ContainerStateRunning, define.ContainerStatePaused:
+		// All containers that ran at any point during the last boot
+		// must be placed in the Exited state.
+		state.State = define.ContainerStateExited
+	case define.ContainerStateConfigured, define.ContainerStateCreated:
+		state.State = define.ContainerStateConfigured
+	case define.ContainerStateUnknown:
+		// Something really strange must have happened to get us here.
+		// Reset to configured, maybe the reboot cleared things up?
 		state.State = define.ContainerStateConfigured
 	}
 	state.ExecSessions = make(map[string]*ExecSession)
@@ -624,7 +662,6 @@ func resetContainerState(state *ContainerState) {
 	state.StartupHCFailureCount = 0
 	state.NetNS = ""
 	state.NetworkStatus = nil
-	state.NetworkStatusOld = nil
 }
 
 // Refresh refreshes the container's state after a restart.
@@ -662,7 +699,7 @@ func (c *Container) refresh() error {
 		if err := os.MkdirAll(root, 0755); err != nil {
 			return fmt.Errorf("creating userNS tmpdir for container %s: %w", c.ID(), err)
 		}
-		if err := os.Chown(root, c.RootUID(), c.RootGID()); err != nil {
+		if err := idtools.SafeChown(root, c.RootUID(), c.RootGID()); err != nil {
 			return err
 		}
 	}
@@ -675,7 +712,6 @@ func (c *Container) refresh() error {
 	c.lock = lock
 
 	c.state.NetworkStatus = nil
-	c.state.NetworkStatusOld = nil
 
 	// Rewrite the config if necessary.
 	// Podman 4.0 uses a new port format in the config.
@@ -725,11 +761,6 @@ func (c *Container) removeConmonFiles() error {
 		return fmt.Errorf("removing container %s winsz file: %w", c.ID(), err)
 	}
 
-	oomFile := filepath.Join(c.bundlePath(), "oom")
-	if err := os.Remove(oomFile); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("removing container %s OOM file: %w", c.ID(), err)
-	}
-
 	// Remove the exit file so we don't leak memory in tmpfs
 	exitFile, err := c.exitFilePath()
 	if err != nil {
@@ -737,6 +768,15 @@ func (c *Container) removeConmonFiles() error {
 	}
 	if err := os.Remove(exitFile); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("removing container %s exit file: %w", c.ID(), err)
+	}
+
+	// Remove the oom file
+	oomFile, err := c.oomFilePath()
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(oomFile); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("removing container %s oom file: %w", c.ID(), err)
 	}
 
 	return nil
@@ -1539,7 +1579,13 @@ func (c *Container) mountStorage() (_ string, deferredErr error) {
 	var err error
 	// Container already mounted, nothing to do
 	if c.state.Mounted {
-		return c.state.Mountpoint, nil
+		mounted := true
+		if c.ensureState(define.ContainerStateExited) {
+			mounted, _ = mount.Mounted(c.state.Mountpoint)
+		}
+		if mounted {
+			return c.state.Mountpoint, nil
+		}
 	}
 
 	if !c.config.NoShm {
@@ -1553,7 +1599,7 @@ func (c *Container) mountStorage() (_ string, deferredErr error) {
 			if err := c.mountSHM(shmOptions); err != nil {
 				return "", err
 			}
-			if err := os.Chown(c.config.ShmDir, c.RootUID(), c.RootGID()); err != nil {
+			if err := idtools.SafeChown(c.config.ShmDir, c.RootUID(), c.RootGID()); err != nil {
 				return "", fmt.Errorf("failed to chown %s: %w", c.config.ShmDir, err)
 			}
 			defer func() {
@@ -1683,45 +1729,18 @@ func (c *Container) mountStorage() (_ string, deferredErr error) {
 	}
 
 	tz := c.Timezone()
-	if tz != "" {
-		timezonePath := filepath.Join("/usr/share/zoneinfo", tz)
-		if tz == "local" {
-			timezonePath, err = filepath.EvalSymlinks("/etc/localtime")
-			if err != nil {
-				return "", fmt.Errorf("finding local timezone for container %s: %w", c.ID(), err)
-			}
+	localTimePath, err := timezone.ConfigureContainerTimeZone(tz, c.state.RunDir, mountPoint, etcInTheContainerPath, c.ID())
+	if err != nil {
+		return "", fmt.Errorf("configuring timezone for container %s: %w", c.ID(), err)
+	}
+	if localTimePath != "" {
+		if err := c.relabel(localTimePath, c.config.MountLabel, false); err != nil {
+			return "", err
 		}
-		// make sure to remove any existing localtime file in the container to not create invalid links
-		err = unix.Unlinkat(etcInTheContainerFd, "localtime", 0)
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return "", fmt.Errorf("removing /etc/localtime: %w", err)
+		if c.state.BindMounts == nil {
+			c.state.BindMounts = make(map[string]string)
 		}
-
-		hostPath, err := securejoin.SecureJoin(mountPoint, timezonePath)
-		if err != nil {
-			return "", fmt.Errorf("resolve zoneinfo path in the container: %w", err)
-		}
-
-		_, err = os.Stat(hostPath)
-		if err != nil {
-			// file does not exists which means tzdata is not installed in the container, just create /etc/locatime which a copy from the host
-			logrus.Debugf("Timezone %s does not exist in the container, create our own copy from the host", timezonePath)
-			localtimePath, err := c.copyTimezoneFile(timezonePath)
-			if err != nil {
-				return "", fmt.Errorf("setting timezone for container %s: %w", c.ID(), err)
-			}
-			if c.state.BindMounts == nil {
-				c.state.BindMounts = make(map[string]string)
-			}
-			c.state.BindMounts["/etc/localtime"] = localtimePath
-		} else {
-			// file exists lets just symlink according to localtime(5)
-			logrus.Debugf("Create locatime symlink for %s", timezonePath)
-			err = unix.Symlinkat(".."+timezonePath, etcInTheContainerFd, "localtime")
-			if err != nil {
-				return "", fmt.Errorf("creating /etc/localtime symlink: %w", err)
-			}
-		}
+		c.state.BindMounts["/etc/localtime"] = localTimePath
 	}
 
 	// Request a mount of all named volumes
@@ -1772,7 +1791,7 @@ func (c *Container) mountNamedVolume(v *ContainerNamedVolume, mountpoint string)
 		return nil, err
 	}
 	_, hasNoCopy := vol.config.Options["nocopy"]
-	if vol.state.NeedsCopyUp && !cutil.StringInSlice("nocopy", v.Options) && !hasNoCopy {
+	if vol.state.NeedsCopyUp && !slices.Contains(v.Options, "nocopy") && !hasNoCopy {
 		logrus.Debugf("Copying up contents from container %s to volume %s", c.ID(), vol.Name())
 
 		srcDir, err := securejoin.SecureJoin(mountpoint, v.Dest)
@@ -1925,9 +1944,12 @@ func (c *Container) cleanupStorage() error {
 		// error
 		// We still want to be able to kick the container out of the
 		// state
-		if errors.Is(err, storage.ErrNotAContainer) || errors.Is(err, storage.ErrContainerUnknown) || errors.Is(err, storage.ErrLayerNotMounted) {
-			logrus.Errorf("Storage for container %s has been removed", c.ID())
-		} else {
+		switch {
+		case errors.Is(err, storage.ErrLayerNotMounted):
+			logrus.Infof("Storage for container %s is not mounted: %v", c.ID(), err)
+		case errors.Is(err, storage.ErrNotAContainer) || errors.Is(err, storage.ErrContainerUnknown):
+			logrus.Warnf("Storage for container %s has been removed: %v", c.ID(), err)
+		default:
 			reportErrorf("cleaning up container %s storage: %w", c.ID(), err)
 		}
 	}
@@ -2228,7 +2250,7 @@ func (c *Container) saveSpec(spec *spec.Spec) error {
 // Warning: precreate hooks may alter 'config' in place.
 func (c *Container) setupOCIHooks(ctx context.Context, config *spec.Spec) (map[string][]spec.Hook, error) {
 	allHooks := make(map[string][]spec.Hook)
-	if c.runtime.config.Engine.HooksDir == nil {
+	if len(c.runtime.config.Engine.HooksDir.Get()) == 0 {
 		if rootless.IsRootless() {
 			return nil, nil
 		}
@@ -2252,7 +2274,7 @@ func (c *Container) setupOCIHooks(ctx context.Context, config *spec.Spec) (map[s
 			}
 		}
 	} else {
-		manager, err := hooks.New(ctx, c.runtime.config.Engine.HooksDir, []string{"precreate", "poststop"})
+		manager, err := hooks.New(ctx, c.runtime.config.Engine.HooksDir.Get(), []string{"precreate", "poststop"})
 		if err != nil {
 			return nil, err
 		}
@@ -2297,7 +2319,7 @@ func (c *Container) mount() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolving storage path for container %s: %w", c.ID(), err)
 	}
-	if err := os.Chown(mountPoint, c.RootUID(), c.RootGID()); err != nil {
+	if err := idtools.SafeChown(mountPoint, c.RootUID(), c.RootGID()); err != nil {
 		return "", fmt.Errorf("cannot chown %s to %d:%d: %w", mountPoint, c.RootUID(), c.RootGID(), err)
 	}
 	return mountPoint, nil
@@ -2480,13 +2502,13 @@ func (c *Container) extractSecretToCtrStorage(secr *ContainerSecret) error {
 	if err != nil {
 		return fmt.Errorf("unable to create %s: %w", secretFile, err)
 	}
-	if err := os.Lchown(secretFile, int(hostUID), int(hostGID)); err != nil {
+	if err := idtools.SafeLchown(secretFile, int(hostUID), int(hostGID)); err != nil {
 		return err
 	}
 	if err := os.Chmod(secretFile, os.FileMode(secr.Mode)); err != nil {
 		return err
 	}
-	if err := label.Relabel(secretFile, c.config.MountLabel, false); err != nil {
+	if err := c.relabel(secretFile, c.config.MountLabel, false); err != nil {
 		return err
 	}
 	return nil

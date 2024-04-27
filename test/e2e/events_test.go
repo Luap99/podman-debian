@@ -3,11 +3,12 @@ package integration
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
-	"github.com/containers/podman/v4/libpod/events"
-	. "github.com/containers/podman/v4/test/utils"
+	"github.com/containers/podman/v5/cmd/podman/system"
+	. "github.com/containers/podman/v5/test/utils"
 	"github.com/containers/storage/pkg/stringid"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -86,10 +87,10 @@ var _ = Describe("Podman events", func() {
 	It("podman events with a type", func() {
 		setup := podmanTest.Podman([]string{"run", "-dt", "--pod", "new:foobarpod", ALPINE, "top"})
 		setup.WaitWithDefaultTimeout()
-		stop := podmanTest.Podman([]string{"pod", "stop", "foobarpod"})
-		stop.WaitWithDefaultTimeout()
-		Expect(stop).Should(ExitCleanly())
 		Expect(setup).Should(ExitCleanly())
+
+		podmanTest.StopPod("foobarpod")
+
 		result := podmanTest.Podman([]string{"events", "--stream=false", "--filter", "type=pod", "--filter", "pod=foobarpod"})
 		result.WaitWithDefaultTimeout()
 		Expect(result).Should(ExitCleanly())
@@ -118,7 +119,10 @@ var _ = Describe("Podman events", func() {
 	})
 
 	It("podman events format", func() {
-		_, ec, _ := podmanTest.RunLsContainer("")
+		start := time.Now()
+		ctrName := "testCtr"
+		_, ec, _ := podmanTest.RunLsContainer(ctrName)
+		end := time.Now()
 		Expect(ec).To(Equal(0))
 
 		test := podmanTest.Podman([]string{"events", "--stream=false", "--format", "json"})
@@ -128,20 +132,33 @@ var _ = Describe("Podman events", func() {
 		jsonArr := test.OutputToStringArray()
 		Expect(test.OutputToStringArray()).ShouldNot(BeEmpty())
 
-		event := events.Event{}
+		event := system.Event{}
 		err := json.Unmarshal([]byte(jsonArr[0]), &event)
 		Expect(err).ToNot(HaveOccurred())
 
-		test = podmanTest.Podman([]string{"events", "--stream=false", "--format", "{{json.}}"})
+		test = podmanTest.Podman([]string{
+			"events",
+			"--stream=false",
+			"--since", strconv.FormatInt(start.Unix(), 10),
+			"--filter", fmt.Sprintf("container=%s", ctrName),
+			"--format", "{{json .}}",
+		})
+
 		test.WaitWithDefaultTimeout()
 		Expect(test).To(ExitCleanly())
 
 		jsonArr = test.OutputToStringArray()
 		Expect(test.OutputToStringArray()).ShouldNot(BeEmpty())
 
-		event = events.Event{}
+		event = system.Event{}
 		err = json.Unmarshal([]byte(jsonArr[0]), &event)
 		Expect(err).ToNot(HaveOccurred())
+
+		Expect(event.Time).To(BeNumerically(">=", start.Unix()))
+		Expect(event.Time).To(BeNumerically("<=", end.Unix()))
+		Expect(event.TimeNano).To(BeNumerically(">=", start.UnixNano()))
+		Expect(event.TimeNano).To(BeNumerically("<=", end.UnixNano()))
+		Expect(time.Unix(0, event.TimeNano).Unix()).To(BeEquivalentTo(event.Time))
 
 		test = podmanTest.Podman([]string{"events", "--stream=false", "--filter=type=container", "--format", "ID: {{.ID}}"})
 		test.WaitWithDefaultTimeout()
@@ -177,7 +194,7 @@ var _ = Describe("Podman events", func() {
 
 		// unix timestamp in 10 seconds
 		until := time.Now().Add(time.Second * 10).Unix()
-		result := podmanTest.Podman([]string{"events", "--since", "30s", "--until", fmt.Sprint(until)})
+		result := podmanTest.Podman([]string{"events", "--since", "30s", "--until", strconv.FormatInt(until, 10)})
 		result.Wait(11)
 		Expect(result).Should(ExitCleanly())
 		Expect(result.OutputToString()).To(ContainSubstring(name1))
@@ -219,6 +236,36 @@ var _ = Describe("Podman events", func() {
 		result2.WaitWithDefaultTimeout()
 		Expect(result2).Should(ExitCleanly())
 		Expect(result2.OutputToString()).To(ContainSubstring(fmt.Sprintf("pod_id=%s", id)))
+	})
+
+	It("podman events network connection", func() {
+		network := stringid.GenerateRandomID()
+		result := podmanTest.Podman([]string{"create", "--network", "bridge", ALPINE, "top"})
+		result.WaitWithDefaultTimeout()
+		Expect(result).Should(ExitCleanly())
+		ctrID := result.OutputToString()
+
+		result = podmanTest.Podman([]string{"network", "create", network})
+		result.WaitWithDefaultTimeout()
+		Expect(result).Should(ExitCleanly())
+
+		result = podmanTest.Podman([]string{"network", "connect", network, ctrID})
+		result.WaitWithDefaultTimeout()
+		Expect(result).Should(ExitCleanly())
+
+		result = podmanTest.Podman([]string{"network", "disconnect", network, ctrID})
+		result.WaitWithDefaultTimeout()
+		Expect(result).Should(ExitCleanly())
+
+		result = podmanTest.Podman([]string{"events", "--stream=false", "--since", "30s"})
+		result.WaitWithDefaultTimeout()
+		Expect(result).Should(ExitCleanly())
+		lines := result.OutputToStringArray()
+		Expect(lines).To(HaveLen(5))
+		Expect(lines[3]).To(ContainSubstring("network connect"))
+		Expect(lines[3]).To(ContainSubstring(fmt.Sprintf("(container=%s, name=%s)", ctrID, network)))
+		Expect(lines[4]).To(ContainSubstring("network disconnect"))
+		Expect(lines[4]).To(ContainSubstring(fmt.Sprintf("(container=%s, name=%s)", ctrID, network)))
 	})
 
 	It("podman events health_status generated", func() {

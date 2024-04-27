@@ -1,5 +1,4 @@
-//go:build freebsd
-// +build freebsd
+//go:build !remote
 
 package libpod
 
@@ -11,8 +10,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/pkg/util"
 	"github.com/google/shlex"
 	"github.com/sirupsen/logrus"
 )

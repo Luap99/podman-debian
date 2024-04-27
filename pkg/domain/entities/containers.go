@@ -7,9 +7,10 @@ import (
 	"time"
 
 	nettypes "github.com/containers/common/libnetwork/types"
-	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/specgen"
+	imageTypes "github.com/containers/image/v5/types"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/pkg/domain/entities/types"
+	"github.com/containers/podman/v5/pkg/specgen"
 	"github.com/containers/storage/pkg/archive"
 )
 
@@ -43,7 +44,7 @@ type ContainerRunlabelOptions struct {
 	SignaturePolicy string
 	// SkipTLSVerify - skip HTTPS and certificate verifications when
 	// contacting registries.
-	SkipTLSVerify types.OptionalBool
+	SkipTLSVerify imageTypes.OptionalBool
 }
 
 // ContainerRunlabelReport contains the results from executing container-runlabel.
@@ -157,13 +158,12 @@ type ContainerInspectReport struct {
 	*define.InspectContainerData
 }
 
-type ContainerStatReport struct {
-	define.FileInfo
-}
+type ContainerStatReport = types.ContainerStatReport
 
 type CommitOptions struct {
 	Author         string
 	Changes        []string
+	Config         []byte
 	Format         string
 	ImageName      string
 	IncludeVolumes bool
@@ -211,13 +211,7 @@ type CheckpointOptions struct {
 	FileLocks      bool
 }
 
-type CheckpointReport struct {
-	Err             error                                   `json:"-"`
-	Id              string                                  `json:"Id"` //nolint:revive,stylecheck
-	RawInput        string                                  `json:"-"`
-	RuntimeDuration int64                                   `json:"runtime_checkpoint_duration"`
-	CRIUStatistics  *define.CRIUCheckpointRestoreStatistics `json:"criu_statistics"`
-}
+type CheckpointReport = types.CheckpointReport
 
 type RestoreOptions struct {
 	All             bool
@@ -238,13 +232,7 @@ type RestoreOptions struct {
 	FileLocks       bool
 }
 
-type RestoreReport struct {
-	Err             error                                   `json:"-"`
-	Id              string                                  `json:"Id"` //nolint:revive,stylecheck
-	RawInput        string                                  `json:"-"`
-	RuntimeDuration int64                                   `json:"runtime_restore_duration"`
-	CRIUStatistics  *define.CRIUCheckpointRestoreStatistics `json:"criu_statistics"`
-}
+type RestoreReport = types.RestoreReport
 
 type ContainerCreateReport struct {
 	Id string //nolint:revive,stylecheck
@@ -297,6 +285,7 @@ type ExecOptions struct {
 	Interactive bool
 	Latest      bool
 	PreserveFDs uint
+	PreserveFD  []uint
 	Privileged  bool
 	Tty         bool
 	User        string
@@ -360,6 +349,7 @@ type ContainerRunOptions struct {
 	InputStream  *os.File
 	OutputStream *os.File
 	PreserveFDs  uint
+	PreserveFD   []uint
 	Rm           bool
 	SigProxy     bool
 	Spec         *specgen.SpecGenerator
@@ -483,13 +473,7 @@ type ContainerStatsOptions struct {
 	Interval int
 }
 
-// ContainerStatsReport is used for streaming container stats.
-type ContainerStatsReport struct {
-	// Error from reading stats.
-	Error error
-	// Results, set when there is no error.
-	Stats []define.ContainerStats
-}
+type ContainerStatsReport = types.ContainerStatsReport
 
 // ContainerRenameOptions describes input options for renaming a container.
 type ContainerRenameOptions struct {
@@ -497,7 +481,7 @@ type ContainerRenameOptions struct {
 	NewName string
 }
 
-// ContainerCloneOptions contains options for cloning an existing continer
+// ContainerCloneOptions contains options for cloning an existing container
 type ContainerCloneOptions struct {
 	ID           string
 	Destroy      bool
@@ -509,7 +493,4 @@ type ContainerCloneOptions struct {
 }
 
 // ContainerUpdateOptions containers options for updating an existing containers cgroup configuration
-type ContainerUpdateOptions struct {
-	NameOrID string
-	Specgen  *specgen.SpecGenerator
-}
+type ContainerUpdateOptions = types.ContainerUpdateOptions

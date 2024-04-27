@@ -5,11 +5,12 @@
 
 load helpers
 load helpers.systemd
+load helpers.network
 
 SERVICE_NAME="podman_test_$(random_string)"
 
 UNIT_FILE="$UNIT_DIR/$SERVICE_NAME.service"
-TEMPLATE_FILE_PREFIX="$UNIT_DIR/$SERVICE_NAME"
+TEMPLATE_FILE="$UNIT_DIR/$SERVICE_NAME@.service"
 
 function setup() {
     skip_if_remote "systemd tests are meaningless over remote"
@@ -33,11 +34,19 @@ function teardown() {
 
 # Helper to start a systemd service running a container
 function service_setup() {
-    run_podman generate systemd \
+    # January 2024: we can no longer do "run_podman generate systemd" followed
+    # by "echo $output >file", because generate-systemd is deprecated and now
+    # says so loudly, to stderr, with no way to silence it. Since BATS gloms
+    # stdout + stderr, that warning goes to the unit file. (Today's systemd
+    # is forgiving about that, but RHEL8 systemd chokes with EINVAL)
+    (
+        cd $UNIT_DIR
+        run_podman generate systemd --files --name \
                -e http_proxy -e https_proxy -e no_proxy \
                -e HTTP_PROXY -e HTTPS_PROXY -e NO_PROXY \
                --new $cname
-    echo "$output" > "$UNIT_FILE"
+        mv "container-$cname.service" $UNIT_FILE
+    )
     run_podman rm $cname
 
     systemctl daemon-reload
@@ -46,8 +55,7 @@ function service_setup() {
     run systemctl enable "$SERVICE_NAME"
     assert $status -eq 0 "Error enabling systemd unit $SERVICE_NAME: $output"
 
-    run systemctl start "$SERVICE_NAME"
-    assert $status -eq 0 "Error starting systemd unit $SERVICE_NAME: $output"
+    systemctl_start "$SERVICE_NAME"
 
     run systemctl status "$SERVICE_NAME"
     assert $status -eq 0 "systemctl status $SERVICE_NAME: $output"
@@ -80,7 +88,8 @@ function service_cleanup() {
     run_podman create --restart=always $IMAGE
     cid="$output"
     run_podman 0+w generate systemd $cid
-    is "$output" ".*Container $cid has restart policy .*always.* which can lead to issues on shutdown.*" "generate systemd emits warning"
+    require_warning "Container $cid has restart policy .*always.* which can lead to issues on shutdown" \
+                    "generate systemd emits warning"
     run_podman rm -f $cid
 
     cname=$(random_string)
@@ -222,15 +231,18 @@ LISTEN_FDNAMES=listen_fdnames" | sort)
     cname=$(random_string)
     run_podman create --name $cname $IMAGE top
 
-    run_podman generate systemd --template -n $cname
-    echo "$output" > "$TEMPLATE_FILE_PREFIX@.service"
+    # See note in service_setup() above re: using --files
+    (
+        cd $UNIT_DIR
+        run_podman generate systemd --template --files -n $cname
+        mv "container-$cname.service" $TEMPLATE_FILE
+    )
     run_podman rm -f $cname
 
     systemctl daemon-reload
 
     INSTANCE="$SERVICE_NAME@1.service"
-    run systemctl start "$INSTANCE"
-    assert $status -eq 0 "Error starting systemd unit $INSTANCE: $output"
+    systemctl_start "$INSTANCE"
 
     run systemctl status "$INSTANCE"
     assert $status -eq 0 "systemctl status $INSTANCE: $output"
@@ -238,7 +250,7 @@ LISTEN_FDNAMES=listen_fdnames" | sort)
     run systemctl stop "$INSTANCE"
     assert $status -eq 0 "Error stopping systemd unit $INSTANCE: $output"
 
-    rm -f "$TEMPLATE_FILE_PREFIX@.service"
+    rm -f $TEMPLATE_FILE
     systemctl daemon-reload
 }
 
@@ -283,7 +295,7 @@ LISTEN_FDNAMES=listen_fdnames" | sort)
 }
 
 # https://github.com/containers/podman/issues/13153
-@test "podman rootless-netns slirp4netns process should be in different cgroup" {
+@test "podman rootless-netns pasta processes should be in different cgroup" {
     is_rootless || skip "only meaningful for rootless"
 
     cname=$(random_string)
@@ -303,9 +315,11 @@ LISTEN_FDNAMES=listen_fdnames" | sort)
     # stop systemd container
     service_cleanup
 
+    pasta_iface=$(default_ifname)
+
     # now check that the rootless netns slirp4netns process is still alive and working
     run_podman unshare --rootless-netns ip addr
-    is "$output" ".*tap0.*" "slirp4netns interface exists in the netns"
+    is "$output" ".*$pasta_iface.*" "pasta interface exists in the netns"
     run_podman exec $cname2 nslookup google.com
 
     run_podman rm -f -t0 $cname2
@@ -313,16 +327,13 @@ LISTEN_FDNAMES=listen_fdnames" | sort)
 }
 
 @test "podman create --health-on-failure=kill" {
-    img="healthcheck_i"
-    _build_health_check_image $img
-
     cname=c_$(random_string)
-    run_podman create --name $cname      \
-               --health-cmd /healthcheck \
-               --health-on-failure=kill  \
-               --health-retries=1        \
-               --restart=on-failure      \
-               $img
+    run_podman create --name $cname                  \
+               --health-cmd /home/podman/healthcheck \
+               --health-on-failure=kill              \
+               --health-retries=1                    \
+               --restart=on-failure                  \
+               $IMAGE /home/podman/pause
 
     # run container in systemd unit
     service_setup
@@ -365,7 +376,6 @@ LISTEN_FDNAMES=listen_fdnames" | sort)
 
     # stop systemd container
     service_cleanup
-    run_podman rmi -f $img
 }
 
 @test "podman-kube@.service template" {
@@ -400,7 +410,7 @@ EOF
 
     # Dispatch the YAML file
     service_name="podman-kube@$(systemd-escape $yaml_source).service"
-    systemctl start $service_name
+    systemctl_start $service_name
     systemctl is-active $service_name
 
     # Make sure that Podman is the service's MainPID
@@ -455,7 +465,7 @@ $name stderr" "logs work with passthrough"
 
     # Now stop and start the service again.
     systemctl stop $service_name
-    systemctl start $service_name
+    systemctl_start $service_name
     systemctl is-active $service_name
     run_podman container inspect $service_container --format "{{.State.Running}}"
     is "$output" "true"

@@ -8,12 +8,12 @@ import (
 	"strings"
 
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/podman/v4/cmd/podman/common"
-	"github.com/containers/podman/v4/cmd/podman/registry"
-	"github.com/containers/podman/v4/cmd/podman/utils"
-	"github.com/containers/podman/v4/cmd/podman/validate"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v5/cmd/podman/common"
+	"github.com/containers/podman/v5/cmd/podman/registry"
+	"github.com/containers/podman/v5/cmd/podman/utils"
+	"github.com/containers/podman/v5/cmd/podman/validate"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/pkg/domain/entities"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -116,16 +116,16 @@ func rm(cmd *cobra.Command, args []string) error {
 			}
 			return fmt.Errorf("reading CIDFile: %w", err)
 		}
-		id := strings.Split(string(content), "\n")[0]
+		id, _, _ := strings.Cut(string(content), "\n")
 		args = append(args, id)
 	}
 
 	for _, f := range filters {
-		split := strings.SplitN(f, "=", 2)
-		if len(split) < 2 {
+		fname, filter, hasFilter := strings.Cut(f, "=")
+		if !hasFilter {
 			return fmt.Errorf("invalid filter %q", f)
 		}
-		rmOptions.Filters[split[0]] = append(rmOptions.Filters[split[0]], split[1])
+		rmOptions.Filters[fname] = append(rmOptions.Filters[fname], filter)
 	}
 
 	if rmOptions.All {
@@ -133,14 +133,14 @@ func rm(cmd *cobra.Command, args []string) error {
 		rmOptions.Depend = true
 	}
 
-	return removeContainers(utils.RemoveSlash(args), rmOptions, true)
+	return removeContainers(utils.RemoveSlash(args), rmOptions, true, false)
 }
 
 // removeContainers will remove the specified containers (names or IDs).
 // Allows for sharing removal logic across commands. If setExit is set,
 // removeContainers will set the exit code according to the `podman-rm` man
 // page.
-func removeContainers(namesOrIDs []string, rmOptions entities.RmOptions, setExit bool) error {
+func removeContainers(namesOrIDs []string, rmOptions entities.RmOptions, setExit bool, quiet bool) error {
 	var errs utils.OutputErrors
 	responses, err := registry.ContainerEngine().ContainerRm(context.Background(), namesOrIDs, rmOptions)
 	if err != nil {
@@ -166,9 +166,13 @@ func removeContainers(namesOrIDs []string, rmOptions entities.RmOptions, setExit
 			}
 			errs = append(errs, r.Err)
 		case r.RawInput != "":
-			fmt.Println(r.RawInput)
+			if !quiet {
+				fmt.Println(r.RawInput)
+			}
 		default:
-			fmt.Println(r.Id)
+			if !quiet {
+				fmt.Println(r.Id)
+			}
 		}
 	}
 	return errs.PrintErrors()

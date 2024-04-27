@@ -26,10 +26,12 @@ load helpers
 {{.Labels.created_at}}   | 20[0-9-]\\\+T[0-9:]\\\+Z
 "
 
-    parse_table "$tests" | while read fmt expect; do
+    defer-assertion-failures
+
+    while read fmt expect; do
         run_podman images --format "$fmt"
         is "$output" "$expect" "podman images --format '$fmt'"
-    done
+    done < <(parse_table "$tests")
 
     run_podman images --format "{{.ID}}" --no-trunc
     is "$output" "sha256:[0-9a-f]\\{64\\}\$" "podman images --no-trunc"
@@ -49,12 +51,11 @@ Labels.created_at | 20[0-9-]\\\+T[0-9:]\\\+Z
 
     run_podman images -a --format json
 
-    parse_table "$tests" | while read field expect; do
+    while read field expect; do
         actual=$(echo "$output" | jq -r ".[0].$field")
         dprint "# actual=<$actual> expect=<$expect}>"
         is "$actual" "$expect" "jq .$field"
-    done
-
+    done < <(parse_table "$tests")
 }
 
 @test "podman images - history output" {
@@ -337,28 +338,34 @@ Deleted: $pauseID"
 @test "podman pull image with additional store" {
     skip_if_remote "only works on local"
 
+    # overlay or vfs
+    local storagedriver="$(podman_storage_driver)"
+
     local imstore=$PODMAN_TMPDIR/imagestore
     local sconf=$PODMAN_TMPDIR/storage.conf
     cat >$sconf <<EOF
 [storage]
-driver="overlay"
+driver="$storagedriver"
 
 [storage.options]
 additionalimagestores = [ "$imstore/root" ]
 EOF
 
     skopeo copy containers-storage:$IMAGE \
-           containers-storage:\[overlay@$imstore/root+$imstore/runroot\]$IMAGE
+           containers-storage:\[${storagedriver}@${imstore}/root+${imstore}/runroot\]$IMAGE
 
+    # IMPORTANT! Use -2/-1 indices, not 0/1, because $SYSTEMD_IMAGE may be
+    # present in store, and if it is it will precede $IMAGE.
     CONTAINERS_STORAGE_CONF=$sconf run_podman images -a -n --format "{{.Repository}}:{{.Tag}} {{.ReadOnly}}"
-    is "${lines[0]}" "$IMAGE false" "image from readonly store"
-    is "${lines[1]}" "$IMAGE true" "image from readwrite store"
+    assert "${#lines[*]}" -ge 2 "at least 2 lines from 'podman images'"
+    is "${lines[-2]}" "$IMAGE false" "image from readonly store"
+    is "${lines[-1]}" "$IMAGE true" "image from readwrite store"
 
     CONTAINERS_STORAGE_CONF=$sconf run_podman images -a -n --format "{{.Id}}"
-    id=${lines[0]}
+    id=${lines[-1]}
 
     CONTAINERS_STORAGE_CONF=$sconf run_podman pull -q $IMAGE
-    is "$output" "$id" "Should only print one line"
+    is "$output" "$id" "pull -q $IMAGE, using storage.conf"
 
     run_podman --root $imstore/root rmi --all
 }
@@ -387,9 +394,9 @@ EOF
     tries=100
     while [[ ${#lines[*]} -gt 1 ]] && [[ $tries -gt 0 ]]; do
         # Prior to #18980, 'podman images' during rmi could fail with 'image not known'
-        # '0+w' reflects that we may see "Top layer not found" warnings.
-        # FIXME FIXME: find a way to check for any other warnings
+        # '0+w' because we sometimes get warnings.
         run_podman 0+w images --format "{{.ID}} {{.Names}}"
+        allow_warnings "Top layer .* of image .* not found in layer tree"
         tries=$((tries - 1))
     done
 

@@ -148,14 +148,21 @@ load helpers
 }
 
 @test "podman run umask" {
-    test "$(podman_runtime)" == "crun" \
-        || skip "FIXME: runtime is $(podman_runtime); this test requires crun or runc 1.1.7 or newer which is not currently in debian"
     umask="0724"
     run_podman run --rm -q $IMAGE grep Umask /proc/self/status
     is "$output" "Umask:.*0022" "default_umask should not be modified"
 
     run_podman run -q --rm --umask $umask $IMAGE grep Umask /proc/self/status
     is "$output" "Umask:.*$umask" "umask should be modified"
+
+    # FIXME: even in December 2023, exec test fails with Debian runc (1.1.10).
+    # And even if we some day get a fixed version on Debian, these tests have
+    # to pass on RHEL, and we have no control over runc version there.
+    if [[ "$(podman_runtime)" == "runc" ]]; then
+        echo "# Passed run test; skipping exec because runtime != crun" >&3
+        return
+    fi
+
     run_podman run -q -d --umask $umask $IMAGE sleep inf
     cid=$output
     run_podman exec $cid grep Umask /proc/self/status
@@ -164,6 +171,85 @@ load helpers
     is "$output" "42" "umask should apply to newly created file"
 
     run_podman rm -f -t0 $cid
+}
+
+@test "podman exec --tty" {
+    # Run all tests, report failures at end
+    defer-assertion-failures
+
+    # Outer loops: different variations on the RUN container
+    for run_opt_t in "" "-t"; do
+        for run_term_env in "" "explicit_RUN_term"; do
+            local run_opt_env=
+            if [[ -n "$run_term_env" ]]; then
+                run_opt_env="--env=TERM=$run_term_env"
+            fi
+            run_podman run -d $run_opt_t $run_opt_env --name test $IMAGE top
+
+            # Inner loops: different variations on EXEC
+            for exec_opt_t in "" "-t"; do
+                for exec_term_env in "" "explicit_EXEC_term"; do
+                    # What to expect.
+                    local expected=
+                    # if -t is set anywhere, either run or exec, go with xterm
+                    if [[ -n "$run_opt_t$exec_opt_t" ]]; then
+                        expected="xterm"
+                    fi
+                    # ...unless overridden by explicit --env
+                    if [[ -n "$run_term_env$exec_term_env" ]]; then
+                        # (exec overrides run)
+                        expected="${exec_term_env:-$run_term_env}"
+                    fi
+
+                    local exec_opt_env=
+                    if [[ -n "$exec_term_env" ]]; then
+                        exec_opt_env="--env=TERM=$exec_term_env"
+                    fi
+
+                    local desc="run $run_opt_t $run_opt_env, exec $exec_opt_t $exec_opt_env"
+                    TERM=exec-term run_podman exec $exec_opt_t $exec_opt_env test sh -c 'echo -n $TERM'
+                    assert "$output" = "$expected" "$desc"
+                done
+            done
+
+            run_podman rm -f -t0 test
+        done
+    done
+}
+
+@test "podman exec - does not leak session IDs on invalid command" {
+    run_podman run -d $IMAGE top
+    cid="$output"
+
+    for i in {1..3}; do
+        run_podman 127 exec $cid blahblah
+        run_podman 125 exec -d $cid blahblah
+    done
+
+    run_podman inspect --format "{{len .ExecIDs}}" $cid
+    assert "$output" = "0" ".ExecIDs must be empty"
+}
+
+# 'exec --preserve-fd' passes a list of additional file descriptors into the container
+@test "podman exec --preserve-fd" {
+    skip_if_remote "preserve-fd is meaningless over remote"
+
+    runtime=$(podman_runtime)
+    if [[ $runtime != "crun" ]]; then
+        skip "runtime is $runtime; preserve-fd requires crun"
+    fi
+
+    run_podman run -d $IMAGE top
+    cid="$output"
+
+    content=$(random_string 20)
+    echo "$content" > $PODMAN_TMPDIR/tempfile
+
+    # /proc/self/fd will have 0 1 2, possibly 3 & 4, but no 2-digit fds other than 40
+    run_podman exec --preserve-fd=9,40 $cid sh -c '/bin/ls -C -w999 /proc/self/fd; cat <&9; cat <&40' 9<<<"fd9" 10</dev/null 40<$PODMAN_TMPDIR/tempfile
+    assert "${lines[0]}" !~ [123][0-9] "/proc/self/fd must not contain 10-39"
+    assert "${lines[1]}" = "fd9"       "cat from fd 9"
+    assert "${lines[2]}" = "$content"  "cat from fd 40"
 }
 
 # vim: filetype=sh

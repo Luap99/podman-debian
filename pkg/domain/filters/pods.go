@@ -1,3 +1,5 @@
+//go:build !remote
+
 package filters
 
 import (
@@ -8,8 +10,9 @@ import (
 
 	"github.com/containers/common/pkg/filters"
 	"github.com/containers/common/pkg/util"
-	"github.com/containers/podman/v4/libpod"
-	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v5/libpod"
+	"github.com/containers/podman/v5/libpod/define"
+	"golang.org/x/exp/slices"
 )
 
 // GeneratePodFilterFunc takes a filter and filtervalue (key, value)
@@ -25,7 +28,7 @@ func GeneratePodFilterFunc(filter string, filterValues []string, r *libpod.Runti
 				return false
 			}
 			for _, id := range ctrIds {
-				if util.FilterID(id, filterValues) {
+				if filters.FilterID(id, filterValues) {
 					return true
 				}
 			}
@@ -61,7 +64,7 @@ func GeneratePodFilterFunc(filter string, filterValues []string, r *libpod.Runti
 		}, nil
 	case "ctr-status":
 		for _, filterValue := range filterValues {
-			if !util.StringInSlice(filterValue, []string{"created", "running", "paused", "stopped", "exited", "unknown"}) {
+			if !slices.Contains([]string{"created", "running", "paused", "stopped", "exited", "unknown"}, filterValue) {
 				return nil, fmt.Errorf("%s is not a valid status", filterValue)
 			}
 		}
@@ -90,7 +93,7 @@ func GeneratePodFilterFunc(filter string, filterValues []string, r *libpod.Runti
 		}, nil
 	case "id":
 		return func(p *libpod.Pod) bool {
-			return util.FilterID(p.ID(), filterValues)
+			return filters.FilterID(p.ID(), filterValues)
 		}, nil
 	case "name":
 		return func(p *libpod.Pod) bool {
@@ -98,7 +101,7 @@ func GeneratePodFilterFunc(filter string, filterValues []string, r *libpod.Runti
 		}, nil
 	case "status":
 		for _, filterValue := range filterValues {
-			if !util.StringInSlice(filterValue, []string{"stopped", "running", "paused", "exited", "dead", "created", "degraded"}) {
+			if !slices.Contains([]string{"stopped", "running", "paused", "exited", "dead", "created", "degraded"}, filterValue) {
 				return nil, fmt.Errorf("%s is not a valid pod status", filterValue)
 			}
 		}
@@ -118,6 +121,11 @@ func GeneratePodFilterFunc(filter string, filterValues []string, r *libpod.Runti
 		return func(p *libpod.Pod) bool {
 			labels := p.Labels()
 			return filters.MatchLabelFilters(filterValues, labels)
+		}, nil
+	case "label!":
+		return func(p *libpod.Pod) bool {
+			labels := p.Labels()
+			return !filters.MatchLabelFilters(filterValues, labels)
 		}, nil
 	case "until":
 		return func(p *libpod.Pod) bool {
@@ -154,7 +162,7 @@ func GeneratePodFilterFunc(filter string, filterValues []string, r *libpod.Runti
 				return false
 			}
 			for _, net := range networks {
-				if util.StringInSlice(net, inputNetNames) {
+				if slices.Contains(inputNetNames, net) {
 					return true
 				}
 			}

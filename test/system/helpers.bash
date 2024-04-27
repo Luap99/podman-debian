@@ -4,16 +4,19 @@
 PODMAN=${PODMAN:-podman}
 QUADLET=${QUADLET:-/usr/libexec/podman/quadlet}
 
+# crun or runc, unlikely to change. Cache, because it's expensive to determine.
+PODMAN_RUNTIME=
+
 # Standard image to use for most tests
 PODMAN_TEST_IMAGE_REGISTRY=${PODMAN_TEST_IMAGE_REGISTRY:-"quay.io"}
 PODMAN_TEST_IMAGE_USER=${PODMAN_TEST_IMAGE_USER:-"libpod"}
 PODMAN_TEST_IMAGE_NAME=${PODMAN_TEST_IMAGE_NAME:-"testimage"}
-PODMAN_TEST_IMAGE_TAG=${PODMAN_TEST_IMAGE_TAG:-"20221018"}
+PODMAN_TEST_IMAGE_TAG=${PODMAN_TEST_IMAGE_TAG:-"20240123"}
 PODMAN_TEST_IMAGE_FQN="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/$PODMAN_TEST_IMAGE_NAME:$PODMAN_TEST_IMAGE_TAG"
 
 # Larger image containing systemd tools.
 PODMAN_SYSTEMD_IMAGE_NAME=${PODMAN_SYSTEMD_IMAGE_NAME:-"systemd-image"}
-PODMAN_SYSTEMD_IMAGE_TAG=${PODMAN_SYSTEMD_IMAGE_TAG:-"20230531"}
+PODMAN_SYSTEMD_IMAGE_TAG=${PODMAN_SYSTEMD_IMAGE_TAG:-"20240124"}
 PODMAN_SYSTEMD_IMAGE_FQN="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/$PODMAN_SYSTEMD_IMAGE_NAME:$PODMAN_SYSTEMD_IMAGE_TAG"
 
 # Remote image that we *DO NOT* fetch or keep by default; used for testing pull
@@ -135,11 +138,6 @@ function skopeo() {
 
 # Setup helper: establish a test environment with exactly the images needed
 function basic_setup() {
-    # FIXME FIXME FIXME: remove if #17216 is fixed. See below also.
-    if [[ -e "${BATS_SUITE_TMPDIR}/forget-it" ]]; then
-        skip "everything is hosed, no point in going on"
-    fi
-
     # Clean up all containers
     run_podman rm -t 0 --all --force --ignore
 
@@ -154,11 +152,6 @@ function basic_setup() {
             for errline in "${lines[@]}"; do
                 echo "# $errline" >&3
             done
-            # FIXME FIXME FIXME: temporary hack for #18831. If we see the
-            # unmount/EINVAL flake, nothing will ever work again.
-            if [[ $output =~ unmounting.*invalid ]]; then
-                touch "${BATS_SUITE_TMPDIR}/forget-it"
-            fi
         fi
     done
 
@@ -169,22 +162,6 @@ function basic_setup() {
     # Image loads are slow.
     found_needed_image=
     run_podman '?' images --all --format '{{.Repository}}:{{.Tag}} {{.ID}}'
-    # FIXME FIXME FIXME: temporary hack for #17216. If we see the unlinkat-busy
-    # flake, nothing will ever work again.
-    if [[ $status -ne 0 ]]; then
-        if [[ "$output" =~ unlinkat.*busy ]]; then
-            # Signal (see above) to skip all subsequent tests.
-            touch "${BATS_SUITE_TMPDIR}/forget-it"
-            # Gather some debugging info, then fail
-            echo "$_LOG_PROMPT ps auxww --forest"
-            ps auxww --forest
-            echo "$_LOG_PROMPT mount"
-            mount
-            echo "$_LOG_PROMPT lsof /var/lib/containers"
-            lsof /var/lib/containers
-            false
-        fi
-    fi
 
     for line in "${lines[@]}"; do
         set $line
@@ -221,8 +198,58 @@ function basic_setup() {
     # ancient BATS (v1.1) in RHEL gating tests.)
     PODMAN_TMPDIR=$(mktemp -d --tmpdir=${BATS_TMPDIR:-/tmp} podman_bats.XXXXXX)
 
+    # runtime is not likely to change
+    if [[ -z "$PODMAN_RUNTIME" ]]; then
+        PODMAN_RUNTIME=$(podman_runtime)
+    fi
+
     # In the unlikely event that a test runs is() before a run_podman()
     MOST_RECENT_PODMAN_COMMAND=
+
+    # Test filenames must match ###-name.bats; use "[###] " as prefix
+    run expr "$BATS_TEST_FILENAME" : "^.*/\([0-9]\{3\}\)-[^/]\+\.bats\$"
+    BATS_TEST_NAME_PREFIX="[${output}] "
+
+    # By default, assert() and die() cause an immediate test failure.
+    # Under special circumstances (usually long test loops), tests
+    # can call defer-assertion-failures() to continue going, the
+    # idea being that a large number of failures can show patterns.
+    ASSERTION_FAILURES=
+    immediate-assertion-failures
+}
+
+# bail-now is how we terminate a test upon assertion failure.
+# By default, and the vast majority of the time, it just triggers
+# immediate test termination; but see defer-assertion-failures, below.
+function bail-now() {
+    # "false" does not apply to "bail now"! It means "nonzero exit",
+    # which BATS interprets as "yes, bail immediately".
+    false
+}
+
+# Invoked on teardown: will terminate immediately if there have been
+# any deferred test failures; otherwise will reset back to immediate
+# test termination on future assertions.
+function immediate-assertion-failures() {
+    function bail-now() {
+        false
+    }
+
+    # Any backlog?
+    if [[ -n "$ASSERTION_FAILURES" ]]; then
+        local n=${#ASSERTION_FAILURES}
+        ASSERTION_FAILURES=
+        die "$n test assertions failed. Search for 'FAIL:' above this line." >&2
+    fi
+}
+
+# Used in special test circumstances--typically multi-condition loops--to
+# continue going even on assertion failures. The test will fail afterward,
+# usually in teardown. This can be useful to show failure patterns.
+function defer-assertion-failures() {
+    function bail-now() {
+        ASSERTION_FAILURES+="!"
+    }
 }
 
 # Basic teardown: remove all pods and containers
@@ -259,6 +286,7 @@ function basic_teardown() {
     done
 
     command rm -rf $PODMAN_TMPDIR
+    immediate-assertion-failures
 }
 
 
@@ -339,11 +367,22 @@ function run_podman() {
     # Remember command args, for possible use in later diagnostic messages
     MOST_RECENT_PODMAN_COMMAND="podman $*"
 
+    # BATS >= 1.5.0 treats 127 as a special case, adding a big nasty warning
+    # at the end of the test run if any command exits thus. Silence it.
+    #   https://bats-core.readthedocs.io/en/stable/warnings/BW01.html
+    local silence127=
+    if [[ "$expected_rc" = "127" ]]; then
+        # We could use "-127", but that would cause BATS to fail if the
+        # command exits any other status -- and default BATS failure messages
+        # are much less helpful than the run_podman ones. "!" is more flexible.
+        silence127="!"
+    fi
+
     # stdout is only emitted upon error; this printf is to help in debugging
-    printf "\n%s %s %s\n" "$(timestamp)" "$_LOG_PROMPT" "$*"
+    printf "\n%s %s %s %s\n" "$(timestamp)" "$_LOG_PROMPT" "$PODMAN" "$*"
     # BATS hangs if a subprocess remains and keeps FD 3 open; this happens
     # if podman crashes unexpectedly without cleaning up subprocesses.
-    run timeout --foreground -v --kill=10 $PODMAN_TIMEOUT $PODMAN $_PODMAN_TEST_OPTS "$@" 3>/dev/null
+    run $silence127 timeout --foreground -v --kill=10 $PODMAN_TIMEOUT $PODMAN $_PODMAN_TEST_OPTS "$@" 3>/dev/null
     # without "quotes", multiple lines are glommed together into one
     if [ -n "$output" ]; then
         echo "$(timestamp) $output"
@@ -390,10 +429,12 @@ function run_podman() {
     # (see top of function) allows our caller to indicate that warnings are
     # expected, e.g., "podman stop" without -t0.
     if [[ $status -eq 0 ]]; then
-        # FIXME: don't do this on Debian: runc is way, way too flaky:
-        # FIXME: #11784 - lstat /sys/fs/.../*.scope: ENOENT
-        # FIXME: #11785 - cannot toggle freezer: cgroups not configured
-        if [[ ! "${DISTRO_NV}" =~ debian ]]; then
+        # FIXME: don't do this on Debian or RHEL. runc is way too buggy:
+        #   - #11784 - lstat /sys/fs/.../*.scope: ENOENT
+        #   - #11785 - cannot toggle freezer: cgroups not configured
+        # As of January 2024 the freezer one seems to be fixed in Debian-runc
+        # but not in RHEL8-runc. The lstat one is closed-wontfix.
+        if [[ $PODMAN_RUNTIME != "runc" ]]; then
             # FIXME: All kube commands emit unpredictable errors:
             #    "Storage for container <X> has been removed"
             #    "no container with ID <X> found in database"
@@ -411,7 +452,7 @@ function run_podman() {
 
 # Wait for certain output from a container, indicating that it's ready.
 function wait_for_output {
-    local sleep_delay=5
+    local sleep_delay=1
     local how_long=$PODMAN_TIMEOUT
     local expect=
     local cid=
@@ -558,10 +599,35 @@ function selinux_enabled() {
 # love to cache this result, we probably shouldn't.
 function podman_runtime() {
     # This function is intended to be used as '$(podman_runtime)', i.e.
-    # our caller wants our output. run_podman() messes with output because
-    # it emits the command invocation to stdout, hence the redirection.
-    run_podman info --format '{{ .Host.OCIRuntime.Name }}' >/dev/null
-    basename "${output:-[null]}"
+    # our caller wants our output. It's unsafe to use run_podman().
+    runtime=$($PODMAN $_PODMAN_TEST_OPTS info --format '{{ .Host.OCIRuntime.Name }}' 2>/dev/null)
+    basename "${runtime:-[null]}"
+}
+
+# Returns the storage driver: 'overlay' or 'vfs'
+function podman_storage_driver() {
+    run_podman info --format '{{.Store.GraphDriverName}}' >/dev/null
+    # Should there ever be a new driver
+    case "$output" in
+        overlay) ;;
+        vfs)     ;;
+        *)       die "Unknown storage driver '$output'; if this is a new driver, please review uses of this function in tests." ;;
+    esac
+    echo "$output"
+}
+
+# Given a (scratch) directory path, returns a set of command-line options
+# for running an isolated podman that will not step on system podman. Set:
+#  - rootdir, so we don't clobber real images or storage;
+#  - tmpdir, so we use an isolated DB; and
+#  - runroot, out of an abundance of paranoia
+function podman_isolation_opts() {
+    local path=${1?podman_isolation_opts: missing PATH arg}
+
+    for opt in root runroot tmpdir;do
+        mkdir -p $path/$opt
+        echo " --$opt $path/$opt"
+    done
 }
 
 # rhbz#1895105: rootless journald is unavailable except to users in
@@ -744,7 +810,7 @@ function die() {
     echo "#/vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv"  >&2
     echo "#| FAIL: $*"                                           >&2
     echo "#\\^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^" >&2
-    false
+    bail-now
 }
 
 ############
@@ -860,7 +926,7 @@ function assert() {
         printf "#|         > %s%s\n" "$ws" "$line"                >&2
     done
     printf "#\\^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n"   >&2
-    false
+    bail-now
 }
 
 ########
@@ -910,9 +976,41 @@ function is() {
         printf "#|         > '%s'\n" "$line"                   >&2
     done
     printf "#\\^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n" >&2
-    false
+    bail-now
 }
 
+####################
+#  allow_warnings  #  check cmd output for warning messages other than these
+####################
+#
+# HEADS UP: Operates on '$lines' array, so, must be invoked after run_podman
+#
+function allow_warnings() {
+    for line in "${lines[@]}"; do
+        if [[ "$line" =~ level=[we] ]]; then
+            local ok=
+            for pattern in "$@"; do
+                if [[ "$line" =~ $pattern ]]; then
+                   ok=ok
+                fi
+            done
+            if [[ -z "$ok" ]]; then
+                die "Unexpected warning/error in command results: $line"
+            fi
+        fi
+    done
+}
+
+#####################
+#  require_warning  #  Require the given message, but disallow any others
+#####################
+# Optional 2nd argument is a message to display if warning is missing
+function require_warning() {
+    local expect="$1"
+    local msg="${2:-Did not find expected warning/error message}"
+    assert "$output" =~ "$expect" "$msg"
+    allow_warnings "$expect"
+}
 
 ############
 #  dprint  #  conditional debug message
@@ -1044,66 +1142,40 @@ function _podman_commands() {
     awk '/^Available Commands:/{ok=1;next}/^Options:/{ok=0}ok { print $1 }' <<<"$output" | grep .
 }
 
-###############################
-#  _build_health_check_image  #  Builds a container image with a configured health check
-###############################
-#
-# The health check will fail once the /uh-oh file exists.
-#
-# First argument is the desired name of the image
-# Second argument, if present and non-null, forces removal of the /uh-oh file once the check failed; this way the container can be restarted
-#
-
-function _build_health_check_image {
-    local imagename="$1"
-    local cleanfile=""
-
-    if [[ ! -z "$2" ]]; then
-        cleanfile="rm -f /uh-oh"
-    fi
-    # Create an image with a healthcheck script; said script will
-    # pass until the file /uh-oh gets created (by us, via exec)
-    cat >${PODMAN_TMPDIR}/healthcheck <<EOF
-#!/bin/sh
-
-if test -e /uh-oh; then
-    echo "Uh-oh on stdout!"
-    echo "Uh-oh on stderr!" >&2
-    ${cleanfile}
-    exit 1
-else
-    echo "Life is Good on stdout"
-    echo "Life is Good on stderr" >&2
-    exit 0
-fi
-EOF
-
-    cat >${PODMAN_TMPDIR}/entrypoint <<EOF
-#!/bin/sh
-
-trap 'echo Received SIGTERM, finishing; exit' SIGTERM; echo WAITING; while :; do sleep 0.1; done
-EOF
-
-    cat >${PODMAN_TMPDIR}/Containerfile <<EOF
-FROM $IMAGE
-
-COPY healthcheck /healthcheck
-COPY entrypoint  /entrypoint
-
-RUN  chmod 755 /healthcheck /entrypoint
-
-CMD ["/entrypoint"]
-EOF
-
-    run_podman build -t $imagename ${PODMAN_TMPDIR}
-}
-
 ##########################
 #  sleep_to_next_second  #  Sleep until second rolls over
 ##########################
 
 function sleep_to_next_second() {
     sleep 0.$(printf '%04d' $((10000 - 10#$(date +%4N))))
+}
+
+function wait_for_command_output() {
+    local cmd="$1"
+    local want="$2"
+    local tries=20
+    local sleep_delay=0.5
+
+    case "${#*}" in
+        2) ;;
+        4) tries="$3"
+           sleep_delay="$4"
+           ;;
+        *) die "Internal error: 'wait_for_command_output' requires two or four arguments" ;;
+    esac
+
+    while [[ $tries -gt 0 ]]; do
+        echo "$_LOG_PROMPT $cmd"
+        run $cmd
+        echo "$output"
+        if [[ "$output" = "$want" ]]; then
+            return
+        fi
+
+        sleep $sleep_delay
+        tries=$((tries - 1))
+    done
+    die "Timed out waiting for '$cmd' to return '$want'"
 }
 
 # END   miscellaneous tools

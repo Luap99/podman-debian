@@ -1,5 +1,4 @@
-//go:build linux && cgo
-// +build linux,cgo
+//go:build !remote && linux && cgo
 
 package libpod
 
@@ -17,13 +16,13 @@ import (
 	"syscall"
 	"unsafe"
 
-	"github.com/containers/common/pkg/util"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/pkg/rootless"
 	"github.com/containers/psgo"
 	"github.com/containers/storage/pkg/reexec"
 	"github.com/google/shlex"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/exp/slices"
 	"golang.org/x/sys/unix"
 )
 
@@ -214,10 +213,11 @@ func (c *Container) Top(descriptors []string) ([]string, error) {
 		return nil, psgoErr
 	}
 
-	// Note that the descriptors to ps(1) must be shlexed (see #12452).
-	psDescriptors := []string{}
-	for _, d := range descriptors {
-		shSplit, err := shlex.Split(d)
+	psDescriptors := descriptors
+	if len(descriptors) == 1 {
+		// Note that the descriptors to ps(1) must be shlexed (see #12452).
+		psDescriptors = make([]string, 0, len(descriptors))
+		shSplit, err := shlex.Split(descriptors[0])
 		if err != nil {
 			return nil, fmt.Errorf("parsing ps args: %w", err)
 		}
@@ -231,7 +231,7 @@ func (c *Container) Top(descriptors []string) ([]string, error) {
 	// Only use ps(1) from the host when we know the container was not started with CAP_SYS_PTRACE,
 	// with it the container can access /proc/$pid/ files and potentially escape the container fs.
 	if c.config.Spec.Process.Capabilities != nil &&
-		!util.StringInSlice("CAP_SYS_PTRACE", c.config.Spec.Process.Capabilities.Effective) {
+		!slices.Contains(c.config.Spec.Process.Capabilities.Effective, "CAP_SYS_PTRACE") {
 		var retry bool
 		output, retry, err = c.execPS(psDescriptors)
 		if err != nil {
@@ -327,7 +327,7 @@ func (c *Container) execPS(psArgs []string) ([]string, bool, error) {
 	cmd.Stdout = wPipe
 	cmd.Stderr = &errBuf
 	// nil means use current env so explicitly unset all, to not leak any sensitive env vars
-	cmd.Env = []string{}
+	cmd.Env = []string{fmt.Sprintf("HOME=%s", os.Getenv("HOME"))}
 
 	retryContainerExec := true
 	err = cmd.Run()

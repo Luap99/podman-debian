@@ -6,11 +6,11 @@ import (
 	"os"
 
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/podman/v4/cmd/podman/common"
-	"github.com/containers/podman/v4/cmd/podman/generate"
-	"github.com/containers/podman/v4/cmd/podman/registry"
-	"github.com/containers/podman/v4/cmd/podman/utils"
-	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v5/cmd/podman/common"
+	"github.com/containers/podman/v5/cmd/podman/generate"
+	"github.com/containers/podman/v5/cmd/podman/registry"
+	"github.com/containers/podman/v5/cmd/podman/utils"
+	"github.com/containers/podman/v5/pkg/domain/entities"
 	"github.com/spf13/cobra"
 )
 
@@ -83,6 +83,7 @@ func generateFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig) {
 
 	noTruncAnnotationsFlagName := "no-trunc"
 	flags.BoolVar(&generateOptions.UseLongAnnotations, noTruncAnnotationsFlagName, false, "Don't truncate annotations to Kubernetes length (63 chars)")
+	_ = flags.MarkHidden(noTruncAnnotationsFlagName)
 
 	podmanOnlyFlagName := "podman-only"
 	flags.BoolVar(&generateOptions.PodmanOnly, podmanOnlyFlagName, false, "Add podman-only reserved annotations to the generated YAML file (Cannot be used by Kubernetes)")

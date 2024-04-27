@@ -10,11 +10,11 @@ import (
 	"github.com/containers/common/pkg/auth"
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v4/cmd/podman/common"
-	"github.com/containers/podman/v4/cmd/podman/registry"
-	"github.com/containers/podman/v4/cmd/podman/utils"
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v5/cmd/podman/common"
+	"github.com/containers/podman/v5/cmd/podman/registry"
+	"github.com/containers/podman/v5/cmd/podman/utils"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	"github.com/containers/podman/v5/pkg/util"
 	"github.com/spf13/cobra"
 )
 
@@ -110,8 +110,15 @@ func pullFlags(cmd *cobra.Command) {
 	_ = cmd.RegisterFlagCompletionFunc(authfileFlagName, completion.AutocompleteDefault)
 
 	decryptionKeysFlagName := "decryption-key"
-	flags.StringSliceVar(&pullOptions.DecryptionKeys, decryptionKeysFlagName, nil, "Key needed to decrypt the image (e.g. /path/to/key.pem)")
+	flags.StringArrayVar(&pullOptions.DecryptionKeys, decryptionKeysFlagName, nil, "Key needed to decrypt the image (e.g. /path/to/key.pem)")
 	_ = cmd.RegisterFlagCompletionFunc(decryptionKeysFlagName, completion.AutocompleteDefault)
+
+	retryFlagName := "retry"
+	flags.Uint(retryFlagName, registry.RetryDefault(), "number of times to retry in case of failure when performing pull")
+	_ = cmd.RegisterFlagCompletionFunc(retryFlagName, completion.AutocompleteNone)
+	retryDelayFlagName := "retry-delay"
+	flags.String(retryDelayFlagName, registry.RetryDelayDefault(), "delay between retries in case of pull failures")
+	_ = cmd.RegisterFlagCompletionFunc(retryDelayFlagName, completion.AutocompleteNone)
 
 	if registry.IsRemote() {
 		_ = flags.MarkHidden(decryptionKeysFlagName)
@@ -136,6 +143,25 @@ func imagePull(cmd *cobra.Command, args []string) error {
 	if cmd.Flags().Changed("tls-verify") {
 		pullOptions.SkipTLSVerify = types.NewOptionalBool(!pullOptions.TLSVerifyCLI)
 	}
+
+	if cmd.Flags().Changed("retry") {
+		retry, err := cmd.Flags().GetUint("retry")
+		if err != nil {
+			return err
+		}
+
+		pullOptions.Retry = &retry
+	}
+
+	if cmd.Flags().Changed("retry-delay") {
+		val, err := cmd.Flags().GetString("retry-delay")
+		if err != nil {
+			return err
+		}
+
+		pullOptions.RetryDelay = val
+	}
+
 	if cmd.Flags().Changed("authfile") {
 		if err := auth.CheckAuthFile(pullOptions.Authfile); err != nil {
 			return err
@@ -149,10 +175,14 @@ func imagePull(cmd *cobra.Command, args []string) error {
 		if pullOptions.Arch != "" || pullOptions.OS != "" {
 			return errors.New("--platform option can not be specified with --arch or --os")
 		}
-		split := strings.SplitN(platform, "/", 2)
-		pullOptions.OS = split[0]
-		if len(split) > 1 {
-			pullOptions.Arch = split[1]
+
+		specs := strings.Split(platform, "/")
+		pullOptions.OS = specs[0] // may be empty
+		if len(specs) > 1 {
+			pullOptions.Arch = specs[1]
+			if len(specs) > 2 {
+				pullOptions.Variant = specs[2]
+			}
 		}
 	}
 

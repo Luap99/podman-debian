@@ -13,32 +13,35 @@ import (
 	"sync"
 
 	buildahDefine "github.com/containers/buildah/define"
+	bparse "github.com/containers/buildah/pkg/parse"
 	"github.com/containers/common/libimage"
 	nettypes "github.com/containers/common/libnetwork/types"
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/secrets"
+	"github.com/containers/image/v5/docker/reference"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v4/cmd/podman/parse"
-	"github.com/containers/podman/v4/libpod"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	v1apps "github.com/containers/podman/v4/pkg/k8s.io/api/apps/v1"
-	v1 "github.com/containers/podman/v4/pkg/k8s.io/api/core/v1"
-	metav1 "github.com/containers/podman/v4/pkg/k8s.io/apimachinery/pkg/apis/meta/v1"
-	"github.com/containers/podman/v4/pkg/specgen"
-	"github.com/containers/podman/v4/pkg/specgen/generate"
-	"github.com/containers/podman/v4/pkg/specgen/generate/kube"
-	"github.com/containers/podman/v4/pkg/specgenutil"
-	"github.com/containers/podman/v4/pkg/systemd/notifyproxy"
-	"github.com/containers/podman/v4/pkg/util"
-	"github.com/containers/podman/v4/utils"
+	"github.com/containers/podman/v5/cmd/podman/parse"
+	"github.com/containers/podman/v5/libpod"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/pkg/annotations"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	entitiesTypes "github.com/containers/podman/v5/pkg/domain/entities/types"
+	"github.com/containers/podman/v5/pkg/domain/infra/abi/internal/expansion"
+	v1apps "github.com/containers/podman/v5/pkg/k8s.io/api/apps/v1"
+	v1 "github.com/containers/podman/v5/pkg/k8s.io/api/core/v1"
+	metav1 "github.com/containers/podman/v5/pkg/k8s.io/apimachinery/pkg/apis/meta/v1"
+	"github.com/containers/podman/v5/pkg/specgen"
+	"github.com/containers/podman/v5/pkg/specgen/generate"
+	"github.com/containers/podman/v5/pkg/specgen/generate/kube"
+	"github.com/containers/podman/v5/pkg/specgenutil"
+	"github.com/containers/podman/v5/pkg/systemd/notifyproxy"
+	"github.com/containers/podman/v5/pkg/util"
+	"github.com/containers/podman/v5/utils"
 	"github.com/coreos/go-systemd/v22/daemon"
-	"github.com/docker/distribution/reference"
 	"github.com/opencontainers/go-digest"
 	"github.com/opencontainers/selinux/go-selinux"
 	"github.com/sirupsen/logrus"
 	yamlv3 "gopkg.in/yaml.v3"
-	"k8s.io/kubernetes/third_party/forked/golang/expansion"
 	"sigs.k8s.io/yaml"
 )
 
@@ -73,7 +76,6 @@ func (ic *ContainerEngine) createServiceContainer(ctx context.Context, name stri
 	}
 	ctrOpts := entities.ContainerCreateOptions{
 		// Inherited from infra containers
-		ImageVolume:      define.TypeBind,
 		IsInfra:          false,
 		MemorySwappiness: -1,
 		ReadOnly:         true,
@@ -108,6 +110,12 @@ func (ic *ContainerEngine) createServiceContainer(ctx context.Context, name stri
 	// via the `sdNotifyAnnotation` annotation in the K8s YAML.
 	opts = append(opts, libpod.WithSdNotifyMode(define.SdNotifyModeIgnore))
 
+	if options.Replace {
+		if _, err := ic.ContainerRm(ctx, []string{spec.Name}, entities.RmOptions{Force: true, Ignore: true}); err != nil {
+			return nil, err
+		}
+	}
+
 	// Create a new libpod container based on the spec.
 	ctr, err := ic.Libpod.NewContainer(ctx, runtimeSpec, spec, false, opts...)
 	if err != nil {
@@ -115,6 +123,51 @@ func (ic *ContainerEngine) createServiceContainer(ctx context.Context, name stri
 	}
 
 	return ctr, nil
+}
+
+func prepareVolumesFrom(forContainer, podName string, ctrNames, annotations map[string]string) ([]string, error) {
+	annotationVolsFrom := define.VolumesFromAnnotation + "/" + forContainer
+
+	volsFromCtrs, ok := annotations[annotationVolsFrom]
+
+	// No volumes-from specified
+	if !ok || volsFromCtrs == "" {
+		return nil, nil
+	}
+
+	// The volumes-from string is a semicolon-separated container names
+	// optionally with respective mount options.
+	volumesFrom := strings.Split(volsFromCtrs, ";")
+	for idx, volsFromCtr := range volumesFrom {
+		// Each entry is of format "container[:mount-options]"
+		fields := strings.Split(volsFromCtr, ":")
+		if len(fields) != 1 && len(fields) != 2 {
+			return nil, fmt.Errorf("invalid annotation %s value", annotationVolsFrom)
+		}
+
+		if fields[0] == "" {
+			return nil, fmt.Errorf("from container name cannot be empty in annotation %s", annotationVolsFrom)
+		}
+
+		// Source and target containers cannot be same
+		if fields[0] == forContainer {
+			return nil, fmt.Errorf("to and from container names cannot be same in annotation %s", annotationVolsFrom)
+		}
+
+		// Update the source container name if it belongs to the pod
+		// the source container must exist before the target container
+		// in the kube yaml. Otherwise, the source container will be
+		// treated as an external container. This also helps in avoiding
+		// cyclic dependencies between containers within the pod.
+		if _, ok := ctrNames[fields[0]]; ok {
+			volumesFrom[idx] = podName + "-" + fields[0]
+			if len(fields) == 2 {
+				volumesFrom[idx] = volumesFrom[idx] + ":" + fields[1]
+			}
+		}
+	}
+
+	return volumesFrom, nil
 }
 
 // Creates the name for a k8s entity based on the provided content of a
@@ -237,16 +290,16 @@ func (ic *ContainerEngine) PlayKube(ctx context.Context, body io.Reader, options
 
 			podTemplateSpec.ObjectMeta = podYAML.ObjectMeta
 			podTemplateSpec.Spec = podYAML.Spec
-			for name, val := range podYAML.Annotations {
-				if len(val) > define.MaxKubeAnnotation && !options.UseLongAnnotations {
-					return nil, fmt.Errorf("annotation %q=%q value length exceeds Kubernetes max %d", name, val, define.MaxKubeAnnotation)
-				}
-			}
+
 			for name, val := range options.Annotations {
 				if podYAML.Annotations == nil {
 					podYAML.Annotations = make(map[string]string)
 				}
 				podYAML.Annotations[name] = val
+			}
+
+			if err := annotations.ValidateAnnotations(podYAML.Annotations); err != nil {
+				return nil, err
 			}
 
 			r, proxies, err := ic.playKubePod(ctx, podTemplateSpec.ObjectMeta.Name, &podTemplateSpec, options, &ipIndex, podYAML.Annotations, configMaps, serviceContainer)
@@ -468,12 +521,16 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 		return nil, nil, fmt.Errorf("pod does not have a name")
 	}
 
+	if _, ok := annotations[define.VolumesFromAnnotation]; ok {
+		return nil, nil, fmt.Errorf("annotation %s without target volume is reserved for internal use", define.VolumesFromAnnotation)
+	}
+
 	podOpt := entities.PodCreateOptions{
 		Infra:      true,
 		Net:        &entities.NetOptions{NoHosts: options.NoHosts},
 		ExitPolicy: string(config.PodExitPolicyStop),
 	}
-	podOpt, err = kube.ToPodOpt(ctx, podName, podOpt, podYAML)
+	podOpt, err = kube.ToPodOpt(ctx, podName, podOpt, options.PublishAllPorts, podYAML)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -484,14 +541,7 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 	}
 
 	if len(options.Networks) > 0 {
-		var pastaNetworkNameExists bool
-
-		_, err := ic.Libpod.Network().NetworkInspect("pasta")
-		if err == nil {
-			pastaNetworkNameExists = true
-		}
-
-		ns, networks, netOpts, err := specgen.ParseNetworkFlag(options.Networks, pastaNetworkNameExists)
+		ns, networks, netOpts, err := specgen.ParseNetworkFlag(options.Networks)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -502,7 +552,11 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 	}
 
 	if options.Userns == "" {
-		options.Userns = "host"
+		if v, ok := annotations[define.UserNsAnnotation]; ok {
+			options.Userns = v
+		} else {
+			options.Userns = "host"
+		}
 		if podYAML.Spec.HostUsers != nil && !*podYAML.Spec.HostUsers {
 			options.Userns = "auto"
 		}
@@ -618,7 +672,7 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 					// error out instead reuse the current volume.
 					vol, err = ic.Libpod.GetVolume(v.Source)
 					if err != nil {
-						return nil, nil, fmt.Errorf("cannot re-use local volume for volume from configmap %q: %w", v.Source, err)
+						return nil, nil, fmt.Errorf("cannot reuse local volume for volume from configmap %q: %w", v.Source, err)
 					}
 				} else {
 					return nil, nil, fmt.Errorf("cannot create a local volume for volume from configmap %q: %w", v.Source, err)
@@ -628,6 +682,7 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 			if err != nil || mountPoint == "" {
 				return nil, nil, fmt.Errorf("unable to get mountpoint of volume %q: %w", vol.Name(), err)
 			}
+			defaultMode := v.DefaultMode
 			// Create files and add data to the volume mountpoint based on the Items in the volume
 			for k, v := range v.Items {
 				dataPath := filepath.Join(mountPoint, k)
@@ -638,6 +693,10 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 				defer f.Close()
 				_, err = f.Write(v)
 				if err != nil {
+					return nil, nil, err
+				}
+				// Set file permissions
+				if err := os.Chmod(f.Name(), os.FileMode(defaultMode)); err != nil {
 					return nil, nil, err
 				}
 			}
@@ -702,6 +761,11 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 		podSpec.PodSpecGen.ServiceContainerID = serviceContainer.ID()
 	}
 
+	if options.Replace {
+		if _, err := ic.PodRm(ctx, []string{podName}, entities.PodRmOptions{Force: true, Ignore: true}); err != nil {
+			return nil, nil, fmt.Errorf("replacing pod %v: %w", podName, err)
+		}
+	}
 	// Create the Pod
 	pod, err := generate.MakePod(&podSpec, ic.Libpod)
 	if err != nil {
@@ -764,6 +828,13 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 			initCtrType = define.OneShotInitContainer
 		}
 
+		var volumesFrom []string
+		if list, err := prepareVolumesFrom(initCtr.Name, podName, ctrNames, annotations); err != nil {
+			return nil, nil, err
+		} else if list != nil {
+			volumesFrom = list
+		}
+
 		specgenOpts := kube.CtrSpecGenOptions{
 			Annotations:        annotations,
 			ConfigMaps:         configMaps,
@@ -784,6 +855,8 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 			SecretsManager:     secretsManager,
 			UserNSIsHost:       p.Userns.IsHost(),
 			Volumes:            volumes,
+			VolumesFrom:        volumesFrom,
+			UtsNSIsHost:        p.UtsNs.IsHost(),
 		}
 		specGen, err := kube.ToSpecGen(ctx, &specgenOpts)
 		if err != nil {
@@ -806,6 +879,12 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 			return nil, nil, err
 		}
 		opts = append(opts, libpod.WithSdNotifyMode(define.SdNotifyModeIgnore))
+		if options.Replace {
+			if _, err := ic.ContainerRm(ctx, []string{spec.Name}, entities.RmOptions{Force: true, Ignore: true}); err != nil {
+				return nil, nil, err
+			}
+		}
+
 		ctr, err := generate.ExecuteCreate(ctx, ic.Libpod, rtSpec, spec, false, opts...)
 		if err != nil {
 			return nil, nil, err
@@ -833,6 +912,13 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 			labels[k] = v
 		}
 
+		var volumesFrom []string
+		if list, err := prepareVolumesFrom(container.Name, podName, ctrNames, annotations); err != nil {
+			return nil, nil, err
+		} else if list != nil {
+			volumesFrom = list
+		}
+
 		specgenOpts := kube.CtrSpecGenOptions{
 			Annotations:        annotations,
 			ConfigMaps:         configMaps,
@@ -853,6 +939,8 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 			SecretsManager:     secretsManager,
 			UserNSIsHost:       p.Userns.IsHost(),
 			Volumes:            volumes,
+			VolumesFrom:        volumesFrom,
+			UtsNSIsHost:        p.UtsNs.IsHost(),
 		}
 
 		if podYAML.Spec.TerminationGracePeriodSeconds != nil {
@@ -903,6 +991,12 @@ func (ic *ContainerEngine) playKubePod(ctx context.Context, podName string, podY
 			}
 			sdNotifyProxies = append(sdNotifyProxies, proxy)
 			opts = append(opts, libpod.WithSdNotifySocket(proxy.SocketPath()))
+		}
+
+		if options.Replace {
+			if _, err := ic.ContainerRm(ctx, []string{spec.Name}, entities.RmOptions{Force: true, Ignore: true}); err != nil {
+				return nil, nil, err
+			}
 		}
 
 		ctr, err := generate.ExecuteCreate(ctx, ic.Libpod, rtSpec, spec, false, opts...)
@@ -984,10 +1078,16 @@ func (ic *ContainerEngine) getImageAndLabelInfo(ctx context.Context, cwd string,
 		buildOpts := new(buildahDefine.BuildOptions)
 		commonOpts := new(buildahDefine.CommonBuildOptions)
 		buildOpts.ConfigureNetwork = buildahDefine.NetworkDefault
-		buildOpts.Isolation = buildahDefine.IsolationChroot
+		isolation, err := bparse.IsolationOption("")
+		if err != nil {
+			return nil, nil, err
+		}
+		buildOpts.Isolation = isolation
 		buildOpts.CommonBuildOpts = commonOpts
+		buildOpts.SystemContext = options.SystemContext
 		buildOpts.Output = container.Image
 		buildOpts.ContextDirectory = filepath.Dir(buildFile)
+		buildOpts.ReportWriter = writer
 		if _, _, err := ic.Libpod.Build(ctx, *buildOpts, []string{buildFile}...); err != nil {
 			return nil, nil, err
 		}
@@ -1106,6 +1206,8 @@ func (ic *ContainerEngine) playKubePVC(ctx context.Context, mountLabel string, p
 			opts["o"] = v
 		case util.VolumeImportSourceAnnotation:
 			importFrom = v
+		case util.VolumeImageAnnotation:
+			opts["image"] = v
 		}
 	}
 	volOptions = append(volOptions, libpod.WithVolumeOptions(opts))
@@ -1143,7 +1245,7 @@ func (ic *ContainerEngine) playKubePVC(ctx context.Context, mountLabel string, p
 		}
 	}
 
-	report.Volumes = append(report.Volumes, entities.PlayKubeVolume{
+	report.Volumes = append(report.Volumes, entitiesTypes.PlayKubeVolume{
 		Name: vol.Name(),
 	})
 
@@ -1504,7 +1606,7 @@ func (ic *ContainerEngine) PlayKubeDown(ctx context.Context, body io.Reader, opt
 		return nil, err
 	}
 
-	reports.RmReport, err = ic.PodRm(ctx, podNames, entities.PodRmOptions{Ignore: true})
+	reports.RmReport, err = ic.PodRm(ctx, podNames, entities.PodRmOptions{Ignore: true, Force: true})
 	if err != nil {
 		return nil, err
 	}

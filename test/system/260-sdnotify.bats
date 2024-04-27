@@ -325,7 +325,7 @@ spec:
   - command:
     - /bin/sh
     - -c
-    - 'printenv NOTIFY_SOCKET; while ! test -f /stop;do sleep 0.1;done'
+    - 'printenv NOTIFY_SOCKET; echo READY; while ! test -f /stop;do sleep 0.1;done'
     image: $SYSTEMD_IMAGE
     name: a
   - command:
@@ -352,19 +352,22 @@ EOF
         $PODMAN play kube --service-container=true --log-driver journald $yaml_source &>/dev/null &
 
     # Wait for both containers to be running
+    containers_running=
     for i in $(seq 1 20); do
         run_podman "?" container wait $container_a $container_b --condition="running"
         if [[ $status == 0 ]]; then
+            containers_running=1
             break
         fi
         sleep 0.5
         # Just for debugging
         run_podman ps -a
     done
-    if [[ $status != 0 ]]; then
+    if [[ -z "$containers_running" ]]; then
         die "container $container_a and/or $container_b did not start"
     fi
 
+    wait_for_ready $container_a
     # Make sure the containers have the correct policy
     run_podman container inspect $container_a $container_b $service_container --format "{{.Config.SdNotifyMode}}"
     is "$output" "container
@@ -503,7 +506,7 @@ none | false | false | 0
 
     run_podman push $registry_flags $IMAGE $image_on_local_registry
     run_podman pull $registry_flags $image_on_local_registry
-    is "${lines[1]}" "Pulling image $image_on_local_registry inside systemd: setting pull timeout to 5m0s" "NOTIFY_SOCKET is passed to container"
+    is "${lines[1]}" "Pulling image //$image_on_local_registry inside systemd: setting pull timeout to 5m0s" "NOTIFY_SOCKET is passed to container"
 
     run cat $_SOCAT_LOG
     # The 'echo's help us debug failed runs

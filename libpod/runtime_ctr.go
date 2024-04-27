@@ -1,3 +1,5 @@
+//go:build !remote
+
 package libpod
 
 import (
@@ -15,20 +17,20 @@ import (
 	"github.com/containers/common/libnetwork/types"
 	"github.com/containers/common/pkg/cgroups"
 	"github.com/containers/common/pkg/config"
-	cutil "github.com/containers/common/pkg/util"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/libpod/events"
-	"github.com/containers/podman/v4/libpod/shutdown"
-	"github.com/containers/podman/v4/pkg/domain/entities/reports"
-	"github.com/containers/podman/v4/pkg/rootless"
-	"github.com/containers/podman/v4/pkg/specgen"
-	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/libpod/events"
+	"github.com/containers/podman/v5/libpod/shutdown"
+	"github.com/containers/podman/v5/pkg/domain/entities/reports"
+	"github.com/containers/podman/v5/pkg/rootless"
+	"github.com/containers/podman/v5/pkg/specgen"
+	"github.com/containers/podman/v5/pkg/util"
 	"github.com/containers/storage"
 	"github.com/containers/storage/pkg/stringid"
 	"github.com/docker/go-units"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/runtime-tools/generate"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/exp/slices"
 )
 
 // Contains the public Runtime API for containers
@@ -254,7 +256,7 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 		for _, opts := range ctr.config.Networks {
 			if opts.InterfaceName != "" {
 				// check that no name is assigned to more than network
-				if cutil.StringInSlice(opts.InterfaceName, usedIfNames) {
+				if slices.Contains(usedIfNames, opts.InterfaceName) {
 					return nil, fmt.Errorf("network interface name %q is already assigned to another network", opts.InterfaceName)
 				}
 				usedIfNames = append(usedIfNames, opts.InterfaceName)
@@ -262,15 +264,22 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 		}
 		i := 0
 		for nameOrID, opts := range ctr.config.Networks {
-			netName, err := r.normalizeNetworkName(nameOrID)
+			netName, nicName, err := r.normalizeNetworkName(nameOrID)
 			if err != nil {
 				return nil, err
 			}
-			// assign interface name if empty
+
+			// check whether interface is to be named as the network_interface
+			// when name left unspecified
+			if opts.InterfaceName == "" {
+				opts.InterfaceName = nicName
+			}
+
+			// assign default interface name if empty
 			if opts.InterfaceName == "" {
 				for i < 100000 {
 					ifName := fmt.Sprintf("eth%d", i)
-					if !cutil.StringInSlice(ifName, usedIfNames) {
+					if !slices.Contains(usedIfNames, ifName) {
 						opts.InterfaceName = ifName
 						usedIfNames = append(usedIfNames, ifName)
 						break
@@ -470,8 +479,6 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 
 	// Go through named volumes and add them.
 	// If they don't exist they will be created using basic options.
-	// Maintain an array of them - we need to lock them later.
-	ctrNamedVolumes := make([]*Volume, 0, len(ctr.config.NamedVolumes))
 	for _, vol := range ctr.config.NamedVolumes {
 		isAnonymous := false
 		if vol.Name == "" {
@@ -481,9 +488,8 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 			isAnonymous = true
 		} else {
 			// Check if it already exists
-			dbVol, err := r.state.Volume(vol.Name)
+			_, err := r.state.Volume(vol.Name)
 			if err == nil {
-				ctrNamedVolumes = append(ctrNamedVolumes, dbVol)
 				// The volume exists, we're good
 				continue
 			} else if !errors.Is(err, define.ErrNoSuchVolume) {
@@ -538,12 +544,10 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 			volOptions = append(volOptions, WithVolumeNoChown())
 		}
 
-		newVol, err := r.newVolume(ctx, false, volOptions...)
+		_, err = r.newVolume(ctx, false, volOptions...)
 		if err != nil {
 			return nil, fmt.Errorf("creating named volume %q: %w", vol.Name, err)
 		}
-
-		ctrNamedVolumes = append(ctrNamedVolumes, newVol)
 	}
 
 	switch ctr.config.LogDriver {
@@ -565,20 +569,6 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 		ctr.config.Mounts = append(ctr.config.Mounts, ctr.config.ShmDir)
 	}
 
-	// Lock all named volumes we are adding ourself to, to ensure we can't
-	// use a volume being removed.
-	volsLocked := make(map[string]bool)
-	for _, namedVol := range ctrNamedVolumes {
-		toLock := namedVol
-		// Ensure that we don't double-lock a named volume that is used
-		// more than once.
-		if volsLocked[namedVol.Name()] {
-			continue
-		}
-		volsLocked[namedVol.Name()] = true
-		toLock.lock.Lock()
-		defer toLock.lock.Unlock()
-	}
 	// Add the container to the state
 	// TODO: May be worth looking into recovering from name/ID collisions here
 	if ctr.config.Pod != "" {

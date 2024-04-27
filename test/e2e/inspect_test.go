@@ -1,7 +1,7 @@
 package integration
 
 import (
-	. "github.com/containers/podman/v4/test/utils"
+	. "github.com/containers/podman/v5/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -438,7 +438,7 @@ var _ = Describe("Podman inspect", func() {
 		inspect := podmanTest.Podman([]string{"inspect", `--format="{{json .NetworkSettings.Ports}}"`, ctnrName})
 		inspect.WaitWithDefaultTimeout()
 		Expect(inspect).Should(ExitCleanly())
-		Expect(inspect.OutputToString()).To(Equal(`"{"80/tcp":[{"HostIp":"","HostPort":"8084"}]}"`))
+		Expect(inspect.OutputToString()).To(Equal(`"{"80/tcp":[{"HostIp":"0.0.0.0","HostPort":"8084"}]}"`))
 	})
 
 	It("Verify container inspect has default network", func() {
@@ -465,7 +465,7 @@ var _ = Describe("Podman inspect", func() {
 		Expect(inspect[0].NetworkSettings.Networks).To(HaveLen(1))
 	})
 
-	It("Container inspect with unlimited uilimits should be -1", func() {
+	It("Container inspect with unlimited ulimits should be -1", func() {
 		ctrName := "testctr"
 		session := podmanTest.Podman([]string{"run", "-d", "--ulimit", "core=-1:-1", "--name", ctrName, ALPINE, "top"})
 		session.WaitWithDefaultTimeout()

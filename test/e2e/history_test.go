@@ -1,7 +1,7 @@
 package integration
 
 import (
-	. "github.com/containers/podman/v4/test/utils"
+	. "github.com/containers/podman/v5/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -63,6 +63,11 @@ var _ = Describe("Podman history", func() {
 		Expect(session.OutputToString()).ToNot(ContainSubstring("..."))
 		// the second line in the alpine history contains a command longer than 45 chars
 		Expect(len(lines[1])).To(BeNumerically(">", 45))
+
+		session = podmanTest.Podman([]string{"history", "--no-trunc", "--format", "{{.Size}}", ALPINE})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(ExitCleanly())
+		Expect(session.OutputToStringArray()).To(Equal([]string{"0B", "5.84MB"}))
 	})
 
 	It("podman history with json flag", func() {

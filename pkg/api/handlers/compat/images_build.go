@@ -18,13 +18,14 @@ import (
 	"github.com/containers/buildah/pkg/parse"
 	"github.com/containers/image/v5/docker/reference"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v4/libpod"
-	"github.com/containers/podman/v4/pkg/api/handlers/utils"
-	api "github.com/containers/podman/v4/pkg/api/types"
-	"github.com/containers/podman/v4/pkg/auth"
-	"github.com/containers/podman/v4/pkg/channel"
-	"github.com/containers/podman/v4/pkg/rootless"
-	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v5/libpod"
+	"github.com/containers/podman/v5/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v5/pkg/api/types"
+	"github.com/containers/podman/v5/pkg/auth"
+	"github.com/containers/podman/v5/pkg/bindings/images"
+	"github.com/containers/podman/v5/pkg/channel"
+	"github.com/containers/podman/v5/pkg/rootless"
+	"github.com/containers/podman/v5/pkg/util"
 	"github.com/containers/storage/pkg/archive"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/opencontainers/runtime-spec/specs-go"
@@ -140,6 +141,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		Timestamp               int64    `schema:"timestamp"`
 		Ulimits                 string   `schema:"ulimits"`
 		UnsetEnvs               []string `schema:"unsetenv"`
+		UnsetLabels             []string `schema:"unsetlabel"`
 		Volumes                 []string `schema:"volume"`
 	}{
 		Dockerfile:       "Dockerfile",
@@ -223,8 +225,14 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 				// it's not json, assume just a string
 				m = []string{query.Dockerfile}
 			}
+
 			for _, containerfile := range m {
-				containerFiles = append(containerFiles, filepath.Join(contextDirectory, filepath.Clean(filepath.FromSlash(containerfile))))
+				// Add path to containerfile iff it is not URL
+				if !(strings.HasPrefix(containerfile, "http://") || strings.HasPrefix(containerfile, "https://")) {
+					containerfile = filepath.Join(contextDirectory,
+						filepath.Clean(filepath.FromSlash(containerfile)))
+				}
+				containerFiles = append(containerFiles, containerfile)
 			}
 			dockerFileSet = true
 		}
@@ -322,15 +330,15 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 			if len(secretOpt) > 0 {
 				modifiedOpt := []string{}
 				for _, token := range secretOpt {
-					arr := strings.SplitN(token, "=", 2)
-					if len(arr) > 1 {
-						if arr[0] == "src" {
+					key, val, hasVal := strings.Cut(token, "=")
+					if hasVal {
+						if key == "src" {
 							/* move secret away from contextDir */
 							/* to make sure we dont accidentally commit temporary secrets to image*/
 							builderDirectory, _ := filepath.Split(contextDirectory)
 							// following path is outside build context
-							newSecretPath := filepath.Join(builderDirectory, arr[1])
-							oldSecretPath := filepath.Join(contextDirectory, arr[1])
+							newSecretPath := filepath.Join(builderDirectory, val)
+							oldSecretPath := filepath.Join(contextDirectory, val)
 							err := os.Rename(oldSecretPath, newSecretPath)
 							if err != nil {
 								utils.BadRequest(w, "secrets", query.Secrets, err)
@@ -369,10 +377,19 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// make sure to force rootless as rootless otherwise buildah runs code which is intended to be run only as root.
-		if isolation == buildah.IsolationOCI && rootless.IsRootless() {
-			isolation = buildah.IsolationOCIRootless
+		// Make sure to force rootless as rootless otherwise buildah runs code which is intended to be run only as root.
+		// Same the other way around: https://github.com/containers/podman/issues/22109
+		switch isolation {
+		case buildah.IsolationOCI:
+			if rootless.IsRootless() {
+				isolation = buildah.IsolationOCIRootless
+			}
+		case buildah.IsolationOCIRootless:
+			if !rootless.IsRootless() {
+				isolation = buildah.IsolationOCI
+			}
 		}
+
 		registry = ""
 		format = query.OutputFormat
 	} else {
@@ -543,19 +560,19 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 					utils.BadRequest(w, "securityopt", query.SecurityOpt, errors.New("no-new-privileges is not supported"))
 					return
 				}
-				con := strings.SplitN(opt, "=", 2)
-				if len(con) != 2 {
+				name, value, hasValue := strings.Cut(opt, "=")
+				if !hasValue {
 					utils.BadRequest(w, "securityopt", query.SecurityOpt, fmt.Errorf("invalid --security-opt name=value pair: %q", opt))
 					return
 				}
 
-				switch con[0] {
+				switch name {
 				case "label":
-					labelOpts = append(labelOpts, con[1])
+					labelOpts = append(labelOpts, value)
 				case "apparmor":
-					apparmor = con[1]
+					apparmor = value
 				case "seccomp":
-					seccomp = con[1]
+					seccomp = value
 				default:
 					utils.BadRequest(w, "securityopt", query.SecurityOpt, fmt.Errorf("invalid --security-opt 2: %q", opt))
 					return
@@ -711,6 +728,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 		SystemContext:                  systemContext,
 		Target:                         query.Target,
 		UnsetEnvs:                      query.UnsetEnvs,
+		UnsetLabels:                    query.UnsetLabels,
 	}
 
 	for _, platformSpec := range query.Platform {
@@ -773,14 +791,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 	var stepErrors []string
 
 	for {
-		type BuildResponse struct {
-			Stream string                 `json:"stream,omitempty"`
-			Error  *jsonmessage.JSONError `json:"errorDetail,omitempty"`
-			// NOTE: `error` is being deprecated check https://github.com/moby/moby/blob/master/pkg/jsonmessage/jsonmessage.go#L148
-			ErrorMessage string          `json:"error,omitempty"` // deprecate this slowly
-			Aux          json.RawMessage `json:"aux,omitempty"`
-		}
-		m := BuildResponse{}
+		m := images.BuildResponse{}
 
 		select {
 		case e := <-stdout.Chan():
@@ -810,7 +821,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 			// output all step errors irrespective of quiet
 			// flag.
 			for _, stepError := range stepErrors {
-				t := BuildResponse{}
+				t := images.BuildResponse{}
 				t.Stream = stepError
 				if err := enc.Encode(t); err != nil {
 					stderr.Write([]byte(err.Error()))
@@ -819,7 +830,7 @@ func BuildImage(w http.ResponseWriter, r *http.Request) {
 			}
 			m.ErrorMessage = string(e)
 			m.Error = &jsonmessage.JSONError{
-				Message: m.ErrorMessage,
+				Message: string(e),
 			}
 			if err := enc.Encode(m); err != nil {
 				logrus.Warnf("Failed to json encode error %v", err)

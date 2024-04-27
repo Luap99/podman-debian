@@ -3,7 +3,7 @@ package server
 import (
 	"net/http"
 
-	"github.com/containers/podman/v4/pkg/api/handlers/libpod"
+	"github.com/containers/podman/v5/pkg/api/handlers/libpod"
 	"github.com/gorilla/mux"
 )
 
@@ -17,30 +17,60 @@ func (s *APIServer) registerKubeHandlers(r *mux.Router) error {
 	// description: Create and run pods based on a Kubernetes YAML file (pod or service kind).
 	// parameters:
 	//  - in: query
+	//    name: annotations
+	//    type: string
+	//    description: JSON encoded value of annotations (a map[string]string).
+	//  - in: query
+	//    name: logDriver
+	//    type: string
+	//    description: Logging driver for the containers in the pod.
+	//  - in: query
+	//    name: logOptions
+	//    type: array
+	//    description: logging driver options
+	//    items:
+	//         type: string
+	//  - in: query
 	//    name: network
 	//    type: array
 	//    description: USe the network mode or specify an array of networks.
 	//    items:
 	//      type: string
 	//  - in: query
-	//    name: tlsVerify
+	//    name: noHosts
 	//    type: boolean
-	//    default: true
-	//    description: Require HTTPS and verify signatures when contacting registries.
+	//    default: false
+	//    description: do not setup /etc/hosts file in container
 	//  - in: query
-	//    name: logDriver
-	//    type: string
-	//    description: Logging driver for the containers in the pod.
-	//  - in: query
-	//    name: start
+	//    name: noTrunc
 	//    type: boolean
-	//    default: true
-	//    description: Start the pod after creating it.
+	//    default: false
+	//    description: use annotations that are not truncated to the Kubernetes maximum length of 63 characters
+	//  - in: query
+	//    name: publishPorts
+	//    type: array
+	//    description: publish a container's port, or a range of ports, to the host
+	//    items:
+	//         type: string
+	//  - in: query
+	//    name: publishAllPorts
+	//    type: boolean
+	//    description: Whether to publish all ports defined in the K8S YAML file (containerPort, hostPort), if false only hostPort will be published
+	//  - in: query
+	//    name: replace
+	//    type: boolean
+	//    default: false
+	//    description: replace existing pods and containers
 	//  - in: query
 	//    name: serviceContainer
 	//    type: boolean
 	//    default: false
 	//    description: Starts a service container before all pods.
+	//  - in: query
+	//    name: start
+	//    type: boolean
+	//    default: true
+	//    description: Start the pod after creating it.
 	//  - in: query
 	//    name: staticIPs
 	//    type: array
@@ -54,19 +84,19 @@ func (s *APIServer) registerKubeHandlers(r *mux.Router) error {
 	//    items:
 	//      type: string
 	//  - in: query
-	//    name: wait
+	//    name: tlsVerify
 	//    type: boolean
-	//    default: false
-	//    description: Clean up all objects created when a SIGTERM is received or pods exit.
-	//  - in: query
-	//    name: noTrunc
-	//    type: boolean
-	//    default: false
-	//    description: use annotations that are not truncated to the Kubernetes maximum length of 63 characters
+	//    default: true
+	//    description: Require HTTPS and verify signatures when contacting registries.
 	//  - in: query
 	//    name: userns
 	//    type: string
 	//    description: Set the user namespace mode for the pods.
+	//  - in: query
+	//    name: wait
+	//    type: boolean
+	//    default: false
+	//    description: Clean up all objects created when a SIGTERM is received or pods exit.
 	//  - in: body
 	//    name: request
 	//    description: Kubernetes YAML file.
@@ -86,8 +116,8 @@ func (s *APIServer) registerKubeHandlers(r *mux.Router) error {
 	// tags:
 	//  - containers
 	//  - pods
-	// summary: Remove pods from kube play
-	// description: Tears down pods defined in a YAML file
+	// summary: Remove resources created from kube play
+	// description: Tears down pods, secrets, and volumes defined in a YAML file
 	// parameters:
 	//  - in: query
 	//    name: force

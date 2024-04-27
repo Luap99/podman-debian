@@ -2,7 +2,6 @@ package compat
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -15,20 +14,18 @@ import (
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/filters"
 	"github.com/containers/image/v5/manifest"
-	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v4/libpod"
-	"github.com/containers/podman/v4/pkg/api/handlers"
-	"github.com/containers/podman/v4/pkg/api/handlers/utils"
-	api "github.com/containers/podman/v4/pkg/api/types"
-	"github.com/containers/podman/v4/pkg/auth"
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/containers/podman/v4/pkg/domain/infra/abi"
-	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v5/libpod"
+	"github.com/containers/podman/v5/pkg/api/handlers"
+	"github.com/containers/podman/v5/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v5/pkg/api/types"
+	"github.com/containers/podman/v5/pkg/auth"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	"github.com/containers/podman/v5/pkg/domain/infra/abi"
+	"github.com/containers/podman/v5/pkg/util"
 	"github.com/containers/storage"
-	"github.com/docker/distribution/registry/api/errcode"
 	docker "github.com/docker/docker/api/types"
 	dockerContainer "github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/pkg/jsonmessage"
+	dockerImage "github.com/docker/docker/api/types/image"
 	"github.com/docker/go-connections/nat"
 	"github.com/opencontainers/go-digest"
 	"github.com/sirupsen/logrus"
@@ -136,18 +133,17 @@ func CommitContainer(w http.ResponseWriter, r *http.Request) {
 		PreferredManifestType: manifest.DockerV2Schema2MediaType,
 	}
 
-	input := handlers.CreateContainerConfig{}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("Decode(): %w", err))
-		return
-	}
-
 	options.Message = query.Comment
 	options.Author = query.Author
 	options.Pause = query.Pause
 	options.Squash = query.Squash
-	for _, change := range query.Changes {
-		options.Changes = append(options.Changes, strings.Split(change, "\n")...)
+	options.Changes = handlers.DecodeChanges(query.Changes)
+	if r.Body != nil {
+		defer r.Body.Close()
+		if options.CommitOptions.OverrideConfig, err = abi.DecodeOverrideConfig(r.Body); err != nil {
+			utils.Error(w, http.StatusBadRequest, err)
+			return
+		}
 	}
 	ctr, err := runtime.LookupContainer(query.Container)
 	if err != nil {
@@ -168,7 +164,7 @@ func CommitContainer(w http.ResponseWriter, r *http.Request) {
 
 	commitImage, err := ctr.Commit(r.Context(), destImage, options)
 	if err != nil && !strings.Contains(err.Error(), "is not running") {
-		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("CommitFailure: %w", err))
+		utils.Error(w, http.StatusInternalServerError, err)
 		return
 	}
 	utils.WriteResponse(w, http.StatusCreated, entities.IDResponse{ID: commitImage.ID()})
@@ -253,11 +249,6 @@ func CreateImageFromSrc(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-type pullResult struct {
-	images []*libimage.Image
-	err    error
-}
-
 func CreateImageFromImage(w http.ResponseWriter, r *http.Request) {
 	// 200 no error
 	// 404 repo does not exist or no read access
@@ -266,9 +257,11 @@ func CreateImageFromImage(w http.ResponseWriter, r *http.Request) {
 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 
 	query := struct {
-		FromImage string `schema:"fromImage"`
-		Tag       string `schema:"tag"`
-		Platform  string `schema:"platform"`
+		FromImage  string `schema:"fromImage"`
+		Tag        string `schema:"tag"`
+		Platform   string `schema:"platform"`
+		Retry      uint   `schema:"retry"`
+		RetryDelay string `schema:"retryDelay"`
 	}{
 		// This is where you can override the golang default value for one of fields
 	}
@@ -299,6 +292,19 @@ func CreateImageFromImage(w http.ResponseWriter, r *http.Request) {
 	}
 	pullOptions.Writer = os.Stderr // allows for debugging on the server
 
+	if _, found := r.URL.Query()["retry"]; found {
+		pullOptions.MaxRetries = &query.Retry
+	}
+
+	if _, found := r.URL.Query()["retryDelay"]; found {
+		duration, err := time.ParseDuration(query.RetryDelay)
+		if err != nil {
+			utils.Error(w, http.StatusBadRequest, err)
+			return
+		}
+		pullOptions.RetryDelay = &duration
+	}
+
 	// Handle the platform.
 	platformSpecs := strings.Split(query.Platform, "/")
 	pullOptions.OS = platformSpecs[0] // may be empty
@@ -309,99 +315,7 @@ func CreateImageFromImage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	progress := make(chan types.ProgressProperties)
-	pullOptions.Progress = progress
-
-	pullResChan := make(chan pullResult)
-	go func() {
-		pulledImages, err := runtime.LibimageRuntime().Pull(r.Context(), possiblyNormalizedName, config.PullPolicyAlways, pullOptions)
-		pullResChan <- pullResult{images: pulledImages, err: err}
-	}()
-
-	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(true)
-
-	flush := func() {
-		if flusher, ok := w.(http.Flusher); ok {
-			flusher.Flush()
-		}
-	}
-
-	statusWritten := false
-	writeStatusCode := func(code int) {
-		if !statusWritten {
-			w.WriteHeader(code)
-			w.Header().Set("Content-Type", "application/json")
-			flush()
-			statusWritten = true
-		}
-	}
-
-loop: // break out of for/select infinite loop
-	for {
-		report := jsonmessage.JSONMessage{}
-		report.Progress = &jsonmessage.JSONProgress{}
-		select {
-		case e := <-progress:
-			writeStatusCode(http.StatusOK)
-			switch e.Event {
-			case types.ProgressEventNewArtifact:
-				report.Status = "Pulling fs layer"
-			case types.ProgressEventRead:
-				report.Status = "Downloading"
-				report.Progress.Current = int64(e.Offset)
-				report.Progress.Total = e.Artifact.Size
-				report.ProgressMessage = report.Progress.String()
-			case types.ProgressEventSkipped:
-				report.Status = "Already exists"
-			case types.ProgressEventDone:
-				report.Status = "Download complete"
-			}
-			report.ID = e.Artifact.Digest.Encoded()[0:12]
-			if err := enc.Encode(report); err != nil {
-				logrus.Warnf("Failed to json encode error %q", err.Error())
-			}
-			flush()
-		case pullRes := <-pullResChan:
-			err := pullRes.err
-			if err != nil {
-				var errcd errcode.ErrorCoder
-				if errors.As(err, &errcd) {
-					writeStatusCode(errcd.ErrorCode().Descriptor().HTTPStatusCode)
-				} else {
-					writeStatusCode(http.StatusInternalServerError)
-				}
-				msg := err.Error()
-				report.Error = &jsonmessage.JSONError{
-					Message: msg,
-				}
-				report.ErrorMessage = msg
-			} else {
-				pulledImages := pullRes.images
-				if len(pulledImages) > 0 {
-					img := pulledImages[0].ID()
-					if utils.IsLibpodRequest(r) {
-						report.Status = "Pull complete"
-					} else {
-						report.Status = "Download complete"
-					}
-					report.ID = img[0:12]
-				} else {
-					msg := "internal error: no images pulled"
-					report.Error = &jsonmessage.JSONError{
-						Message: msg,
-					}
-					report.ErrorMessage = msg
-					writeStatusCode(http.StatusInternalServerError)
-				}
-			}
-			if err := enc.Encode(report); err != nil {
-				logrus.Warnf("Failed to json encode error %q", err.Error())
-			}
-			flush()
-			break loop // break out of for/select infinite loop
-		}
-	}
+	utils.CompatPull(r.Context(), w, runtime, possiblyNormalizedName, config.PullPolicyAlways, pullOptions)
 }
 
 func GetImage(w http.ResponseWriter, r *http.Request) {
@@ -483,7 +397,7 @@ func imageDataToImageInspect(ctx context.Context, l *libimage.Image) (*handlers.
 		DockerVersion:   info.Version,
 		GraphDriver:     graphDriver,
 		ID:              "sha256:" + l.ID(),
-		Metadata:        docker.ImageMetadata{},
+		Metadata:        dockerImage.Metadata{},
 		Os:              info.Os,
 		OsVersion:       info.Version,
 		Parent:          info.Parent,

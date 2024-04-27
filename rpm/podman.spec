@@ -12,7 +12,7 @@
 # until that's fixed.
 # c9s bz: https://bugzilla.redhat.com/show_bug.cgi?id=2227328
 # c8s bz: https://bugzilla.redhat.com/show_bug.cgi?id=2227331
-%if %{defined rhel} && !%{defined eln}
+%if %{defined rhel} && 0%{?rhel} < 10
 %define gobuild(o:) go build -buildmode pie -compiler gc -tags="rpm_crashtraceback libtrust_openssl ${BUILDTAGS:-}" -ldflags "-linkmode=external -compressdwarf=false ${LDFLAGS:-} -B 0x$(head -c20 /dev/urandom|od -An -tx1|tr -d ' \\n') -extldflags '%__global_ldflags'" -a -v -x %{?**};
 # python3 dep conditional for rhel8
 %if %{?rhel} == 8
@@ -31,24 +31,22 @@
 %define build_with_btrfs 1
 %endif
 
+%if %{defined copr_username}
+%define copr_build 1
+%endif
+
 %global container_base_path github.com/containers
 %global container_base_url https://%{container_base_path}
 
 # For LDFLAGS
-%global ld_project %{container_base_path}/%{name}/v4
+%global ld_project %{container_base_path}/%{name}/v5
 %global ld_libpod %{ld_project}/libpod
 
 # %%{name}
 %global git0 %{container_base_url}/%{name}
 
-# dnsname
-%global repo_plugins dnsname
-%global git_plugins %{container_base_url}/%{repo_plugins}
-%global commit_plugins 18822f9a4fb35d1349eb256f4cd2bfd372474d84
-%global import_path_plugins %{container_base_path}/%{repo_plugins}
-
 Name: podman
-%if %{defined copr_username}
+%if %{defined copr_build}
 Epoch: 102
 %else
 Epoch: 5
@@ -71,8 +69,7 @@ ExclusiveArch: aarch64 ppc64le s390x x86_64
 Summary: Manage Pods, Containers and Container Images
 URL: https://%{name}.io/
 # All SourceN files fetched from upstream
-Source0: %{git0}/archive/v%{version}.tar.gz
-Source1: %{git_plugins}/archive/%{commit_plugins}/%{repo_plugins}-%{commit_plugins}.tar.gz
+Source0: %{git0}/archive/v%{version_no_tilde}.tar.gz
 Provides: %{name}-manpages = %{epoch}:%{version}-%{release}
 BuildRequires: %{_bindir}/envsubst
 %if %{defined build_with_btrfs}
@@ -84,7 +81,7 @@ BuildRequires: glibc-devel
 BuildRequires: glibc-static
 BuildRequires: golang
 BuildRequires: git-core
-%if !%{defined gobuild}
+%if %{undefined rhel} || 0%{?rhel} >= 10
 BuildRequires: go-rpm-macros
 %endif
 BuildRequires: gpgme-devel
@@ -104,8 +101,19 @@ BuildRequires: python3
 %endif
 Requires: catatonit
 Requires: conmon >= 2:2.1.7-2
+%if %{defined fedora} && 0%{?fedora} >= 40
+# TODO: Remove the f40 conditional after a few releases to keep conditionals to
+# a minimum
+# Ref: https://bugzilla.redhat.com/show_bug.cgi?id=2269148
+Requires: containers-common-extra >= 5:0.58.0-1
+%else
 Requires: containers-common-extra
+%endif
+%if %{defined rhel} && !%{defined eln}
+Recommends: gvisor-tap-vsock-gvforwarder
+%else
 Requires: gvisor-tap-vsock-gvforwarder
+%endif
 Recommends: gvisor-tap-vsock
 Provides: %{name}-quadlet
 Obsoletes: %{name}-quadlet <= 5:4.4.0-1
@@ -173,19 +181,6 @@ run %{name}-remote in production.
 manage pods, containers and container images. %{name}-remote supports ssh
 connections as well.
 
-%package plugins
-Summary: Plugins for %{name}
-Requires: dnsmasq
-Recommends: gvisor-tap-vsock
-
-%description plugins
-This plugin sets up the use of dnsmasq on a given CNI network so
-that Pods can resolve each other by name.  When configured,
-the pod and its IP address are added to a network specific hosts file
-that dnsmasq will read in.  Similarly, when a pod
-is removed from the network, it will remove the entry from the hosts
-file.  Each CNI network will have its own dnsmasq instance.
-
 %package -n %{name}sh
 Summary: Confined login and user shell using %{name}
 Requires: %{name} = %{epoch}:%{version}-%{release}
@@ -200,11 +195,21 @@ It is a symlink to %{_bindir}/%{name} and execs into the `%{name}sh` container
 when `%{_bindir}/%{name}sh` is set as a login shell or set as os.Args[0].
 
 %prep
-%autosetup -Sgit -n %{name}-%{version}
+%autosetup -Sgit -n %{name}-%{version_no_tilde}
 sed -i 's;@@PODMAN@@\;$(BINDIR);@@PODMAN@@\;%{_bindir};' Makefile
 
-# untar dnsname
-tar zxf %{SOURCE1}
+# cgroups-v1 is supported on rhel9
+%if 0%{?rhel} == 9
+sed -i '/DELETE ON RHEL9/,/DELETE ON RHEL9/d' libpod/runtime.go
+%endif
+
+# These changes are only meant for copr builds
+%if %{defined copr_build}
+# podman --version should show short sha
+sed -i "s/^const RawVersion = .*/const RawVersion = \"##VERSION##-##SHORT_SHA##\"/" version/rawversion/version.go
+# use ParseTolerant to allow short sha in version
+sed -i "s/^var Version.*/var Version, err = semver.ParseTolerant(rawversion.RawVersion)/" version/version.go
+%endif
 
 %build
 %set_build_flags
@@ -219,7 +224,9 @@ CGO_CFLAGS=$(echo $CGO_CFLAGS | sed 's/-specs=\/usr\/lib\/rpm\/redhat\/redhat-an
 export CGO_CFLAGS+=" -m64 -mtune=generic -fcf-protection=full"
 %endif
 
-LDFLAGS="-X %{ld_libpod}/define.buildInfo=$(date +%s) \
+export GOPROXY=direct
+
+LDFLAGS="-X %{ld_libpod}/define.buildInfo=${SOURCE_DATE_EPOCH:-$(date +%s)} \
          -X %{ld_libpod}/config._installPrefix=%{_prefix} \
          -X %{ld_libpod}/config._etcDir=%{_sysconfdir} \
          -X %{ld_project}/pkg/systemd/quadlet._binDir=%{_bindir}"
@@ -246,22 +253,9 @@ LDFLAGS=''
 
 %{__make} docs docker-docs
 
-# build dnsname the old way otherwise it fails on koji
-cd %{repo_plugins}-%{commit_plugins}
-mkdir _build
-cd _build
-mkdir -p src/%{container_base_path}
-ln -s ../../../../ src/%{import_path_plugins}
-cd ..
-ln -s vendor src
-export GOPATH=$(pwd)/_build:$(pwd)
-%define gomodulesmode GO111MODULE=off
-%gobuild -o bin/dnsname %{import_path_plugins}/plugins/meta/dnsname
-cd ..
-
 %install
 install -dp %{buildroot}%{_unitdir}
-PODMAN_VERSION=%{version} %{__make} PREFIX=%{buildroot}%{_prefix} ETCDIR=%{_sysconfdir} \
+PODMAN_VERSION=%{version} %{__make} DESTDIR=%{buildroot} PREFIX=%{_prefix} ETCDIR=%{_sysconfdir} \
        install.bin \
        install.man \
        install.systemd \
@@ -275,14 +269,9 @@ PODMAN_VERSION=%{version} %{__make} PREFIX=%{buildroot}%{_prefix} ETCDIR=%{_sysc
 
 sed -i 's;%{buildroot};;g' %{buildroot}%{_bindir}/docker
 
-# install dnsname plugin
-cd %{repo_plugins}-%{commit_plugins}
-%{__make} PREFIX=%{_prefix} DESTDIR=%{buildroot} install
-cd ..
-
 # do not include docker and podman-remote man pages in main package
-for file in `find %{buildroot}%{_mandir}/man[15] -type f | sed "s,%{buildroot},," | grep -v -e remote -e docker`; do
-    echo "$file*" >> podman.file-list
+for file in `find %{buildroot}%{_mandir}/man[15] -type f | sed "s,%{buildroot},," | grep -v -e %{name}sh.1 -e remote -e docker`; do
+    echo "$file*" >> %{name}.file-list
 done
 
 rm -f %{buildroot}%{_mandir}/man5/docker*.5
@@ -294,7 +283,7 @@ cp -pav test/system %{buildroot}/%{_datadir}/%{name}/test/
 %{!?_licensedir:%global license %doc}
 
 %files -f %{name}.file-list
-%license LICENSE
+%license LICENSE vendor/modules.txt
 %doc README.md CONTRIBUTING.md install.md transfer.md
 %{_bindir}/%{name}
 %dir %{_libexecdir}/%{name}
@@ -318,6 +307,7 @@ cp -pav test/system %{buildroot}/%{_datadir}/%{name}/test/
 %files docker
 %{_bindir}/docker
 %{_mandir}/man1/docker*.1*
+%{_sysconfdir}/profile.d/%{name}-docker.*
 %{_tmpfilesdir}/%{name}-docker.conf
 %{_user_tmpfilesdir}/%{name}-docker.conf
 
@@ -334,14 +324,9 @@ cp -pav test/system %{buildroot}/%{_datadir}/%{name}/test/
 %files tests
 %{_datadir}/%{name}/test
 
-%files plugins
-%license %{repo_plugins}-%{commit_plugins}/LICENSE
-%doc %{repo_plugins}-%{commit_plugins}/{README.md,README_PODMAN.md}
-%dir %{_libexecdir}/cni
-%{_libexecdir}/cni/dnsname
-
 %files -n %{name}sh
 %{_bindir}/%{name}sh
+%{_mandir}/man1/%{name}sh.1*
 
 %changelog
 %if %{defined autochangelog}

@@ -95,16 +95,13 @@ EPOCH_TEST_COMMIT="$CIRRUS_BASE_SHA"
 # contexts, such as host->container or root->rootless user
 #
 # List of envariables which must be EXACT matches
-PASSTHROUGH_ENV_EXACT='CGROUP_MANAGER|DEST_BRANCH|DISTRO_NV|GOCACHE|GOPATH|GOSRC|NETWORK_BACKEND|OCI_RUNTIME|ROOTLESS_USER|SCRIPT_BASE|SKIP_USERNS|EC2_INST_TYPE|PODMAN_DB'
+PASSTHROUGH_ENV_EXACT='CGROUP_MANAGER|DEST_BRANCH|DISTRO_NV|GOCACHE|GOPATH|GOSRC|NETWORK_BACKEND|OCI_RUNTIME|PODMAN_IGNORE_CGROUPSV1_WARNING|ROOTLESS_USER|SCRIPT_BASE|SKIP_USERNS|EC2_INST_TYPE|PODMAN_DB|STORAGE_FS'
 
 # List of envariable patterns which must match AT THE BEGINNING of the name.
 PASSTHROUGH_ENV_ATSTART='CI|LANG|LC_|TEST'
 
 # List of envariable patterns which can match ANYWHERE in the name
 PASSTHROUGH_ENV_ANYWHERE='_NAME|_FQIN'
-
-# Combine into one
-PASSTHROUGH_ENV_RE="(^($PASSTHROUGH_ENV_EXACT)\$)|(^($PASSTHROUGH_ENV_ATSTART))|($PASSTHROUGH_ENV_ANYWHERE)"
 
 # Unsafe env. vars for display
 SECRET_ENV_RE='ACCOUNT|GC[EP]..|SSH|PASSWORD|SECRET|TOKEN'
@@ -115,25 +112,14 @@ CG_FS_TYPE="$(stat -f -c %T /sys/fs/cgroup)"
 # Set to 1 in all podman container images
 CONTAINER="${CONTAINER:-0}"
 
+# Without this, perl garbles "f39β" command-line args
+PERL_UNICODE=A
+
 # END Global export of all variables
 set +a
 
 lilto() { err_retry 8 1000 "" "$@"; }  # just over 4 minutes max
 bigto() { err_retry 7 5670 "" "$@"; }  # 12 minutes max
-
-# Return a list of environment variables that should be passed through
-# to lower levels (tests in containers, or via ssh to rootless).
-# We return the variable names only, not their values. It is up to our
-# caller to reference values.
-passthrough_envars(){
-    local envname
-    warn "Will pass env. vars. matching the following regex:
-    $PASSTHROUGH_ENV_RE"
-    compgen -A variable | \
-        grep -Ev "SETUP_ENVIRONMENT" | \
-        grep -Ev "$SECRET_ENV_RE" | \
-        grep -E  "$PASSTHROUGH_ENV_RE"
-}
 
 setup_rootless() {
     req_env_vars GOPATH GOSRC SECRET_ENV_RE
@@ -151,7 +137,11 @@ setup_rootless() {
     # shellcheck disable=SC2154
     if passwd --status $ROOTLESS_USER
     then
-        if [[ $PRIV_NAME = "rootless" ]]; then
+        # Farm tests utilize the rootless user to simulate a "remote" podman instance.
+    # Root still needs to own the repo. clone and all things under `$GOPATH`.  The
+    # opposite is true for the lower-level podman e2e tests, the rootless user
+    # runs them, and therefore needs permissions.
+        if [[ $PRIV_NAME = "rootless" ]] && [[ "$TEST_FLAVOR" != "farm"  ]]; then
             msg "Updating $ROOTLESS_USER user permissions on possibly changed libpod code"
             chown -R $ROOTLESS_USER:$ROOTLESS_USER "$GOPATH" "$GOSRC"
             return 0
@@ -198,66 +188,18 @@ setup_rootless() {
     # Maintain access-permission consistency with all other .ssh files.
     install -Z -m 700 -o $ROOTLESS_USER -g $ROOTLESS_USER \
         /root/.ssh/known_hosts /home/$ROOTLESS_USER/.ssh/known_hosts
+
+    if [[ -n "$ROOTLESS_USER" ]]; then
+        showrun echo "conditional setup for ROOTLESS_USER [=$ROOTLESS_USER]"
+        # Make all future CI scripts aware of these values
+        echo "ROOTLESS_USER=$ROOTLESS_USER" >> /etc/ci_environment
+        echo "ROOTLESS_UID=$ROOTLESS_UID" >> /etc/ci_environment
+    fi
 }
 
 install_test_configs() {
     msg "Installing ./test/registries.conf system-wide."
     install -v -D -m 644 ./test/registries.conf /etc/containers/
-}
-
-use_cni() {
-    req_env_vars OS_RELEASE_ID PACKAGE_DOWNLOAD_DIR SCRIPT_BASE
-    # Defined by common automation library
-    # shellcheck disable=SC2154
-    if [[ "$OS_RELEASE_ID" =~ "debian" ]]; then
-        # Supporting it involves swapping the rpm & dnf commands below
-        die "Testing debian w/ CNI networking currently not supported"
-    fi
-
-    msg "Unsetting NETWORK_BACKEND for all subsequent environments."
-    echo "export -n NETWORK_BACKEND" >> /etc/ci_environment
-    echo "unset NETWORK_BACKEND" >> /etc/ci_environment
-    export -n NETWORK_BACKEND
-    unset NETWORK_BACKEND
-    # While it's possible a user may want both installed, for CNI CI testing
-    # purposes we only care about backward-compatibility, not forward.
-    # If both CNI & netavark are present, in some situations where --root
-    # is used it's possible for podman to pick the "wrong" networking stack.
-    msg "Force-removing netavark and aardvark-dns"
-    # Other packages depend on nv/av, but we're testing with podman
-    # binaries built from source, so it's safe to ignore these deps.
-    #
-    # Do not fail when netavark and aardvark-dns are not installed.
-    for pkg in aardvark-dns netavark
-    do
-        [ -z "$(rpm -qa | grep $pkg)" ] && echo "$pkg not installed" || rpm -e --nodeps $pkg
-    done
-    msg "Installing default CNI configuration"
-    showrun dnf install -y $PACKAGE_DOWNLOAD_DIR/podman-plugins*
-    cd $GOSRC || exit 1
-    rm -rvf /etc/cni/net.d
-    mkdir -p /etc/cni/net.d
-    showrun install -v -D -m 644 ./cni/87-podman-bridge.conflist \
-        /etc/cni/net.d/
-    # This config must always sort last in the list of networks (podman picks
-    # first one as the default).  This config prevents allocation of network
-    # address space used by default in google cloud.
-    # https://cloud.google.com/vpc/docs/vpc#ip-ranges
-    showrun install -v -D -m 644 $SCRIPT_BASE/99-do-not-use-google-subnets.conflist \
-        /etc/cni/net.d/
-}
-
-use_netavark() {
-    req_env_vars OS_RELEASE_ID PRIOR_FEDORA_NAME DISTRO_NV
-    local magickind repokind
-    msg "Forcing NETWORK_BACKEND=netavark for all subsequent environments."
-    echo "NETWORK_BACKEND=netavark" >> /etc/ci_environment
-    export NETWORK_BACKEND=netavark  # needed for install_test_configs()
-    msg "Removing any/all CNI configuration"
-    showrun rm -rvf /etc/cni/net.d/*
-    # N/B: The CNI packages are still installed and available. This is
-    # on purpose, since CI needs to verify the selection mechanisms are
-    # functional when both are available.
 }
 
 # Remove all files provided by the distro version of podman.
@@ -293,8 +235,9 @@ remove_packaged_podman_files() {
         LISTING_CMD="rpm -ql podman"
     fi
 
-    # delete the podman socket in case it has been created previously
-    rm -f $(podman info --format "{{.Host.RemoteSocket.Path}}")
+    # delete the podman socket in case it has been created previously.
+    # Do so without running podman, lest that invocation initialize unwanted state.
+    rm -f /run/podman/podman.sock  /run/user/$(id -u)/podman/podman.sock || true
 
     # yum/dnf/dpkg may list system directories, only remove files
     $LISTING_CMD | while read fullpath

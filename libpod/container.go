@@ -1,3 +1,5 @@
+//go:build !remote
+
 package libpod
 
 import (
@@ -10,14 +12,13 @@ import (
 	"strings"
 	"time"
 
-	types040 "github.com/containernetworking/cni/pkg/types/040"
-	"github.com/containers/common/libnetwork/cni"
+	"github.com/containers/common/libnetwork/pasta"
 	"github.com/containers/common/libnetwork/types"
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/secrets"
 	"github.com/containers/image/v5/manifest"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/libpod/lock"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/libpod/lock"
 	"github.com/containers/storage"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
@@ -127,6 +128,7 @@ type Container struct {
 	restoreFromCheckpoint bool
 
 	slirp4netnsSubnet *net.IPNet
+	pastaResult       *pasta.SetupResult
 }
 
 // ContainerState contains the current state of the container
@@ -173,13 +175,6 @@ type ContainerState struct {
 	LegacyExecSessions map[string]*legacyExecSession `json:"execSessions,omitempty"`
 	// NetNS is the path or name of the NetNS
 	NetNS string `json:"netns,omitempty"`
-	// NetworkStatusOld contains the configuration results for all networks
-	// the pod is attached to. Only populated if we created a network
-	// namespace for the container, and the network namespace is currently
-	// active.
-	// These are DEPRECATED and will be removed in a future release.
-	// This field is only used for backwarts compatibility.
-	NetworkStatusOld []*types040.Result `json:"networkResults,omitempty"`
 	// NetworkStatus contains the network Status for all networks
 	// the container is attached to. Only populated if we created a network
 	// namespace for the container, and the network namespace is currently
@@ -683,6 +678,15 @@ func (c *Container) Hostname() string {
 		return c.config.Spec.Hostname
 	}
 
+	// if the container is not running in a private UTS namespace,
+	// return the host's hostname.
+	privateUTS := c.hasPrivateUTS()
+	if !privateUTS {
+		hostname, err := os.Hostname()
+		if err == nil {
+			return hostname
+		}
+	}
 	if len(c.ID()) < 11 {
 		return c.ID()
 	}
@@ -709,6 +713,14 @@ func (c *Container) Terminal() bool {
 func (c *Container) LinuxResources() *spec.LinuxResources {
 	if c.config.Spec != nil && c.config.Spec.Linux != nil {
 		return c.config.Spec.Linux.Resources
+	}
+	return nil
+}
+
+// Env returns the default environment variables defined for the container
+func (c *Container) Env() []string {
+	if c.config.Spec != nil && c.config.Spec.Process != nil {
+		return c.config.Spec.Process.Env
 	}
 	return nil
 }
@@ -1220,23 +1232,6 @@ func (c *Container) HostNetwork() bool {
 	return true
 }
 
-// ContainerState returns containerstate struct
-func (c *Container) ContainerState() (*ContainerState, error) {
-	if !c.batched {
-		c.lock.Lock()
-		defer c.lock.Unlock()
-
-		if err := c.syncContainer(); err != nil {
-			return nil, err
-		}
-	}
-	returnConfig := new(ContainerState)
-	if err := JSONDeepCopy(c.state, returnConfig); err != nil {
-		return nil, fmt.Errorf("copying container %s state: %w", c.ID(), err)
-	}
-	return c.state, nil
-}
-
 // HasHealthCheck returns bool as to whether there is a health check
 // defined for the container
 func (c *Container) HasHealthCheck() bool {
@@ -1371,39 +1366,10 @@ func (c *Container) GetNetworkStatus() (map[string]types.StatusBlock, error) {
 	return c.getNetworkStatus(), nil
 }
 
-// getNetworkStatus get the current network status from the state. If the container
-// still uses the old network status it is converted to the new format. This function
+// getNetworkStatus get the current network status from the state. This function
 // should be used instead of reading c.state.NetworkStatus directly.
 func (c *Container) getNetworkStatus() map[string]types.StatusBlock {
-	if c.state.NetworkStatus != nil {
-		return c.state.NetworkStatus
-	}
-	if c.state.NetworkStatusOld != nil {
-		networks, err := c.networks()
-		if err != nil {
-			return nil
-		}
-		if len(networks) != len(c.state.NetworkStatusOld) {
-			return nil
-		}
-		result := make(map[string]types.StatusBlock, len(c.state.NetworkStatusOld))
-		i := 0
-		// Note: NetworkStatusOld does not contain the network names so we get them extra
-		// We cannot guarantee the same order but after a state refresh it should work
-		for netName := range networks {
-			status, err := cni.CNIResultToStatus(c.state.NetworkStatusOld[i])
-			if err != nil {
-				return nil
-			}
-			result[netName] = status
-			i++
-		}
-		c.state.NetworkStatus = result
-		_ = c.save()
-
-		return result
-	}
-	return nil
+	return c.state.NetworkStatus
 }
 
 func (c *Container) NamespaceMode(ns spec.LinuxNamespaceType, ctrSpec *spec.Spec) string {

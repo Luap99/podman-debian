@@ -33,9 +33,21 @@ if grep -n ^$'\t' test/system/*; then
     die "Found leading tabs in system tests. Use spaces to indent, not tabs."
 fi
 
-# Defined by CI config.
+# Lookup 'env' dict. string value from key specified as argument from YAML file.
+get_env_key() {
+    local yaml
+    local script
+
+    yaml="$CIRRUS_WORKING_DIR/.github/workflows/scan-secrets.yml"
+    script="from yaml import safe_load; print(safe_load(open('$yaml'))['env']['$1'])"
+    python -c "$script"
+}
+
+# Only need to check CI-stuffs on a single build-task, there's only ever
+# one prior-fedora task so use that one.
+# Envars all defined by CI config.
 # shellcheck disable=SC2154
-if [[ "${DISTRO_NV}" =~ fedora ]]; then
+if [[ "${DISTRO_NV}" == "$PRIOR_FEDORA_NAME" ]]; then
     msg "Checking shell scripts"
     showrun ooe.sh dnf install -y ShellCheck  # small/quick addition
     showrun shellcheck --format=tty \

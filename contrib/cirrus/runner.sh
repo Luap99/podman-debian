@@ -22,10 +22,6 @@ source $(dirname $0)/lib.sh
 showrun echo "starting"
 
 function _run_validate() {
-    # TODO: aarch64 images need python3-devel installed
-    # https://github.com/containers/automation_images/issues/159
-    showrun bigto ooe.sh dnf install -y python3-devel
-
     # git-validation tool fails if $EPOCH_TEST_COMMIT is empty
     # shellcheck disable=SC2154
     if [[ -n "$EPOCH_TEST_COMMIT" ]]; then
@@ -33,7 +29,8 @@ function _run_validate() {
     else
         warn "Skipping git-validation since \$EPOCH_TEST_COMMIT is empty"
     fi
-
+    # make sure PRs have tests
+    showrun make tests-included
 }
 
 function _run_unit() {
@@ -126,6 +123,12 @@ function _run_minikube() {
     showrun bats test/minikube |& logformatter
 }
 
+function _run_farm() {
+    _bail_if_test_can_be_skipped test/farm test/system
+    msg "Testing podman farm."
+    showrun bats test/farm |& logformatter
+}
+
 exec_container() {
     local var_val
     local cmd
@@ -164,9 +167,6 @@ function _run_swagger() {
     local download_url
     local envvarsfile
     req_env_vars GCPJSON GCPNAME GCPPROJECT CTR_FQIN
-
-    [[ -x /usr/local/bin/swagger ]] || \
-        die "Expecting swagger binary to be present and executable."
 
     # The filename and bucket depend on the automation context
     #shellcheck disable=SC2154,SC2153
@@ -275,6 +275,8 @@ function _run_altbuild() {
             rm -rf $context_dir
             ;;
         *Windows*)
+	    showrun make .install.pre-commit
+            showrun make lint GOOS=windows CGO_ENABLED=0
             showrun make podman-remote-release-windows_amd64.zip
             ;;
         *RPM*)
@@ -360,12 +362,6 @@ function _run_gitlab() {
     return $ret
 }
 
-# TODO: enable fcos_image_build task in cirrus
-#function _run_fcos_image_build() {
-#    # FIXME: Doesn't seem to grab CTXDIR from .cirrus.yml
-#    CTXDIR="contrib/podman-next/fcos-podmanimage"
-#    podman build -t quay.io/podman/fcos:podman-next $CTXDIR
-#}
 
 # Name pattern for logformatter output file, derived from environment
 function output_name() {
@@ -424,7 +420,7 @@ dotest() {
         |& logformatter
 }
 
-_run_machine() {
+_run_machine-linux() {
     # N/B: Can't use _bail_if_test_can_be_skipped here b/c content isn't under test/
     showrun make localmachine |& logformatter
 }

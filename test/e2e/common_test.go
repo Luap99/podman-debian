@@ -21,10 +21,9 @@ import (
 	"time"
 
 	"github.com/containers/common/pkg/cgroups"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/inspect"
-	"github.com/containers/podman/v4/pkg/util"
-	. "github.com/containers/podman/v4/test/utils"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/pkg/inspect"
+	. "github.com/containers/podman/v5/test/utils"
 	"github.com/containers/storage/pkg/lockfile"
 	"github.com/containers/storage/pkg/reexec"
 	"github.com/containers/storage/pkg/stringid"
@@ -33,6 +32,8 @@ import (
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/exp/slices"
+	"golang.org/x/sys/unix"
 )
 
 var (
@@ -121,6 +122,7 @@ var (
 		// invalid containers.conf files to fail the cleanup.
 		os.Unsetenv("CONTAINERS_CONF")
 		os.Unsetenv("CONTAINERS_CONF_OVERRIDE")
+		os.Unsetenv("PODMAN_CONNECTIONS_CONF")
 		podmanTest.Cleanup()
 		f := CurrentSpecReport()
 		processTestResult(f)
@@ -208,12 +210,11 @@ var _ = SynchronizedAfterSuite(func() {
 			scanner := bufio.NewScanner(f)
 			for scanner.Scan() {
 				text := scanner.Text()
-				timing := strings.SplitN(text, "\t\t", 2)
-				if len(timing) != 2 {
+				name, durationString, ok := strings.Cut(text, "\t\t")
+				if !ok {
 					Fail(fmt.Sprintf("incorrect timing line: %q", text))
 				}
-				name := timing[0]
-				duration, err := strconv.ParseFloat(timing[1], 64)
+				duration, err := strconv.ParseFloat(durationString, 64)
 				Expect(err).ToNot(HaveOccurred(), "failed to parse float from timings file")
 				testTimings = append(testTimings, testResult{name: name, length: duration})
 			}
@@ -286,22 +287,22 @@ func PodmanTestCreateUtil(tempDir string, remote bool) *PodmanTestIntegration {
 	}
 	os.Setenv("DISABLE_HC_SYSTEMD", "true")
 
-	dbBackend := "boltdb"
-	if os.Getenv("PODMAN_DB") == "sqlite" {
-		dbBackend = "sqlite"
+	dbBackend := "sqlite"
+	if os.Getenv("PODMAN_DB") == "boltdb" {
+		dbBackend = "boltdb"
 	}
 
-	networkBackend := CNI
-	networkConfigDir := "/etc/cni/net.d"
+	networkBackend := Netavark
+	networkConfigDir := "/etc/containers/networks"
 	if isRootless() {
-		networkConfigDir = filepath.Join(os.Getenv("HOME"), ".config/cni/net.d")
+		networkConfigDir = filepath.Join(root, "etc", "networks")
 	}
 
-	if strings.ToLower(os.Getenv("NETWORK_BACKEND")) == "netavark" {
-		networkBackend = Netavark
-		networkConfigDir = "/etc/containers/networks"
+	if strings.ToLower(os.Getenv("NETWORK_BACKEND")) == "cni" {
+		networkBackend = CNI
+		networkConfigDir = "/etc/cni/net.d"
 		if isRootless() {
-			networkConfigDir = filepath.Join(root, "etc", "networks")
+			networkConfigDir = filepath.Join(os.Getenv("HOME"), ".config/cni/net.d")
 		}
 	}
 
@@ -366,7 +367,7 @@ func PodmanTestCreateUtil(tempDir string, remote bool) *PodmanTestIntegration {
 			if err == nil {
 				lockFile.Close()
 				p.RemoteSocketLock = lockPath
-				p.RemoteSocket = fmt.Sprintf("unix:%s-%s.sock", pathPrefix, uuid)
+				p.RemoteSocket = fmt.Sprintf("unix://%s-%s.sock", pathPrefix, uuid)
 				break
 			}
 			tries++
@@ -412,9 +413,19 @@ func (p *PodmanTestIntegration) createArtifact(image string) {
 	destName := imageTarPath(image)
 	if _, err := os.Stat(destName); os.IsNotExist(err) {
 		GinkgoWriter.Printf("Caching %s at %s...\n", image, destName)
-		pull := p.PodmanNoCache([]string{"pull", image})
-		pull.Wait(440)
-		Expect(pull).Should(Exit(0))
+		for try := 0; try < 3; try++ {
+			pull := p.PodmanNoCache([]string{"pull", image})
+			pull.Wait(440)
+			if pull.ExitCode() == 0 {
+				break
+			}
+			if try == 2 {
+				Expect(pull).Should(Exit(0), "Failed after many retries")
+			}
+
+			GinkgoWriter.Println("Will wait and retry")
+			time.Sleep(time.Duration(try+1) * 5 * time.Second)
+		}
 
 		save := p.PodmanNoCache([]string{"save", "-o", destName, image})
 		save.Wait(90)
@@ -441,6 +452,19 @@ func (p *PodmanTestIntegration) InspectContainer(name string) []define.InspectCo
 	session.WaitWithDefaultTimeout()
 	Expect(session).Should(Exit(0))
 	return session.InspectContainerToJSON()
+}
+
+// StopContainer stops a container with no timeout, ensuring a fast test.
+func (p *PodmanTestIntegration) StopContainer(nameOrID string) {
+	stop := p.Podman([]string{"stop", "-t0", nameOrID})
+	stop.WaitWithDefaultTimeout()
+	Expect(stop).Should(ExitCleanly())
+}
+
+func (p *PodmanTestIntegration) StopPod(nameOrID string) {
+	stop := p.Podman([]string{"pod", "stop", "-t0", nameOrID})
+	stop.WaitWithDefaultTimeout()
+	Expect(stop).Should(ExitCleanly())
 }
 
 func processTestResult(r SpecReport) {
@@ -497,8 +521,17 @@ func (p *PodmanTestIntegration) RunTopContainerWithArgs(name string, args []stri
 		podmanArgs = append(podmanArgs, "--name", name)
 	}
 	podmanArgs = append(podmanArgs, args...)
-	podmanArgs = append(podmanArgs, "-d", ALPINE, "top")
-	return p.Podman(podmanArgs)
+	podmanArgs = append(podmanArgs, "-d", ALPINE, "top", "-b")
+	session := p.Podman(podmanArgs)
+	session.WaitWithDefaultTimeout()
+	Expect(session).To(ExitCleanly())
+	cid := session.OutputToString()
+	// Output indicates that top is running, which means it's safe
+	// for our caller to invoke `podman stop`
+	if !WaitContainerReady(p, cid, "Mem:", 20, 1) {
+		Fail("Could not start a top container")
+	}
+	return session
 }
 
 // RunLsContainer runs a simple container in the background that
@@ -540,7 +573,7 @@ func (p *PodmanTestIntegration) RunContainerWithNetworkTest(mode string) *Podman
 	if mode != "" {
 		podmanArgs = append(podmanArgs, "--network", mode)
 	}
-	podmanArgs = append(podmanArgs, fedoraMinimal, "curl", "-k", "-o", "/dev/null", "http://www.redhat.com:80")
+	podmanArgs = append(podmanArgs, fedoraMinimal, "curl", "-s", "-S", "-k", "-o", "/dev/null", "http://www.redhat.com:80")
 	session := p.Podman(podmanArgs)
 	return session
 }
@@ -642,8 +675,20 @@ func (p *PodmanTestIntegration) Cleanup() {
 	// Make sure to only check exit codes after all cleanup is done.
 	// An error would cause it to stop and return early otherwise.
 	Expect(stop).To(Exit(0), "command: %v\nstdout: %s\nstderr: %s", stop.Command.Args, stop.OutputToString(), stop.ErrorToString())
+	checkStderrCleanupError(stop, "stop --all -t0 error logged")
 	Expect(podrm).To(Exit(0), "command: %v\nstdout: %s\nstderr: %s", podrm.Command.Args, podrm.OutputToString(), podrm.ErrorToString())
+	checkStderrCleanupError(podrm, "pod rm -fa -t0 error logged")
 	Expect(rmall).To(Exit(0), "command: %v\nstdout: %s\nstderr: %s", rmall.Command.Args, rmall.OutputToString(), rmall.ErrorToString())
+	checkStderrCleanupError(rmall, "rm -fa -t0 error logged")
+}
+
+func checkStderrCleanupError(s *PodmanSessionIntegration, cmd string) {
+	if strings.Contains(podmanTest.OCIRuntime, "runc") {
+		// we cannot check stderr for runc, way to many errors
+		return
+	}
+	// offset is 1 so the stacj trace doesn't link to this helper function here
+	ExpectWithOffset(1, s.ErrorToString()).To(BeEmpty(), cmd)
 }
 
 // CleanupVolume cleans up the volumes and containers.
@@ -653,6 +698,7 @@ func (p *PodmanTestIntegration) CleanupVolume() {
 	session := p.Podman([]string{"volume", "rm", "-fa"})
 	session.WaitWithDefaultTimeout()
 	Expect(session).To(Exit(0), "command: %v\nstdout: %s\nstderr: %s", session.Command.Args, session.OutputToString(), session.ErrorToString())
+	checkStderrCleanupError(session, "volume rm -fa error logged")
 }
 
 // CleanupSecret cleans up the secrets and containers.
@@ -662,6 +708,7 @@ func (p *PodmanTestIntegration) CleanupSecrets() {
 	session := p.Podman([]string{"secret", "rm", "-a"})
 	session.Wait(90)
 	Expect(session).To(Exit(0), "command: %v\nstdout: %s\nstderr: %s", session.Command.Args, session.OutputToString(), session.ErrorToString())
+	checkStderrCleanupError(session, "secret rm -a error logged")
 }
 
 // InspectContainerToJSON takes the session output of an inspect
@@ -675,10 +722,11 @@ func (s *PodmanSessionIntegration) InspectContainerToJSON() []define.InspectCont
 
 // InspectPodToJSON takes the sessions output from a pod inspect and returns json
 func (s *PodmanSessionIntegration) InspectPodToJSON() define.InspectPodData {
-	var i define.InspectPodData
+	var i []define.InspectPodData
 	err := jsoniter.Unmarshal(s.Out.Contents(), &i)
 	Expect(err).ToNot(HaveOccurred())
-	return i
+	Expect(i).To(HaveLen(1))
+	return i[0]
 }
 
 // InspectPodToJSON takes the sessions output from an inspect and returns json
@@ -831,17 +879,21 @@ type journaldTests struct {
 
 var journald journaldTests
 
-func SkipIfJournaldUnavailable() {
+// Check if journalctl is unavailable
+func checkAvailableJournald() {
 	f := func() {
 		journald.journaldSkip = false
 
-		// Check if journalctl is unavailable
 		cmd := exec.Command("journalctl", "-n", "1")
 		if err := cmd.Run(); err != nil {
 			journald.journaldSkip = true
 		}
 	}
 	journald.journaldOnce.Do(f)
+}
+
+func SkipIfJournaldUnavailable() {
+	checkAvailableJournald()
 
 	// In container, journalctl does not return an error even if
 	// journald is unavailable
@@ -983,7 +1035,17 @@ func rmAll(podmanBin string, path string) {
 			GinkgoWriter.Printf("%v\n", err)
 		}
 	} else {
-		if err := os.RemoveAll(path); err != nil {
+		// When using overlay as root, podman leaves a stray mount behind.
+		// This leak causes remote tests to take a loooooong time, which
+		// then causes Cirrus to time out. Unmount that stray.
+		overlayPath := path + "/root/overlay"
+		if _, err := os.Stat(overlayPath); err == nil {
+			if err = unix.Unmount(overlayPath, unix.MNT_DETACH); err != nil {
+				GinkgoWriter.Printf("Error unmounting %s: %v\n", overlayPath, err)
+			}
+		}
+
+		if err = os.RemoveAll(path); err != nil {
 			GinkgoWriter.Printf("%q\n", err)
 		}
 	}
@@ -1009,7 +1071,7 @@ func (p *PodmanTestIntegration) PodmanNoEvents(args []string) *PodmanSessionInte
 // MakeOptions assembles all the podman main options
 func (p *PodmanTestIntegration) makeOptions(args []string, noEvents, noCache bool) []string {
 	if p.RemoteTest {
-		if !util.StringInSlice("--remote", args) {
+		if !slices.Contains(args, "--remote") {
 			return append([]string{"--remote", "--url", p.RemoteSocket}, args...)
 		}
 		return args
@@ -1127,7 +1189,7 @@ func (p *PodmanTestIntegration) removeNetwork(name string) {
 
 // generatePolicyFile generates a signature verification policy file.
 // it returns the policy file path.
-func generatePolicyFile(tempDir string) string {
+func generatePolicyFile(tempDir string, port int) string {
 	keyPath := filepath.Join(tempDir, "key.gpg")
 	policyPath := filepath.Join(tempDir, "policy.json")
 	conf := fmt.Sprintf(`
@@ -1139,20 +1201,20 @@ func generatePolicyFile(tempDir string) string {
     ],
     "transports": {
         "docker": {
-            "localhost:5000": [
+            "localhost:%[1]d": [
                 {
                     "type": "signedBy",
                     "keyType": "GPGKeys",
-                    "keyPath": "%s"
+                    "keyPath": "%[2]s"
                 }
             ],
-            "localhost:5000/sigstore-signed": [
+            "localhost:%[1]d/sigstore-signed": [
                 {
                     "type": "sigstoreSigned",
                     "keyPath": "testdata/sigstore-key.pub"
                 }
             ],
-            "localhost:5000/sigstore-signed-params": [
+            "localhost:%[1]d/sigstore-signed-params": [
                 {
                     "type": "sigstoreSigned",
                     "keyPath": "testdata/sigstore-key.pub"
@@ -1161,7 +1223,7 @@ func generatePolicyFile(tempDir string) string {
         }
     }
 }
-`, keyPath)
+`, port, keyPath)
 	writeConf([]byte(conf), policyPath)
 	return policyPath
 }
@@ -1223,7 +1285,7 @@ func GetPort() int {
 		// Random port within that range
 		port := portMin + rng.Intn((portMax-portMin)/nProcs)*nProcs + myProc
 
-		used, err := net.Listen("tcp", "localhost:"+strconv.Itoa(port))
+		used, err := net.Listen("tcp", "0.0.0.0:"+strconv.Itoa(port))
 		if err == nil {
 			// it's open. Return it.
 			err = used.Close()
@@ -1232,14 +1294,14 @@ func GetPort() int {
 		}
 	}
 
-	Fail(fmt.Sprintf("unable to get free port: %v", err))
+	Fail(fmt.Sprintf("unable to get free port in range %d-%d", portMin, portMax))
 	return 0 // notreached
 }
 
 func ncz(port int) bool {
 	timeout := 500 * time.Millisecond
 	for i := 0; i < 5; i++ {
-		ncCmd := []string{"-z", "localhost", fmt.Sprintf("%d", port)}
+		ncCmd := []string{"-z", "localhost", strconv.Itoa(port)}
 		GinkgoWriter.Printf("Running: nc %s\n", strings.Join(ncCmd, " "))
 		check := SystemExec("nc", ncCmd)
 		if check.ExitCode() == 0 {
