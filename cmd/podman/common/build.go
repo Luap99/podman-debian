@@ -113,6 +113,9 @@ func DefineBuildFlags(cmd *cobra.Command, buildOpts *BuildFlagsWrapper, isFarmBu
 	completion.CompleteCommandFlags(cmd, fromAndBudFlagsCompletions)
 	flags.SetNormalizeFunc(buildahCLI.AliasFlags)
 	if registry.IsRemote() {
+		// Unset the isolation default as we never want to send this over the API
+		// as it can be wrong (root vs rootless).
+		_ = flags.Lookup("isolation").Value.Set("")
 		_ = flags.MarkHidden("disable-content-trust")
 		_ = flags.MarkHidden("sign-by")
 		_ = flags.MarkHidden("signature-policy")
@@ -400,9 +403,14 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *Buil
 		compression = buildahDefine.Uncompressed
 	}
 
-	isolation, err := parse.IsolationOption(flags.Isolation)
-	if err != nil {
-		return nil, err
+	isolation := buildahDefine.IsolationDefault
+	// Only parse the isolation when it is actually needed as we do not want to send a wrong default
+	// to the server in the remote case (root vs rootless).
+	if flags.Isolation != "" {
+		isolation, err = parse.IsolationOption(flags.Isolation)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	usernsOption, idmappingOptions, err := parse.IDMappingOptions(c, isolation)
