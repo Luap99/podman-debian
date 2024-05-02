@@ -66,15 +66,11 @@ execute_after_dh_auto_configure:
 
 override_dh_auto_build:
 	$(MAKE) docs docker-docs GOMD2MAN=/usr/bin/go-md2man
-
-#	LDFLAGS_PODMAN="-X main.gitCommit=$(GIT_COMMIT)"
-#   upstream Makefile calls `go build ... -o bin/podman-remote ./cmd/podman`
-#   dont know how I get dh_auto_build to do that.
 	DH_GOLANG_BUILDPKG="github.com/containers/podman/cmd/podman" \
 	dh_auto_build -v  --builddirectory=_output -- -tags "$(BUILDTAGS_REMOTE)" \
           -ldflags "-X main.buildInfo=$(DEB_VERSION)"
 	mv _output/bin/podman _output/bin/podman-remote
-	DH_GOLANG_BUILDPKG="github.com/containers/podman/cmd/..." \
+	DH_GOLANG_BUILDPKG="github.com/containers/podman/cmd/podman github.com/containers/podman/cmd/rootlessport github.com/containers/podman/cmd/quadlet" \
 	dh_auto_build -v  --builddirectory=_output -- -tags "$(BUILDTAGS)" \
           -ldflags "-X main.buildInfo=$(DEB_VERSION)"
 
