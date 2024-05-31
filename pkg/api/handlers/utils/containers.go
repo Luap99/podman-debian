@@ -9,17 +9,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containers/podman/v5/libpod/events"
-	api "github.com/containers/podman/v5/pkg/api/types"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	"github.com/containers/podman/v5/pkg/domain/infra/abi"
+	"github.com/containers/podman/v4/libpod/events"
+	api "github.com/containers/podman/v4/pkg/api/types"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/domain/infra/abi"
 
-	"github.com/containers/podman/v5/pkg/api/handlers"
+	"github.com/containers/podman/v4/pkg/api/handlers"
 	"github.com/sirupsen/logrus"
 
-	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v4/libpod/define"
 
-	"github.com/containers/podman/v5/libpod"
+	"github.com/containers/podman/v4/libpod"
 	"github.com/gorilla/schema"
 )
 
@@ -238,10 +238,7 @@ func waitNextExit(ctx context.Context, containerName string) (int32, error) {
 
 	evt, ok := <-eventChannel
 	if ok {
-		if evt.ContainerExitCode != nil {
-			return int32(*evt.ContainerExitCode), nil
-		}
-		return -1, nil
+		return int32(evt.ContainerExitCode), nil
 	}
 	// if ok == false then containerEngine.Events() has exited
 	// it may happen if request was canceled (e.g. client closed connection prematurely) or

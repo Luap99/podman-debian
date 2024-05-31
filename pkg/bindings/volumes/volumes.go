@@ -5,16 +5,16 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/containers/podman/v5/pkg/bindings"
-	"github.com/containers/podman/v5/pkg/domain/entities/reports"
-	entitiesTypes "github.com/containers/podman/v5/pkg/domain/entities/types"
+	"github.com/containers/podman/v4/pkg/bindings"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/domain/entities/reports"
 	jsoniter "github.com/json-iterator/go"
 )
 
 // Create creates a volume given its configuration.
-func Create(ctx context.Context, config entitiesTypes.VolumeCreateOptions, options *CreateOptions) (*entitiesTypes.VolumeConfigResponse, error) {
+func Create(ctx context.Context, config entities.VolumeCreateOptions, options *CreateOptions) (*entities.VolumeConfigResponse, error) {
 	var (
-		v entitiesTypes.VolumeConfigResponse
+		v entities.VolumeConfigResponse
 	)
 	if options == nil {
 		options = new(CreateOptions)
@@ -39,9 +39,9 @@ func Create(ctx context.Context, config entitiesTypes.VolumeCreateOptions, optio
 }
 
 // Inspect returns low-level information about a volume.
-func Inspect(ctx context.Context, nameOrID string, options *InspectOptions) (*entitiesTypes.VolumeConfigResponse, error) {
+func Inspect(ctx context.Context, nameOrID string, options *InspectOptions) (*entities.VolumeConfigResponse, error) {
 	var (
-		inspect entitiesTypes.VolumeConfigResponse
+		inspect entities.VolumeConfigResponse
 	)
 	if options == nil {
 		options = new(InspectOptions)
@@ -62,9 +62,9 @@ func Inspect(ctx context.Context, nameOrID string, options *InspectOptions) (*en
 
 // List returns the configurations for existing volumes in the form of a slice.  Optionally, filters
 // can be used to refine the list of volumes.
-func List(ctx context.Context, options *ListOptions) ([]*entitiesTypes.VolumeListReport, error) {
+func List(ctx context.Context, options *ListOptions) ([]*entities.VolumeListReport, error) {
 	var (
-		vols []*entitiesTypes.VolumeListReport
+		vols []*entities.VolumeListReport
 	)
 	conn, err := bindings.GetClient(ctx)
 	if err != nil {

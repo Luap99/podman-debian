@@ -1,4 +1,5 @@
 //go:build amd64 || arm64
+// +build amd64 arm64
 
 package machine
 
@@ -10,14 +11,13 @@ import (
 	"time"
 
 	"github.com/containers/common/pkg/completion"
+	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/report"
-	"github.com/containers/podman/v5/cmd/podman/common"
-	"github.com/containers/podman/v5/cmd/podman/registry"
-	"github.com/containers/podman/v5/cmd/podman/validate"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	"github.com/containers/podman/v5/pkg/machine"
-	"github.com/containers/podman/v5/pkg/machine/shim"
-	"github.com/containers/podman/v5/pkg/machine/vmconfigs"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/validate"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/machine"
 	"github.com/docker/go-units"
 	"github.com/spf13/cobra"
 )
@@ -61,13 +61,14 @@ func init() {
 
 func list(cmd *cobra.Command, args []string) error {
 	var (
-		opts machine.ListOptions
-		err  error
+		opts         machine.ListOptions
+		listResponse []*machine.ListResponse
+		err          error
 	)
 
-	listResponse, err := shim.List([]vmconfigs.VMProvider{provider}, opts)
+	listResponse, err = provider.List(opts)
 	if err != nil {
-		return err
+		return fmt.Errorf("listing vms: %w", err)
 	}
 
 	// Sort by last run
@@ -79,15 +80,12 @@ func list(cmd *cobra.Command, args []string) error {
 		return listResponse[i].Running
 	})
 
-	defaultCon := ""
-	con, err := registry.PodmanConfig().ContainersConfDefaultsRO.GetConnection("", true)
-	if err == nil {
-		// ignore the error here we only want to know if we have a default connection to show it in list
-		defaultCon = con.Name
-	}
-
 	if report.IsJSON(listFlag.format) {
-		machineReporter := toMachineFormat(listResponse, defaultCon)
+		machineReporter, err := toMachineFormat(listResponse)
+		if err != nil {
+			return err
+		}
+
 		b, err := json.MarshalIndent(machineReporter, "", "    ")
 		if err != nil {
 			return err
@@ -96,7 +94,11 @@ func list(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	machineReporter := toHumanFormat(listResponse, defaultCon)
+	machineReporter, err := toHumanFormat(listResponse)
+	if err != nil {
+		return err
+	}
+
 	return outputTemplate(cmd, machineReporter)
 }
 
@@ -152,11 +154,16 @@ func streamName(imageStream string) string {
 	return imageStream
 }
 
-func toMachineFormat(vms []*machine.ListResponse, defaultCon string) []*entities.ListReporter {
+func toMachineFormat(vms []*machine.ListResponse) ([]*entities.ListReporter, error) {
+	cfg, err := config.ReadCustomConfig()
+	if err != nil {
+		return nil, err
+	}
+
 	machineResponses := make([]*entities.ListReporter, 0, len(vms))
 	for _, vm := range vms {
 		response := new(entities.ListReporter)
-		response.Default = vm.Name == defaultCon
+		response.Default = vm.Name == cfg.Engine.ActiveService
 		response.Name = vm.Name
 		response.Running = vm.Running
 		response.LastUp = strTime(vm.LastUp)
@@ -164,8 +171,8 @@ func toMachineFormat(vms []*machine.ListResponse, defaultCon string) []*entities
 		response.Stream = streamName(vm.Stream)
 		response.VMType = vm.VMType
 		response.CPUs = vm.CPUs
-		response.Memory = strUint(uint64(vm.Memory.ToBytes()))
-		response.DiskSize = strUint(uint64(vm.DiskSize.ToBytes()))
+		response.Memory = strUint(vm.Memory)
+		response.DiskSize = strUint(vm.DiskSize)
 		response.Port = vm.Port
 		response.RemoteUsername = vm.RemoteUsername
 		response.IdentityPath = vm.IdentityPath
@@ -174,14 +181,19 @@ func toMachineFormat(vms []*machine.ListResponse, defaultCon string) []*entities
 
 		machineResponses = append(machineResponses, response)
 	}
-	return machineResponses
+	return machineResponses, nil
 }
 
-func toHumanFormat(vms []*machine.ListResponse, defaultCon string) []*entities.ListReporter {
+func toHumanFormat(vms []*machine.ListResponse) ([]*entities.ListReporter, error) {
+	cfg, err := config.ReadCustomConfig()
+	if err != nil {
+		return nil, err
+	}
+
 	humanResponses := make([]*entities.ListReporter, 0, len(vms))
 	for _, vm := range vms {
 		response := new(entities.ListReporter)
-		if vm.Name == defaultCon {
+		if vm.Name == cfg.Engine.ActiveService {
 			response.Name = vm.Name + "*"
 			response.Default = true
 		} else {
@@ -202,10 +214,10 @@ func toHumanFormat(vms []*machine.ListResponse, defaultCon string) []*entities.L
 		response.Created = units.HumanDuration(time.Since(vm.CreatedAt)) + " ago"
 		response.VMType = vm.VMType
 		response.CPUs = vm.CPUs
-		response.Memory = units.BytesSize(float64(vm.Memory.ToBytes()))
-		response.DiskSize = units.BytesSize(float64(vm.DiskSize.ToBytes()))
+		response.Memory = units.BytesSize(float64(vm.Memory))
+		response.DiskSize = units.BytesSize(float64(vm.DiskSize))
 
 		humanResponses = append(humanResponses, response)
 	}
-	return humanResponses
+	return humanResponses, nil
 }

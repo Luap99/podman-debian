@@ -3,11 +3,12 @@ package entities
 import (
 	"errors"
 	"strings"
+	"time"
 
 	commonFlag "github.com/containers/common/pkg/flag"
-	"github.com/containers/podman/v5/pkg/domain/entities/types"
-	"github.com/containers/podman/v5/pkg/specgen"
-	"github.com/containers/podman/v5/pkg/util"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/specgen"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -17,25 +18,51 @@ type PodKillOptions struct {
 	Signal string
 }
 
-type PodKillReport = types.PodKillReport
+type PodKillReport struct {
+	Errs []error
+	Id   string //nolint:revive,stylecheck
+}
 
-type ListPodsReport = types.ListPodsReport
+type ListPodsReport struct {
+	Cgroup     string
+	Containers []*ListPodContainer
+	Created    time.Time
+	Id         string //nolint:revive,stylecheck
+	InfraId    string //nolint:revive,stylecheck
+	Name       string
+	Namespace  string
+	// Network names connected to infra container
+	Networks []string
+	Status   string
+	Labels   map[string]string
+}
 
-type ListPodContainer = types.ListPodContainer
+type ListPodContainer struct {
+	Id           string //nolint:revive,stylecheck
+	Names        string
+	Status       string
+	RestartCount uint
+}
 
 type PodPauseOptions struct {
 	All    bool
 	Latest bool
 }
 
-type PodPauseReport = types.PodPauseReport
+type PodPauseReport struct {
+	Errs []error
+	Id   string //nolint:revive,stylecheck
+}
 
 type PodunpauseOptions struct {
 	All    bool
 	Latest bool
 }
 
-type PodUnpauseReport = types.PodUnpauseReport
+type PodUnpauseReport struct {
+	Errs []error
+	Id   string //nolint:revive,stylecheck
+}
 
 type PodStopOptions struct {
 	All     bool
@@ -44,20 +71,30 @@ type PodStopOptions struct {
 	Timeout int
 }
 
-type PodStopReport = types.PodStopReport
+type PodStopReport struct {
+	Errs []error
+	Id   string //nolint:revive,stylecheck
+}
 
 type PodRestartOptions struct {
 	All    bool
 	Latest bool
 }
 
-type PodRestartReport = types.PodRestartReport
+type PodRestartReport struct {
+	Errs []error
+	Id   string //nolint:revive,stylecheck
+}
+
 type PodStartOptions struct {
 	All    bool
 	Latest bool
 }
 
-type PodStartReport = types.PodStartReport
+type PodStartReport struct {
+	Errs []error
+	Id   string //nolint:revive,stylecheck
+}
 
 type PodRmOptions struct {
 	All     bool
@@ -67,9 +104,17 @@ type PodRmOptions struct {
 	Timeout *uint
 }
 
-type PodRmReport = types.PodRmReport
+type PodRmReport struct {
+	RemovedCtrs map[string]error
+	Err         error
+	Id          string //nolint:revive,stylecheck
+}
 
-type PodSpec = types.PodSpec
+// PddSpec is an abstracted version of PodSpecGen designed to eventually accept options
+// not meant to be in a specgen
+type PodSpec struct {
+	PodSpecGen specgen.PodSpecGenerator
+}
 
 // PodCreateOptions provides all possible options for creating a pod and its infra container.
 // The JSON tags below are made to match the respective field in ContainerCreateOptions for the purpose of mapping.
@@ -166,7 +211,6 @@ type ContainerCreateOptions struct {
 	EnvFile            []string
 	Expose             []string
 	GIDMap             []string
-	GPUs               []string
 	GroupAdd           []string
 	HealthCmd          string
 	HealthInterval     string
@@ -206,7 +250,6 @@ type ContainerCreateOptions struct {
 	PodIDFile          string
 	Personality        string
 	PreserveFDs        uint
-	PreserveFD         []uint
 	Privileged         bool
 	PublishAll         bool
 	Pull               string
@@ -216,8 +259,6 @@ type ContainerCreateOptions struct {
 	Restart            string
 	Replace            bool
 	Requires           []string
-	Retry              *uint  `json:"retry,omitempty"`
-	RetryDelay         string `json:"retry_delay,omitempty"`
 	Rm                 bool
 	RootFS             bool
 	Secrets            []string
@@ -273,15 +314,19 @@ type ContainerCreateOptions struct {
 func NewInfraContainerCreateOptions() ContainerCreateOptions {
 	options := ContainerCreateOptions{
 		IsInfra:          true,
-		ImageVolume:      "anonymous",
+		ImageVolume:      define.TypeBind,
 		MemorySwappiness: -1,
 	}
 	return options
 }
 
-type PodCreateReport = types.PodCreateReport
+type PodCreateReport struct {
+	Id string //nolint:revive,stylecheck
+}
 
-type PodCloneReport = types.PodCloneReport
+type PodCloneReport struct {
+	Id string //nolint:revive,stylecheck
+}
 
 func (p *PodCreateOptions) CPULimits() *specs.LinuxCPU {
 	cpu := &specs.LinuxCPU{}
@@ -400,7 +445,10 @@ type PodPruneOptions struct {
 	Force bool `json:"force" schema:"force"`
 }
 
-type PodPruneReport = types.PodPruneReport
+type PodPruneReport struct {
+	Err error
+	Id  string //nolint:revive,stylecheck
+}
 
 type PodTopOptions struct {
 	// CLI flags.
@@ -424,7 +472,9 @@ type PodPSOptions struct {
 	Sort      string
 }
 
-type PodInspectReport = types.PodInspectReport
+type PodInspectReport struct {
+	*define.InspectPodData
+}
 
 // PodStatsOptions are options for the pod stats command.
 type PodStatsOptions struct {
@@ -435,7 +485,35 @@ type PodStatsOptions struct {
 }
 
 // PodStatsReport includes pod-resource statistics data.
-type PodStatsReport = types.PodStatsReport
+type PodStatsReport struct {
+	// Percentage of CPU utilized by pod
+	// example: 75.5%
+	CPU string
+	// Humanized Memory usage and maximum
+	// example: 12mb / 24mb
+	MemUsage string
+	// Memory usage and maximum in bytes
+	// example: 1,000,000 / 4,000,000
+	MemUsageBytes string
+	// Percentage of Memory utilized by pod
+	// example: 50.5%
+	Mem string
+	// Network usage inbound + outbound
+	NetIO string
+	// Humanized disk usage read + write
+	BlockIO string
+	// Container PID
+	PIDS string
+	// Pod ID
+	// example: 62310217a19e
+	Pod string
+	// Container ID
+	// example: e43534f89a7d
+	CID string
+	// Pod Name
+	// example: elastic_pascal
+	Name string
+}
 
 // ValidatePodStatsOptions validates the specified slice and options. Allows
 // for sharing code in the front- and the back-end.
@@ -466,7 +544,7 @@ func ValidatePodStatsOptions(args []string, options *PodStatsOptions) error {
 // PodLogsOptionsToContainerLogsOptions converts PodLogOptions to ContainerLogOptions
 func PodLogsOptionsToContainerLogsOptions(options PodLogsOptions) ContainerLogsOptions {
 	// PodLogsOptions are similar but contains few extra fields like ctrName
-	// So cast other values as is so we can reuse the code
+	// So cast other values as is so we can re-use the code
 	containerLogsOpts := ContainerLogsOptions{
 		Details:      options.Details,
 		Latest:       options.Latest,

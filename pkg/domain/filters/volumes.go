@@ -1,4 +1,5 @@
 //go:build !remote
+// +build !remote
 
 package filters
 
@@ -8,8 +9,8 @@ import (
 	"time"
 
 	"github.com/containers/common/pkg/filters"
-	"github.com/containers/podman/v5/libpod"
-	"github.com/containers/podman/v5/pkg/util"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/pkg/util"
 )
 
 func GenerateVolumeFilters(filter string, filterValues []string, runtime *libpod.Runtime) (libpod.VolumeFilter, error) {
@@ -49,7 +50,14 @@ func GenerateVolumeFilters(filter string, filterValues []string, runtime *libpod
 	case "opt":
 		return func(v *libpod.Volume) bool {
 			for _, val := range filterValues {
-				filterKey, filterVal, _ := strings.Cut(val, "=")
+				filterArray := strings.SplitN(val, "=", 2)
+				filterKey := filterArray[0]
+				var filterVal string
+				if len(filterArray) > 1 {
+					filterVal = filterArray[1]
+				} else {
+					filterVal = ""
+				}
 
 				for labelKey, labelValue := range v.Options() {
 					if labelKey == filterKey && (filterVal == "" || labelValue == filterVal) {

@@ -1,4 +1,5 @@
 //go:build !remote
+// +build !remote
 
 package generate
 
@@ -10,10 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/rootless"
-	"github.com/containers/podman/v5/pkg/util"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/util"
 
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/runtime-tools/generate"
@@ -93,14 +93,34 @@ func DevicesFromPath(g *generate.Generator, devicePath string) error {
 }
 
 func BlockAccessToKernelFilesystems(privileged, pidModeIsHost bool, mask, unmask []string, g *generate.Generator) {
+	defaultMaskPaths := []string{"/proc/acpi",
+		"/proc/kcore",
+		"/proc/keys",
+		"/proc/latency_stats",
+		"/proc/timer_list",
+		"/proc/timer_stats",
+		"/proc/sched_debug",
+		"/proc/scsi",
+		"/sys/firmware",
+		"/sys/fs/selinux",
+		"/sys/dev/block",
+	}
+
 	if !privileged {
-		for _, mp := range config.DefaultMaskedPaths {
+		for _, mp := range defaultMaskPaths {
 			// check that the path to mask is not in the list of paths to unmask
 			if shouldMask(mp, unmask) {
 				g.AddLinuxMaskedPaths(mp)
 			}
 		}
-		for _, rp := range config.DefaultReadOnlyPaths {
+		for _, rp := range []string{
+			"/proc/asound",
+			"/proc/bus",
+			"/proc/fs",
+			"/proc/irq",
+			"/proc/sys",
+			"/proc/sysrq-trigger",
+		} {
 			if shouldMask(rp, unmask) {
 				g.AddLinuxReadonlyPaths(rp)
 			}

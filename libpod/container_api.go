@@ -1,4 +1,5 @@
 //go:build !remote
+// +build !remote
 
 package libpod
 
@@ -13,9 +14,9 @@ import (
 	"time"
 
 	"github.com/containers/common/pkg/resize"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/libpod/events"
-	"github.com/containers/podman/v5/pkg/signal"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/libpod/events"
+	"github.com/containers/podman/v4/pkg/signal"
 	"github.com/containers/storage/pkg/archive"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
@@ -172,7 +173,7 @@ func (c *Container) StartAndAttach(ctx context.Context, streams *define.AttachSt
 	// Attach to the container before starting it
 	go func() {
 		// Start resizing
-		if c.LogDriver() != define.PassthroughLogging && c.LogDriver() != define.PassthroughTTYLogging {
+		if c.LogDriver() != define.PassthroughLogging {
 			registerResizeFunc(resize, c.bundlePath())
 		}
 
@@ -304,9 +305,6 @@ func (c *Container) Attach(streams *define.AttachStreams, keys string, resize <-
 	if c.LogDriver() == define.PassthroughLogging {
 		return fmt.Errorf("this container is using the 'passthrough' log driver, cannot attach: %w", define.ErrNoLogs)
 	}
-	if c.LogDriver() == define.PassthroughTTYLogging {
-		return fmt.Errorf("this container is using the 'passthrough-tty' log driver, cannot attach: %w", define.ErrNoLogs)
-	}
 	if !c.batched {
 		c.lock.Lock()
 		if err := c.syncContainer(); err != nil {
@@ -339,7 +337,7 @@ func (c *Container) Attach(streams *define.AttachStreams, keys string, resize <-
 	}
 
 	// Start resizing
-	if c.LogDriver() != define.PassthroughLogging && c.LogDriver() != define.PassthroughTTYLogging {
+	if c.LogDriver() != define.PassthroughLogging {
 		registerResizeFunc(resize, c.bundlePath())
 	}
 

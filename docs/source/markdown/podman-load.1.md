@@ -44,17 +44,14 @@ Suppress the progress output
 
 ## EXAMPLES
 
-Create an image from a compressed tar file, without showing progress.
 ```
 $ podman load --quiet -i fedora.tar.gz
 ```
 
-Create an image from the archive.tar file pulled from a URL, without showing progress.
 ```
 $ podman load -q -i https://server.com/archive.tar
 ```
 
-Create an image from stdin using bash redirection from a tar file.
 ```
 $ podman load < fedora.tar
 Getting image source signatures
@@ -67,7 +64,6 @@ Storing signatures
 Loaded image:  registry.fedoraproject.org/fedora:latest
 ```
 
-Create an image from stdin using a pipe.
 ```
 $ cat fedora.tar | podman load
 Getting image source signatures

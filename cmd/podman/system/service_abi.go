@@ -1,4 +1,6 @@
 //go:build (linux || freebsd) && !remote
+// +build linux freebsd
+// +build !remote
 
 package system
 
@@ -10,10 +12,13 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/containers/podman/v5/cmd/podman/registry"
-	api "github.com/containers/podman/v5/pkg/api/server"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	"github.com/containers/podman/v5/pkg/domain/infra"
+	"github.com/containers/common/pkg/cgroups"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	api "github.com/containers/podman/v4/pkg/api/server"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/domain/infra"
+	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/utils"
 	"github.com/coreos/go-systemd/v22/activation"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/pflag"
@@ -121,7 +126,16 @@ func restService(flags *pflag.FlagSet, cfg *entities.PodmanConfig, opts entities
 	// Close the fd right away to not leak it during the entire time of the service.
 	devNullfile.Close()
 
-	maybeMoveToSubCgroup()
+	cgroupv2, _ := cgroups.IsCgroup2UnifiedMode()
+	if rootless.IsRootless() && !cgroupv2 {
+		logrus.Warnf("Running 'system service' in rootless mode without cgroup v2, containers won't survive a 'system service' restart")
+	}
+
+	if err := utils.MaybeMoveToSubCgroup(); err != nil {
+		// it is a best effort operation, so just print the
+		// error for debugging purposes.
+		logrus.Debugf("Could not move to subcgroup: %v", err)
+	}
 
 	maybeStartServiceReaper()
 	infra.StartWatcher(libpodRuntime)

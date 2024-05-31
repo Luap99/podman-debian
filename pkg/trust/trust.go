@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-
-	"golang.org/x/exp/maps"
 )
 
 // Policy describes a basic trust policy configuration
@@ -53,7 +51,11 @@ func getPolicyShowOutput(policyContentStruct policyContent, systemRegistriesDirP
 		}
 		output = append(output, descriptionsOfPolicyRequirements(policyContentStruct.Default, template, registryConfigs, "", idReader)...)
 	}
-	transports := maps.Keys(policyContentStruct.Transports)
+	// FIXME: This should use x/exp/maps.Keys after we update to Go 1.18.
+	transports := []string{}
+	for t := range policyContentStruct.Transports {
+		transports = append(transports, t)
+	}
 	sort.Strings(transports)
 	for _, transport := range transports {
 		transval := policyContentStruct.Transports[transport]
@@ -61,7 +63,11 @@ func getPolicyShowOutput(policyContentStruct policyContent, systemRegistriesDirP
 			transport = "repository"
 		}
 
-		scopes := maps.Keys(transval)
+		// FIXME: This should use x/exp/maps.Keys after we update to Go 1.18.
+		scopes := []string{}
+		for s := range transval {
+			scopes = append(scopes, s)
+		}
 		sort.Strings(scopes)
 		for _, repo := range scopes {
 			repoval := transval[repo]

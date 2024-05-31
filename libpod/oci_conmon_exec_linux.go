@@ -1,10 +1,11 @@
 //go:build !remote
+// +build !remote
 
 package libpod
 
 import (
 	"github.com/containers/common/pkg/capabilities"
-	"github.com/moby/sys/user"
+	"github.com/opencontainers/runc/libcontainer/user"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 )
 

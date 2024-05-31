@@ -266,7 +266,7 @@ EOF
     local infra_cid="$output"
     # confirm that entrypoint is what we set
     run_podman container inspect --format '{{.Config.Entrypoint}}' $infra_cid
-    is "$output" "[${infra_command}]" "infra-command took effect"
+    is "$output" "$infra_command" "infra-command took effect"
     # confirm that infra container name is set
     run_podman container inspect --format '{{.Name}}' $infra_cid
     is "$output" "$infra_name" "infra-name took effect"
@@ -514,6 +514,7 @@ spec:
     skip_if_remote "resource limits only implemented on non-remote"
     skip_if_rootless "resource limits only work with root"
     skip_if_cgroupsv1 "resource limits only meaningful on cgroups V2"
+    skip_if_aarch64 "FIXME: #15074 - flakes often on aarch64"
 
     # create loopback device
     lofile=${PODMAN_TMPDIR}/disk.img
@@ -716,8 +717,8 @@ function thingy_with_unique_id() {
         podid="$output"
         run_podman run -d --pod $podid $IMAGE top -d 2
 
-        run_podman pod inspect $podid --format "{{.CgroupPath}}"
-        result="$output"
+        run_podman pod inspect $podid
+        result=$(jq -r .CgroupPath <<< $output)
         assert "$result" =~ "/" ".CgroupPath is a valid path"
 
         if is_cgroupsv2; then

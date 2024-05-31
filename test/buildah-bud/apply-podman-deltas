@@ -256,9 +256,6 @@ skip_if_remote "Explicit request in buildah PR 4190 to skip this on remote" \
 skip_if_rootless "Flakes when run rootless, too. See Buildah PR 4190" \
                  "build: test race in updating image name while performing parallel commits"
 
-skip_if_remote "--events-backend does not work with podman-remote" \
-	       "build test default ulimits"
-
 ###############################################################################
 # BEGIN tests which are skipped due to actual podman or podman-remote bugs.
 
@@ -291,9 +288,9 @@ skip_if_rootless_remote "FIXME: not sure if 17788 or some other bug" \
 skip "FIXME: 2023-06-13 buildah PR 4746 broke this test" \
      "bud with encrypted FROM image"
 
-# 2024-04-16 test needs to be fixed in buildah repo, to use another registry
-skip "FIXME: 2024-04-16 nixery is down" \
-     "bud-implicit-no-history"
+# v4.9 release branch
+skip "FIXME: 2024-04-30 test is broken, no clue" \
+     "bud and test --unsetlabel"
 
 # END   temporary workarounds that must be reevaluated periodically
 ###############################################################################

@@ -1,4 +1,5 @@
 //go:build windows
+// +build windows
 
 package main
 
@@ -10,18 +11,15 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/containers/podman/v5/pkg/machine/wsl/wutil"
+	"github.com/containers/podman/v4/pkg/machine/wsl/wutil"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/windows/svc/eventlog"
 )
 
 const (
-	//nolint:stylecheck
 	MB_ICONWARNING = 0x00000030
-	//nolint:stylecheck
-	MB_OK = 0x00000000
-	//nolint:stylecheck
-	MB_DEFBUTTON1 = 0x00000000
+	MB_OK          = 0x00000000
+	MB_DEFBUTTON1  = 0x00000000
 )
 
 const KernelWarning = "WSL Kernel installation did not complete successfully. " +
@@ -51,7 +49,7 @@ func installWslKernel() error {
 	)
 	backoff := 500 * time.Millisecond
 	for i := 1; i < 6; i++ {
-		err = wutil.SilentExec(wutil.FindWSL(), "--update")
+		err = wutil.SilentExec("wsl", "--update")
 		if err == nil {
 			break
 		}
@@ -88,7 +86,7 @@ func warn(title string, caption string) int {
 
 func main() {
 	args := os.Args
-	_, _ = setupLogging(path.Base(args[0]))
+	setupLogging(path.Base(args[0]))
 	if wutil.IsWSLInstalled() {
 		// nothing to do
 		logrus.Info("WSL Kernel already installed")

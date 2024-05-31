@@ -28,7 +28,6 @@ Print usage statement
 
 ## EXAMPLES
 
-Run healthchecks in specified container:
 ```
 $ podman healthcheck run mywebapp
 ```

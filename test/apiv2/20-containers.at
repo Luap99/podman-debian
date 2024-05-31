@@ -4,7 +4,7 @@
 #
 
 # WORKDIR=/data
-ENV_WORKDIR_IMG=quay.io/libpod/testimage:20240123
+ENV_WORKDIR_IMG=quay.io/libpod/testimage:20200929
 MultiTagName=localhost/test/testformultitag:tag
 
 podman pull $IMAGE &>/dev/null
@@ -45,11 +45,6 @@ t POST "/v4.7.0/libpod/containers/foo/attach?logs=true&stream=false" 200
 response_headers=$(cat "$WORKDIR/curl.headers.out")
 like "$response_headers" ".*Content-Type: application/vnd\.docker\.multiplexed-stream.*" "vnd.docker.multiplexed-stream libpod v4.7.0"
 
-t POST "containers/foo/attach?logs=true&stream=false" 101
-response_headers=$(cat "$WORKDIR/curl.headers.out")
-like "$response_headers" ".*Content-Type: application/vnd\.docker\.raw-stream.*" "hijacked connection header: Content-type: application/vnd.docker.raw-stream"
-like "$response_headers" ".*Upgrade: tcp.*" "hijacked connection header: Upgrade: tcp"
-
 t POST "containers/foo/kill" 204
 
 podman run --replace --name=foo -v /tmp:/tmp $IMAGE true
@@ -74,7 +69,7 @@ t GET libpod/containers/json?all=true 200 \
   .[0].IsInfra=false
 
 # Test compat API for Network Settings (.Network is N/A when rootless)
-network_expect="Networks.pasta.NetworkID=pasta"
+network_expect="Networks.slirp4netns.NetworkID=slirp4netns"
 if root; then
     network_expect="Networks.podman.NetworkID=podman"
 fi
@@ -532,7 +527,7 @@ t GET containers/$cid/json 200 \
 
 t DELETE containers/$cid?v=true 204
 
-# test create container like Docker >= 25 cli: NetworkMode="default" but EndpointsConfig struct is explicitly set and netns="host"
+# test create container like Docker >= 25 cli: NetworkMode="default" but EndpointsConfig struct is explictly set and netns="host"
 t POST containers/create \
   Image=$IMAGE \
   HostConfig='{"NetworkMode":"default"}' \

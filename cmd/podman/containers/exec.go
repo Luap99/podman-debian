@@ -10,13 +10,13 @@ import (
 	"time"
 
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/podman/v5/cmd/podman/common"
-	"github.com/containers/podman/v5/cmd/podman/registry"
-	"github.com/containers/podman/v5/cmd/podman/validate"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	envLib "github.com/containers/podman/v5/pkg/env"
-	"github.com/containers/podman/v5/pkg/rootless"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/validate"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	envLib "github.com/containers/podman/v4/pkg/env"
+	"github.com/containers/podman/v4/pkg/rootless"
 	"github.com/spf13/cobra"
 )
 
@@ -68,7 +68,7 @@ func execFlags(cmd *cobra.Command) {
 	_ = cmd.RegisterFlagCompletionFunc(envFlagName, completion.AutocompleteNone)
 
 	envFileFlagName := "env-file"
-	flags.StringArrayVar(&envFile, envFileFlagName, []string{}, "Read in a file of environment variables")
+	flags.StringSliceVar(&envFile, envFileFlagName, []string{}, "Read in a file of environment variables")
 	_ = cmd.RegisterFlagCompletionFunc(envFileFlagName, completion.AutocompleteDefault)
 
 	flags.BoolVarP(&execOpts.Interactive, "interactive", "i", false, "Keep STDIN open even if not attached")
@@ -82,10 +82,6 @@ func execFlags(cmd *cobra.Command) {
 	preserveFdsFlagName := "preserve-fds"
 	flags.UintVar(&execOpts.PreserveFDs, preserveFdsFlagName, 0, "Pass N additional file descriptors to the container")
 	_ = cmd.RegisterFlagCompletionFunc(preserveFdsFlagName, completion.AutocompleteNone)
-
-	preserveFdFlagName := "preserve-fd"
-	flags.UintSliceVar(&execOpts.PreserveFD, preserveFdFlagName, nil, "Pass a list of additional file descriptors to the container")
-	_ = cmd.RegisterFlagCompletionFunc(preserveFdFlagName, completion.AutocompleteNone)
 
 	workdirFlagName := "workdir"
 	flags.StringVarP(&execOpts.WorkDir, workdirFlagName, "w", "", "Working directory inside the container")
@@ -142,12 +138,6 @@ func exec(cmd *cobra.Command, args []string) error {
 	}
 
 	execOpts.Envs = envLib.Join(execOpts.Envs, cliEnv)
-
-	for _, fd := range execOpts.PreserveFD {
-		if !rootless.IsFdInherited(int(fd)) {
-			return fmt.Errorf("file descriptor %d is not available - the preserve-fd option requires that file descriptors must be passed", fd)
-		}
-	}
 
 	for fd := 3; fd < int(3+execOpts.PreserveFDs); fd++ {
 		if !rootless.IsFdInherited(fd) {

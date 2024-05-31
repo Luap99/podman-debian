@@ -1,8 +1,7 @@
 ####> This option file is used in:
-####>   podman build, create, farm build, pull, push, run
+####>   podman build, farm build
 ####> If file is edited, make sure the changes
 ####> are applicable to all of those.
 #### **--retry-delay**=*duration*
 
-Duration of delay between retry attempts when pulling or pushing images between
-the registry and local storage in case of failure. The default is to start at two seconds and then exponentially back off. The delay is used when this value is set, and no exponential back off occurs.
+Duration of delay between retry attempts in case of failure when performing pull of images from registry. Default is **2s**.

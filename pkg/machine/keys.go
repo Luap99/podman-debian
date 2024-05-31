@@ -1,4 +1,5 @@
 //go:build amd64 || arm64
+// +build amd64 arm64
 
 package machine
 
@@ -34,20 +35,6 @@ func CreateSSHKeys(writeLocation string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSuffix(string(b), "\n"), nil
-}
-
-// GetSSHKeys checks to see if there is a ssh key at the provided location.
-// If not, we create the priv and pub keys. The ssh key is then returned.
-func GetSSHKeys(identityPath string) (string, error) {
-	if _, err := os.Stat(identityPath); err == nil {
-		b, err := os.ReadFile(identityPath + ".pub")
-		if err != nil {
-			return "", err
-		}
-		return strings.TrimSuffix(string(b), "\n"), nil
-	}
-
-	return CreateSSHKeys(identityPath)
 }
 
 func CreateSSHKeysPrefix(identityPath string, passThru bool, skipExisting bool, prefix ...string) (string, error) {

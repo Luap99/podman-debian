@@ -1,4 +1,5 @@
 //go:build !remote && systemd
+// +build !remote,systemd
 
 package libpod
 
@@ -9,10 +10,10 @@ import (
 	"os/exec"
 	"strings"
 
-	systemdCommon "github.com/containers/common/pkg/systemd"
-	"github.com/containers/podman/v5/pkg/errorhandling"
-	"github.com/containers/podman/v5/pkg/rootless"
-	"github.com/containers/podman/v5/pkg/systemd"
+	"github.com/containers/podman/v4/pkg/errorhandling"
+	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/systemd"
+	"github.com/containers/podman/v4/utils"
 	"github.com/sirupsen/logrus"
 )
 
@@ -137,7 +138,7 @@ func (c *Container) removeTransientFiles(ctx context.Context, isStartup bool) er
 }
 
 func (c *Container) disableHealthCheckSystemd(isStartup bool) bool {
-	if !systemdCommon.RunsOnSystemd() || os.Getenv("DISABLE_HC_SYSTEMD") == "true" {
+	if !utils.RunsOnSystemd() || os.Getenv("DISABLE_HC_SYSTEMD") == "true" {
 		return true
 	}
 	if isStartup {

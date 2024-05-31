@@ -1,11 +1,11 @@
 //go:build !remote
+// +build !remote
 
 package libpod
 
 import (
 	"bufio"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,12 +18,11 @@ import (
 
 	"github.com/containers/common/libnetwork/types"
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/api/handlers/utils/apiutil"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/api/handlers/utils/apiutil"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/selinux/go-selinux/label"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/sys/unix"
 )
 
 // FuncTimer helps measure the execution time of a function
@@ -217,7 +216,7 @@ func writeHijackHeader(r *http.Request, conn io.Writer, tty bool) {
 		// Upgraded
 		fmt.Fprintf(conn,
 			"HTTP/1.1 101 UPGRADED\r\nContent-Type: %s\r\nConnection: Upgrade\r\nUpgrade: %s\r\n\r\n",
-			header, proto)
+			proto, header)
 	}
 }
 
@@ -235,12 +234,8 @@ func makeInspectPorts(bindings []types.PortMapping, expose map[uint16][]string) 
 			for i := uint16(0); i < port.Range; i++ {
 				key := fmt.Sprintf("%d/%s", port.ContainerPort+i, protocol)
 				hostPorts := portBindings[key]
-				var hostIP = port.HostIP
-				if len(port.HostIP) == 0 {
-					hostIP = "0.0.0.0"
-				}
 				hostPorts = append(hostPorts, define.InspectHostPort{
-					HostIP:   hostIP,
+					HostIP:   port.HostIP,
 					HostPort: strconv.FormatUint(uint64(port.HostPort+i), 10),
 				})
 				portBindings[key] = hostPorts
@@ -278,10 +273,6 @@ func writeStringToPath(path, contents, mountLabel string, uid, gid int) error {
 	}
 	// Relabel runDirResolv for the container
 	if err := label.Relabel(path, mountLabel, false); err != nil {
-		if errors.Is(err, unix.ENOTSUP) {
-			logrus.Debugf("Labeling not supported on %q", path)
-			return nil
-		}
 		return err
 	}
 

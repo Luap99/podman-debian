@@ -6,18 +6,14 @@ podman\-systemd.unit - systemd units using Podman Quadlet
 
 ## SYNOPSIS
 
-*name*.container, *name*.volume, *name*.network, *name*.kube *name*.image, *name*.pod
+*name*.container, *name*.volume, *name*.network, *name*.kube *name*.image
 
-### Podman rootful unit search path
-
-Quadlet files for the root user can be placed in the following two directories:
+### Podman unit search path
 
  * /etc/containers/systemd/
  * /usr/share/containers/systemd/
 
-### Podman rootless unit search path
-
-Quadlet files for non-root users can be placed in the following directories
+### Podman user unit search path
 
  * $XDG_CONFIG_HOME/containers/systemd/ or ~/.config/containers/systemd/
  * /etc/containers/systemd/users/$(UID)
@@ -39,22 +35,17 @@ the [Service] table and [Install] tables pass directly to systemd and are handle
 See systemd.unit(5) man page for more information.
 
 The Podman generator reads the search paths above and reads files with the extensions `.container`
-`.volume`, `.network`, `.pod` and `.kube`, and for each file generates a similarly named `.service` file. Be aware that
+`.volume` and `*.kube`, and for each file generates a similarly named `.service` file. Be aware that
 existing vendor services (i.e., in `/usr/`) are replaced if they have the same name. The generated unit files can
 be started and managed with `systemctl` like any other systemd service. `systemctl {--user} list-unit-files`
 lists existing unit files on the system.
+
+Files with the `.network` extension are only read if they are mentioned in a `.container` file. See the `Network=` key.
 
 The Podman files use the same format as [regular systemd unit files](https://www.freedesktop.org/software/systemd/man/systemd.syntax.html).
 Each file type has a custom section (for example, `[Container]`) that is handled by Podman, and all
 other sections are passed on untouched, allowing the use of any normal systemd configuration options
 like dependencies or cgroup limits.
-
-The source files also support drop-ins in the same [way systemd does](https://www.freedesktop.org/software/systemd/man/latest/systemd.unit.html).
-For a given source file (say `foo.container`), the corresponding `.d`directory (in this
-case `foo.container.d`) will be scanned for files with a `.conf` extension that are merged into
-the base file in alphabetical order. The format of these drop-in files is the same as the base file.
-This is useful to alter or add configuration settings for a unit, without having to modify unit
-files.
 
 For rootless containers, when administrators place Quadlet files in the
 /etc/containers/systemd/users directory, all users' sessions execute the
@@ -81,8 +72,7 @@ Quadlet requires the use of cgroup v2, use `podman info --format {{.Host.Cgroups
 ### Service Type
 
 By default, the `Type` field of the `Service` section of the Quadlet file does not need to be set.
-Quadlet will set it to `notify` for `.container` and `.kube` files,
-`forking` for `.pod` files, and `oneshot` for `.volume`, `.network` and `.image` files.
+Quadlet will set it to `notify` for `.container` and `.kube` files and to `oneshot` for `.volume`, `.network` and `.image` files.
 
 However, `Type` may be explicitly set to `oneshot` for `.container` and `.kube` files when no containers are expected
 to run once `podman` exits.
@@ -113,86 +103,16 @@ WantedBy=default.target
 
 Currently, only the `Alias`, `WantedBy` and `RequiredBy` keys are supported.
 
-The Install section can be part of the main file, or it can be in a
-separate drop-in file as described above. The latter allows you to
-install an non-enabled unit and then later enabling it by installing
-the drop-in.
-
-
 **NOTE:** To express dependencies between containers, use the generated names of the service. In other
 words `WantedBy=other.service`, not `WantedBy=other.container`. The same is
 true for other kinds of dependencies, too, like `After=other.service`.
 
-### Template files
-
-Systemd supports a concept of [template files](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html#Service%20Templates).
-They are units with names of the form "basename@instancename.service"
-when they are running, but that can be instantiated multiple times
-from a single "basename@.service" file. The individual instances can
-also be different by using drop-in files with the full instance name.
-
-Quadlets support these in two ways. First of all, a quadlet unit with
-a template form will generate a systemd service with a template form,
-and the template systemd service can be used as a regular template.
-For example, "foo@.container" will generate "foo@.service" and you can
-then "systemctl start foo@bar.service".
-
-Secondly, if you make a symlink like "foo@instance.container", that
-will generate an instantiated template file. When generating this file
-quadlet will read drop-in files both from the instanced directory
-(foo@instance.container.d) and the template directory
-(foo@.container.d). This allows customization of individual instances.
-
-Instanced template files (like `foo@bar.container`) can be enabled
-just like non-templated ones. However, templated ones
-(`foo@.container`) are different, because they need to be
-instantiated. If the `[Install]` section contains a `DefaultInstance=`
-key, then that instance will be enabled, but if not, nothing will
-happen and the options will only be used as the default for units
-that are instantiated using symlinks.
-
-An example template file `sleep@.container` might look like this:
-
-```
-[Unit]
-Description=A templated sleepy container
-
-[Container]
-Image=quay.io/fedora/fedora
-Exec=sleep %i
-
-[Service]
-# Restart service when sleep finishes
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-DefaultInstance=100
-```
-
-If this is installed, then on boot there will be a `sleep@100.service`
-running that sleeps for 100 seconds. You can then do something like
-`systemctl start sleep@50.service` to start another instance that
-sleeps 50 seconds, or alternatively another service can start it via a
-dependency like `Wants=sleep@50.service`.
-
-In addition, if you do `ln -s sleep@.container sleep@10.container` you
-will also have a 10 second sleep running at boot. And, if you want
-that particular instance to be running with another image, you can
-create a drop-in file like `sleep@10.container.d/10-image.conf`:
-```
-[Container]
-Image=quay.io/centos/centos
-```
-
 ### Debugging unit files
 
-After placing the unit file in one of the unit search paths (mentioned
-above), you can start it with `systemctl start {--user}`. If it fails
-with "Failed to start example.service: Unit example.service not
-found.", then it is possible that you used incorrect syntax or you
-used an option from a newer version of Podman Quadlet and the
-generator failed to create a service file.
+After placing the unit file in one of the unit search paths (mentioned above), you can start it with
+`systemctl start {--user}`. If it fails with "Failed to start example.service: Unit example.service not found.",
+then it is possible that you used incorrect syntax or you used an option from a newer version of Podman
+Quadlet and the generator failed to create a service file.
 
 View the generated files and/or error messages with:
 ```
@@ -236,24 +156,23 @@ Valid options for `[Container]` are listed below:
 | ContainerName=name                   | --name name                                          |
 | ContainersConfModule=/etc/nvd\.conf  | --module=/etc/nvd\.conf                              |
 | DNS=192.168.55.1                     | --dns=192.168.55.1                                   |
-| DNSOption=ndots:1                    | --dns-option=ndots:1                                 |
 | DNSSearch=foo.com                    | --dns-search=foo.com                                 |
+| DNSOption=ndots:1                    | --dns-option=ndots:1                                 |
 | DropCapability=CAP                   | --cap-drop=CAP                                       |
-| Entrypoint=/foo.sh                   | --entrypoint=/foo.sh                                 |
 | Environment=foo=bar                  | --env foo=bar                                        |
 | EnvironmentFile=/tmp/env             | --env-file /tmp/env                                  |
 | EnvironmentHost=true                 | --env-host                                           |
 | Exec=/usr/bin/command                | Command after image specification - /usr/bin/command |
 | ExposeHostPort=50-59                 | --expose 50-59                                       |
 | GIDMap=0:10000:10                    | --gidmap=0:10000:10                                  |
-| GlobalArgs=--log-level=debug         | --log-level=debug                                    |
 | Group=1234                           | --user UID:1234                                      |
-| HealthCmd=/usr/bin/command           | --health-cmd=/usr/bin/command                        |
+| GlobalArgs=--log-level=debug         | --log-level=debug                                    |
+| HealthCmd="/usr/bin/command"         | --health-cmd="/usr/bin/command"                      |
 | HealthInterval=2m                    | --health-interval=2m                                 |
 | HealthOnFailure=kill                 | --health-on-failure=kill                             |
 | HealthRetries=5                      | --health-retries=5                                   |
 | HealthStartPeriod=1m                 | --health-start-period=period=1m                      |
-| HealthStartupCmd=command             | --health-startup-cmd=command                         |
+| HealthStartupCmd="command"           | --health-startup-cmd="command"                       |
 | HealthStartupInterval=1m             | --health-startup-interval=1m                         |
 | HealthStartupRetries=8               | --health-startup-retries=8                           |
 | HealthStartupSuccess=2               | --health-startup-success=2                           |
@@ -265,37 +184,32 @@ Valid options for `[Container]` are listed below:
 | IP6=2001:db8::1                      | --ip6 2001:db8::1                                    |
 | Label="XYZ"                          | --label "XYZ"                                        |
 | LogDriver=journald                   | --log-driver journald                                |
-| Mask=/proc/sys/foo\:/proc/sys/bar    | --security-opt mask=/proc/sys/foo:/proc/sys/bar      |
 | Mount=type=...                       | --mount type=...                                     |
 | Network=host                         | --net host                                           |
 | NoNewPrivileges=true                 | --security-opt no-new-privileges                     |
+| Rootfs=/var/lib/rootfs               | --rootfs /var/lib/rootfs                             |
 | Notify=true                          | --sdnotify container                                 |
 | PidsLimit=10000                      | --pids-limit 10000                                   |
-| Pod=pod-name                         | --pod=pod-name                                       |
 | PodmanArgs=--add-host foobar         | --add-host foobar                                    |
 | PublishPort=50-59                    | --publish 50-59                                      |
 | Pull=never                           | --pull=never                                         |
 | ReadOnly=true                        | --read-only                                          |
 | ReadOnlyTmpfs=true                   | --read-only-tmpfs                                    |
-| Rootfs=/var/lib/rootfs               | --rootfs /var/lib/rootfs                             |
 | RunInit=true                         | --init                                               |
 | SeccompProfile=/tmp/s.json           | --security-opt seccomp=/tmp/s.json                   |
-| Secret=secret                        | --secret=secret[,opt=opt ...]                        |
 | SecurityLabelDisable=true            | --security-opt label=disable                         |
 | SecurityLabelFileType=usr_t          | --security-opt label=filetype:usr_t                  |
 | SecurityLabelLevel=s0:c1,c2          | --security-opt label=level:s0:c1,c2                  |
 | SecurityLabelNested=true             | --security-opt label=nested                          |
 | SecurityLabelType=spc_t              | --security-opt label=type:spc_t                      |
 | ShmSize=100m                         | --shm-size=100m                                      |
-| StopTimeout=20                       | --stop-timeout=20                                    |
 | SubGIDMap=gtest                      | --subgidname=gtest                                   |
 | SubUIDMap=utest                      | --subuidname=utest                                   |
 | Sysctl=name=value                    | --sysctl=name=value                                  |
 | Timezone=local                       | --tz local                                           |
 | Tmpfs=/work                          | --tmpfs /work                                        |
 | UIDMap=0:10000:10                    | --uidmap=0:10000:10                                  |
-| Ulimit=nofile=1000:10000             | --ulimit nofile=1000:10000                           |
-| Unmask=ALL                           | --security-opt unmask=ALL                            |
+| Ulimit=nofile:1000:10000             | --ulimit nofile:1000:10000                           |
 | User=bin                             | --user bin                                           |
 | UserNS=keep-id:uid=200,gid=210       | --userns keep-id:uid=200,gid=210                     |
 | Volume=/source:/dest                 | --volume /source:/dest                               |
@@ -381,12 +295,6 @@ For example:
 DropCapability=CAP_DAC_OVERRIDE CAP_IPC_OWNER
 ```
 
-### `Entrypoint=`
-
-Override the default ENTRYPOINT from the image.
-Equivalent to the Podman `--entrypoint` option.
-Specify multi option commands in the form of a json string.
-
 ### `Environment=`
 
 Set an environment variable in the container. This uses the same format as
@@ -426,7 +334,8 @@ This key can be listed multiple times.
 ### `GlobalArgs=`
 
 This key contains a list of arguments passed directly between `podman` and `run`
-in the generated file. It can be used to access Podman features otherwise unsupported by the generator. Since the generator is unaware
+in the generated file (right before the image name in the command line). It can be used to
+access Podman features otherwise unsupported by the generator. Since the generator is unaware
 of what unexpected interactions can be caused by these arguments, it is not recommended to use
 this option.
 
@@ -539,10 +448,6 @@ This key can be listed multiple times.
 Set the log-driver used by Podman when running the container.
 Equivalent to the Podman `--log-driver` option.
 
-### `Mask=`
-
-Specify the paths to mask separated by a colon. `Mask=/path/1:/path/2`. A masked path cannot be accessed inside the container.
-
 ### `Mount=`
 
 Attach a filesystem mount to the container.
@@ -574,6 +479,14 @@ This key can be listed multiple times.
 If enabled, this disables the container processes from gaining additional privileges via things like
 setuid and file capabilities.
 
+### `Rootfs=`
+
+The rootfs to use for the container. Rootfs points to a directory on the system that contains the content to be run within the container. This option conflicts with the `Image` option.
+
+The format of the rootfs is the same as when passed to `podman run --rootfs`, so it supports overlay mounts as well.
+
+Note: On SELinux systems, the rootfs needs the correct label, which is by default unconfined_u:object_r:container_file_t:s0.
+
 ### `Notify=` (defaults to `no`)
 
 By default, Podman is run in such a way that the systemd startup notify command is handled by
@@ -583,22 +496,10 @@ starts the child in the container. However, if the container application support
 `Notify` to true passes the notification details to the container allowing it to notify
 of startup on its own.
 
-In addition, setting `Notify` to `healthy` will postpone startup notifications until such time as
-the container is marked healthy, as determined by Podman healthchecks. Note that this requires
-setting up a container healthcheck, see the `HealthCmd` option for more.
-
 ### `PidsLimit=`
 
 Tune the container's pids limit.
 This is equivalent to the Podman `--pids-limit` option.
-
-### `Pod=`
-
-Specify a Quadlet `.pod` unit to link the container to.
-The value must take the form of `<name>.pod` and the `.pod` unit must exist.
-
-Quadlet will add all the necessary parameters to link between the container and the pod and between their corresponding services.
-
 
 ### `PodmanArgs=`
 
@@ -643,14 +544,6 @@ If enabled, makes the image read-only.
 
 If ReadOnly is set to `yes`, mount a read-write tmpfs on /dev, /dev/shm, /run, /tmp, and /var/tmp.
 
-### `Rootfs=`
-
-The rootfs to use for the container. Rootfs points to a directory on the system that contains the content to be run within the container. This option conflicts with the `Image` option.
-
-The format of the rootfs is the same as when passed to `podman run --rootfs`, so it supports overlay mounts as well.
-
-Note: On SELinux systems, the rootfs needs the correct label, which is by default unconfined_u:object_r:container_file_t:s0.
-
 ### `RunInit=` (default to `no`)
 
 If enabled, the container has a minimal init process inside the
@@ -660,11 +553,6 @@ container that forwards signals and reaps processes.
 
 Set the seccomp profile to use in the container. If unset, the default podman profile is used.
 Set to either the pathname of a json file, or `unconfined` to disable the seccomp filters.
-
-### `Secret=`
-
-Use a Podman secret in the container either as a file or an environment variable.
-This is equivalent to the Podman `--secret` option and generally has the form `secret[,opt=opt ...]`
 
 ### `SecurityLabelDisable=`
 
@@ -686,19 +574,16 @@ Allow SecurityLabels to function within the container. This allows separation of
 
 Set the label process type for the container processes.
 
+### `Secret=`
+
+Use a Podman secret in the container either as a file or an environment variable.
+This is equivalent to the Podman `--secret` option and generally has the form `secret[,opt=opt ...]`
+
 ### `ShmSize=`
 
 Size of /dev/shm.
 
 This is equivalent to the Podman `--shm-size` option and generally has the form `number[unit]`
-
-### `StopTimeout=`
-
-Seconds to wait before forcibly stopping the container.
-
-Note, this value should be lower than the actual systemd unit timeout to make sure the podman rm command is not killed by systemd.
-
-This is equivalent to the Podman `--stop-timeout` option
 
 ### `SubGIDMap=`
 
@@ -721,16 +606,16 @@ For example:
 Sysctl=net.ipv6.conf.all.disable_ipv6=1 net.ipv6.conf.all.use_tempaddr=1
 ```
 
-### `Timezone=` (if unset uses system-configured default)
-
-The timezone to run the container in.
-
 ### `Tmpfs=`
 
 Mount a tmpfs in the container. This is equivalent to the Podman `--tmpfs` option, and
 generally has the form `CONTAINER-DIR[:OPTIONS]`.
 
 This key can be listed multiple times.
+
+### `Timezone=` (if unset uses system-configured default)
+
+The timezone to run the container in.
 
 ### `UIDMap=`
 
@@ -742,18 +627,6 @@ This key can be listed multiple times.
 ### `Ulimit=`
 
 Ulimit options. Sets the ulimits values inside of the container.
-
-This key can be listed multiple times.
-
-### `Unmask=`
-
-Specify the paths to unmask separated by a colon. unmask=ALL or /path/1:/path/2, or shell expanded paths (/proc/*):
-
-If set to `ALL`, Podman will unmask all the paths that are masked or made read-only by default.
-
-The default masked paths are /proc/acpi, /proc/kcore, /proc/keys, /proc/latency_stats, /proc/sched_debug, /proc/scsi, /proc/timer_list, /proc/timer_stats, /sys/firmware, and /sys/fs/selinux.
-
-The default paths that are read-only are /proc/asound, /proc/bus, /proc/fs, /proc/irq, /proc/sys, /proc/sysrq-trigger, /sys/fs/cgroup.
 
 ### `User=`
 
@@ -785,114 +658,6 @@ Working directory inside the container.
 
 The default working directory for running binaries within a container is the root directory (/). The image developer can set a different default with the WORKDIR instruction. This option overrides the working directory by using the -w option.
 
-## Pod units [Pod]
-
-Pod units are named with a `.pod` extension and contain a `[Pod]` section describing
-the pod that is created and run as a service. The resulting service file contains a line like
-`ExecStartPre=podman pod create …`, and most of the keys in this section control the command-line
-options passed to Podman.
-
-By default, the Podman pod has the same name as the unit, but with a `systemd-` prefix, i.e.
-a `$name.pod` file creates a `$name-pod.service` unit and a `systemd-$name` Podman pod. The
-`PodName` option allows for overriding this default name with a user-provided one.
-
-Valid options for `[Pod]` are listed below:
-
-| **[Pod] options**                   | **podman container create equivalent** |
-|-------------------------------------|----------------------------------------|
-| ContainersConfModule=/etc/nvd\.conf | --module=/etc/nvd\.conf                |
-| GlobalArgs=--log-level=debug        | --log-level=debug                      |
-| Network=host                        | --network host                         |
-| PodmanArgs=\-\-cpus=2               | --cpus=2                               |
-| PodName=name                        | --name=name                            |
-| PublishPort=50-59                   | --publish 50-59                        |
-| Volume=/source:/dest                | --volume /source:/dest                 |
-
-Supported keys in the `[Pod]` section are:
-
-### `ContainersConfModule=`
-
-Load the specified containers.conf(5) module. Equivalent to the Podman `--module` option.
-
-This key can be listed multiple times.
-
-### `GlobalArgs=`
-
-This key contains a list of arguments passed directly between `podman` and `pod`
-in the generated file. It can be used to access Podman features otherwise unsupported by the generator. Since the generator is unaware
-of what unexpected interactions can be caused by these arguments, it is not recommended to use
-this option.
-
-The format of this is a space separated list of arguments, which can optionally be individually
-escaped to allow inclusion of whitespace and other control characters.
-
-This key can be listed multiple times.
-
-### `Network=`
-
-Specify a custom network for the pod.
-This has the same format as the `--network` option to `podman pod create`.
-For example, use `host` to use the host network in the pod, or `none` to not set up networking in the pod.
-
-As a special case, if the `name` of the network ends with `.network`, Quadlet will look for the corresponding `.network` Quadlet unit.
-If found, Quadlet will use the name of the Network set in the Unit, otherwise, `systemd-$name` is used.
-The generated systemd service contains a dependency on the service unit generated for that `.network` unit,
-or on `$name-network.service` if the `.network` unit is not found
-
-This key can be listed multiple times.
-
-### `PodmanArgs=`
-
-This key contains a list of arguments passed directly to the end of the `podman pod create` command
-in the generated file. It can be used to access Podman features otherwise unsupported by the generator. Since the generator is unaware
-of what unexpected interactions can be caused by these arguments, is not recommended to use
-this option.
-
-The format of this is a space separated list of arguments, which can optionally be individually
-escaped to allow inclusion of whitespace and other control characters.
-
-This key can be listed multiple times.
-
-### `PodName=`
-
-The (optional) name of the Podman pod. If this is not specified, the default value
-of `systemd-%N` is used, which is the same as the service name but with a `systemd-`
-prefix to avoid conflicts with user-managed containers.
-
-Please note that pods and containers cannot have the same name.
-So, if PodName is set, it must not conflict with any container.
-
-### `PublishPort=`
-
-Exposes a port, or a range of ports (e.g. `50-59`), from the pod to the host. Equivalent
-to the Podman `--publish` option. The format is similar to the Podman options, which is of
-the form `ip:hostPort:containerPort`, `ip::containerPort`, `hostPort:containerPort` or
-`containerPort`, where the number of host and container ports must be the same (in the case
-of a range).
-
-If the IP is set to 0.0.0.0 or not set at all, the port is bound on all IPv4 addresses on
-the host; use [::] for IPv6.
-
-Note that not listing a host port means that Podman automatically selects one, and it
-may be different for each invocation of service. This makes that a less useful option. The
-allocated port can be found with the `podman port` command.
-
-This key can be listed multiple times.
-
-### `Volume=`
-
-Mount a volume in the pod. This is equivalent to the Podman `--volume` option, and
-generally has the form `[[SOURCE-VOLUME|HOST-DIR:]CONTAINER-DIR[:OPTIONS]]`.
-
-If `SOURCE-VOLUME` starts with `.`, Quadlet resolves the path relative to the location of the unit file.
-
-As a special case, if `SOURCE-VOLUME` ends with `.volume`, Quadlet will look for the corresponding `.volume` Quadlet unit.
-If found, Quadlet will use the name of the Volume set in the Unit, otherwise, `systemd-$name` is used.
-The generated systemd service contains a dependency on the service unit generated for that `.volume` unit,
-or on `$name-volume.service` if the `.volume` unit is not found
-
-This key can be listed multiple times.
-
 ## Kube units [Kube]
 
 Kube units are named with a `.kube` extension and contain a `[Kube]` section describing
@@ -910,7 +675,6 @@ Valid options for `[Kube]` are listed below:
 | AutoUpdate=registry                 | --annotation "io.containers.autoupdate=registry"                 |
 | ConfigMap=/tmp/config.map           | --config-map /tmp/config.map                                     |
 | ContainersConfModule=/etc/nvd\.conf | --module=/etc/nvd\.conf                                          |
-| ExitCodePropagation=how             | How to propagate container error status                          |
 | GlobalArgs=--log-level=debug        | --log-level=debug                                                |
 | KubeDownForce=true                  | --force (for `podman kube down`)                                 |
 | LogDriver=journald                  | --log-driver journald                                            |
@@ -959,7 +723,8 @@ The current default value is `none`.
 ### `GlobalArgs=`
 
 This key contains a list of arguments passed directly between `podman` and `kube`
-in the generated file. It can be used to access Podman features otherwise unsupported by the generator. Since the generator is unaware
+in the generated file (right before the image name in the command line). It can be used to
+access Podman features otherwise unsupported by the generator. Since the generator is unaware
 of what unexpected interactions can be caused by these arguments, it is not recommended to use
 this option.
 
@@ -977,6 +742,10 @@ Equivalent to the Podman `--force` option.
 
 Set the log-driver Podman uses when running the container.
 Equivalent to the Podman `--log-driver` option.
+
+### `Mask=`
+
+Specify the paths to mask separated by a colon. `Mask=/path/1:/path/2`. A masked path cannot be accessed inside the container.
 
 ### `Network=`
 
@@ -1031,6 +800,16 @@ Alternatively, users can explicitly set the `WorkingDirectory` field of the `Ser
 Please note that if the `WorkingDirectory` field of the `Service` group is set,
 Quadlet will not set it even if `SetWorkingDirectory` is set
 
+### `Unmask=`
+
+Specify the paths to unmask separated by a colon. unmask=ALL or /path/1:/path/2, or shell expanded paths (/proc/*):
+
+If set to `ALL`, Podman will unmask all the paths that are masked or made read-only by default.
+
+The default masked paths are /proc/acpi, /proc/kcore, /proc/keys, /proc/latency_stats, /proc/sched_debug, /proc/scsi, /proc/timer_list, /proc/timer_stats, /sys/firmware, and /sys/fs/selinux.
+
+The default paths that are read-only are /proc/asound, /proc/bus, /proc/fs, /proc/irq, /proc/sys, /proc/sysrq-trigger, /sys/fs/cgroup.
+
 ### `UserNS=`
 
 Set the user namespace mode for the container. This is equivalent to the Podman `--userns` option and
@@ -1074,7 +853,7 @@ Valid options for `[Network]` are listed below:
 | IPv6=true                           | --ipv6                               |
 | Label="XYZ"                         | --label "XYZ"                        |
 | NetworkName=foo                     | podman network create foo            |
-| Options=isolate=true                | --opt isolate=true                   |
+| Options=isolate                     | --opt isolate                        |
 | PodmanArgs=--dns=192.168.55.1       | --dns=192.168.55.1                   |
 | Subnet=192.5.0.0/16                 | --subnet 192.5.0.0/16                |
 
@@ -1115,7 +894,8 @@ This key can be listed multiple times.
 ### `GlobalArgs=`
 
 This key contains a list of arguments passed directly between `podman` and `network`
-in the generated file. It can be used to access Podman features otherwise unsupported by the generator. Since the generator is unaware
+in the generated file (right before the image name in the command line). It can be used to
+access Podman features otherwise unsupported by the generator. Since the generator is unaware
 of what unexpected interactions can be caused by these arguments, it is not recommended to use
 this option.
 
@@ -1221,8 +1001,6 @@ Valid options for `[Volume]` are listed below:
 | Label="foo=bar"                     | --label "foo=bar"                         |
 | Options=XYZ                         | --opt XYZ                                 |
 | PodmanArgs=--driver=image           | --driver=image                            |
-| Type=type                           | Filesystem type of Device                 |
-| User=123                            | --opt uid=123                             |
 | VolumeName=foo                      | podman volume create foo                  |
 
 Supported keys in `[Volume]` section are:
@@ -1251,7 +1029,8 @@ This is equivalent to the Podman `--driver` option.
 ### `GlobalArgs=`
 
 This key contains a list of arguments passed directly between `podman` and `volume`
-in the generated file. It can be used to access Podman features otherwise unsupported by the generator. Since the generator is unaware
+in the generated file (right before the image name in the command line). It can be used to
+access Podman features otherwise unsupported by the generator. Since the generator is unaware
 of what unexpected interactions can be caused by these arguments, it is not recommended to use
 this option.
 
@@ -1292,7 +1071,7 @@ The mount options to use for a filesystem as used by the **mount(8)** command `-
 ### `PodmanArgs=`
 
 This key contains a list of arguments passed directly to the end of the `podman volume create` command
-in the generated file (right before the name of the volume in the command line). It can be used to
+in the generated file (right before the name of the network in the command line). It can be used to
 access Podman features otherwise unsupported by the generator. Since the generator is unaware
 of what unexpected interactions can be caused by these arguments, is not recommended to use
 this option.
@@ -1389,7 +1168,8 @@ This is equivalent to the Podman `--decryption-key` option.
 ### `GlobalArgs=`
 
 This key contains a list of arguments passed directly between `podman` and `image`
-in the generated file. It can be used to access Podman features otherwise unsupported by the generator. Since the generator is unaware
+in the generated file (right before the image name in the command line). It can be used to
+access Podman features otherwise unsupported by the generator. Since the generator is unaware
 of what unexpected interactions can be caused by these arguments, it is not recommended to use
 this option.
 
@@ -1513,22 +1293,6 @@ Subnet=172.16.0.0/24
 Gateway=172.16.0.1
 IPRange=172.16.0.0/28
 Label=org.test.Key=value
-```
-
-Example for Container in a Pod:
-
-`test.pod`
-```
-[Pod]
-PodName=test
-```
-
-`centos.container`
-```
-[Container]
-Image=quay.io/centos/centos:latest
-Exec=sh -c "sleep inf"
-Pod=test.pod
 ```
 
 ## SEE ALSO

@@ -6,14 +6,14 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/containers/podman/v5/pkg/bindings"
-	"github.com/containers/podman/v5/pkg/domain/entities/types"
+	"github.com/containers/podman/v4/pkg/bindings"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 )
 
 // Checkpoint checkpoints the given container (identified by nameOrID).  All additional
 // options are options and allow for more fine grained control of the checkpoint process.
-func Checkpoint(ctx context.Context, nameOrID string, options *CheckpointOptions) (*types.CheckpointReport, error) {
-	var report types.CheckpointReport
+func Checkpoint(ctx context.Context, nameOrID string, options *CheckpointOptions) (*entities.CheckpointReport, error) {
+	var report entities.CheckpointReport
 	if options == nil {
 		options = new(CheckpointOptions)
 	}
@@ -52,13 +52,13 @@ func Checkpoint(ctx context.Context, nameOrID string, options *CheckpointOptions
 		return nil, err
 	}
 
-	return &types.CheckpointReport{}, nil
+	return &entities.CheckpointReport{}, nil
 }
 
 // Restore restores a checkpointed container to running. The container is identified by the nameOrID option. All
 // additional options are optional and allow finer control of the restore process.
-func Restore(ctx context.Context, nameOrID string, options *RestoreOptions) (*types.RestoreReport, error) {
-	var report types.RestoreReport
+func Restore(ctx context.Context, nameOrID string, options *RestoreOptions) (*entities.RestoreReport, error) {
+	var report entities.RestoreReport
 	if options == nil {
 		options = new(RestoreOptions)
 	}

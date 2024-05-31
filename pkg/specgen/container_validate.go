@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/containers/podman/v5/libpod/define"
-	"golang.org/x/exp/slices"
+	"github.com/containers/common/pkg/util"
+	"github.com/containers/podman/v4/libpod/define"
 )
 
 var (
@@ -31,7 +31,7 @@ func (s *SpecGenerator) Validate() error {
 		if len(s.Networks) > 0 {
 			return fmt.Errorf("networks must be defined when the pod is created: %w", define.ErrNetworkOnPodContainer)
 		}
-		if len(s.PortMappings) > 0 || (s.PublishExposedPorts != nil && *s.PublishExposedPorts) {
+		if len(s.PortMappings) > 0 || s.PublishExposedPorts {
 			return fmt.Errorf("published or exposed ports must be defined when the pod is created: %w", define.ErrNetworkOnPodContainer)
 		}
 		if len(s.HostAdd) > 0 {
@@ -59,7 +59,7 @@ func (s *SpecGenerator) Validate() error {
 		return fmt.Errorf("cannot set hostname when running in the host UTS namespace: %w", ErrInvalidSpecConfig)
 	}
 	// systemd values must be true, false, or always
-	if len(s.ContainerBasicConfig.Systemd) > 0 && !slices.Contains(SystemDValues, strings.ToLower(s.ContainerBasicConfig.Systemd)) {
+	if len(s.ContainerBasicConfig.Systemd) > 0 && !util.StringInSlice(strings.ToLower(s.ContainerBasicConfig.Systemd), SystemDValues) {
 		return fmt.Errorf("--systemd values must be one of %q: %w", strings.Join(SystemDValues, ", "), ErrInvalidSpecConfig)
 	}
 
@@ -75,7 +75,7 @@ func (s *SpecGenerator) Validate() error {
 		return exclusiveOptions("rootfs", "image")
 	}
 	// imagevolumemode must be one of ignore, tmpfs, or anonymous if given
-	if len(s.ContainerStorageConfig.ImageVolumeMode) > 0 && !slices.Contains(ImageVolumeModeValues, strings.ToLower(s.ContainerStorageConfig.ImageVolumeMode)) {
+	if len(s.ContainerStorageConfig.ImageVolumeMode) > 0 && !util.StringInSlice(strings.ToLower(s.ContainerStorageConfig.ImageVolumeMode), ImageVolumeModeValues) {
 		return fmt.Errorf("invalid ImageVolumeMode %q, value must be one of %s",
 			s.ContainerStorageConfig.ImageVolumeMode, strings.Join(ImageVolumeModeValues, ","))
 	}
@@ -102,7 +102,7 @@ func (s *SpecGenerator) Validate() error {
 	// ContainerNetworkConfig
 	//
 	// useimageresolveconf conflicts with dnsserver, dnssearch, dnsoption
-	if s.UseImageResolvConf != nil && *s.UseImageResolvConf {
+	if s.UseImageResolvConf {
 		if len(s.DNSServers) > 0 {
 			return exclusiveOptions("UseImageResolvConf", "DNSServer")
 		}
@@ -114,7 +114,7 @@ func (s *SpecGenerator) Validate() error {
 		}
 	}
 	// UseImageHosts and HostAdd are exclusive
-	if (s.UseImageHosts != nil && *s.UseImageHosts) && len(s.HostAdd) > 0 {
+	if s.UseImageHosts && len(s.HostAdd) > 0 {
 		return exclusiveOptions("UseImageHosts", "HostAdd")
 	}
 

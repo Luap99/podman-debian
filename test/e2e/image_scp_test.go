@@ -4,7 +4,8 @@ import (
 	"os"
 	"path/filepath"
 
-	. "github.com/containers/podman/v5/test/utils"
+	"github.com/containers/common/pkg/config"
+	. "github.com/containers/podman/v4/test/utils"
 	"github.com/containers/storage/pkg/homedir"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -12,7 +13,7 @@ import (
 
 var _ = Describe("podman image scp", func() {
 
-	BeforeEach(setupConnectionsConf)
+	BeforeEach(setupEmptyContainersConf)
 
 	It("podman image scp bogus image", func() {
 		scp := podmanTest.Podman([]string{"image", "scp", "FOOBAR"})
@@ -32,6 +33,15 @@ var _ = Describe("podman image scp", func() {
 		session := podmanTest.Podman(cmd)
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(ExitCleanly())
+
+		cfg, err := config.ReadCustomConfig()
+		Expect(err).ShouldNot(HaveOccurred())
+		Expect(cfg.Engine).Should(HaveField("ActiveService", "QA"))
+		Expect(cfg.Engine.ServiceDestinations).To(HaveKeyWithValue("QA",
+			config.Destination{
+				URI: "ssh://root@podman.test:2222/run/podman/podman.sock",
+			},
+		))
 
 		scp := podmanTest.Podman([]string{"image", "scp", ALPINE, "QA::"})
 		scp.WaitWithDefaultTimeout()

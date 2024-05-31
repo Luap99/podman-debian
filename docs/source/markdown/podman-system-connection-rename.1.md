@@ -10,8 +10,6 @@ podman\-system\-connection\-rename - Rename the destination for Podman service
 Rename ssh destination from *old* to *new*.
 
 ## EXAMPLE
-
-Rename the specified connection:
 ```
 $ podman system connection rename laptop devel
 ```

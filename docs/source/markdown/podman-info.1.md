@@ -33,6 +33,7 @@ reasonably be enumerated in this document.
 ## EXAMPLES
 
 Run `podman info` for a YAML formatted response:
+
 ```
 $ podman info
 host:
@@ -181,6 +182,7 @@ version:
 ```
 
 Run `podman info --format json` for a JSON formatted response:
+
 ```
 $ podman info --format json
 {

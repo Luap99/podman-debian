@@ -1,4 +1,5 @@
 //go:build !remote && linux
+// +build !remote,linux
 
 package libpod
 
@@ -11,7 +12,7 @@ import (
 
 	"github.com/containers/common/libnetwork/slirp4netns"
 	"github.com/containers/common/libnetwork/types"
-	"github.com/containers/podman/v5/pkg/errorhandling"
+	"github.com/containers/podman/v4/pkg/errorhandling"
 	"github.com/sirupsen/logrus"
 )
 

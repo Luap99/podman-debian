@@ -1,4 +1,5 @@
 //go:build !remote
+// +build !remote
 
 package generate
 
@@ -14,13 +15,13 @@ import (
 	"github.com/containers/common/libimage"
 	"github.com/containers/common/libnetwork/pasta"
 	"github.com/containers/common/libnetwork/slirp4netns"
-	"github.com/containers/podman/v5/libpod"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/namespaces"
-	"github.com/containers/podman/v5/pkg/rootless"
-	"github.com/containers/podman/v5/pkg/specgen"
-	"github.com/containers/podman/v5/pkg/specgenutil"
-	"github.com/containers/podman/v5/pkg/util"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/namespaces"
+	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/specgen"
+	"github.com/containers/podman/v4/pkg/specgenutil"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/selinux/go-selinux/label"
 	"github.com/sirupsen/logrus"
@@ -54,12 +55,12 @@ func MakeContainer(ctx context.Context, rt *libpod.Runtime, s *specgen.SpecGener
 			s.ResourceLimits.Unified = make(map[string]string)
 		}
 		for _, cgroupConf := range rtc.Containers.CgroupConf.Get() {
-			key, val, hasVal := strings.Cut(cgroupConf, "=")
-			if !hasVal {
-				return nil, nil, nil, fmt.Errorf("CgroupConf %s from containers.conf invalid, must be name=value", cgroupConf)
+			cgr := strings.SplitN(cgroupConf, "=", 2)
+			if len(cgr) != 2 {
+				return nil, nil, nil, fmt.Errorf("CgroupConf %q from containers.conf invalid, must be name=value", cgr)
 			}
-			if _, ok := s.ResourceLimits.Unified[key]; !ok {
-				s.ResourceLimits.Unified[key] = val
+			if _, ok := s.ResourceLimits.Unified[cgr[0]]; !ok {
+				s.ResourceLimits.Unified[cgr[0]] = cgr[1]
 			}
 		}
 	}
@@ -152,11 +153,7 @@ func MakeContainer(ctx context.Context, rt *libpod.Runtime, s *specgen.SpecGener
 	}
 
 	if s.Rootfs != "" {
-		rootfsOverlay := false
-		if s.RootfsOverlay != nil {
-			rootfsOverlay = *s.RootfsOverlay
-		}
-		options = append(options, libpod.WithRootFS(s.Rootfs, rootfsOverlay, s.RootfsMapping))
+		options = append(options, libpod.WithRootFS(s.Rootfs, s.RootfsOverlay, s.RootfsMapping))
 	}
 
 	newImage, resolvedImageName, imageData, err := getImageFromSpec(ctx, rt, s)
@@ -230,7 +227,10 @@ func MakeContainer(ctx context.Context, rt *libpod.Runtime, s *specgen.SpecGener
 		options = append(options, libpod.WithHostUsers(s.HostUsers))
 	}
 
-	command := makeCommand(s, imageData)
+	command, err := makeCommand(s, imageData)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 
 	infraVol := len(compatibleOptions.Mounts) > 0 || len(compatibleOptions.Volumes) > 0 || len(compatibleOptions.ImageVolumes) > 0 || len(compatibleOptions.OverlayVolumes) > 0
 	opts, err := createContainerOptions(rt, s, pod, finalVolumes, finalOverlays, imageData, command, infraVol, *compatibleOptions)
@@ -251,9 +251,6 @@ func MakeContainer(ctx context.Context, rt *libpod.Runtime, s *specgen.SpecGener
 		options = append(options, opts...)
 	}
 	runtimeSpec, err := SpecGenToOCI(ctx, s, rt, rtc, newImage, finalMounts, pod, command, compatibleOptions)
-	if err != nil {
-		return nil, nil, nil, err
-	}
 	if clone { // the container fails to start if cloned due to missing Linux spec entries
 		if c == nil {
 			return nil, nil, nil, errors.New("the given container could not be retrieved")
@@ -358,11 +355,7 @@ func createContainerOptions(rt *libpod.Runtime, s *specgen.SpecGenerator, pod *l
 		options = append(options, libpod.WithPreserveFDs(s.PreserveFDs))
 	}
 
-	if s.PreserveFD != nil {
-		options = append(options, libpod.WithPreserveFD(s.PreserveFD))
-	}
-
-	if s.Stdin != nil && *s.Stdin {
+	if s.Stdin {
 		options = append(options, libpod.WithStdin())
 	}
 
@@ -372,7 +365,7 @@ func createContainerOptions(rt *libpod.Runtime, s *specgen.SpecGenerator, pod *l
 	if s.Umask != "" {
 		options = append(options, libpod.WithUmask(s.Umask))
 	}
-	if s.Volatile != nil && *s.Volatile {
+	if s.Volatile {
 		options = append(options, libpod.WithVolatile())
 	}
 	if s.PasswdEntry != "" {
@@ -381,11 +374,8 @@ func createContainerOptions(rt *libpod.Runtime, s *specgen.SpecGenerator, pod *l
 	if s.GroupEntry != "" {
 		options = append(options, libpod.WithGroupEntry(s.GroupEntry))
 	}
-	if s.BaseHostsFile != "" {
-		options = append(options, libpod.WithBaseHostsFile(s.BaseHostsFile))
-	}
 
-	if s.IsPrivileged() {
+	if s.Privileged {
 		options = append(options, libpod.WithMountAllDevices())
 	}
 
@@ -524,7 +514,7 @@ func createContainerOptions(rt *libpod.Runtime, s *specgen.SpecGenerator, pod *l
 	if s.WorkDir == "" {
 		s.WorkDir = "/"
 	}
-	if s.CreateWorkingDir != nil && *s.CreateWorkingDir {
+	if s.CreateWorkingDir {
 		options = append(options, libpod.WithCreateWorkingDir())
 	}
 	if s.StopSignal != nil {
@@ -551,8 +541,8 @@ func createContainerOptions(rt *libpod.Runtime, s *specgen.SpecGenerator, pod *l
 			options = append(options, libpod.WithLogDriver(s.LogConfiguration.Driver))
 		}
 	}
-	if s.LabelNested != nil {
-		options = append(options, libpod.WithLabelNested(*s.LabelNested))
+	if s.ContainerSecurityConfig.LabelNested {
+		options = append(options, libpod.WithLabelNested(s.ContainerSecurityConfig.LabelNested))
 	}
 	// Security options
 	if len(s.SelinuxOpts) > 0 {
@@ -571,10 +561,8 @@ func createContainerOptions(rt *libpod.Runtime, s *specgen.SpecGenerator, pod *l
 			options = append(options, libpod.WithSecLabels(selinuxOpts))
 		}
 	}
-	options = append(options, libpod.WithPrivileged(s.IsPrivileged()))
-	if s.ReadWriteTmpfs != nil {
-		options = append(options, libpod.WithReadWriteTmpfs(*s.ReadWriteTmpfs))
-	}
+	options = append(options, libpod.WithPrivileged(s.Privileged))
+	options = append(options, libpod.WithReadWriteTmpfs(s.ReadWriteTmpfs))
 
 	// Get namespace related options
 	namespaceOpts, err := namespaceOptions(s, rt, pod, imageData)
@@ -594,11 +582,7 @@ func createContainerOptions(rt *libpod.Runtime, s *specgen.SpecGenerator, pod *l
 		options = append(options, libpod.WithShmSizeSystemd(*s.ShmSizeSystemd))
 	}
 	if s.Rootfs != "" {
-		rootfsOverlay := false
-		if s.RootfsOverlay != nil {
-			rootfsOverlay = *s.RootfsOverlay
-		}
-		options = append(options, libpod.WithRootFS(s.Rootfs, rootfsOverlay, s.RootfsMapping))
+		options = append(options, libpod.WithRootFS(s.Rootfs, s.RootfsOverlay, s.RootfsMapping))
 	}
 	// Default used if not overridden on command line
 

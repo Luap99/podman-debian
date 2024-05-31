@@ -1,3 +1,6 @@
+//go:build amd64 || arm64
+// +build amd64 arm64
+
 package main
 
 import (
@@ -12,8 +15,11 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/containers/podman/v5/cmd/podman/registry"
-	"github.com/containers/podman/v5/pkg/errorhandling"
+	"github.com/containers/common/pkg/config"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/pkg/errorhandling"
+	"github.com/containers/podman/v4/pkg/machine"
+	"github.com/containers/podman/v4/pkg/machine/provider"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -108,8 +114,15 @@ func composeDockerHost() (string, error) {
 		return registry.DefaultAPIAddress(), nil
 	}
 
-	conf := registry.PodmanConfig()
-	if conf.URI == "" {
+	cfg, err := config.ReadCustomConfig()
+	if err != nil {
+		return "", err
+	}
+
+	// NOTE: podman --connection=foo and --url=... are injected
+	// into the default connection below in `root.go`.
+	defaultConnection := cfg.Engine.ActiveService
+	if defaultConnection == "" {
 		switch runtime.GOOS {
 		// If no default connection is set on Linux or FreeBSD,
 		// we just use the local socket by default - just as
@@ -124,27 +137,69 @@ func composeDockerHost() (string, error) {
 		}
 	}
 
-	parsedConnection, err := url.Parse(conf.URI)
+	connection, ok := cfg.Engine.ServiceDestinations[defaultConnection]
+	if !ok {
+		return "", fmt.Errorf("internal error: default connection %q not found in database", defaultConnection)
+	}
+	parsedConnection, err := url.Parse(connection.URI)
 	if err != nil {
 		return "", fmt.Errorf("preparing connection to remote machine: %w", err)
 	}
 
 	// If the default connection does not point to a `podman
 	// machine`, we cannot use a local path and need to use SSH.
-	if !conf.MachineMode {
-		// Docker Compose v1 doesn't like paths for ssh, so we optimistically
+	if !connection.IsMachine {
+		// Compose doesn't like paths, so we optimistically
 		// assume the presence of a Docker socket on the remote
 		// machine which is the case for podman machines.
-		if parsedConnection.Scheme == "ssh" {
-			return strings.TrimSuffix(conf.URI, parsedConnection.Path), nil
-		}
-		return conf.URI, nil
+		return strings.TrimSuffix(connection.URI, parsedConnection.Path), nil
 	}
-	uri, err := getMachineConn(conf.URI, parsedConnection)
+
+	machineProvider, err := provider.Get()
 	if err != nil {
-		return "", fmt.Errorf("get machine connection URI: %w", err)
+		return "", fmt.Errorf("getting machine provider: %w", err)
 	}
-	return uri, nil
+	machineList, err := machineProvider.List(machine.ListOptions{})
+	if err != nil {
+		return "", fmt.Errorf("listing machines: %w", err)
+	}
+
+	// Now we know that the connection points to a machine and we
+	// can find the machine by looking for the one with the
+	// matching port.
+	connectionPort, err := strconv.Atoi(parsedConnection.Port())
+	if err != nil {
+		return "", fmt.Errorf("parsing connection port: %w", err)
+	}
+	for _, item := range machineList {
+		if connectionPort != item.Port {
+			continue
+		}
+
+		vm, err := machineProvider.LoadVMByName(item.Name)
+		if err != nil {
+			return "", fmt.Errorf("loading machine: %w", err)
+		}
+		info, err := vm.Inspect()
+		if err != nil {
+			return "", fmt.Errorf("inspecting machine: %w", err)
+		}
+		if info.State != machine.Running {
+			return "", fmt.Errorf("machine %s is not running but in state %s", item.Name, info.State)
+		}
+		if machineProvider.VMType() == machine.WSLVirt || machineProvider.VMType() == machine.HyperVVirt {
+			if info.ConnectionInfo.PodmanPipe == nil {
+				return "", errors.New("pipe of machine is not set")
+			}
+			return strings.Replace(info.ConnectionInfo.PodmanPipe.Path, `\\.\pipe\`, "npipe:////./pipe/", 1), nil
+		}
+		if info.ConnectionInfo.PodmanSocket == nil {
+			return "", errors.New("socket of machine is not set")
+		}
+		return "unix://" + info.ConnectionInfo.PodmanSocket.Path, nil
+	}
+
+	return "", fmt.Errorf("could not find a matching machine for connection %q", connection.URI)
 }
 
 // composeEnv returns the compose-specific environment variables.

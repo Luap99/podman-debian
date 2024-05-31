@@ -1,4 +1,5 @@
 //go:build linux
+// +build linux
 
 package lock
 
@@ -6,7 +7,7 @@ import (
 	"fmt"
 	"syscall"
 
-	"github.com/containers/podman/v5/libpod/lock/shm"
+	"github.com/containers/podman/v4/libpod/lock/shm"
 )
 
 // SHMLockManager manages shared memory locks.

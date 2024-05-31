@@ -71,11 +71,3 @@ func ParseSysSignalToName(s syscall.Signal) (string, error) {
 	}
 	return "", fmt.Errorf("unknown syscall signal: %s", s)
 }
-
-func ToDockerFormat(s uint) string {
-	var signalStr, err = ParseSysSignalToName(syscall.Signal(s))
-	if err != nil {
-		return strconv.FormatUint(uint64(s), 10)
-	}
-	return fmt.Sprintf("SIG%s", signalStr)
-}

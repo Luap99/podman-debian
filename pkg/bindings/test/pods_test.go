@@ -6,17 +6,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/bindings"
-	"github.com/containers/podman/v5/pkg/bindings/pods"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	"github.com/containers/podman/v5/pkg/errorhandling"
-	"github.com/containers/podman/v5/pkg/specgen"
-	"github.com/containers/podman/v5/utils"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/bindings"
+	"github.com/containers/podman/v4/pkg/bindings/pods"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/errorhandling"
+	"github.com/containers/podman/v4/pkg/specgen"
+	"github.com/containers/podman/v4/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
-	"golang.org/x/exp/slices"
 )
 
 var _ = Describe("Podman pods", func() {
@@ -86,8 +85,8 @@ var _ = Describe("Podman pods", func() {
 		for _, i := range podSummary {
 			names = append(names, i.Name)
 		}
-		Expect(slices.Contains(names, newpod)).To(BeTrue())
-		Expect(slices.Contains(names, "newpod2")).To(BeTrue())
+		Expect(StringInSlice(newpod, names)).To(BeTrue())
+		Expect(StringInSlice("newpod2", names)).To(BeTrue())
 	})
 
 	// The test validates the list pod endpoint with passing filters as the params.
@@ -131,7 +130,7 @@ var _ = Describe("Podman pods", func() {
 		for _, i := range filteredPods {
 			names = append(names, i.Name)
 		}
-		Expect(slices.Contains(names, "newpod2")).To(BeTrue())
+		Expect(StringInSlice("newpod2", names)).To(BeTrue())
 
 		// Validate list pod with id filter
 		filters = make(map[string][]string)
@@ -147,7 +146,7 @@ var _ = Describe("Podman pods", func() {
 		for _, i := range filteredPods {
 			names = append(names, i.Name)
 		}
-		Expect(slices.Contains(names, "newpod")).To(BeTrue())
+		Expect(StringInSlice("newpod", names)).To(BeTrue())
 
 		// Using multiple filters
 		filters["name"] = []string{newpod}
@@ -159,7 +158,7 @@ var _ = Describe("Podman pods", func() {
 		for _, i := range filteredPods {
 			names = append(names, i.Name)
 		}
-		Expect(slices.Contains(names, "newpod")).To(BeTrue())
+		Expect(StringInSlice("newpod", names)).To(BeTrue())
 	})
 
 	// The test validates if the exists responds

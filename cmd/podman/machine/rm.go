@@ -1,14 +1,17 @@
 //go:build amd64 || arm64
+// +build amd64 arm64
 
 package machine
 
 import (
-	"github.com/containers/podman/v5/cmd/podman/registry"
-	"github.com/containers/podman/v5/libpod/events"
-	"github.com/containers/podman/v5/pkg/machine"
-	"github.com/containers/podman/v5/pkg/machine/env"
-	"github.com/containers/podman/v5/pkg/machine/shim"
-	"github.com/containers/podman/v5/pkg/machine/vmconfigs"
+	"bufio"
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/libpod/events"
+	"github.com/containers/podman/v4/pkg/machine"
 	"github.com/spf13/cobra"
 )
 
@@ -39,6 +42,9 @@ func init() {
 	formatFlagName := "force"
 	flags.BoolVarP(&destroyOptions.Force, formatFlagName, "f", false, "Stop and do not prompt before rming")
 
+	keysFlagName := "save-keys"
+	flags.BoolVar(&destroyOptions.SaveKeys, keysFlagName, false, "Do not delete SSH keys")
+
 	ignitionFlagName := "save-ignition"
 	flags.BoolVar(&destroyOptions.SaveIgnition, ignitionFlagName, false, "Do not delete ignition file")
 
@@ -49,23 +55,37 @@ func init() {
 func rm(_ *cobra.Command, args []string) error {
 	var (
 		err error
+		vm  machine.VM
 	)
 	vmName := defaultMachineName
 	if len(args) > 0 && len(args[0]) > 0 {
 		vmName = args[0]
 	}
 
-	dirs, err := env.GetMachineDirs(provider.VMType())
+	vm, err = provider.LoadVMByName(vmName)
+	if err != nil {
+		return err
+	}
+	confirmationMessage, remove, err := vm.Remove(vmName, destroyOptions)
 	if err != nil {
 		return err
 	}
 
-	mc, err := vmconfigs.LoadMachineByName(vmName, dirs)
-	if err != nil {
-		return err
+	if !destroyOptions.Force {
+		// Warn user
+		fmt.Println(confirmationMessage)
+		reader := bufio.NewReader(os.Stdin)
+		fmt.Print("Are you sure you want to continue? [y/N] ")
+		answer, err := reader.ReadString('\n')
+		if err != nil {
+			return err
+		}
+		if strings.ToLower(answer)[0] != 'y' {
+			return nil
+		}
 	}
-
-	if err := shim.Remove(mc, provider, dirs, destroyOptions); err != nil {
+	err = remove()
+	if err != nil {
 		return err
 	}
 	newMachineEvent(events.Remove, events.Event{Name: vmName})

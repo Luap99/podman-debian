@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	bdefine "github.com/containers/buildah/define"
 	"github.com/containers/common/libimage"
@@ -28,12 +27,12 @@ import (
 	"github.com/containers/image/v5/signature"
 	"github.com/containers/image/v5/transports"
 	"github.com/containers/image/v5/transports/alltransports"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	"github.com/containers/podman/v5/pkg/domain/entities/reports"
-	domainUtils "github.com/containers/podman/v5/pkg/domain/utils"
-	"github.com/containers/podman/v5/pkg/errorhandling"
-	"github.com/containers/podman/v5/pkg/rootless"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/domain/entities/reports"
+	domainUtils "github.com/containers/podman/v4/pkg/domain/utils"
+	"github.com/containers/podman/v4/pkg/errorhandling"
+	"github.com/containers/podman/v4/pkg/rootless"
 	"github.com/containers/storage"
 	"github.com/opencontainers/go-digest"
 	imgspecv1 "github.com/opencontainers/image-spec/specs-go/v1"
@@ -254,15 +253,6 @@ func (ir *ImageEngine) Pull(ctx context.Context, rawImage string, options entiti
 	pullOptions.InsecureSkipTLSVerify = options.SkipTLSVerify
 	pullOptions.Writer = options.Writer
 	pullOptions.OciDecryptConfig = options.OciDecryptConfig
-	pullOptions.MaxRetries = options.Retry
-
-	if options.RetryDelay != "" {
-		duration, err := time.ParseDuration(options.RetryDelay)
-		if err != nil {
-			return nil, err
-		}
-		pullOptions.RetryDelay = &duration
-	}
 
 	if !options.Quiet && pullOptions.Writer == nil {
 		pullOptions.Writer = os.Stderr
@@ -343,14 +333,6 @@ func (ir *ImageEngine) Push(ctx context.Context, source string, destination stri
 	pushOptions.OciEncryptLayers = options.OciEncryptLayers
 	pushOptions.CompressionLevel = options.CompressionLevel
 	pushOptions.ForceCompressionFormat = options.ForceCompressionFormat
-	pushOptions.MaxRetries = options.Retry
-	if options.RetryDelay != "" {
-		duration, err := time.ParseDuration(options.RetryDelay)
-		if err != nil {
-			return nil, err
-		}
-		pushOptions.RetryDelay = &duration
-	}
 
 	compressionFormat := options.CompressionFormat
 	if compressionFormat == "" {

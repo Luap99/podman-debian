@@ -8,13 +8,13 @@ import (
 	"strings"
 
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v5/libpod"
-	"github.com/containers/podman/v5/pkg/api/handlers/utils"
-	api "github.com/containers/podman/v5/pkg/api/types"
-	"github.com/containers/podman/v5/pkg/auth"
-	"github.com/containers/podman/v5/pkg/channel"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	"github.com/containers/podman/v5/pkg/domain/infra/abi"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v4/pkg/api/types"
+	"github.com/containers/podman/v4/pkg/auth"
+	"github.com/containers/podman/v4/pkg/channel"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/domain/infra/abi"
 	"github.com/gorilla/schema"
 	"github.com/sirupsen/logrus"
 )
@@ -32,8 +32,6 @@ func PushImage(w http.ResponseWriter, r *http.Request) {
 		Destination            string `schema:"destination"`
 		Format                 string `schema:"format"`
 		RemoveSignatures       bool   `schema:"removeSignatures"`
-		Retry                  uint   `schema:"retry"`
-		RetryDelay             string `schema:"retryDelay"`
 		TLSVerify              bool   `schema:"tlsVerify"`
 		Quiet                  bool   `schema:"quiet"`
 	}{
@@ -85,12 +83,7 @@ func PushImage(w http.ResponseWriter, r *http.Request) {
 		Password:               password,
 		Quiet:                  query.Quiet,
 		RemoveSignatures:       query.RemoveSignatures,
-		RetryDelay:             query.RetryDelay,
 		Username:               username,
-	}
-
-	if _, found := r.URL.Query()["retry"]; found {
-		options.Retry = &query.Retry
 	}
 
 	if _, found := r.URL.Query()["compressionFormat"]; found {

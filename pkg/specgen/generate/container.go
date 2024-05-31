@@ -1,4 +1,5 @@
 //go:build !remote
+// +build !remote
 
 package generate
 
@@ -14,12 +15,12 @@ import (
 
 	"github.com/containers/common/libimage"
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v5/libpod"
-	"github.com/containers/podman/v5/libpod/define"
-	ann "github.com/containers/podman/v5/pkg/annotations"
-	envLib "github.com/containers/podman/v5/pkg/env"
-	"github.com/containers/podman/v5/pkg/signal"
-	"github.com/containers/podman/v5/pkg/specgen"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/libpod/define"
+	ann "github.com/containers/podman/v4/pkg/annotations"
+	envLib "github.com/containers/podman/v4/pkg/env"
+	"github.com/containers/podman/v4/pkg/signal"
+	"github.com/containers/podman/v4/pkg/specgen"
 	"github.com/openshift/imagebuilder"
 	"github.com/sirupsen/logrus"
 )
@@ -110,15 +111,7 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 	}
 
 	// Get Default Environment from containers.conf
-	envHost := false
-	if s.EnvHost != nil {
-		envHost = *s.EnvHost
-	}
-	httpProxy := false
-	if s.HTTPProxy != nil {
-		httpProxy = *s.HTTPProxy
-	}
-	defaultEnvs, err := envLib.ParseSlice(rtc.GetDefaultEnvEx(envHost, httpProxy))
+	defaultEnvs, err := envLib.ParseSlice(rtc.GetDefaultEnvEx(s.EnvHost, s.HTTPProxy))
 	if err != nil {
 		return nil, fmt.Errorf("parsing fields in containers.conf: %w", err)
 	}
@@ -137,7 +130,7 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 
 	// add default terminal to env if tty flag is set
 	_, ok := defaultEnvs["TERM"]
-	if (s.Terminal != nil && *s.Terminal) && !ok {
+	if s.Terminal && !ok {
 		defaultEnvs["TERM"] = "xterm"
 	}
 
@@ -162,7 +155,7 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 		delete(defaultEnvs, e)
 	}
 
-	if s.UnsetEnvAll != nil && *s.UnsetEnvAll {
+	if s.UnsetEnvAll {
 		defaultEnvs = make(map[string]string)
 	}
 	// First transform the os env into a map. We need it for the labels later in
@@ -170,9 +163,9 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 	osEnv := envLib.Map(os.Environ())
 
 	// Caller Specified defaults
-	if envHost {
+	if s.EnvHost {
 		defaultEnvs = envLib.Join(defaultEnvs, osEnv)
-	} else if httpProxy {
+	} else if s.HTTPProxy {
 		for _, envSpec := range config.ProxyEnv {
 			if v, ok := osEnv[envSpec]; ok {
 				defaultEnvs[envSpec] = v
@@ -244,8 +237,13 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 		}
 	}
 
-	for _, annotation := range rtc.Containers.Annotations.Get() {
-		k, v, _ := strings.Cut(annotation, "=")
+	for _, v := range rtc.Containers.Annotations.Get() {
+		split := strings.SplitN(v, "=", 2)
+		k := split[0]
+		v := ""
+		if len(split) == 2 {
+			v = split[1]
+		}
 		annotations[k] = v
 	}
 	// now pass in the values from client
@@ -311,10 +309,6 @@ func CompleteSpec(ctx context.Context, r *libpod.Runtime, s *specgen.SpecGenerat
 		warnings = append(warnings, "Port mappings have been discarded as one of the Host, Container, Pod, and None network modes are in use")
 	}
 
-	if len(s.ImageVolumeMode) == 0 {
-		s.ImageVolumeMode = rtc.Engine.ImageVolumeMode
-	}
-
 	return warnings, nil
 }
 
@@ -363,9 +357,9 @@ func ConfigToSpec(rt *libpod.Runtime, specg *specgen.SpecGenerator, containerID 
 		if conf.Spec.Process != nil && conf.Spec.Process.Env != nil {
 			env := make(map[string]string)
 			for _, entry := range conf.Spec.Process.Env {
-				key, val, hasVal := strings.Cut(entry, "=")
-				if hasVal {
-					env[key] = val
+				split := strings.SplitN(entry, "=", 2)
+				if len(split) == 2 {
+					env[split[0]] = split[1]
 				}
 			}
 			specg.Env = env
@@ -509,7 +503,7 @@ func ConfigToSpec(rt *libpod.Runtime, specg *specgen.SpecGenerator, containerID 
 
 // mapSecurityConfig takes a libpod.ContainerSecurityConfig and converts it to a specgen.ContinerSecurityConfig
 func mapSecurityConfig(c *libpod.ContainerConfig, s *specgen.SpecGenerator) {
-	s.Privileged = &c.Privileged
+	s.Privileged = c.Privileged
 	s.SelinuxOpts = append(s.SelinuxOpts, c.LabelOpts...)
 	s.User = c.User
 	s.Groups = c.Groups

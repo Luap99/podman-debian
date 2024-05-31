@@ -1,4 +1,5 @@
 //go:build !remote
+// +build !remote
 
 package libpod
 
@@ -18,8 +19,9 @@ import (
 	"github.com/containers/common/libnetwork/types"
 	"github.com/containers/common/pkg/cgroups"
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/rootless"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/utils"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/runtime-tools/generate"
 	"github.com/opencontainers/selinux/go-selinux/label"
@@ -175,6 +177,7 @@ func (c *Container) cleanupNetwork() error {
 
 	c.state.NetNS = ""
 	c.state.NetworkStatus = nil
+	c.state.NetworkStatusOld = nil
 
 	if c.valid {
 		return c.save()
@@ -387,7 +390,7 @@ func (c *Container) getOCICgroupPath() (string, error) {
 	case c.config.NoCgroups:
 		return "", nil
 	case c.config.CgroupsMode == cgroupSplit:
-		selfCgroup, err := cgroups.GetOwnCgroupDisallowRoot()
+		selfCgroup, err := utils.GetOwnCgroupDisallowRoot()
 		if err != nil {
 			return "", err
 		}
@@ -411,6 +414,27 @@ func (c *Container) getOCICgroupPath() (string, error) {
 	default:
 		return "", fmt.Errorf("invalid cgroup manager %s requested: %w", cgroupManager, define.ErrInvalidArg)
 	}
+}
+
+// If the container is rootless, set up the slirp4netns network
+func (c *Container) setupRootlessNetwork() error {
+	// set up slirp4netns again because slirp4netns will die when conmon exits
+	if c.config.NetMode.IsSlirp4netns() {
+		err := c.runtime.setupSlirp4netns(c, c.state.NetNS)
+		if err != nil {
+			return err
+		}
+	}
+
+	// set up rootlesskit port forwarder again since it dies when conmon exits
+	// we use rootlesskit port forwarder only as rootless and when bridge network is used
+	if rootless.IsRootless() && c.config.NetMode.IsBridge() && len(c.config.PortMappings) > 0 {
+		err := c.runtime.setupRootlessPortMappingViaRLK(c, c.state.NetNS, c.state.NetworkStatus)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func openDirectory(path string) (fd int, err error) {
@@ -595,12 +619,7 @@ func (c *Container) setCgroupsPath(g *generate.Generator) error {
 	return nil
 }
 
-// addSpecialDNS adds special dns servers for slirp4netns and pasta
-func (c *Container) addSpecialDNS(nameservers []string) []string {
-	if c.pastaResult != nil {
-		nameservers = append(nameservers, c.pastaResult.DNSForwardIPs...)
-	}
-
+func (c *Container) addSlirp4netnsDNS(nameservers []string) []string {
 	// slirp4netns has a built in DNS forwarder.
 	if c.config.NetMode.IsSlirp4netns() {
 		slirp4netnsDNS, err := slirp4netns.GetDNS(c.slirp4netnsSubnet)

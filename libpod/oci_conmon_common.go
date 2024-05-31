@@ -1,4 +1,6 @@
 //go:build !remote && (linux || freebsd)
+// +build !remote
+// +build linux freebsd
 
 package libpod
 
@@ -26,14 +28,14 @@ import (
 	"github.com/containers/common/pkg/resize"
 	"github.com/containers/common/pkg/version"
 	conmonConfig "github.com/containers/conmon/runner/config"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/libpod/logs"
-	"github.com/containers/podman/v5/pkg/checkpoint/crutils"
-	"github.com/containers/podman/v5/pkg/errorhandling"
-	"github.com/containers/podman/v5/pkg/rootless"
-	"github.com/containers/podman/v5/pkg/specgenutil"
-	"github.com/containers/podman/v5/pkg/util"
-	"github.com/containers/podman/v5/utils"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/libpod/logs"
+	"github.com/containers/podman/v4/pkg/checkpoint/crutils"
+	"github.com/containers/podman/v4/pkg/errorhandling"
+	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/specgenutil"
+	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v4/utils"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
@@ -64,7 +66,6 @@ type ConmonOCIRuntime struct {
 	supportsKVM       bool
 	supportsNoCgroups bool
 	enableKeyring     bool
-	persistDir        string
 }
 
 // Make a new Conmon-based OCI runtime with the given options.
@@ -144,15 +145,13 @@ func newConmonOCIRuntime(name string, paths []string, conmonPath string, runtime
 	}
 
 	runtime.exitsDir = filepath.Join(runtime.tmpDir, "exits")
-	// The persist-dir is where conmon writes the exit file and oom file (if oom killed), we join the container ID to this path later on
-	runtime.persistDir = filepath.Join(runtime.tmpDir, "persist")
 
 	// Create the exit files and attach sockets directories
 	if err := os.MkdirAll(runtime.exitsDir, 0750); err != nil {
-		return nil, fmt.Errorf("creating OCI runtime exit files directory: %w", err)
-	}
-	if err := os.MkdirAll(runtime.persistDir, 0750); err != nil {
-		return nil, fmt.Errorf("creating OCI runtime persist directory: %w", err)
+		// The directory is allowed to exist
+		if !os.IsExist(err) {
+			return nil, fmt.Errorf("creating OCI runtime exit files directory: %w", err)
+		}
 	}
 	return runtime, nil
 }
@@ -210,7 +209,7 @@ func (r *ConmonOCIRuntime) CreateContainer(ctr *Container, restoreOptions *Conta
 // status, but will instead only check for the existence of the conmon exit file
 // and update state to stopped if it exists.
 func (r *ConmonOCIRuntime) UpdateContainerStatus(ctr *Container) error {
-	runtimeDir, err := util.GetRootlessRuntimeDir()
+	runtimeDir, err := util.GetRuntimeDir()
 	if err != nil {
 		return err
 	}
@@ -291,7 +290,7 @@ func (r *ConmonOCIRuntime) UpdateContainerStatus(ctr *Container) error {
 // Sets time the container was started, but does not save it.
 func (r *ConmonOCIRuntime) StartContainer(ctr *Container) error {
 	// TODO: streams should probably *not* be our STDIN/OUT/ERR - redirect to buffers?
-	runtimeDir, err := util.GetRootlessRuntimeDir()
+	runtimeDir, err := util.GetRuntimeDir()
 	if err != nil {
 		return err
 	}
@@ -310,7 +309,7 @@ func (r *ConmonOCIRuntime) StartContainer(ctr *Container) error {
 
 // UpdateContainer updates the given container's cgroup configuration
 func (r *ConmonOCIRuntime) UpdateContainer(ctr *Container, resources *spec.LinuxResources) error {
-	runtimeDir, err := util.GetRootlessRuntimeDir()
+	runtimeDir, err := util.GetRuntimeDir()
 	if err != nil {
 		return err
 	}
@@ -369,7 +368,7 @@ func (r *ConmonOCIRuntime) KillContainer(ctr *Container, signal uint, all bool) 
 // *bytes.buffer and returned; otherwise, it is set to os.Stderr.
 func (r *ConmonOCIRuntime) killContainer(ctr *Container, signal uint, all, captureStderr bool) (*bytes.Buffer, error) {
 	logrus.Debugf("Sending signal %d to container %s", signal, ctr.ID())
-	runtimeDir, err := util.GetRootlessRuntimeDir()
+	runtimeDir, err := util.GetRuntimeDir()
 	if err != nil {
 		return nil, err
 	}
@@ -505,7 +504,7 @@ func (r *ConmonOCIRuntime) StopContainer(ctr *Container, timeout uint, all bool)
 
 // DeleteContainer deletes a container from the OCI runtime.
 func (r *ConmonOCIRuntime) DeleteContainer(ctr *Container) error {
-	runtimeDir, err := util.GetRootlessRuntimeDir()
+	runtimeDir, err := util.GetRuntimeDir()
 	if err != nil {
 		return err
 	}
@@ -515,7 +514,7 @@ func (r *ConmonOCIRuntime) DeleteContainer(ctr *Container) error {
 
 // PauseContainer pauses the given container.
 func (r *ConmonOCIRuntime) PauseContainer(ctr *Container) error {
-	runtimeDir, err := util.GetRootlessRuntimeDir()
+	runtimeDir, err := util.GetRuntimeDir()
 	if err != nil {
 		return err
 	}
@@ -525,7 +524,7 @@ func (r *ConmonOCIRuntime) PauseContainer(ctr *Container) error {
 
 // UnpauseContainer unpauses the given container.
 func (r *ConmonOCIRuntime) UnpauseContainer(ctr *Container) error {
-	runtimeDir, err := util.GetRootlessRuntimeDir()
+	runtimeDir, err := util.GetRuntimeDir()
 	if err != nil {
 		return err
 	}
@@ -852,7 +851,7 @@ func (r *ConmonOCIRuntime) CheckpointContainer(ctr *Container, options Container
 	args = append(args, ctr.ID())
 	logrus.Debugf("the args to checkpoint: %s %s", r.path, strings.Join(args, " "))
 
-	runtimeDir, err := util.GetRootlessRuntimeDir()
+	runtimeDir, err := util.GetRuntimeDir()
 	if err != nil {
 		return 0, err
 	}
@@ -941,12 +940,6 @@ func (r *ConmonOCIRuntime) ExitFilePath(ctr *Container) (string, error) {
 		return "", fmt.Errorf("must provide a valid container to get exit file path: %w", define.ErrInvalidArg)
 	}
 	return filepath.Join(r.exitsDir, ctr.ID()), nil
-}
-
-// OOMFilePath is the path to a container's oom file.
-// The oom file will only exist if the container was oom killed.
-func (r *ConmonOCIRuntime) OOMFilePath(ctr *Container) (string, error) {
-	return filepath.Join(r.persistDir, ctr.ID(), "oom"), nil
 }
 
 // RuntimeInfo provides information on the runtime.
@@ -1045,39 +1038,6 @@ func (r *ConmonOCIRuntime) getLogTag(ctr *Container) (string, error) {
 	return b.String(), nil
 }
 
-func getPreserveFdExtraFiles(preserveFD []uint, preserveFDs uint) (uint, []*os.File, []*os.File, error) {
-	var filesToClose []*os.File
-	var extraFiles []*os.File
-
-	preserveFDsMap := make(map[uint]struct{})
-	for _, i := range preserveFD {
-		if i < 3 {
-			return 0, nil, nil, fmt.Errorf("cannot preserve FD %d, consider using the passthrough log-driver to pass STDIO streams into the container: %w", i, define.ErrInvalidArg)
-		}
-		if i-2 > preserveFDs {
-			// preserveFDs is the number of FDs above 2 to keep around.
-			// e.g. if the user specified FD=3, then preserveFDs must be 1.
-			preserveFDs = i - 2
-		}
-		preserveFDsMap[i] = struct{}{}
-	}
-
-	if preserveFDs > 0 {
-		for fd := 3; fd < int(3+preserveFDs); fd++ {
-			if len(preserveFDsMap) > 0 {
-				if _, ok := preserveFDsMap[uint(fd)]; !ok {
-					extraFiles = append(extraFiles, nil)
-					continue
-				}
-			}
-			f := os.NewFile(uintptr(fd), fmt.Sprintf("fd-%d", fd))
-			filesToClose = append(filesToClose, f)
-			extraFiles = append(extraFiles, f)
-		}
-	}
-	return preserveFDs, filesToClose, extraFiles, nil
-}
-
 // createOCIContainer generates this container's main conmon instance and prepares it for starting
 func (r *ConmonOCIRuntime) createOCIContainer(ctr *Container, restoreOptions *ContainerCheckpointOptions) (int64, error) {
 	var stderrBuf bytes.Buffer
@@ -1106,7 +1066,7 @@ func (r *ConmonOCIRuntime) createOCIContainer(ctr *Container, restoreOptions *Co
 	}
 
 	if ctr.config.CgroupsMode == cgroupSplit {
-		if err := moveToRuntimeCgroup(); err != nil {
+		if err := utils.MoveUnderCgroupSubtree("runtime"); err != nil {
 			return 0, err
 		}
 	}
@@ -1116,11 +1076,7 @@ func (r *ConmonOCIRuntime) createOCIContainer(ctr *Container, restoreOptions *Co
 		pidfile = filepath.Join(ctr.state.RunDir, "pidfile")
 	}
 
-	persistDir := filepath.Join(r.persistDir, ctr.ID())
-	args, err := r.sharedConmonArgs(ctr, ctr.ID(), ctr.bundlePath(), pidfile, ctr.LogPath(), r.exitsDir, persistDir, ociLog, ctr.LogDriver(), logTag)
-	if err != nil {
-		return 0, err
-	}
+	args := r.sharedConmonArgs(ctr, ctr.ID(), ctr.bundlePath(), pidfile, ctr.LogPath(), r.exitsDir, ociLog, ctr.LogDriver(), logTag)
 
 	if ctr.config.SdNotifyMode == define.SdNotifyModeContainer && ctr.config.SdNotifySocket != "" {
 		args = append(args, fmt.Sprintf("--sdnotify-socket=%s", ctr.config.SdNotifySocket))
@@ -1158,11 +1114,10 @@ func (r *ConmonOCIRuntime) createOCIContainer(ctr *Container, restoreOptions *Co
 		args = append(args, []string{"--exit-command-arg", arg}...)
 	}
 
-	preserveFDs := ctr.config.PreserveFDs
-
 	// Pass down the LISTEN_* environment (see #10443).
+	preserveFDs := ctr.config.PreserveFDs
 	if val := os.Getenv("LISTEN_FDS"); val != "" {
-		if preserveFDs > 0 || len(ctr.config.PreserveFD) > 0 {
+		if ctr.config.PreserveFDs > 0 {
 			logrus.Warnf("Ignoring LISTEN_FDS to preserve custom user-specified FDs")
 		} else {
 			fds, err := strconv.Atoi(val)
@@ -1173,10 +1128,6 @@ func (r *ConmonOCIRuntime) createOCIContainer(ctr *Container, restoreOptions *Co
 		}
 	}
 
-	preserveFDs, filesToClose, extraFiles, err := getPreserveFdExtraFiles(ctr.config.PreserveFD, preserveFDs)
-	if err != nil {
-		return 0, err
-	}
 	if preserveFDs > 0 {
 		args = append(args, formatRuntimeOpts("--preserve-fds", strconv.FormatUint(uint64(preserveFDs), 10))...)
 	}
@@ -1238,7 +1189,14 @@ func (r *ConmonOCIRuntime) createOCIContainer(ctr *Container, restoreOptions *Co
 		return 0, fmt.Errorf("configuring conmon env: %w", err)
 	}
 
-	cmd.ExtraFiles = extraFiles
+	var filesToClose []*os.File
+	if preserveFDs > 0 {
+		for fd := 3; fd < int(3+preserveFDs); fd++ {
+			f := os.NewFile(uintptr(fd), fmt.Sprintf("fd-%d", fd))
+			filesToClose = append(filesToClose, f)
+			cmd.ExtraFiles = append(cmd.ExtraFiles, f)
+		}
+	}
 
 	cmd.Env = r.conmonEnv
 	// we don't want to step on users fds they asked to preserve
@@ -1366,7 +1324,7 @@ func (r *ConmonOCIRuntime) configureConmonEnv() ([]string, error) {
 		}
 		res = append(res, v)
 	}
-	runtimeDir, err := util.GetRootlessRuntimeDir()
+	runtimeDir, err := util.GetRuntimeDir()
 	if err != nil {
 		return nil, err
 	}
@@ -1376,16 +1334,7 @@ func (r *ConmonOCIRuntime) configureConmonEnv() ([]string, error) {
 }
 
 // sharedConmonArgs takes common arguments for exec and create/restore and formats them for the conmon CLI
-// func (r *ConmonOCIRuntime) sharedConmonArgs(ctr *Container, cuuid, bundlePath, pidPath, logPath, exitDir, persistDir, ociLogPath, logDriver, logTag string) ([]string, error) {
-func (r *ConmonOCIRuntime) sharedConmonArgs(ctr *Container, cuuid, bundlePath, pidPath, logPath, exitDir, persistDir, ociLogPath, logDriver, logTag string) ([]string, error) {
-	// Make the persists directory for the container after the ctr ID is appended to it in the caller
-	// This is needed as conmon writes the exit and oom file in the given persist directory path as just "exit" and "oom"
-	// So creating a directory with the container ID under the persist dir will help keep track of which container the
-	// exit and oom files belong to.
-	if err := os.MkdirAll(persistDir, 0750); err != nil {
-		return nil, fmt.Errorf("creating OCI runtime oom files directory for ctr %q: %w", ctr.ID(), err)
-	}
-
+func (r *ConmonOCIRuntime) sharedConmonArgs(ctr *Container, cuuid, bundlePath, pidPath, logPath, exitDir, ociLogPath, logDriver, logTag string) []string {
 	// set the conmon API version to be able to use the correct sync struct keys
 	args := []string{
 		"--api-version", "1",
@@ -1396,7 +1345,6 @@ func (r *ConmonOCIRuntime) sharedConmonArgs(ctr *Container, cuuid, bundlePath, p
 		"-p", pidPath,
 		"-n", ctr.Name(),
 		"--exit-dir", exitDir,
-		"--persist-dir", persistDir,
 		"--full-attach",
 	}
 	if len(r.runtimeFlags) > 0 {
@@ -1417,7 +1365,7 @@ func (r *ConmonOCIRuntime) sharedConmonArgs(ctr *Container, cuuid, bundlePath, p
 		logDriverArg = define.JournaldLogging
 	case define.NoLogging:
 		logDriverArg = define.NoLogging
-	case define.PassthroughLogging, define.PassthroughTTYLogging:
+	case define.PassthroughLogging:
 		logDriverArg = define.PassthroughLogging
 	//lint:ignore ST1015 the default case has to be here
 	default: //nolint:gocritic
@@ -1459,7 +1407,7 @@ func (r *ConmonOCIRuntime) sharedConmonArgs(ctr *Container, cuuid, bundlePath, p
 		logrus.Debugf("Running with no Cgroups")
 		args = append(args, "--runtime-arg", "--cgroup-manager", "--runtime-arg", "disabled")
 	}
-	return args, nil
+	return args
 }
 
 // newPipe creates a unix socket pair for communication.

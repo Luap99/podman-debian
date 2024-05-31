@@ -12,15 +12,15 @@ import (
 
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/ssh"
-	"github.com/containers/podman/v5/cmd/podman/common"
-	"github.com/containers/podman/v5/cmd/podman/registry"
-	"github.com/containers/podman/v5/cmd/podman/validate"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/bindings"
-	"github.com/containers/podman/v5/pkg/checkpoint/crutils"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	"github.com/containers/podman/v5/pkg/parallel"
-	"github.com/containers/podman/v5/version"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/validate"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/bindings"
+	"github.com/containers/podman/v4/pkg/checkpoint/crutils"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/parallel"
+	"github.com/containers/podman/v4/version"
 	"github.com/containers/storage"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -143,7 +143,7 @@ func Execute() {
 }
 
 // readRemoteCliFlags reads cli flags related to operating podman remotely
-func readRemoteCliFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig) error {
+func readRemoteCliFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig) (err error) {
 	conf := podmanConfig.ContainersConfDefaultsRO
 	contextConn, host := cmd.Root().LocalFlags().Lookup("context"), cmd.Root().LocalFlags().Lookup("host")
 	conn, url := cmd.Root().LocalFlags().Lookup("connection"), cmd.Root().LocalFlags().Lookup("url")
@@ -151,32 +151,35 @@ func readRemoteCliFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig)
 	switch {
 	case conn != nil && conn.Changed:
 		if contextConn != nil && contextConn.Changed {
-			return fmt.Errorf("use of --connection and --context at the same time is not allowed")
+			err = fmt.Errorf("use of --connection and --context at the same time is not allowed")
+			return
 		}
-		con, err := conf.GetConnection(conn.Value.String(), false)
-		if err != nil {
-			return err
+		if dest, ok := conf.Engine.ServiceDestinations[conn.Value.String()]; ok {
+			podmanConfig.URI = dest.URI
+			podmanConfig.Identity = dest.Identity
+			podmanConfig.MachineMode = dest.IsMachine
+			return
 		}
-		podmanConfig.URI = con.URI
-		podmanConfig.Identity = con.Identity
-		podmanConfig.MachineMode = con.IsMachine
+		err = fmt.Errorf("connection %q not found", conn.Value.String())
+		return
 	case url.Changed:
 		podmanConfig.URI = url.Value.String()
+		return
 	case contextConn != nil && contextConn.Changed:
 		service := contextConn.Value.String()
 		if service != "default" {
-			con, err := conf.GetConnection(service, false)
-			if err != nil {
-				return err
+			if dest, ok := conf.Engine.ServiceDestinations[contextConn.Value.String()]; ok {
+				podmanConfig.URI = dest.URI
+				podmanConfig.Identity = dest.Identity
+				podmanConfig.MachineMode = dest.IsMachine
+				return
 			}
-			podmanConfig.URI = con.URI
-			podmanConfig.Identity = con.Identity
-			podmanConfig.MachineMode = con.IsMachine
+			return fmt.Errorf("connection %q not found", service)
 		}
 	case host.Changed:
 		podmanConfig.URI = host.Value.String()
 	}
-	return nil
+	return
 }
 
 // setupRemoteConnection returns information about the active service destination
@@ -188,30 +191,28 @@ func readRemoteCliFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig)
 func setupRemoteConnection(podmanConfig *entities.PodmanConfig) error {
 	conf := podmanConfig.ContainersConfDefaultsRO
 	connEnv, hostEnv, sshkeyEnv := os.Getenv("CONTAINER_CONNECTION"), os.Getenv("CONTAINER_HOST"), os.Getenv("CONTAINER_SSHKEY")
+	dest, destFound := conf.Engine.ServiceDestinations[conf.Engine.ActiveService]
 
 	switch {
 	case connEnv != "":
-		con, err := conf.GetConnection(connEnv, false)
-		if err != nil {
-			return err
+		if ConnEnvDest, ok := conf.Engine.ServiceDestinations[connEnv]; ok {
+			podmanConfig.URI = ConnEnvDest.URI
+			podmanConfig.Identity = ConnEnvDest.Identity
+			podmanConfig.MachineMode = ConnEnvDest.IsMachine
+			return nil
 		}
-		podmanConfig.URI = con.URI
-		podmanConfig.Identity = con.Identity
-		podmanConfig.MachineMode = con.IsMachine
+		return fmt.Errorf("connection %q not found", connEnv)
 	case hostEnv != "":
 		if sshkeyEnv != "" {
 			podmanConfig.Identity = sshkeyEnv
 		}
 		podmanConfig.URI = hostEnv
+	case destFound:
+		podmanConfig.URI = dest.URI
+		podmanConfig.Identity = dest.Identity
+		podmanConfig.MachineMode = dest.IsMachine
 	default:
-		con, err := conf.GetConnection("", true)
-		if err == nil {
-			podmanConfig.URI = con.URI
-			podmanConfig.Identity = con.Identity
-			podmanConfig.MachineMode = con.IsMachine
-		} else {
-			podmanConfig.URI = registry.DefaultAPIAddress()
-		}
+		podmanConfig.URI = registry.DefaultAPIAddress()
 	}
 	return nil
 }
@@ -399,10 +400,7 @@ func persistentPostRunE(cmd *cobra.Command, args []string) error {
 
 func configHook() {
 	if dockerConfig != "" {
-		if err := os.Setenv("DOCKER_CONFIG", dockerConfig); err != nil {
-			fmt.Fprintf(os.Stderr, "cannot set DOCKER_CONFIG=%s: %s", dockerConfig, err.Error())
-			os.Exit(1)
-		}
+		logrus.Warn("The --config flag is ignored by Podman. Exists for Docker compatibility")
 	}
 }
 
@@ -478,10 +476,8 @@ func rootFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig) {
 	lFlags.StringVarP(&podmanConfig.URI, "host", "H", podmanConfig.URI, "Used for Docker compatibility")
 	_ = lFlags.MarkHidden("host")
 
-	configFlagName := "config"
-	lFlags.StringVar(&dockerConfig, "config", "", "Location of authentication config file")
-	_ = cmd.RegisterFlagCompletionFunc(configFlagName, completion.AutocompleteDefault)
-
+	lFlags.StringVar(&dockerConfig, "config", "", "Ignored for Docker compatibility")
+	_ = lFlags.MarkHidden("config")
 	// Context option added just for compatibility with DockerCLI.
 	lFlags.String("context", "default", "Name of the context to use to connect to the daemon (This flag is a NOOP and provided solely for scripting compatibility.)")
 	_ = lFlags.MarkHidden("context")
@@ -511,7 +507,7 @@ func rootFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig) {
 		// as a flag here to a) make sure that rootflags are aware of
 		// this flag and b) to have shell completions.
 		moduleFlagName := "module"
-		lFlags.StringArray(moduleFlagName, nil, "Load the containers.conf(5) module")
+		lFlags.StringSlice(moduleFlagName, nil, "Load the containers.conf(5) module")
 		_ = cmd.RegisterFlagCompletionFunc(moduleFlagName, common.AutocompleteContainersConfModules)
 
 		// A *hidden* flag to change the database backend.
@@ -545,7 +541,7 @@ func rootFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig) {
 		_ = cmd.RegisterFlagCompletionFunc(eventsBackendFlagName, common.AutocompleteEventBackend)
 
 		hooksDirFlagName := "hooks-dir"
-		pFlags.StringArrayVar(&podmanConfig.HooksDir, hooksDirFlagName, podmanConfig.ContainersConfDefaultsRO.Engine.HooksDir.Get(), "Set the OCI hooks directory path (may be set multiple times)")
+		pFlags.StringSliceVar(&podmanConfig.HooksDir, hooksDirFlagName, podmanConfig.ContainersConfDefaultsRO.Engine.HooksDir.Get(), "Set the OCI hooks directory path (may be set multiple times)")
 		_ = cmd.RegisterFlagCompletionFunc(hooksDirFlagName, completion.AutocompleteDefault)
 
 		pFlags.IntVar(&podmanConfig.MaxWorks, "max-workers", (runtime.NumCPU()*3)+1, "The maximum number of workers for parallel operations")

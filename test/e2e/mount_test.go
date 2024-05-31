@@ -1,7 +1,7 @@
 package integration
 
 import (
-	. "github.com/containers/podman/v5/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -179,7 +179,9 @@ var _ = Describe("Podman mount", func() {
 		Expect(lmount).Should(ExitCleanly())
 		Expect(lmount.OutputToString()).To(ContainSubstring(cid))
 
-		podmanTest.StopContainer(cid)
+		stop := podmanTest.Podman([]string{"stop", cid})
+		stop.WaitWithDefaultTimeout()
+		Expect(stop).Should(ExitCleanly())
 
 		lmount = podmanTest.Podman([]string{"mount", "--no-trunc"})
 		lmount.WaitWithDefaultTimeout()

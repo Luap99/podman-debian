@@ -9,13 +9,13 @@ import (
 	tm "github.com/buger/goterm"
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/report"
-	"github.com/containers/podman/v5/cmd/podman/common"
-	"github.com/containers/podman/v5/cmd/podman/registry"
-	putils "github.com/containers/podman/v5/cmd/podman/utils"
-	"github.com/containers/podman/v5/cmd/podman/validate"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	"github.com/containers/podman/v5/utils"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	putils "github.com/containers/podman/v4/cmd/podman/utils"
+	"github.com/containers/podman/v4/cmd/podman/validate"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/utils"
 	"github.com/docker/go-units"
 	"github.com/spf13/cobra"
 )
@@ -215,15 +215,7 @@ func (s *containerStats) MemPerc() string {
 }
 
 func (s *containerStats) NetIO() string {
-	var netInput uint64
-	var netOutput uint64
-
-	for _, net := range s.Network {
-		netInput += net.RxBytes
-		netOutput += net.TxBytes
-	}
-
-	return combineHumanValues(netInput, netOutput)
+	return combineHumanValues(s.NetInput, s.NetOutput)
 }
 
 func (s *containerStats) BlockIO() string {

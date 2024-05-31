@@ -1,4 +1,5 @@
 //go:build !remote_testing
+// +build !remote_testing
 
 // build for play kube is not supported on remote yet.
 
@@ -8,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
-	. "github.com/containers/podman/v5/test/utils"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"

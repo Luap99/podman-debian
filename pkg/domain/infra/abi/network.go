@@ -6,13 +6,11 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/containers/common/libnetwork/pasta"
-	"github.com/containers/common/libnetwork/slirp4netns"
 	"github.com/containers/common/libnetwork/types"
 	netutil "github.com/containers/common/libnetwork/util"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	"golang.org/x/exp/slices"
+	"github.com/containers/common/pkg/util"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 )
 
 func (ic *ContainerEngine) NetworkUpdate(ctx context.Context, netName string, options entities.NetworkUpdateOptions) error {
@@ -64,13 +62,9 @@ func (ic *ContainerEngine) NetworkList(ctx context.Context, options entities.Net
 	return nets, err
 }
 
-func (ic *ContainerEngine) NetworkInspect(ctx context.Context, namesOrIds []string, options entities.InspectOptions) ([]entities.NetworkInspectReport, []error, error) {
+func (ic *ContainerEngine) NetworkInspect(ctx context.Context, namesOrIds []string, options entities.InspectOptions) ([]types.Network, []error, error) {
 	var errs []error
-	statuses, err := ic.GetContainerNetStatuses()
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get network status for containers: %w", err)
-	}
-	networks := make([]entities.NetworkInspectReport, 0, len(namesOrIds))
+	networks := make([]types.Network, 0, len(namesOrIds))
 	for _, name := range namesOrIds {
 		net, err := ic.Libpod.Network().NetworkInspect(name)
 		if err != nil {
@@ -81,22 +75,7 @@ func (ic *ContainerEngine) NetworkInspect(ctx context.Context, namesOrIds []stri
 				return nil, nil, fmt.Errorf("inspecting network %s: %w", name, err)
 			}
 		}
-		containerMap := make(map[string]entities.NetworkContainerInfo)
-		for _, st := range statuses {
-			// Make sure to only show the info for the correct network
-			if sb, ok := st.Status[net.Name]; ok {
-				containerMap[st.ID] = entities.NetworkContainerInfo{
-					Name:       st.Name,
-					Interfaces: sb.Interfaces,
-				}
-			}
-		}
-
-		netReport := entities.NetworkInspectReport{
-			Network:    net,
-			Containers: containerMap,
-		}
-		networks = append(networks, netReport)
+		networks = append(networks, net)
 	}
 	return networks, errs, nil
 }
@@ -142,7 +121,7 @@ func (ic *ContainerEngine) NetworkRm(ctx context.Context, namesOrIds []string, o
 			if err != nil {
 				return reports, err
 			}
-			if slices.Contains(networks, name) {
+			if util.StringInSlice(name, networks) {
 				// if user passes force, we nuke containers and pods
 				if !options.Force {
 					// Without the force option, we return an error
@@ -171,7 +150,8 @@ func (ic *ContainerEngine) NetworkRm(ctx context.Context, namesOrIds []string, o
 }
 
 func (ic *ContainerEngine) NetworkCreate(ctx context.Context, network types.Network, createOptions *types.NetworkCreateOptions) (*types.Network, error) {
-	if slices.Contains([]string{"none", "host", "bridge", "private", slirp4netns.BinaryName, pasta.BinaryName, "container", "ns", "default"}, network.Name) {
+	// TODO (5.0): Stop accepting "pasta" as value here
+	if util.StringInSlice(network.Name, []string{"none", "host", "bridge", "private", "slirp4netns", "container", "ns", "default"}) {
 		return nil, fmt.Errorf("cannot create network with name %q because it conflicts with a valid network mode", network.Name)
 	}
 	network, err := ic.Libpod.Network().NetworkCreate(network, createOptions)
@@ -261,37 +241,4 @@ func (ic *ContainerEngine) createDanglingFilterFunc(wantDangling bool) (types.Fi
 		}
 		return wantDangling
 	}, nil
-}
-
-type ContainerNetStatus struct {
-	// Name of the container
-	Name string
-	// ID of the container
-	ID string
-	// Status contains the net status, the key is the network name
-	Status map[string]types.StatusBlock
-}
-
-func (ic *ContainerEngine) GetContainerNetStatuses() ([]ContainerNetStatus, error) {
-	cons, err := ic.Libpod.GetAllContainers()
-	if err != nil {
-		return nil, err
-	}
-	statuses := make([]ContainerNetStatus, 0, len(cons))
-	for _, con := range cons {
-		status, err := con.GetNetworkStatus()
-		if err != nil {
-			if errors.Is(err, define.ErrNoSuchCtr) || errors.Is(err, define.ErrCtrRemoved) {
-				continue
-			}
-			return nil, err
-		}
-
-		statuses = append(statuses, ContainerNetStatus{
-			ID:     con.ID(),
-			Name:   con.Name(),
-			Status: status,
-		})
-	}
-	return statuses, nil
 }

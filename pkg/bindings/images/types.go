@@ -3,7 +3,7 @@ package images
 import (
 	"io"
 
-	"github.com/containers/podman/v5/pkg/domain/entities/types"
+	buildahDefine "github.com/containers/buildah/define"
 )
 
 // RemoveOptions are optional options for image removal
@@ -162,10 +162,6 @@ type PushOptions struct {
 	SkipTLSVerify *bool `schema:"-"`
 	// RemoveSignatures Discard any pre-existing signatures in the image.
 	RemoveSignatures *bool
-	// Retry number of times to retry push in case of failure
-	Retry *uint
-	// RetryDelay between retries in case of push failures
-	RetryDelay *string
 	// Username for authenticating against the registry.
 	Username *string `schema:"-"`
 	// Quiet can be specified to suppress progress when pushing.
@@ -221,10 +217,6 @@ type PullOptions struct {
 	// Quiet can be specified to suppress pull progress when pulling.  Ignored
 	// for remote calls.
 	Quiet *bool
-	// Retry number of times to retry pull in case of failure
-	Retry *uint
-	// RetryDelay between retries in case of pull failures
-	RetryDelay *string
 	// SkipTLSVerify to skip HTTPS and certificate verification.
 	SkipTLSVerify *bool `schema:"-"`
 	// Username for authenticating against the registry.
@@ -234,7 +226,9 @@ type PullOptions struct {
 }
 
 // BuildOptions are optional options for building images
-type BuildOptions = types.BuildOptions
+type BuildOptions struct {
+	buildahDefine.BuildOptions
+}
 
 // ExistsOptions are optional options for checking if an image exists
 //

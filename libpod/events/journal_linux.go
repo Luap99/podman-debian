@@ -1,4 +1,5 @@
 //go:build systemd
+// +build systemd
 
 package events
 
@@ -10,8 +11,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/containers/podman/v5/pkg/rootless"
-	"github.com/containers/podman/v5/pkg/util"
+	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/coreos/go-systemd/v22/journal"
 	"github.com/coreos/go-systemd/v22/sdjournal"
 	"github.com/sirupsen/logrus"
@@ -43,15 +44,12 @@ func (e EventJournalD) Write(ee Event) error {
 	case Image:
 		m["PODMAN_NAME"] = ee.Name
 		m["PODMAN_ID"] = ee.ID
-		if ee.Error != "" {
-			m["ERROR"] = ee.Error
-		}
 	case Container, Pod:
 		m["PODMAN_IMAGE"] = ee.Image
 		m["PODMAN_NAME"] = ee.Name
 		m["PODMAN_ID"] = ee.ID
-		if ee.ContainerExitCode != nil {
-			m["PODMAN_EXIT_CODE"] = strconv.Itoa(*ee.ContainerExitCode)
+		if ee.ContainerExitCode != 0 {
+			m["PODMAN_EXIT_CODE"] = strconv.Itoa(ee.ContainerExitCode)
 		}
 		if ee.PodID != "" {
 			m["PODMAN_POD_ID"] = ee.PodID
@@ -208,7 +206,7 @@ func newEventFromJournalEntry(entry *sdjournal.JournalEntry) (*Event, error) {
 			if err != nil {
 				logrus.Errorf("Parsing event exit code %s", code)
 			} else {
-				newEvent.ContainerExitCode = &intCode
+				newEvent.ContainerExitCode = intCode
 			}
 		}
 
@@ -231,9 +229,6 @@ func newEventFromJournalEntry(entry *sdjournal.JournalEntry) (*Event, error) {
 		newEvent.Network = entry.Fields["PODMAN_NETWORK_NAME"]
 	case Image:
 		newEvent.ID = entry.Fields["PODMAN_ID"]
-		if val, ok := entry.Fields["ERROR"]; ok {
-			newEvent.Error = val
-		}
 	}
 	return &newEvent, nil
 }

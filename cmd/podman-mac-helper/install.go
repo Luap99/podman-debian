@@ -1,4 +1,5 @@
 //go:build darwin
+// +build darwin
 
 package main
 
@@ -18,8 +19,8 @@ import (
 )
 
 const (
-	mode755 = 0755
-	mode644 = 0644
+	rwx_rx_rx = 0755
+	rw_r_r    = 0644
 )
 
 const launchConfig = `<?xml version="1.0" encoding="UTF-8"?>
@@ -109,7 +110,7 @@ func install(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	file, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode644)
+	file, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, rw_r_r)
 	if err != nil {
 		return fmt.Errorf("creating helper plist file: %w", err)
 	}
@@ -138,7 +139,7 @@ func restrictRecursive(targetDir string, until string) error {
 		if err = os.Chown(targetDir, 0, 0); err != nil {
 			return fmt.Errorf("could not update ownership of helper path: %w", err)
 		}
-		if err = os.Chmod(targetDir, mode755|fs.ModeSticky); err != nil {
+		if err = os.Chmod(targetDir, rwx_rx_rx|fs.ModeSticky); err != nil {
 			return fmt.Errorf("could not update permissions of helper path: %w", err)
 		}
 		targetDir = filepath.Dir(targetDir)
@@ -205,7 +206,7 @@ func installExecutable(user string) (string, error) {
 	}
 
 	targetDir := filepath.Join(installPrefix, "podman", "helper", user)
-	if err := os.MkdirAll(targetDir, mode755); err != nil {
+	if err := os.MkdirAll(targetDir, rwx_rx_rx); err != nil {
 		return "", fmt.Errorf("could not create helper directory structure: %w", err)
 	}
 
@@ -220,7 +221,7 @@ func installExecutable(user string) (string, error) {
 	}
 	install := filepath.Join(targetDir, filepath.Base(exec))
 
-	return install, copyFile(install, exec, mode755)
+	return install, copyFile(install, exec, rwx_rx_rx)
 }
 
 func copyFile(dest string, source string, perms fs.FileMode) error {

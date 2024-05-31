@@ -6,12 +6,12 @@ import (
 	"os"
 	"strings"
 
-	"github.com/containers/podman/v5/cmd/podman/common"
-	"github.com/containers/podman/v5/cmd/podman/registry"
-	"github.com/containers/podman/v5/cmd/podman/utils"
-	"github.com/containers/podman/v5/cmd/podman/validate"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/domain/entities"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/utils"
+	"github.com/containers/podman/v4/cmd/podman/validate"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/domain/entities"
 	"github.com/spf13/cobra"
 )
 
@@ -24,7 +24,8 @@ var (
 		RunE:              start,
 		Args:              validateStart,
 		ValidArgsFunction: common.AutocompleteContainersStartable,
-		Example: `podman start 860a4b231279 5421ab43b45
+		Example: `podman start --latest
+  podman start 860a4b231279 5421ab43b45
   podman start --interactive --attach imageID`,
 	}
 
@@ -35,7 +36,8 @@ var (
 		RunE:              startCommand.RunE,
 		Args:              startCommand.Args,
 		ValidArgsFunction: startCommand.ValidArgsFunction,
-		Example: `podman container start 860a4b231279 5421ab43b45
+		Example: `podman container start --latest
+  podman container start 860a4b231279 5421ab43b45
   podman container start --interactive --attach imageID`,
 	}
 )
@@ -124,11 +126,11 @@ func start(cmd *cobra.Command, args []string) error {
 
 	containers := utils.RemoveSlash(args)
 	for _, f := range filters {
-		fname, filter, hasFilter := strings.Cut(f, "=")
-		if !hasFilter {
+		split := strings.SplitN(f, "=", 2)
+		if len(split) < 2 {
 			return fmt.Errorf("invalid filter %q", f)
 		}
-		startOptions.Filters[fname] = append(startOptions.Filters[fname], filter)
+		startOptions.Filters[split[0]] = append(startOptions.Filters[split[0]], split[1])
 	}
 
 	responses, err := registry.ContainerEngine().ContainerStart(registry.GetContext(), containers, startOptions)

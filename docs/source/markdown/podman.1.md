@@ -32,9 +32,6 @@ The CGroup manager to use for container cgroups. Supported values are __cgroupfs
 Note: Setting this flag can cause certain commands to break when called on containers previously created by the other CGroup manager type.
 Note: CGroup manager is not supported in rootless mode when using CGroups Version V1.
 
-#### **--config**
-Location of config file. Mainly for docker compatibility, only the authentication parts of the config are supported.
-
 #### **--conmon**
 Path of the conmon binary (Default path is configured in `containers.conf`)
 
@@ -242,20 +239,15 @@ Set default location of the storage.conf file.
 
 #### **CONTAINER_CONNECTION**
 
-Override default `--connection` value to access Podman service. Automatically enables the --remote option.
+Override default `--connection` value to access Podman service. Also enabled --remote option.
 
 #### **CONTAINER_HOST**
 
-Set default `--url` value to access Podman service. Automatically enables --remote option.
+Set default `--url` value to access Podman service. Also enabled --remote option.
 
 #### **CONTAINER_SSHKEY**
 
 Set default `--identity` path to ssh key file value used to access Podman service.
-
-#### **PODMAN_CONNECTIONS_CONF**
-
-The path to the file where the system connections and farms created with `podman system connection add`
-and `podman farm add` are stored, by default it uses `~/.config/containers/podman-connections.json`.
 
 #### **STORAGE_DRIVER**
 
@@ -447,10 +439,6 @@ Or just add the content manually.
 	$ echo USERNAME:10000:65536 >> /etc/subgid
 
 See the `subuid(5)` and `subgid(5)` man pages for more information.
-
-
-
-Note: whitespace in any row of /etc/subuid or /etc/subgid, including trailing blanks, may result in no entry failures.
 
 Images are pulled under `XDG_DATA_HOME` when specified, otherwise in the home directory of the user under `.local/share/containers/storage`.
 

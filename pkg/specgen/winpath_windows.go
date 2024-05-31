@@ -1,10 +1,9 @@
 package specgen
 
 import (
+	"github.com/sirupsen/logrus"
 	"os"
 	"path/filepath"
-
-	"github.com/sirupsen/logrus"
 )
 
 func shouldResolveUnixWinVariant(path string) bool {

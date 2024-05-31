@@ -9,8 +9,6 @@ use utf8;
 
 use strict;
 use warnings;
-use Clone                       qw(clone);
-use FindBin;
 
 (our $ME = $0) =~ s|.*/||;
 our $VERSION = '0.1';
@@ -25,17 +23,17 @@ $| = 1;
 # BEGIN user-customizable section
 
 # Path to podman executable
-my $Default_Podman = "$FindBin::Bin/../bin/podman";
+my $Default_Podman = './bin/podman';
 my $PODMAN = $ENV{PODMAN} || $Default_Podman;
 
 # Path to all doc files, including .rst and (down one level) markdown
-our $Docs_Path = 'docs/source';
+my $Docs_Path = 'docs/source';
 
 # Path to podman markdown source files (of the form podman-*.1.md)
-our $Markdown_Path = "$Docs_Path/markdown";
+my $Markdown_Path = "$Docs_Path/markdown";
 
 # Global error count
-our $Errs = 0;
+my $Errs = 0;
 
 # Table of exceptions for documenting fields in '--format {{.Foo}}'
 #
@@ -109,9 +107,14 @@ my %Skip_Subcommand = map { $_ => 1 } (
     "help",                     # has no man page
     "completion",               # internal (hidden) subcommand
     "compose",                  # external tool, outside of our control
+    "farm",                # hidden subcommand till it is fully implemented - remove this once done
 );
 
 # END   user-customizable section
+###############################################################################
+
+use FindBin;
+
 ###############################################################################
 # BEGIN boilerplate args checking, usage messages
 
@@ -177,9 +180,6 @@ sub main {
     # Fetch command-line arguments.  Barf if too many.
     die "$ME: Too many arguments; try $ME --help\n"                 if @ARGV;
 
-    chdir "$FindBin::Bin/.."
-        or die "$ME: FATAL: Cannot cd $FindBin::Bin/..: $!";
-
     my $help = podman_help();
     my $man  = podman_man('podman');
     my $rst  = podman_rst();
@@ -216,49 +216,15 @@ sub xref_by_help {
                 # autocompletion that looks like a Go template, but those
                 # template options aren't documented in the man pages.
                 if ($k eq '--format' && ! ref($man->{$k})) {
-                    # "podman inspect" tries to autodetect if it's being run
-                    # on an image or container. It cannot sanely be documented.
-                    unless ("@subcommand" eq "inspect") {
-                        warn "$ME: 'podman @subcommand': --format options are available through autocomplete, but are not documented in $man->{_path}\n";
-                        ++$Errs;
-                    }
+                    warn "$ME: 'podman @subcommand': --format options are available through autocomplete, but are not documented in $man->{_path}\n";
+
+                    ++$Errs   unless "@subcommand" eq "inspect";
                     next OPTION;
                 }
 
                 xref_by_help($help->{$k}, $man->{$k}, @subcommand, $k);
             }
-
-            # Documenting --format fields is tricky! They can be scalars, structs,
-            # or functions. This is a complicated block because if help & man don't
-            # match, we want to give the most user-friendly message possible.
-            elsif (@subcommand && $subcommand[-1] eq '--format') {
-                # '!' is one of the Format_Exceptions defined at top
-                if (($man->{$k} ne '!') && ($man->{$k} ne $help->{$k})) {
-                    # Fallback message
-                    my $msg = "TELL ED TO HANDLE THIS: man='$man->{$k}' help='$help->{$k}'";
-
-                    # Many different permutations of mismatches.
-                    my $combo = "$man->{$k}-$help->{$k}";
-                    if ($combo eq '0-...') {
-                        $msg = "is a nested structure. Please add '...' to man page.";
-                    }
-                    elsif ($combo =~ /^\d+-\.\.\.$/) {
-                        $msg = "is a nested structure, but the man page documents it as a function?!?";
-                    }
-                    elsif ($combo eq '...-0') {
-                        $msg = "is a simple value, not a nested structure. Please remove '...' from man page.";
-                    }
-                    elsif ($combo =~ /^0-[1-9]\d*$/) {
-                        $msg = "is a function that calls for $help->{$k} args. Please investigate what those are, then add them to the man page. E.g., '$k *bool*' or '$k *path* *bool*'";
-                    }
-                    elsif ($combo =~ /^\d+-[1-9]\d*$/) {
-                        $msg = "is a function that calls for $help->{$k} args; the man page lists $man->{$k}. Please fix the man page.";
-                    }
-
-                    warn "$ME: 'podman @subcommand {{$k' $msg\n";
-                    ++$Errs;
-                }
-            }
+            # Otherwise, non-ref is leaf node such as a --option
         }
         else {
             # Not documented in man. However, handle '...' as a special case
@@ -267,8 +233,7 @@ sub xref_by_help {
             # are way too many to list individually.
             my $k_copy = $k;
             while ($k_copy =~ s/\.[^.]+$//) {
-                my $parent_man = $man->{$k_copy} // '';
-                if (($parent_man eq '...') || ($parent_man eq '!')) {
+                if (($man->{$k_copy}||'') eq '...') {
                     next OPTION;
                 }
             }
@@ -278,7 +243,7 @@ sub xref_by_help {
             # The usual case is "podman ... --help"...
             my $what = '--help';
             # ...but for *options* (e.g. --filter), we're checking command completion
-            $what = '<TAB>' if @subcommand && $subcommand[-1] =~ /^--/;
+            $what = '<TAB>' if $subcommand[-1] =~ /^--/;
             warn "$ME: 'podman @subcommand $what' lists '$k', which is not in $man\n";
             ++$Errs;
         }
@@ -344,7 +309,7 @@ sub xref_by_man {
 
             # It's not always --help, sometimes we check <TAB> completion
             my $what = '--help';
-            $what = 'command completion' if @subcommand && $subcommand[-1] =~ /^--/;
+            $what = 'command completion' if $subcommand[-1] =~ /^--/;
             warn "$ME: 'podman @subcommand': '$k' in $man, but not in $what\n";
             ++$Errs;
         }
@@ -428,37 +393,21 @@ sub podman_help {
             }
 
             # Special case for --format: run podman with autocomplete.
-            # If that lists one or more '{{.Foo<something>' entries,
+            # If that lists one or more '{{.Foo}}' or '{{.Foo.' entries
+            # (indicating terminal or nonterminal nodes respectively)
             # convert our option data structure from scalar (indicating
             # that we just cross-check for existence in the man page)
             # to hashref (indicating that we recurse down and cross-check
             # each individual param).
-            #
-            # There are three possibilities for <something>:
-            #    {{.Foo}}  (end braces)       | terminal node. Usual case.
-            #    {{.Foo.   (dot)              | deeper struct. Hard to handle.
-            #    {{.Foo This is a function... | function. Rare, and " " " "
-            #
             if ($opt eq '--format') {
                 my @completions = _completions(@_, '--format', '{{.');
                 for my $c (@completions) {
-                    if ($c =~ /^\{\{(\.\S+)(\s+This.*\s(\d+)\s+arg.*)?$/) {
-                        my ($fmt, $n_args) = ($1, $3 || 0);
-                        # Strip off braces/dot, leaving just the name
-                        $fmt =~ s/(\.|\}\})$//;
-                        my $stripped = $1;
-
+                    if ($c =~ /^\{\{(\.\S+)(\.|\}\})$/) {
                         # First time through: convert to a hashref
                         $help{$opt} = {}   if ! ref($help{$opt});
 
                         # Remember this param
-                        if ($stripped eq '}}') {
-                            $n_args = 0;
-                        }
-                        elsif ($stripped eq '.') {
-                            $n_args = '...';
-                        }
-                        $help{$opt}{$fmt} = $n_args;
+                        $help{$opt}{$1} = 1;
                     }
                 }
 
@@ -508,27 +457,15 @@ sub podman_help {
 ################
 #  podman_man  #  Parse contents of podman-*.1.md
 ################
-our %Man_Seen;
 sub podman_man {
     my $command = shift;
     my $subpath = "$Markdown_Path/$command.1.md";
+    my $manpath = "$FindBin::Bin/../$subpath";
     print "** $subpath \n"                              if $debug;
 
     my %man = (_path => $subpath);
-
-    # We often get called multiple times on the same man page,
-    # because (e.g.) podman-container-list == podman-ps. It's the
-    # same man page text, though, and we don't know which subcommand
-    # we're being called for, so there's nothing to be gained by
-    # rereading the man page or by dumping yet more warnings
-    # at the user. So, keep a cache of what we've done.
-    if (my $seen = $Man_Seen{$subpath}) {
-        return clone($seen);
-    }
-    $Man_Seen{$subpath} = \%man;
-
-    open my $fh, '<', $subpath
-        or die "$ME: Cannot read $subpath: $!\n";
+    open my $fh, '<', $manpath
+        or die "$ME: Cannot read $manpath: $!\n";
     my $section = '';
     my @most_recent_flags;
     my $previous_subcmd = '';
@@ -576,7 +513,7 @@ sub podman_man {
             if ($line =~ /^\|\s*\[podman-(\S+?)\(\d\)\]/) {
                 # $1 will be changed by recursion _*BEFORE*_ left-hand assignment
                 my $subcmd = $1;
-                $man{$subcmd} = podman_man("podman-$subcmd");
+                $man{$subcmd} = podman_man("podman-$1");
             }
 
             # In podman-<subcommand>.1.md
@@ -691,13 +628,11 @@ sub podman_man {
             # --format does not always mean a Go format! E.g., push --format=oci
             if ($previous_flag eq '--format') {
                 # ...but if there's a table like '| .Foo | blah blah |'
-                # then it's definitely a Go template. There are three cases:
-                #     .Foo        - Scalar field. The usual case.
-                #     .Foo ...    - Structure with subfields, e.g. .Foo.Xyz
-                #     .Foo ARG(s) - Function requiring one or more arguments
-                #
-                #                   1     12   3        32
-                if ($line =~ /^\|\s+(\.\S+)(\s+([^\|]+\S))?\s+\|/) {
+                # then it's definitely a Go template. '.Foo ...' (three dots)
+                # indicates that .Foo includes a number of subfields .Foo.Xxx,
+                # .Foo.Yyy too numerous to list individually in man pages.
+                #                   1     12   3      32
+                if ($line =~ /^\|\s+(\.\S+)(\s+(\.\.\.))?\s+\|/) {
                     my ($format, $etc) = ($1, $3);
 
                     # Confirmed: we have a table with '.Foo' strings, so
@@ -709,25 +644,9 @@ sub podman_man {
                     }
 
                     # ...and document this format option. $etc, if set,
-                    # will indicate if this is a struct ("...") or a
-                    # function.
-                    if ($etc) {
-                        if ($etc eq '...') {    # ok
-                            ;
-                        }
-                        elsif ($etc =~ /^\*[a-z]+\*(\s+\*[a-z]+\*)*$/) {
-                            # a function. Preserve only the arg COUNT, not
-                            # their names. (command completion has no way
-                            # to give us arg names or types).
-                            $etc = scalar(split(' ', $etc));
-                        }
-                        else {
-                            warn "$ME: $subpath:$.: unknown args '$etc' for '$format'. Valid args are '...' for nested structs or, for functions, one or more asterisk-wrapped argument names.\n";
-                            ++$Errs;
-                        }
-                    }
-
-                    $man{$previous_flag}{$format} = $etc || 0;
+                    # will be '...' which indicates that $format has
+                    # too many subformats to document individually.
+                    $man{$previous_flag}{$format} = $etc || 1;
 
                     # Sort order check, case-insensitive
                     if (lc($format) lt lc($previous_format)) {
@@ -805,7 +724,7 @@ sub podman_man {
     # for this command, flag them as seen, and as '...' so we don't
     # complain about any sub-fields.
     if (my $fields = $Format_Exceptions{$command}) {
-        $man{"--format"}{$_} = '!' for @$fields;
+        $man{"--format"}{$_} = '...' for @$fields;
     }
 
     # Special case: the 'image trust' man page tries hard to cover both set
@@ -891,7 +810,7 @@ sub podman_rst {
 }
 
 ##################
-#  _completions  #  run podman __complete, return list of completions
+#  _completions  #  run podman __completeNoDesc, return list of completions
 ##################
 sub _completions {
     my $kidpid = open my $podman_fh, '-|';
@@ -902,7 +821,7 @@ sub _completions {
     if ($kidpid == 0) {
         # We are the child
         close STDERR;
-        exec $PODMAN, '__complete', @_;
+        exec $PODMAN, '__completeNoDesc', @_;
         die "$ME: Could not exec: $!\n";
     }
 
@@ -925,7 +844,7 @@ sub _completions {
         }
     }
     close $podman_fh
-        or warn "$ME: Error running podman __complete @_\n";
+        or warn "$ME: Error running podman __completeNoDesc @_\n";
     return @completions;
 }
 

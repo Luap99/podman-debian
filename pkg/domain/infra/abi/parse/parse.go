@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/containers/podman/v5/libpod"
-	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/libpod/define"
 	"github.com/docker/go-units"
 	"github.com/sirupsen/logrus"
 )
@@ -27,64 +27,64 @@ func VolumeOptions(opts map[string]string) ([]libpod.VolumeCreateOption, error) 
 			for _, o := range splitVal {
 				// Options will be formatted as either "opt" or
 				// "opt=value"
-				opt, val, hasVal := strings.Cut(o, "=")
-				switch strings.ToLower(opt) {
+				splitO := strings.SplitN(o, "=", 2)
+				switch strings.ToLower(splitO[0]) {
 				case "size":
-					size, err := units.FromHumanSize(val)
+					size, err := units.FromHumanSize(splitO[1])
 					if err != nil {
-						return nil, fmt.Errorf("cannot convert size %s to integer: %w", val, err)
+						return nil, fmt.Errorf("cannot convert size %s to integer: %w", splitO[1], err)
 					}
 					libpodOptions = append(libpodOptions, libpod.WithVolumeSize(uint64(size)))
 					finalVal = append(finalVal, o)
 					// set option "SIZE": "$size"
-					volumeOptions["SIZE"] = val
+					volumeOptions["SIZE"] = splitO[1]
 				case "inodes":
-					inodes, err := strconv.ParseUint(val, 10, 64)
+					inodes, err := strconv.ParseUint(splitO[1], 10, 64)
 					if err != nil {
-						return nil, fmt.Errorf("cannot convert inodes %s to integer: %w", val, err)
+						return nil, fmt.Errorf("cannot convert inodes %s to integer: %w", splitO[1], err)
 					}
 					libpodOptions = append(libpodOptions, libpod.WithVolumeInodes(inodes))
 					finalVal = append(finalVal, o)
 					// set option "INODES": "$size"
-					volumeOptions["INODES"] = val
+					volumeOptions["INODES"] = splitO[1]
 				case "uid":
-					if !hasVal {
+					if len(splitO) != 2 {
 						return nil, fmt.Errorf("uid option must provide a UID: %w", define.ErrInvalidArg)
 					}
-					intUID, err := strconv.Atoi(val)
+					intUID, err := strconv.Atoi(splitO[1])
 					if err != nil {
-						return nil, fmt.Errorf("cannot convert UID %s to integer: %w", val, err)
+						return nil, fmt.Errorf("cannot convert UID %s to integer: %w", splitO[1], err)
 					}
 					logrus.Debugf("Removing uid= from options and adding WithVolumeUID for UID %d", intUID)
 					libpodOptions = append(libpodOptions, libpod.WithVolumeUID(intUID), libpod.WithVolumeNoChown())
 					finalVal = append(finalVal, o)
 					// set option "UID": "$uid"
-					volumeOptions["UID"] = val
+					volumeOptions["UID"] = splitO[1]
 				case "gid":
-					if !hasVal {
+					if len(splitO) != 2 {
 						return nil, fmt.Errorf("gid option must provide a GID: %w", define.ErrInvalidArg)
 					}
-					intGID, err := strconv.Atoi(val)
+					intGID, err := strconv.Atoi(splitO[1])
 					if err != nil {
-						return nil, fmt.Errorf("cannot convert GID %s to integer: %w", val, err)
+						return nil, fmt.Errorf("cannot convert GID %s to integer: %w", splitO[1], err)
 					}
 					logrus.Debugf("Removing gid= from options and adding WithVolumeGID for GID %d", intGID)
 					libpodOptions = append(libpodOptions, libpod.WithVolumeGID(intGID), libpod.WithVolumeNoChown())
 					finalVal = append(finalVal, o)
 					// set option "GID": "$gid"
-					volumeOptions["GID"] = val
+					volumeOptions["GID"] = splitO[1]
 				case "noquota":
 					logrus.Debugf("Removing noquota from options and adding WithVolumeDisableQuota")
 					libpodOptions = append(libpodOptions, libpod.WithVolumeDisableQuota())
 					// set option "NOQUOTA": "true"
 					volumeOptions["NOQUOTA"] = "true"
 				case "timeout":
-					if !hasVal {
+					if len(splitO) != 2 {
 						return nil, fmt.Errorf("timeout option must provide a valid timeout in seconds: %w", define.ErrInvalidArg)
 					}
-					intTimeout, err := strconv.Atoi(val)
+					intTimeout, err := strconv.Atoi(splitO[1])
 					if err != nil {
-						return nil, fmt.Errorf("cannot convert Timeout %s to an integer: %w", val, err)
+						return nil, fmt.Errorf("cannot convert Timeout %s to an integer: %w", splitO[1], err)
 					}
 					if intTimeout < 0 {
 						return nil, fmt.Errorf("volume timeout cannot be negative (got %d)", intTimeout)

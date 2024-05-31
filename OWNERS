@@ -7,7 +7,6 @@ approvers:
   - edsantiago
   - flouthoc
   - giuseppe
-  - jakecorrenti
   - jwhonce
   - lsm5
   - mheon
@@ -18,8 +17,10 @@ approvers:
   - umohnani8
   - vrothberg
   - ygalblum
+  - zhangguanzhang
 reviewers:
   - Luap99
+  - QiWang19
   - TomSweeneyRedHat
   - alexlarsson
   - baude
@@ -27,7 +28,6 @@ reviewers:
   - edsantiago
   - flouthoc
   - giuseppe
-  - jakecorrenti
   - jwhonce
   - lsm5
   - mheon
@@ -38,3 +38,4 @@ reviewers:
   - umohnani8
   - vrothberg
   - ygalblum
+  - zhangguanzhang

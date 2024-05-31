@@ -1,72 +1,18 @@
 //go:build windows
+// +build windows
 
 package wutil
 
 import (
 	"bufio"
 	"io"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 
 	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
 )
-
-var (
-	once    sync.Once
-	wslPath string
-)
-
-func FindWSL() string {
-	// At the time of this writing, a defect appeared in the OS preinstalled WSL executable
-	// where it no longer reliably locates the preferred Windows App Store variant.
-	//
-	// Manually discover (and cache) the wsl.exe location to bypass the problem
-	once.Do(func() {
-		var locs []string
-
-		// Prefer Windows App Store version
-		if localapp := getLocalAppData(); localapp != "" {
-			locs = append(locs, filepath.Join(localapp, "Microsoft", "WindowsApps", "wsl.exe"))
-		}
-
-		// Otherwise, the common location for the legacy system version
-		root := os.Getenv("SystemRoot")
-		if root == "" {
-			root = `C:\Windows`
-		}
-		locs = append(locs, filepath.Join(root, "System32", "wsl.exe"))
-
-		for _, loc := range locs {
-			if _, err := os.Stat(loc); err == nil {
-				wslPath = loc
-				return
-			}
-		}
-
-		// Hope for the best
-		wslPath = "wsl"
-	})
-
-	return wslPath
-}
-
-func getLocalAppData() string {
-	localapp := os.Getenv("LOCALAPPDATA")
-	if localapp != "" {
-		return localapp
-	}
-
-	if user := os.Getenv("USERPROFILE"); user != "" {
-		return filepath.Join(user, "AppData", "Local")
-	}
-
-	return localapp
-}
 
 func SilentExec(command string, args ...string) error {
 	cmd := exec.Command(command, args...)
@@ -83,7 +29,7 @@ func SilentExecCmd(command string, args ...string) *exec.Cmd {
 }
 
 func IsWSLInstalled() bool {
-	cmd := SilentExecCmd(FindWSL(), "--status")
+	cmd := SilentExecCmd("wsl", "--status")
 	out, err := cmd.StdoutPipe()
 	cmd.Stderr = nil
 	if err != nil {
@@ -103,7 +49,7 @@ func IsWSLInstalled() bool {
 }
 
 func IsWSLStoreVersionInstalled() bool {
-	cmd := SilentExecCmd(FindWSL(), "--version")
+	cmd := SilentExecCmd("wsl", "--version")
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	if err := cmd.Run(); err != nil {

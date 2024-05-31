@@ -7,13 +7,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/containers/podman/v5/libpod"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	dfilters "github.com/containers/podman/v5/pkg/domain/filters"
-	"github.com/containers/podman/v5/pkg/signal"
-	"github.com/containers/podman/v5/pkg/specgen"
-	"github.com/containers/podman/v5/pkg/specgen/generate"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	dfilters "github.com/containers/podman/v4/pkg/domain/filters"
+	"github.com/containers/podman/v4/pkg/signal"
+	"github.com/containers/podman/v4/pkg/specgen"
+	"github.com/containers/podman/v4/pkg/specgen/generate"
 	"github.com/sirupsen/logrus"
 )
 
@@ -121,7 +121,7 @@ func (ic *ContainerEngine) PodLogs(ctx context.Context, nameOrID string, options
 	}
 
 	// PodLogsOptions are similar but contains few extra fields like ctrName
-	// So cast other values as is so we can reuse the code
+	// So cast other values as is so we can re-use the code
 	containerLogsOpts := entities.PodLogsOptionsToContainerLogsOptions(options)
 
 	return ic.ContainerLogs(ctx, ctrNames, containerLogsOpts)

@@ -7,13 +7,13 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/containers/podman/v5/libpod"
-	"github.com/containers/podman/v5/pkg/api/handlers/utils"
-	api "github.com/containers/podman/v5/pkg/api/types"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	"github.com/containers/podman/v5/pkg/specgen"
-	"github.com/containers/podman/v5/pkg/specgen/generate"
-	"github.com/containers/podman/v5/pkg/specgenutil"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v4/pkg/api/types"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/specgen"
+	"github.com/containers/podman/v4/pkg/specgen/generate"
+	"github.com/containers/podman/v4/pkg/specgenutil"
 	"github.com/containers/storage"
 )
 
@@ -30,11 +30,11 @@ func CreateContainer(w http.ResponseWriter, r *http.Request) {
 	// we have to set the default before we decode to make sure the correct default is set when the field is unset
 	sg := specgen.SpecGenerator{
 		ContainerNetworkConfig: specgen.ContainerNetworkConfig{
-			UseImageHosts: &conf.Containers.NoHosts,
+			UseImageHosts: conf.Containers.NoHosts,
 		},
 		ContainerSecurityConfig: specgen.ContainerSecurityConfig{
 			Umask:      conf.Containers.Umask,
-			Privileged: &conf.Containers.Privileged,
+			Privileged: conf.Containers.Privileged,
 		},
 	}
 

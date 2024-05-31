@@ -9,11 +9,11 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/api/handlers"
-	"github.com/containers/podman/v5/pkg/bindings"
-	"github.com/containers/podman/v5/pkg/domain/entities/reports"
-	"github.com/containers/podman/v5/pkg/domain/entities/types"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/api/handlers"
+	"github.com/containers/podman/v4/pkg/bindings"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/domain/entities/reports"
 )
 
 var (
@@ -25,7 +25,7 @@ var (
 // the most recent number of containers.  The pod and size booleans indicate that pod information and rootfs
 // size information should also be included.  Finally, the sync bool synchronizes the OCI runtime and
 // container state.
-func List(ctx context.Context, options *ListOptions) ([]types.ListContainer, error) {
+func List(ctx context.Context, options *ListOptions) ([]entities.ListContainer, error) {
 	if options == nil {
 		options = new(ListOptions)
 	}
@@ -33,7 +33,7 @@ func List(ctx context.Context, options *ListOptions) ([]types.ListContainer, err
 	if err != nil {
 		return nil, err
 	}
-	var containers []types.ListContainer
+	var containers []entities.ListContainer
 	params, err := options.ToParams()
 	if err != nil {
 		return nil, err
@@ -218,7 +218,7 @@ func Start(ctx context.Context, nameOrID string, options *StartOptions) error {
 	return response.Process(nil)
 }
 
-func Stats(ctx context.Context, containers []string, options *StatsOptions) (chan types.ContainerStatsReport, error) {
+func Stats(ctx context.Context, containers []string, options *StatsOptions) (chan entities.ContainerStatsReport, error) {
 	if options == nil {
 		options = new(StatsOptions)
 	}
@@ -243,7 +243,7 @@ func Stats(ctx context.Context, containers []string, options *StatsOptions) (cha
 		return nil, response.Process(nil)
 	}
 
-	statsChan := make(chan types.ContainerStatsReport)
+	statsChan := make(chan entities.ContainerStatsReport)
 
 	go func() {
 		defer close(statsChan)
@@ -263,9 +263,9 @@ func Stats(ctx context.Context, containers []string, options *StatsOptions) (cha
 			// fall through and do some work
 		}
 
-		var report types.ContainerStatsReport
+		var report entities.ContainerStatsReport
 		if err := dec.Decode(&report); err != nil {
-			report = types.ContainerStatsReport{Error: err}
+			report = entities.ContainerStatsReport{Error: err}
 		}
 		statsChan <- report
 

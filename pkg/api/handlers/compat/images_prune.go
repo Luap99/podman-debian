@@ -6,15 +6,14 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/containers/podman/v5/libpod"
-	"github.com/containers/podman/v5/pkg/api/handlers"
-	"github.com/containers/podman/v5/pkg/api/handlers/utils"
-	api "github.com/containers/podman/v5/pkg/api/types"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	"github.com/containers/podman/v5/pkg/domain/infra/abi"
-	"github.com/containers/podman/v5/pkg/util"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/pkg/api/handlers"
+	"github.com/containers/podman/v4/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v4/pkg/api/types"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/domain/infra/abi"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/docker/docker/api/types"
-	dockerImage "github.com/docker/docker/api/types/image"
 )
 
 func PruneImages(w http.ResponseWriter, r *http.Request) {
@@ -42,7 +41,7 @@ func PruneImages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	idr := make([]dockerImage.DeleteResponse, 0, len(imagePruneReports))
+	idr := make([]types.ImageDeleteResponseItem, 0, len(imagePruneReports))
 	var reclaimedSpace uint64
 	var errorMsg bytes.Buffer
 	for _, p := range imagePruneReports {
@@ -54,7 +53,7 @@ func PruneImages(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		idr = append(idr, dockerImage.DeleteResponse{
+		idr = append(idr, types.ImageDeleteResponseItem{
 			Deleted: p.Id,
 		})
 		reclaimedSpace += p.Size

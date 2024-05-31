@@ -4,19 +4,19 @@ import (
 	"context"
 	"net/http"
 
-	handlersTypes "github.com/containers/podman/v5/pkg/api/handlers/types"
-	"github.com/containers/podman/v5/pkg/bindings"
-	"github.com/containers/podman/v5/pkg/domain/entities/types"
-	"github.com/containers/podman/v5/pkg/errorhandling"
+	"github.com/containers/podman/v4/pkg/api/handlers/types"
+	"github.com/containers/podman/v4/pkg/bindings"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/errorhandling"
 )
 
 // Remove removes one or more images from the local storage.  Use optional force option to remove an
 // image, even if it's used by containers.
-func Remove(ctx context.Context, images []string, options *RemoveOptions) (*types.ImageRemoveReport, []error) {
+func Remove(ctx context.Context, images []string, options *RemoveOptions) (*entities.ImageRemoveReport, []error) {
 	if options == nil {
 		options = new(RemoveOptions)
 	}
-	var report handlersTypes.LibpodImagesRemoveReport
+	var report types.LibpodImagesRemoveReport
 	conn, err := bindings.GetClient(ctx)
 	if err != nil {
 		return nil, []error{err}

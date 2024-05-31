@@ -1,4 +1,5 @@
 //go:build !remote
+// +build !remote
 
 package infra
 
@@ -13,11 +14,11 @@ import (
 	"syscall"
 
 	"github.com/containers/common/pkg/cgroups"
-	"github.com/containers/podman/v5/libpod"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	"github.com/containers/podman/v5/pkg/namespaces"
-	"github.com/containers/podman/v5/pkg/rootless"
-	"github.com/containers/podman/v5/pkg/util"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/namespaces"
+	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v4/pkg/util"
 	"github.com/containers/storage/pkg/idtools"
 	"github.com/containers/storage/types"
 	"github.com/sirupsen/logrus"
@@ -33,6 +34,7 @@ var (
 )
 
 type engineOpts struct {
+	noStore  bool
 	withFDS  bool
 	reset    bool
 	renumber bool
@@ -43,6 +45,7 @@ type engineOpts struct {
 func GetRuntime(ctx context.Context, flags *flag.FlagSet, cfg *entities.PodmanConfig) (*libpod.Runtime, error) {
 	runtimeSync.Do(func() {
 		runtimeLib, runtimeErr = getRuntime(ctx, flags, &engineOpts{
+			noStore:  false,
 			withFDS:  true,
 			reset:    cfg.IsReset,
 			renumber: cfg.IsRenumber,
@@ -50,6 +53,16 @@ func GetRuntime(ctx context.Context, flags *flag.FlagSet, cfg *entities.PodmanCo
 		})
 	})
 	return runtimeLib, runtimeErr
+}
+
+// GetRuntimeNoStore generates a new libpod runtime configured by command line options
+func GetRuntimeNoStore(ctx context.Context, fs *flag.FlagSet, cfg *entities.PodmanConfig) (*libpod.Runtime, error) {
+	return getRuntime(ctx, fs, &engineOpts{
+		noStore: true,
+		withFDS: true,
+		reset:   false,
+		config:  cfg,
+	})
 }
 
 func getRuntime(ctx context.Context, fs *flag.FlagSet, opts *engineOpts) (*libpod.Runtime, error) {
@@ -135,6 +148,9 @@ func getRuntime(ctx context.Context, fs *flag.FlagSet, opts *engineOpts) (*libpo
 		options = append(options, libpod.WithStorageConfig(storageOpts))
 	}
 
+	if !storageSet && opts.noStore {
+		options = append(options, libpod.WithNoStore())
+	}
 	// TODO CLI flags for image config?
 	// TODO CLI flag for signature policy?
 
@@ -227,7 +243,7 @@ func ParseIDMapping(mode namespaces.UsernsMode, uidMapSlice, gidMapSlice []strin
 		options.HostUIDMapping = false
 		options.HostGIDMapping = false
 		options.AutoUserNs = true
-		opts, err := util.GetAutoOptions(mode)
+		opts, err := mode.GetAutoOptions()
 		if err != nil {
 			return nil, err
 		}

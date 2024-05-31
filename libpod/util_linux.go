@@ -1,9 +1,9 @@
 //go:build !remote
+// +build !remote
 
 package libpod
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,8 +11,8 @@ import (
 	"syscall"
 
 	"github.com/containers/common/pkg/cgroups"
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/pkg/rootless"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/pkg/rootless"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/selinux/go-selinux/label"
 	"github.com/sirupsen/logrus"
@@ -146,7 +146,7 @@ func LabelVolumePath(path, mountLabel string) error {
 	}
 
 	if err := lvpRelabel(path, mountLabel, true); err != nil {
-		if errors.Is(err, unix.ENOTSUP) {
+		if err == syscall.ENOTSUP {
 			logrus.Debugf("Labeling not supported on %q", path)
 		} else {
 			return fmt.Errorf("setting selinux label for %s to %q as shared: %w", path, mountLabel, err)

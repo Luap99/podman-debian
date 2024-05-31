@@ -1,4 +1,5 @@
 //go:build !remote
+// +build !remote
 
 package infra
 
@@ -6,9 +7,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/containers/podman/v5/pkg/bindings"
-	"github.com/containers/podman/v5/pkg/domain/entities"
-	"github.com/containers/podman/v5/pkg/domain/infra/tunnel"
+	"github.com/containers/podman/v4/pkg/bindings"
+	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v4/pkg/domain/infra/tunnel"
 )
 
 // NewContainerEngine factory provides a libpod runtime for container-related operations

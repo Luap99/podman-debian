@@ -1,12 +1,13 @@
 //go:build !remote
+// +build !remote
 
 package ctr
 
 import (
 	"context"
 
-	"github.com/containers/podman/v5/libpod"
-	"github.com/containers/podman/v5/pkg/parallel"
+	"github.com/containers/podman/v4/libpod"
+	"github.com/containers/podman/v4/pkg/parallel"
 	"github.com/sirupsen/logrus"
 )
 

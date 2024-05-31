@@ -131,11 +131,8 @@ func parseUids(colonDelimitKeys []byte) []string {
 				continue
 			}
 			parseduid := uid
-			if ltidx := strings.Index(uid, "<"); ltidx != -1 {
-				subuid := parseduid[ltidx+1:]
-				if gtidx := strings.Index(subuid, ">"); gtidx != -1 {
-					parseduid = subuid[:gtidx]
-				}
+			if strings.Contains(uid, "<") && strings.Contains(uid, ">") {
+				parseduid = strings.SplitN(strings.SplitAfterN(uid, "<", 2)[1], ">", 2)[0]
 			}
 			parseduids = append(parseduids, parseduid)
 		}

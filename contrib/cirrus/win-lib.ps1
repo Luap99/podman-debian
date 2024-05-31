@@ -46,16 +46,12 @@ if ($Env:CI -eq "true") {
 # (builtins)!  They set '$?' to "True" (failed) or "False" success so calling
 # this would mask failures.  Rely on $ErrorActionPreference = 'Stop' instead.
 function Check-Exit {
-    param (
-        [int] $stackPos = 1,
-        [string] $command = 'command'
-    )
-
     $result = $LASTEXITCODE  # WARNING: might not be a number!
     if ( ($result -ne $null) -and ($result -ne 0) ) {
         # https://learn.microsoft.com/en-us/dotnet/api/system.management.automation.callstackframe
-        $caller = (Get-PSCallStack)[$stackPos]
-        throw "Exit code = '$result' running $command at $($caller.ScriptName):$($caller.ScriptLineNumber)"
+        $caller = (Get-PSCallStack)[1]
+        Write-Host "Exit code = '$result' from $($caller.ScriptName):$($caller.ScriptLineNumber)"
+        Exit $result
     }
 }
 
@@ -72,5 +68,5 @@ function Run-Command {
     Write-Host $command
 
     Invoke-Expression $command
-    Check-Exit 2 "'$command'"
+    Check-Exit
 }

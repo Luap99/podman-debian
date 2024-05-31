@@ -1,4 +1,5 @@
 //go:build amd64 || arm64
+// +build amd64 arm64
 
 package machine
 
@@ -6,12 +7,10 @@ import (
 	"os"
 
 	"github.com/containers/common/pkg/report"
-	"github.com/containers/podman/v5/cmd/podman/common"
-	"github.com/containers/podman/v5/cmd/podman/registry"
-	"github.com/containers/podman/v5/cmd/podman/utils"
-	"github.com/containers/podman/v5/pkg/machine"
-	"github.com/containers/podman/v5/pkg/machine/env"
-	"github.com/containers/podman/v5/pkg/machine/vmconfigs"
+	"github.com/containers/podman/v4/cmd/podman/common"
+	"github.com/containers/podman/v4/cmd/podman/registry"
+	"github.com/containers/podman/v4/cmd/podman/utils"
+	"github.com/containers/podman/v4/pkg/machine"
 	"github.com/spf13/cobra"
 )
 
@@ -48,49 +47,23 @@ func inspect(cmd *cobra.Command, args []string) error {
 	var (
 		errs utils.OutputErrors
 	)
-	dirs, err := env.GetMachineDirs(provider.VMType())
-	if err != nil {
-		return err
-	}
 	if len(args) < 1 {
 		args = append(args, defaultMachineName)
 	}
-
 	vms := make([]machine.InspectInfo, 0, len(args))
-	for _, name := range args {
-		mc, err := vmconfigs.LoadMachineByName(name, dirs)
+
+	for _, vmName := range args {
+		vm, err := provider.LoadVMByName(vmName)
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
-
-		state, err := provider.State(mc, false)
+		ii, err := vm.Inspect()
 		if err != nil {
-			return err
+			errs = append(errs, err)
+			continue
 		}
-
-		podmanSocket, podmanPipe, err := mc.ConnectionInfo(provider.VMType())
-		if err != nil {
-			return err
-		}
-
-		ii := machine.InspectInfo{
-			ConfigDir: *dirs.ConfigDir,
-			ConnectionInfo: machine.ConnectionConfig{
-				PodmanSocket: podmanSocket,
-				PodmanPipe:   podmanPipe,
-			},
-			Created:            mc.Created,
-			LastUp:             mc.LastUp,
-			Name:               mc.Name,
-			Resources:          mc.Resources,
-			SSHConfig:          mc.SSH,
-			State:              state,
-			UserModeNetworking: provider.UserModeNetworkEnabled(mc),
-			Rootful:            mc.HostUser.Rootful,
-		}
-
-		vms = append(vms, ii)
+		vms = append(vms, *ii)
 	}
 
 	switch {

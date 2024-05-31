@@ -8,31 +8,26 @@ import (
 	"os/user"
 	"path/filepath"
 
-	. "github.com/containers/podman/v5/test/utils"
+	"github.com/containers/common/pkg/config"
+	. "github.com/containers/podman/v4/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gbytes"
 	. "github.com/onsi/gomega/gexec"
 )
 
-func setupConnectionsConf() {
+func setupEmptyContainersConf() {
 	// make sure connections are not written to real user config on host
-	file := filepath.Join(podmanTest.TempDir, "containers.conf")
+	file := filepath.Join(podmanTest.TempDir, "containersconf")
 	f, err := os.Create(file)
 	Expect(err).ToNot(HaveOccurred())
 	f.Close()
 	os.Setenv("CONTAINERS_CONF", file)
-
-	file = filepath.Join(podmanTest.TempDir, "connections.conf")
-	os.Setenv("PODMAN_CONNECTIONS_CONF", file)
 }
-
-var systemConnectionListCmd = []string{"system", "connection", "ls", "--format", "{{.Name}} {{.URI}} {{.Identity}} {{.Default}} {{.ReadWrite}}"}
-var farmListCmd = []string{"farm", "ls", "--format", "{{.Name}} {{.Connections}} {{.Default}} {{.ReadWrite}}"}
 
 var _ = Describe("podman system connection", func() {
 
-	BeforeEach(setupConnectionsConf)
+	BeforeEach(setupEmptyContainersConf)
 
 	Context("without running API service", func() {
 		It("add ssh://", func() {
@@ -47,10 +42,14 @@ var _ = Describe("podman system connection", func() {
 			Expect(session).Should(ExitCleanly())
 			Expect(session.Out.Contents()).Should(BeEmpty())
 
-			session = podmanTest.Podman(systemConnectionListCmd)
-			session.WaitWithDefaultTimeout()
-			Expect(session).Should(ExitCleanly())
-			Expect(session.OutputToString()).To(Equal("QA ssh://root@podman.test:2222/run/podman/podman.sock ~/.ssh/id_rsa true true"))
+			cfg, err := config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg).Should(HaveActiveService("QA"))
+			Expect(cfg).Should(VerifyService(
+				"QA",
+				"ssh://root@podman.test:2222/run/podman/podman.sock",
+				"~/.ssh/id_rsa",
+			))
 
 			cmd = []string{"system", "connection", "rename",
 				"QA",
@@ -60,10 +59,7 @@ var _ = Describe("podman system connection", func() {
 			session.WaitWithDefaultTimeout()
 			Expect(session).Should(ExitCleanly())
 
-			session = podmanTest.Podman(systemConnectionListCmd)
-			session.WaitWithDefaultTimeout()
-			Expect(session).Should(ExitCleanly())
-			Expect(session.OutputToString()).To(Equal("QE ssh://root@podman.test:2222/run/podman/podman.sock ~/.ssh/id_rsa true true"))
+			Expect(config.ReadCustomConfig()).Should(HaveActiveService("QE"))
 		})
 
 		It("add UDS", func() {
@@ -78,10 +74,11 @@ var _ = Describe("podman system connection", func() {
 			// stderr will probably warn (ENOENT or EACCESS) about socket
 			// but it's too unreliable to test for.
 
-			session = podmanTest.Podman(systemConnectionListCmd)
-			session.WaitWithDefaultTimeout()
-			Expect(session).Should(ExitCleanly())
-			Expect(session.OutputToString()).To(Equal("QA-UDS unix:///run/podman/podman.sock true true"))
+			Expect(config.ReadCustomConfig()).Should(VerifyService(
+				"QA-UDS",
+				"unix:///run/podman/podman.sock",
+				"",
+			))
 
 			cmd = []string{"system", "connection", "add",
 				"QA-UDS1",
@@ -93,12 +90,12 @@ var _ = Describe("podman system connection", func() {
 			Expect(session).Should(Exit(0))
 			Expect(session.Out.Contents()).Should(BeEmpty())
 
-			session = podmanTest.Podman(systemConnectionListCmd)
-			session.WaitWithDefaultTimeout()
-			Expect(session).Should(ExitCleanly())
-			Expect(string(session.Out.Contents())).To(Equal(`QA-UDS unix:///run/podman/podman.sock  true true
-QA-UDS1 unix:///run/user/podman/podman.sock  false true
-`))
+			Expect(config.ReadCustomConfig()).Should(HaveActiveService("QA-UDS"))
+			Expect(config.ReadCustomConfig()).Should(VerifyService(
+				"QA-UDS1",
+				"unix:///run/user/podman/podman.sock",
+				"",
+			))
 		})
 
 		It("add tcp", func() {
@@ -111,13 +108,18 @@ QA-UDS1 unix:///run/user/podman/podman.sock  false true
 			Expect(session).Should(ExitCleanly())
 			Expect(session.Out.Contents()).Should(BeEmpty())
 
-			session = podmanTest.Podman(systemConnectionListCmd)
-			session.WaitWithDefaultTimeout()
-			Expect(session).Should(ExitCleanly())
-			Expect(session.OutputToString()).To(Equal("QA-TCP tcp://localhost:8888 true true"))
+			Expect(config.ReadCustomConfig()).Should(VerifyService(
+				"QA-TCP",
+				"tcp://localhost:8888",
+				"",
+			))
 		})
 
 		It("add to new farm", func() {
+			cfg, err := config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg.Farms.List).Should(BeEmpty())
+
 			cmd := []string{"system", "connection", "add",
 				"--default",
 				"--identity", "~/.ssh/id_rsa",
@@ -130,14 +132,15 @@ QA-UDS1 unix:///run/user/podman/podman.sock  false true
 			Expect(session).Should(ExitCleanly())
 			Expect(session.Out.Contents()).Should(BeEmpty())
 
-			session = podmanTest.Podman(systemConnectionListCmd)
-			session.WaitWithDefaultTimeout()
-			Expect(session).Should(ExitCleanly())
-			Expect(session.OutputToString()).To(Equal("QA ssh://root@podman.test:2222/run/podman/podman.sock ~/.ssh/id_rsa true true"))
-			session = podmanTest.Podman(farmListCmd)
-			session.WaitWithDefaultTimeout()
-			Expect(session).Should(ExitCleanly())
-			Expect(session.OutputToString()).To(Equal("farm1 [QA] true true"))
+			cfg, err = config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg).Should(HaveActiveService("QA"))
+			Expect(cfg).Should(VerifyService(
+				"QA",
+				"ssh://root@podman.test:2222/run/podman/podman.sock",
+				"~/.ssh/id_rsa",
+			))
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("farm1", []string{"QA"}))
 		})
 
 		It("add to existing farm", func() {
@@ -147,6 +150,10 @@ QA-UDS1 unix:///run/user/podman/podman.sock  false true
 			session.WaitWithDefaultTimeout()
 			Expect(session).Should(ExitCleanly())
 			Expect(session.Out.Contents()).Should(ContainSubstring("Farm \"empty-farm\" created"))
+
+			cfg, err := config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("empty-farm", []string{}))
 
 			cmd = []string{"system", "connection", "add",
 				"--default",
@@ -160,17 +167,22 @@ QA-UDS1 unix:///run/user/podman/podman.sock  false true
 			Expect(session).Should(ExitCleanly())
 			Expect(session.Out.Contents()).Should(BeEmpty())
 
-			session = podmanTest.Podman(systemConnectionListCmd)
-			session.WaitWithDefaultTimeout()
-			Expect(session).Should(ExitCleanly())
-			Expect(session.OutputToString()).To(Equal("QA ssh://root@podman.test:2222/run/podman/podman.sock ~/.ssh/id_rsa true true"))
-			session = podmanTest.Podman(farmListCmd)
-			session.WaitWithDefaultTimeout()
-			Expect(session).Should(ExitCleanly())
-			Expect(session.OutputToString()).To(Equal("empty-farm [QA] true true"))
+			cfg, err = config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg).Should(HaveActiveService("QA"))
+			Expect(cfg).Should(VerifyService(
+				"QA",
+				"ssh://root@podman.test:2222/run/podman/podman.sock",
+				"~/.ssh/id_rsa",
+			))
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("empty-farm", []string{"QA"}))
 		})
 
 		It("removing connection should remove from farm also", func() {
+			cfg, err := config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg.Farms.List).Should(BeEmpty())
+
 			cmd := []string{"system", "connection", "add",
 				"--default",
 				"--identity", "~/.ssh/id_rsa",
@@ -183,14 +195,15 @@ QA-UDS1 unix:///run/user/podman/podman.sock  false true
 			Expect(session).Should(ExitCleanly())
 			Expect(session.Out.Contents()).Should(BeEmpty())
 
-			session = podmanTest.Podman(systemConnectionListCmd)
-			session.WaitWithDefaultTimeout()
-			Expect(session).Should(ExitCleanly())
-			Expect(session.OutputToString()).To(Equal("QA ssh://root@podman.test:2222/run/podman/podman.sock ~/.ssh/id_rsa true true"))
-			session = podmanTest.Podman(farmListCmd)
-			session.WaitWithDefaultTimeout()
-			Expect(session).Should(ExitCleanly())
-			Expect(session.OutputToString()).To(Equal("farm1 [QA] true true"))
+			cfg, err = config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg).Should(HaveActiveService("QA"))
+			Expect(cfg).Should(VerifyService(
+				"QA",
+				"ssh://root@podman.test:2222/run/podman/podman.sock",
+				"~/.ssh/id_rsa",
+			))
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("farm1", []string{"QA"}))
 
 			// Remove the QA connection
 			session = podmanTest.Podman([]string{"system", "connection", "remove", "QA"})
@@ -198,14 +211,11 @@ QA-UDS1 unix:///run/user/podman/podman.sock  false true
 			Expect(session).Should(ExitCleanly())
 			Expect(session.Out.Contents()).Should(BeEmpty())
 
-			session = podmanTest.Podman(systemConnectionListCmd)
-			session.WaitWithDefaultTimeout()
-			Expect(session).Should(ExitCleanly())
-			Expect(session.OutputToString()).To(Equal(""))
-			session = podmanTest.Podman(farmListCmd)
-			session.WaitWithDefaultTimeout()
-			Expect(session).Should(ExitCleanly())
-			Expect(session.OutputToString()).To(Equal("farm1 [] true true"))
+			cfg, err = config.ReadCustomConfig()
+			Expect(err).ShouldNot(HaveOccurred())
+			Expect(cfg.Engine.ActiveService).Should(BeEmpty())
+			Expect(cfg.Engine.ServiceDestinations).Should(BeEmpty())
+			Expect(cfg.Farms.List).Should(HaveKeyWithValue("farm1", []string{}))
 		})
 
 		It("remove", func() {
@@ -225,10 +235,10 @@ QA-UDS1 unix:///run/user/podman/podman.sock  false true
 				Expect(session).Should(ExitCleanly())
 				Expect(session.Out.Contents()).Should(BeEmpty())
 
-				session = podmanTest.Podman(systemConnectionListCmd)
-				session.WaitWithDefaultTimeout()
-				Expect(session).Should(ExitCleanly())
-				Expect(session.OutputToString()).To(Equal(""))
+				cfg, err := config.ReadCustomConfig()
+				Expect(err).ShouldNot(HaveOccurred())
+				Expect(cfg.Engine.ActiveService).Should(BeEmpty())
+				Expect(cfg.Engine.ServiceDestinations).Should(BeEmpty())
 			}
 		})
 
@@ -251,7 +261,6 @@ QA-UDS1 unix:///run/user/podman/podman.sock  false true
 			session = podmanTest.Podman([]string{"system", "connection", "list"})
 			session.WaitWithDefaultTimeout()
 			Expect(session).Should(ExitCleanly())
-			Expect(session.OutputToStringArray()).To(HaveLen(1))
 		})
 
 		It("default", func() {
@@ -273,18 +282,19 @@ QA-UDS1 unix:///run/user/podman/podman.sock  false true
 			Expect(session).Should(ExitCleanly())
 			Expect(session.Out.Contents()).Should(BeEmpty())
 
-			session = podmanTest.Podman(systemConnectionListCmd)
-			session.WaitWithDefaultTimeout()
-			Expect(session).Should(ExitCleanly())
-			Expect(string(session.Out.Contents())).To(Equal(`devl ssh://root@podman.test:2222/run/podman/podman.sock ~/.ssh/id_rsa true true
-qe ssh://root@podman.test:2222/run/podman/podman.sock ~/.ssh/id_rsa false true
-`))
+			Expect(config.ReadCustomConfig()).Should(HaveActiveService("devl"))
 
 			cmd = []string{"system", "connection", "list"}
 			session = podmanTest.Podman(cmd)
 			session.WaitWithDefaultTimeout()
 			Expect(session).Should(ExitCleanly())
 			Expect(session.Out).Should(Say("Name *URI *Identity *Default"))
+
+			cmd = []string{"system", "connection", "list", "--format", "{{.Name}}"}
+			session = podmanTest.Podman(cmd)
+			session.WaitWithDefaultTimeout()
+			Expect(session).Should(ExitCleanly())
+			Expect(session.OutputToString()).Should(Equal("devl qe"))
 		})
 
 		It("failed default", func() {
@@ -372,12 +382,12 @@ qe ssh://root@podman.test:2222/run/podman/podman.sock ~/.ssh/id_rsa false true
 				Path:   fmt.Sprintf("/run/user/%s/podman/podman.sock", u.Uid),
 			}
 
-			cmd = exec.Command(podmanTest.RemotePodmanBinary, systemConnectionListCmd...)
-			lsSession, err := Start(cmd, GinkgoWriter, GinkgoWriter)
-			Expect(err).ToNot(HaveOccurred())
-			lsSession.Wait(DefaultWaitTimeout)
-			Expect(lsSession).Should(Exit(0))
-			Expect(string(lsSession.Out.Contents())).To(Equal("QA " + uri.String() + " " + filepath.Join(u.HomeDir, ".ssh", "id_ed25519") + " true true\n"))
+			Expect(config.ReadCustomConfig()).Should(HaveActiveService("QA"))
+			Expect(config.ReadCustomConfig()).Should(VerifyService(
+				"QA",
+				uri.String(),
+				filepath.Join(u.HomeDir, ".ssh", "id_ed25519"),
+			))
 		})
 	})
 })

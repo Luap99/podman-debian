@@ -1,12 +1,13 @@
 //go:build !remote
+// +build !remote
 
 package libpod
 
 import (
 	"fmt"
 
-	"github.com/containers/podman/v5/libpod/define"
-	"github.com/containers/podman/v5/libpod/events"
+	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v4/libpod/events"
 )
 
 // RenumberLocks reassigns lock numbers for all containers and pods in the

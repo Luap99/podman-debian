@@ -26,17 +26,17 @@ Initialize all containers. Containers that have already initialized (including c
 
 ## EXAMPLE
 
-Initialize specified container with a given ID.
+Initialize container with a given ID
 ```
 podman init 35480fc9d568
 ```
 
-Initialize specified container with a given name.
+Initialize container with a given name
 ```
 podman init test1
 ```
 
-Initialize the latest container. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
+Initialize the latest container created by Podman
 ```
 podman init --latest
 ```

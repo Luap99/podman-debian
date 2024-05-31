@@ -268,7 +268,7 @@ func normalizeAuthFileKey(authFileKey string) string {
 	stripped = strings.TrimPrefix(stripped, "https://")
 
 	if stripped != authFileKey { // URLs are interpreted to mean complete registries
-		stripped, _, _ = strings.Cut(stripped, "/")
+		stripped = strings.SplitN(stripped, "/", 2)[0]
 	}
 
 	// Only non-namespaced registry names (or URLs) need to be normalized; repo namespaces

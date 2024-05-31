@@ -11,16 +11,14 @@ load helpers
 --no-trunc                       | .*[0-9a-f]\\\{64\\\}
 "
 
-    defer-assertion-failures
-
-    while read options expect; do
+    parse_table "$tests" | while read options expect; do
         if [ "$options" = "''" ]; then options=; fi
 
         eval set -- "$options"
 
         run_podman history "$@" $IMAGE
         is "$output" "$expect" "podman history $options"
-    done < <(parse_table "$tests")
+    done
 }
 
 @test "podman history - custom format" {
@@ -44,9 +42,7 @@ size      | -\\\?[0-9]\\\+
 
     run_podman history --format json $IMAGE
 
-    defer-assertion-failures
-
-    while read field expect; do
+    parse_table "$tests" | while read field expect; do
         # HACK: we can't include '|' in the table
         if [ "$field" = "id" ]; then expect="$expect\|<missing>";fi
 
@@ -58,7 +54,8 @@ size      | -\\\?[0-9]\\\+
             is "$actual" "$expect\$" "jq .[$i].$field"
             i=$(expr $i + 1)
         done
-    done < <(parse_table "$tests")
+    done
+
 }
 
 @test "podman image history Created" {

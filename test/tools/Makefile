@@ -22,8 +22,7 @@ $(BUILDDIR): \
 	$(BUILDDIR)/goimports \
 	$(BUILDDIR)/go-md2man \
 	$(BUILDDIR)/git-validation \
-	$(BUILDDIR)/ginkgo \
-	$(BUILDDIR)/swagger
+	$(BUILDDIR)/ginkgo
 
 $(BUILDDIR)/goimports: $(SOURCES)
 	$(GO_BUILD) -o $@ ./vendor/golang.org/x/tools/cmd/goimports
@@ -36,6 +35,3 @@ $(BUILDDIR)/git-validation: $(SOURCES)
 
 $(BUILDDIR)/ginkgo: $(SOURCES)
 	$(GO_BUILD) -o $@ ./vendor/github.com/onsi/ginkgo/v2/ginkgo
-
-$(BUILDDIR)/swagger: $(SOURCES)
-	$(GO_BUILD) -o $@ ./vendor/github.com/go-swagger/go-swagger/cmd/swagger
