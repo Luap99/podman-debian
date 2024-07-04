@@ -4,8 +4,10 @@ libpod (4.9.5+ds1-1) unstable; urgency=medium
     - compiled against newer containers/image to address CVE-2024-3727,
       and also enables image signing and verification with sigstore
   * Move systemd files from /lib to /usr/lib, closes: #1073740
-
- -- Reinhard Tartler <siretart@tauware.de>  Thu, 04 Jul 2024 17:04:33 -0400
+  * Add tipp to reset configuration to help with networking issues, 
+    Closes: #1066139
+  
+ -- Reinhard Tartler <siretart@tauware.de>  Thu, 04 Jul 2024 17:11:36 -0400
 
 libpod (4.9.4+ds1-1) unstable; urgency=medium
 
