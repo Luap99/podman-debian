@@ -1,3 +1,14 @@
+Troubleshooting networking issues
+=================================
+
+When experimenting with custom networks, with or wihtout netavark, you might
+get get into a situation that is hard to diagnose. Before reporting a bug
+report, please try resetting your podman configuration using the command:
+
+  podman system reset
+
+See https://bugs.debian.org/1066139 for one of such instances.
+
 Troubleshooting rootless mode
 =============================
 
@@ -42,4 +53,4 @@ We higly recommended to add "swapaccount=1" to default Linux boot options
 
 Then add "swapaccount=1" to "Linux default command line".
 
- -- Reinhard Tartler <siretart@tauware.de>, Sun, 28 Jan 2024 07:38:28 -0500
+ -- Reinhard Tartler <siretart@tauware.de>, Thu,  4 Jul 2024 17:10:07 -0400
