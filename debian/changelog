@@ -1,7 +1,9 @@
 libpod (5.0.3+ds1-1) experimental; urgency=medium
 
-  * New upstream release: 5.0.3
+  * New upstream release: 5.0.3,
+    Addresses: CVE-2024-3727
   * Enable HEREDOC support, image signing
+  * compile against docker 26.1, containerd 1.7, rootlesskit v2
 
  -- Reinhard Tartler <siretart@tauware.de>  Fri, 12 Jul 2024 18:04:56 -0400
 
