@@ -1,6 +1,4 @@
 system-goimports.patch
 downgrade-checkpoint-restore-criu.patch
 sigstore-tests.patch
-revert-newer-docker.patch
-revert-newer-docker2.patch
-revert-newer-docker3.patch
+0003-Fix-reference-to-deprecated-types.Info.patch
