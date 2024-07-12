@@ -1,5 +1,4 @@
 //go:build !remote
-// +build !remote
 
 package libpod
 
@@ -15,8 +14,7 @@ import (
 	"time"
 
 	"github.com/containers/common/libnetwork/types"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v5/libpod/define"
 	"github.com/containers/storage"
 	"github.com/sirupsen/logrus"
 
@@ -42,7 +40,7 @@ const (
 	sqliteOptionForeignKeys = "&_foreign_keys=1"
 	// Make sure that transactions happen exclusively.
 	sqliteOptionTXLock = "&_txlock=exclusive"
-	// Make sure busy timeout is set to high value to keep retying when the db is locked.
+	// Make sure busy timeout is set to high value to keep retrying when the db is locked.
 	// Timeout is in ms, so set it to 100s to have enough time to retry the operations.
 	sqliteOptionBusyTimeout = "&_busy_timeout=100000"
 
@@ -304,7 +302,7 @@ func (s *SQLiteState) ValidateDBConfig(runtime *Runtime) (defErr error) {
 		return define.ErrDBClosed
 	}
 
-	storeOpts, err := storage.DefaultStoreOptions(rootless.IsRootless(), rootless.GetRootlessUID())
+	storeOpts, err := storage.DefaultStoreOptions()
 	if err != nil {
 		return err
 	}
@@ -961,8 +959,7 @@ func (s *SQLiteState) GetContainerExitCode(id string) (int32, error) {
 	}
 
 	row := s.conn.QueryRow("SELECT ExitCode FROM ContainerExitCode WHERE ID=?;", id)
-
-	var exitCode int32
+	var exitCode int32 = -1
 	if err := row.Scan(&exitCode); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return -1, fmt.Errorf("getting exit code of container %s from DB: %w", id, define.ErrNoSuchExitCode)

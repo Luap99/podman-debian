@@ -15,21 +15,22 @@ import (
 	"github.com/containers/common/libimage"
 	"github.com/containers/common/pkg/ssh"
 	"github.com/containers/image/v5/manifest"
-	"github.com/containers/podman/v4/libpod"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/api/handlers"
-	"github.com/containers/podman/v4/pkg/api/handlers/utils"
-	api "github.com/containers/podman/v4/pkg/api/types"
-	"github.com/containers/podman/v4/pkg/bindings/images"
-	"github.com/containers/podman/v4/pkg/channel"
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/containers/podman/v4/pkg/domain/entities/reports"
-	"github.com/containers/podman/v4/pkg/domain/infra/abi"
-	domainUtils "github.com/containers/podman/v4/pkg/domain/utils"
-	"github.com/containers/podman/v4/pkg/errorhandling"
-	"github.com/containers/podman/v4/pkg/rootless"
-	"github.com/containers/podman/v4/pkg/util"
-	utils2 "github.com/containers/podman/v4/utils"
+	"github.com/containers/image/v5/pkg/shortnames"
+	"github.com/containers/image/v5/types"
+	"github.com/containers/podman/v5/libpod"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/pkg/api/handlers"
+	"github.com/containers/podman/v5/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v5/pkg/api/types"
+	"github.com/containers/podman/v5/pkg/bindings/images"
+	"github.com/containers/podman/v5/pkg/channel"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	"github.com/containers/podman/v5/pkg/domain/entities/reports"
+	"github.com/containers/podman/v5/pkg/domain/infra/abi"
+	domainUtils "github.com/containers/podman/v5/pkg/domain/utils"
+	"github.com/containers/podman/v5/pkg/errorhandling"
+	"github.com/containers/podman/v5/pkg/util"
+	utils2 "github.com/containers/podman/v5/utils"
 	"github.com/containers/storage"
 	"github.com/containers/storage/pkg/archive"
 	"github.com/containers/storage/pkg/chrootarchive"
@@ -330,10 +331,7 @@ func ExportImages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tarOptions := &archive.TarOptions{
-		ChownOpts: &idtools.IDPair{
-			UID: rootless.GetRootlessUID(),
-			GID: rootless.GetRootlessGID(),
-		},
+		ChownOpts: &idtools.IDPair{UID: 0, GID: 0},
 	}
 	tar, err := chrootarchive.Tar(output, tarOptions, output)
 	if err != nil {
@@ -723,4 +721,37 @@ func ImageScp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	utils.WriteResponse(w, http.StatusOK, &reports.ScpReport{Id: rep.Names[0]})
+}
+
+// Resolve the passed (short) name to one more candidates it may resolve to.
+// See https://www.redhat.com/sysadmin/container-image-short-names.
+//
+// One user of this endpoint is Podman Desktop which needs to figure out where
+// an image may resolve to.
+func ImageResolve(w http.ResponseWriter, r *http.Request) {
+	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
+	name := utils.GetName(r)
+
+	mode := types.ShortNameModeDisabled
+	sys := runtime.SystemContext()
+	sys.ShortNameMode = &mode
+
+	resolved, err := shortnames.Resolve(sys, name)
+	if err != nil {
+		utils.Error(w, http.StatusBadRequest, fmt.Errorf("resolving %q: %w", name, err))
+		return
+	}
+
+	if len(resolved.PullCandidates) == 0 { // Should never happen but let's be defensive.
+		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("name %q did not resolve to any candidate", name))
+		return
+	}
+
+	names := make([]string, 0, len(resolved.PullCandidates))
+	for _, candidate := range resolved.PullCandidates {
+		names = append(names, candidate.Value.String())
+	}
+
+	report := handlers.LibpodImagesResolveReport{Names: names}
+	utils.WriteResponse(w, http.StatusOK, report)
 }

@@ -1,14 +1,15 @@
 //go:build amd64 || arm64
-// +build amd64 arm64
 
 package machine
 
 import (
 	"fmt"
 
-	"github.com/containers/podman/v4/cmd/podman/registry"
-	"github.com/containers/podman/v4/libpod/events"
-	"github.com/containers/podman/v4/pkg/machine"
+	"github.com/containers/podman/v5/cmd/podman/registry"
+	"github.com/containers/podman/v5/libpod/events"
+	"github.com/containers/podman/v5/pkg/machine/env"
+	"github.com/containers/podman/v5/pkg/machine/shim"
+	"github.com/containers/podman/v5/pkg/machine/vmconfigs"
 	"github.com/spf13/cobra"
 )
 
@@ -36,7 +37,6 @@ func init() {
 func stop(cmd *cobra.Command, args []string) error {
 	var (
 		err error
-		vm  machine.VM
 	)
 
 	vmName := defaultMachineName
@@ -44,13 +44,19 @@ func stop(cmd *cobra.Command, args []string) error {
 		vmName = args[0]
 	}
 
-	vm, err = provider.LoadVMByName(vmName)
+	dirs, err := env.GetMachineDirs(provider.VMType())
 	if err != nil {
 		return err
 	}
-	if err := vm.Stop(vmName, machine.StopOptions{}); err != nil {
+	mc, err := vmconfigs.LoadMachineByName(vmName, dirs)
+	if err != nil {
 		return err
 	}
+
+	if err := shim.Stop(mc, provider, dirs, false); err != nil {
+		return err
+	}
+
 	fmt.Printf("Machine %q stopped successfully\n", vmName)
 	newMachineEvent(events.Stop, events.Event{Name: vmName})
 	return nil

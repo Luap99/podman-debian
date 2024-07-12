@@ -1,5 +1,4 @@
 //go:build !remote
-// +build !remote
 
 package libpod
 
@@ -12,7 +11,7 @@ import (
 	runccgroup "github.com/opencontainers/runc/libcontainer/cgroups"
 
 	"github.com/containers/common/pkg/cgroups"
-	"github.com/containers/podman/v4/libpod/define"
+	"github.com/containers/podman/v5/libpod/define"
 	"golang.org/x/sys/unix"
 )
 
@@ -40,10 +39,6 @@ func (c *Container) getPlatformContainerStats(stats *define.ContainerStats, prev
 		return fmt.Errorf("unable to obtain cgroup stats: %w", err)
 	}
 	conState := c.state.State
-	netStats, err := getContainerNetIO(c)
-	if err != nil {
-		return err
-	}
 
 	// If the current total usage in the cgroup is less than what was previously
 	// recorded then it means the container was restarted and runs in a new cgroup
@@ -70,14 +65,6 @@ func (c *Container) getPlatformContainerStats(stats *define.ContainerStats, prev
 	stats.CPUSystemNano = cgroupStats.CpuStats.CpuUsage.UsageInKernelmode
 	stats.SystemNano = now
 	stats.PerCPU = cgroupStats.CpuStats.CpuUsage.PercpuUsage
-	// Handle case where the container is not in a network namespace
-	if netStats != nil {
-		stats.NetInput = netStats.RxBytes
-		stats.NetOutput = netStats.TxBytes
-	} else {
-		stats.NetInput = 0
-		stats.NetOutput = 0
-	}
 
 	return nil
 }

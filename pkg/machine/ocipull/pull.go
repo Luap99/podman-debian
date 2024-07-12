@@ -2,7 +2,9 @@ package ocipull
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 
 	"github.com/containers/buildah/pkg/parse"
@@ -12,7 +14,8 @@ import (
 	"github.com/containers/image/v5/signature"
 	"github.com/containers/image/v5/transports/alltransports"
 	"github.com/containers/image/v5/types"
-	specV1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/containers/podman/v5/pkg/machine/define"
+	"github.com/sirupsen/logrus"
 )
 
 // PullOptions includes data to alter certain knobs when pulling a source
@@ -26,17 +29,18 @@ type PullOptions struct {
 	Quiet bool
 }
 
-// Pull `imageInput` from a container registry to `sourcePath`.
-func Pull(ctx context.Context, imageInput string, sourcePath string, options PullOptions) error {
-	if _, err := os.Stat(sourcePath); err == nil {
-		return fmt.Errorf("%q already exists", sourcePath)
-	}
+var (
+	// noSignaturePolicy is a default policy if policy.json is not found on
+	// the host machine.
+	noSignaturePolicy string = `{"default":[{"type":"insecureAcceptAnything"}]}`
+)
 
-	srcRef, err := stringToImageReference(imageInput)
-	if err != nil {
-		return err
-	}
-	destRef, err := layout.ParseReference(sourcePath)
+// Pull `imageInput` from a container registry to `sourcePath`.
+func Pull(ctx context.Context, imageInput types.ImageReference, localDestPath *define.VMFile, options *PullOptions) error {
+	var (
+		policy *signature.Policy
+	)
+	destRef, err := layout.ParseReference(localDestPath.GetPath())
 	if err != nil {
 		return err
 	}
@@ -52,14 +56,28 @@ func Pull(ctx context.Context, imageInput string, sourcePath string, options Pul
 		sysCtx.DockerAuthConfig = authConf
 	}
 
-	if err := validateSourceImageReference(ctx, srcRef, sysCtx); err != nil {
-		return err
+	// Policy paths returns a slice of directories where the policy.json
+	// may live.  Iterate those directories and try to see if any are
+	// valid ignoring when the file does not exist
+	for _, path := range policyPaths() {
+		policy, err = signature.NewPolicyFromFile(path)
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("reading signature policy: %w", err)
+		}
 	}
 
-	policy, err := signature.DefaultPolicy(sysCtx)
-	if err != nil {
-		return fmt.Errorf("obtaining default signature policy: %w", err)
+	// If no policy has been found yet, we use a no signature policy automatically
+	if policy == nil {
+		logrus.Debug("no signature policy file found: using default allow everything signature policy")
+		policy, err = signature.NewPolicyFromBytes([]byte(noSignaturePolicy))
+		if err != nil {
+			return fmt.Errorf("obtaining signature policy: %w", err)
+		}
 	}
+
 	policyContext, err := signature.NewPolicyContext(policy)
 	if err != nil {
 		return fmt.Errorf("creating new signature policy context: %w", err)
@@ -71,14 +89,14 @@ func Pull(ctx context.Context, imageInput string, sourcePath string, options Pul
 	if !options.Quiet {
 		copyOpts.ReportWriter = os.Stderr
 	}
-	if _, err := copy.Image(ctx, policyContext, destRef, srcRef, &copyOpts); err != nil {
+	if _, err := copy.Image(ctx, policyContext, destRef, imageInput, &copyOpts); err != nil {
 		return fmt.Errorf("pulling source image: %w", err)
 	}
 
 	return nil
 }
 
-func stringToImageReference(imageInput string) (types.ImageReference, error) {
+func stringToImageReference(imageInput string) (types.ImageReference, error) { //nolint:unused
 	if shortnames.IsShortName(imageInput) {
 		return nil, fmt.Errorf("pulling source images by short name (%q) is not supported, please use a fully-qualified name", imageInput)
 	}
@@ -89,22 +107,4 @@ func stringToImageReference(imageInput string) (types.ImageReference, error) {
 	}
 
 	return ref, nil
-}
-
-func validateSourceImageReference(ctx context.Context, ref types.ImageReference, sysCtx *types.SystemContext) error {
-	src, err := ref.NewImageSource(ctx, sysCtx)
-	if err != nil {
-		return fmt.Errorf("creating image source from reference: %w", err)
-	}
-	defer src.Close()
-
-	ociManifest, _, _, err := readManifestFromImageSource(ctx, src)
-	if err != nil {
-		return err
-	}
-	if ociManifest.Config.MediaType != specV1.MediaTypeImageConfig {
-		return fmt.Errorf("invalid media type of image config %q (expected: %q)", ociManifest.Config.MediaType, specV1.MediaTypeImageConfig)
-	}
-
-	return nil
 }

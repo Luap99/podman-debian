@@ -1,5 +1,4 @@
 //go:build !remote
-// +build !remote
 
 package libpod
 
@@ -27,4 +26,8 @@ func (r *ConmonOCIRuntime) moveConmonToCgroupAndSignal(ctr *Container, cmd *exec
 		return err
 	}
 	return nil
+}
+
+func moveToRuntimeCgroup() error {
+	return errors.New("moveToRuntimeCgroup not supported on freebsd")
 }

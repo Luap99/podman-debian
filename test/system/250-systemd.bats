@@ -5,6 +5,7 @@
 
 load helpers
 load helpers.systemd
+load helpers.network
 
 SERVICE_NAME="podman_test_$(random_string)"
 
@@ -54,8 +55,7 @@ function service_setup() {
     run systemctl enable "$SERVICE_NAME"
     assert $status -eq 0 "Error enabling systemd unit $SERVICE_NAME: $output"
 
-    run systemctl start "$SERVICE_NAME"
-    assert $status -eq 0 "Error starting systemd unit $SERVICE_NAME: $output"
+    systemctl_start "$SERVICE_NAME"
 
     run systemctl status "$SERVICE_NAME"
     assert $status -eq 0 "systemctl status $SERVICE_NAME: $output"
@@ -242,8 +242,7 @@ LISTEN_FDNAMES=listen_fdnames" | sort)
     systemctl daemon-reload
 
     INSTANCE="$SERVICE_NAME@1.service"
-    run systemctl start "$INSTANCE"
-    assert $status -eq 0 "Error starting systemd unit $INSTANCE: $output"
+    systemctl_start "$INSTANCE"
 
     run systemctl status "$INSTANCE"
     assert $status -eq 0 "systemctl status $INSTANCE: $output"
@@ -296,7 +295,7 @@ LISTEN_FDNAMES=listen_fdnames" | sort)
 }
 
 # https://github.com/containers/podman/issues/13153
-@test "podman rootless-netns slirp4netns process should be in different cgroup" {
+@test "podman rootless-netns pasta processes should be in different cgroup" {
     is_rootless || skip "only meaningful for rootless"
 
     cname=$(random_string)
@@ -316,9 +315,11 @@ LISTEN_FDNAMES=listen_fdnames" | sort)
     # stop systemd container
     service_cleanup
 
+    pasta_iface=$(default_ifname)
+
     # now check that the rootless netns slirp4netns process is still alive and working
     run_podman unshare --rootless-netns ip addr
-    is "$output" ".*tap0.*" "slirp4netns interface exists in the netns"
+    is "$output" ".*$pasta_iface.*" "pasta interface exists in the netns"
     run_podman exec $cname2 nslookup google.com
 
     run_podman rm -f -t0 $cname2
@@ -326,16 +327,13 @@ LISTEN_FDNAMES=listen_fdnames" | sort)
 }
 
 @test "podman create --health-on-failure=kill" {
-    img="healthcheck_i"
-    _build_health_check_image $img
-
     cname=c_$(random_string)
-    run_podman create --name $cname      \
-               --health-cmd /healthcheck \
-               --health-on-failure=kill  \
-               --health-retries=1        \
-               --restart=on-failure      \
-               $img
+    run_podman create --name $cname                  \
+               --health-cmd /home/podman/healthcheck \
+               --health-on-failure=kill              \
+               --health-retries=1                    \
+               --restart=on-failure                  \
+               $IMAGE /home/podman/pause
 
     # run container in systemd unit
     service_setup
@@ -378,7 +376,6 @@ LISTEN_FDNAMES=listen_fdnames" | sort)
 
     # stop systemd container
     service_cleanup
-    run_podman rmi -f $img
 }
 
 @test "podman-kube@.service template" {
@@ -413,7 +410,7 @@ EOF
 
     # Dispatch the YAML file
     service_name="podman-kube@$(systemd-escape $yaml_source).service"
-    systemctl start $service_name
+    systemctl_start $service_name
     systemctl is-active $service_name
 
     # Make sure that Podman is the service's MainPID
@@ -468,7 +465,7 @@ $name stderr" "logs work with passthrough"
 
     # Now stop and start the service again.
     systemctl stop $service_name
-    systemctl start $service_name
+    systemctl_start $service_name
     systemctl is-active $service_name
     run_podman container inspect $service_container --format "{{.State.Running}}"
     is "$output" "true"

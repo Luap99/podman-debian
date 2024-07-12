@@ -1,6 +1,4 @@
 //go:build !remote && (linux || freebsd)
-// +build !remote
-// +build linux freebsd
 
 package libpod
 
@@ -17,8 +15,8 @@ import (
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/detach"
 	"github.com/containers/common/pkg/resize"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/errorhandling"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/pkg/errorhandling"
 	"github.com/moby/term"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
@@ -35,7 +33,7 @@ const (
 // Does not check if state is appropriate.
 // started is only required if startContainer is true.
 func (r *ConmonOCIRuntime) Attach(c *Container, params *AttachOptions) error {
-	passthrough := c.LogDriver() == define.PassthroughLogging
+	passthrough := c.LogDriver() == define.PassthroughLogging || c.LogDriver() == define.PassthroughTTYLogging
 
 	if params == nil || params.Streams == nil {
 		return fmt.Errorf("must provide parameters to Attach: %w", define.ErrInternal)

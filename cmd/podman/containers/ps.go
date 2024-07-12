@@ -12,11 +12,11 @@ import (
 	"github.com/containers/common/libnetwork/types"
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/report"
-	"github.com/containers/podman/v4/cmd/podman/common"
-	"github.com/containers/podman/v4/cmd/podman/registry"
-	"github.com/containers/podman/v4/cmd/podman/utils"
-	"github.com/containers/podman/v4/cmd/podman/validate"
-	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v5/cmd/podman/common"
+	"github.com/containers/podman/v5/cmd/podman/registry"
+	"github.com/containers/podman/v5/cmd/podman/utils"
+	"github.com/containers/podman/v5/cmd/podman/validate"
+	"github.com/containers/podman/v5/pkg/domain/entities"
 	"github.com/docker/go-units"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -189,12 +189,17 @@ func ps(cmd *cobra.Command, _ []string) error {
 	if err := checkFlags(cmd); err != nil {
 		return err
 	}
+
+	if !listOpts.Pod {
+		listOpts.Pod = strings.Contains(listOpts.Format, ".PodName")
+	}
+
 	for _, f := range filters {
-		split := strings.SplitN(f, "=", 2)
-		if len(split) == 1 {
+		fname, filter, hasFilter := strings.Cut(f, "=")
+		if !hasFilter {
 			return fmt.Errorf("invalid filter %q", f)
 		}
-		listOpts.Filters[split[0]] = append(listOpts.Filters[split[0]], split[1])
+		listOpts.Filters[fname] = append(listOpts.Filters[fname], filter)
 	}
 	listContainers, err := getResponses()
 	if err != nil {
@@ -334,6 +339,11 @@ func (l psReporter) ImageID() string {
 		return l.ListContainer.ImageID[0:12]
 	}
 	return l.ListContainer.ImageID
+}
+
+// Labels returns a map of the pod's labels
+func (l psReporter) Label(name string) string {
+	return l.ListContainer.Labels[name]
 }
 
 // ID returns the ID of the container

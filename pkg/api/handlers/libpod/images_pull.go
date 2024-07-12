@@ -6,16 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/containers/common/libimage"
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/image/v5/types"
-	"github.com/containers/podman/v4/libpod"
-	"github.com/containers/podman/v4/pkg/api/handlers/utils"
-	api "github.com/containers/podman/v4/pkg/api/types"
-	"github.com/containers/podman/v4/pkg/auth"
-	"github.com/containers/podman/v4/pkg/channel"
-	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v5/libpod"
+	"github.com/containers/podman/v5/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v5/pkg/api/types"
+	"github.com/containers/podman/v5/pkg/auth"
+	"github.com/containers/podman/v5/pkg/channel"
+	"github.com/containers/podman/v5/pkg/domain/entities"
 	"github.com/gorilla/schema"
 	"github.com/sirupsen/logrus"
 )
@@ -33,6 +34,8 @@ func ImagesPull(w http.ResponseWriter, r *http.Request) {
 		PullPolicy string `schema:"policy"`
 		Quiet      bool   `schema:"quiet"`
 		Reference  string `schema:"reference"`
+		Retry      uint   `schema:"retry"`
+		RetryDelay string `schema:"retrydelay"`
 		TLSVerify  bool   `schema:"tlsVerify"`
 		// Platform fields below:
 		Arch    string `schema:"Arch"`
@@ -93,6 +96,19 @@ func ImagesPull(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		utils.Error(w, http.StatusBadRequest, err)
 		return
+	}
+
+	if _, found := r.URL.Query()["retry"]; found {
+		pullOptions.MaxRetries = &query.Retry
+	}
+
+	if _, found := r.URL.Query()["retrydelay"]; found {
+		duration, err := time.ParseDuration(query.RetryDelay)
+		if err != nil {
+			utils.Error(w, http.StatusBadRequest, err)
+			return
+		}
+		pullOptions.RetryDelay = &duration
 	}
 
 	// Let's keep thing simple when running in quiet mode and pull directly.
