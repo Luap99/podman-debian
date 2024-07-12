@@ -1,4 +1,3 @@
 system-goimports.patch
 downgrade-checkpoint-restore-criu.patch
-sigstore-tests.patch
 0003-Fix-reference-to-deprecated-types.Info.patch
