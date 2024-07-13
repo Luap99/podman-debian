@@ -1,3 +1,9 @@
+libpod (5.0.3+ds1-2) experimental; urgency=medium
+
+  * Tighten dependency on rootlesskit v2
+
+ -- Reinhard Tartler <siretart@tauware.de>  Sat, 13 Jul 2024 00:33:33 -0400
+
 libpod (5.0.3+ds1-1) experimental; urgency=medium
 
   * New upstream release: 5.0.3,
