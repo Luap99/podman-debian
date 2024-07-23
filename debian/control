@@ -170,6 +170,7 @@ Depends:
 Conflicts:
  docker.io,
  docker-ce-cli,
+ docker-cli,
 Recommends:
  docker-compose,
 Description: tool to manage containers and pods (Docker CLI)
