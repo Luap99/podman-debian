@@ -1,3 +1,9 @@
+libpod (5.0.3+ds1-3) experimental; urgency=medium
+
+  * Add conflicts relationship to docker-cli, Closes: #1076373
+
+ -- Reinhard Tartler <siretart@tauware.de>  Tue, 23 Jul 2024 09:42:05 +0200
+
 libpod (5.0.3+ds1-2) experimental; urgency=medium
 
   * Tighten dependency on rootlesskit v2
