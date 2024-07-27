@@ -1,3 +1,10 @@
+libpod (5.0.3+ds1-4) unstable; urgency=medium
+
+  * Team upload
+  * Upload changes from experimental to unstable
+
+ -- Mathias Gibbens <gibmat@debian.org>  Sat, 27 Jul 2024 01:35:14 +0000
+
 libpod (5.0.3+ds1-3) experimental; urgency=medium
 
   * Add conflicts relationship to docker-cli, Closes: #1076373
