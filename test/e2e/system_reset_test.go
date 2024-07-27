@@ -3,7 +3,7 @@ package integration
 import (
 	"fmt"
 
-	. "github.com/containers/podman/v4/test/utils"
+	. "github.com/containers/podman/v5/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -92,12 +92,16 @@ var _ = Describe("podman system reset", Serial, func() {
 		ctrName := "testctr"
 		port1 := GetPort()
 		port2 := GetPort()
-		session := podmanTest.Podman([]string{"run", "--name", ctrName, "-p", fmt.Sprintf("%d:%d", port1, port2), "-d", ALPINE, "top"})
+		session := podmanTest.Podman([]string{"run", "--name", ctrName, "-p", fmt.Sprintf("%d:%d", port1, port2), "-d", ALPINE, "sleep", "inf"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(ExitCleanly())
 
+		// run system reset on a container that is running
+		// set a timeout of 9 seconds, which tests that reset is using the timeout
+		// of zero and forceable killing containers with no wait.
+		// #21874
 		reset := podmanTest.Podman([]string{"system", "reset", "--force"})
-		reset.WaitWithDefaultTimeout()
+		reset.WaitWithTimeout(9)
 		Expect(reset).Should(ExitCleanly())
 
 		session2 := podmanTest.Podman([]string{"run", "--name", ctrName, "-p", fmt.Sprintf("%d:%d", port1, port2), "-d", ALPINE, "top"})

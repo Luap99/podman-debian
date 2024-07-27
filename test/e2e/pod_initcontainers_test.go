@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/containers/podman/v4/libpod/define"
-	. "github.com/containers/podman/v4/test/utils"
+	"github.com/containers/podman/v5/libpod/define"
+	. "github.com/containers/podman/v5/test/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
@@ -94,9 +94,7 @@ var _ = Describe("Podman init containers", func() {
 		// Expect(check).Should(Exit(1))
 		Expect(check.ExitCode()).To(Equal(1), "I dont understand why the other way does not work")
 		// Let's double check with a stop and start
-		stopPod := podmanTest.Podman([]string{"pod", "stop", "foobar"})
-		stopPod.WaitWithDefaultTimeout()
-		Expect(stopPod).Should(ExitCleanly())
+		podmanTest.StopPod("foobar")
 		startPod := podmanTest.Podman([]string{"pod", "start", "foobar"})
 		startPod.WaitWithDefaultTimeout()
 		Expect(startPod).Should(ExitCleanly())
@@ -129,9 +127,7 @@ var _ = Describe("Podman init containers", func() {
 		Expect(checkLog).Should(ExitCleanly())
 
 		// Stop and start the pod
-		stopPod := podmanTest.Podman([]string{"pod", "stop", "foobar"})
-		stopPod.WaitWithDefaultTimeout()
-		Expect(stopPod).Should(ExitCleanly())
+		podmanTest.StopPod("foobar")
 		startPod := podmanTest.Podman([]string{"pod", "start", "foobar"})
 		startPod.WaitWithDefaultTimeout()
 		Expect(startPod).Should(ExitCleanly())

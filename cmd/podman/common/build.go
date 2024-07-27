@@ -21,10 +21,10 @@ import (
 	"github.com/containers/image/v5/types"
 	encconfig "github.com/containers/ocicrypt/config"
 	enchelpers "github.com/containers/ocicrypt/helpers"
-	"github.com/containers/podman/v4/cmd/podman/registry"
-	"github.com/containers/podman/v4/cmd/podman/utils"
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/containers/podman/v4/pkg/env"
+	"github.com/containers/podman/v5/cmd/podman/registry"
+	"github.com/containers/podman/v5/cmd/podman/utils"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	"github.com/containers/podman/v5/pkg/env"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -113,6 +113,9 @@ func DefineBuildFlags(cmd *cobra.Command, buildOpts *BuildFlagsWrapper, isFarmBu
 	completion.CompleteCommandFlags(cmd, fromAndBudFlagsCompletions)
 	flags.SetNormalizeFunc(buildahCLI.AliasFlags)
 	if registry.IsRemote() {
+		// Unset the isolation default as we never want to send this over the API
+		// as it can be wrong (root vs rootless).
+		_ = flags.Lookup("isolation").Value.Set("")
 		_ = flags.MarkHidden("disable-content-trust")
 		_ = flags.MarkHidden("sign-by")
 		_ = flags.MarkHidden("signature-policy")
@@ -310,7 +313,9 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *Buil
 		pullPolicy = buildahDefine.PullAlways
 	}
 
-	if flags.PullNever || strings.EqualFold(strings.TrimSpace(flags.Pull), "never") {
+	if flags.PullNever ||
+		strings.EqualFold(strings.TrimSpace(flags.Pull), "false") ||
+		strings.EqualFold(strings.TrimSpace(flags.Pull), "never") {
 		pullPolicy = buildahDefine.PullNever
 	}
 
@@ -334,15 +339,15 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *Buil
 	}
 	if c.Flag("build-arg").Changed {
 		for _, arg := range flags.BuildArg {
-			av := strings.SplitN(arg, "=", 2)
-			if len(av) > 1 {
-				args[av[0]] = av[1]
+			key, val, hasVal := strings.Cut(arg, "=")
+			if hasVal {
+				args[key] = val
 			} else {
 				// check if the env is set in the local environment and use that value if it is
-				if val, present := os.LookupEnv(av[0]); present {
-					args[av[0]] = val
+				if val, present := os.LookupEnv(key); present {
+					args[key] = val
 				} else {
-					delete(args, av[0])
+					delete(args, key)
 				}
 			}
 		}
@@ -398,9 +403,14 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *Buil
 		compression = buildahDefine.Uncompressed
 	}
 
-	isolation, err := parse.IsolationOption(flags.Isolation)
-	if err != nil {
-		return nil, err
+	isolation := buildahDefine.IsolationDefault
+	// Only parse the isolation when it is actually needed as we do not want to send a wrong default
+	// to the server in the remote case (root vs rootless).
+	if flags.Isolation != "" {
+		isolation, err = parse.IsolationOption(flags.Isolation)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	usernsOption, idmappingOptions, err := parse.IDMappingOptions(c, isolation)
@@ -451,15 +461,15 @@ func buildFlagsWrapperToOptions(c *cobra.Command, contextDir string, flags *Buil
 	additionalBuildContext := make(map[string]*buildahDefine.AdditionalBuildContext)
 	if c.Flag("build-context").Changed {
 		for _, contextString := range flags.BuildContext {
-			av := strings.SplitN(contextString, "=", 2)
-			if len(av) > 1 {
-				parseAdditionalBuildContext, err := parse.GetAdditionalBuildContext(av[1])
+			key, val, hasVal := strings.Cut(contextString, "=")
+			if hasVal {
+				parseAdditionalBuildContext, err := parse.GetAdditionalBuildContext(val)
 				if err != nil {
 					return nil, fmt.Errorf("while parsing additional build context: %w", err)
 				}
-				additionalBuildContext[av[0]] = &parseAdditionalBuildContext
+				additionalBuildContext[key] = &parseAdditionalBuildContext
 			} else {
-				return nil, fmt.Errorf("while parsing additional build context: %q, accepts value in the form of key=value", av)
+				return nil, fmt.Errorf("while parsing additional build context: %s, accepts value in the form of key=value", contextString)
 			}
 		}
 	}

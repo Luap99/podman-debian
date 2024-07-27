@@ -2,8 +2,11 @@ package define
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/sirupsen/logrus"
 )
@@ -46,6 +49,38 @@ func (m *VMFile) Read() ([]byte, error) {
 	return os.ReadFile(m.GetPath())
 }
 
+// Read the first n bytes of a given file and return in []bytes
+func (m *VMFile) ReadMagicNumber(n int) ([]byte, error) {
+	f, err := os.Open(m.GetPath())
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	b := make([]byte, n)
+	n, err = io.ReadFull(f, b)
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		return b[:n], err
+	} else {
+		return b[:n], nil
+	}
+}
+
+// ReadPIDFrom a file and return as int. -1 means the pid file could not
+// be read or had something that could not be converted to an int in it
+func (m *VMFile) ReadPIDFrom() (int, error) {
+	vmPidString, err := m.Read()
+	if err != nil {
+		return -1, err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(vmPidString)))
+	if err != nil {
+		return -1, err
+	}
+
+	// Not returning earlier because -1 means something
+	return pid, nil
+}
+
 // NewMachineFile is a constructor for VMFile
 func NewMachineFile(path string, symlink *string) (*VMFile, error) {
 	if len(path) < 1 {
@@ -55,6 +90,7 @@ func NewMachineFile(path string, symlink *string) (*VMFile, error) {
 		return nil, errors.New("invalid symlink path")
 	}
 	mf := VMFile{Path: path}
+	logrus.Debugf("socket length for %s is %d", path, len(path))
 	if symlink != nil && len(path) > MaxSocketPathLength {
 		if err := mf.makeSymlink(symlink); err != nil && !errors.Is(err, os.ErrExist) {
 			return nil, err
@@ -77,4 +113,10 @@ func (m *VMFile) makeSymlink(symlink *string) error {
 	}
 	m.Symlink = &sl
 	return os.Symlink(m.Path, sl)
+}
+
+// AppendToNewVMFile takes a given path and appends it to the existing vmfile path.  The new
+// VMFile is returned
+func (m *VMFile) AppendToNewVMFile(additionalPath string, symlink *string) (*VMFile, error) {
+	return NewMachineFile(filepath.Join(m.Path, additionalPath), symlink)
 }

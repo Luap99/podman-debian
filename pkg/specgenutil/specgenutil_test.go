@@ -1,5 +1,4 @@
 //go:build linux
-// +build linux
 
 package specgenutil
 
@@ -9,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/containers/common/pkg/machine"
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/containers/podman/v4/pkg/specgen"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	"github.com/containers/podman/v5/pkg/specgen"
 	"github.com/stretchr/testify/assert"
 )
 

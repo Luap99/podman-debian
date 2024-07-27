@@ -3,7 +3,7 @@ package server
 import (
 	"net/http"
 
-	"github.com/containers/podman/v4/pkg/api/handlers/libpod"
+	"github.com/containers/podman/v5/pkg/api/handlers/libpod"
 	"github.com/gorilla/mux"
 )
 
@@ -16,6 +16,10 @@ func (s *APIServer) registerKubeHandlers(r *mux.Router) error {
 	// summary: Play a Kubernetes YAML file.
 	// description: Create and run pods based on a Kubernetes YAML file (pod or service kind).
 	// parameters:
+	//  - in: query
+	//    name: annotations
+	//    type: string
+	//    description: JSON encoded value of annotations (a map[string]string).
 	//  - in: query
 	//    name: logDriver
 	//    type: string
@@ -48,6 +52,10 @@ func (s *APIServer) registerKubeHandlers(r *mux.Router) error {
 	//    description: publish a container's port, or a range of ports, to the host
 	//    items:
 	//         type: string
+	//  - in: query
+	//    name: publishAllPorts
+	//    type: boolean
+	//    description: Whether to publish all ports defined in the K8S YAML file (containerPort, hostPort), if false only hostPort will be published
 	//  - in: query
 	//    name: replace
 	//    type: boolean

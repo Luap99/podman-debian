@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/pkg/rootless"
 )
 
 var (
@@ -28,13 +28,13 @@ type defaultMountOptions struct {
 // The sourcePath variable, if not empty, contains a bind mount source.
 func ProcessOptions(options []string, isTmpfs bool, sourcePath string) ([]string, error) {
 	var (
-		foundWrite, foundSize, foundProp, foundMode, foundExec, foundSuid, foundDev, foundCopyUp, foundBind, foundZ, foundU, foundOverlay, foundIdmap, foundCopy, foundNoSwap bool
+		foundWrite, foundSize, foundProp, foundMode, foundExec, foundSuid, foundDev, foundCopyUp, foundBind, foundZ, foundU, foundOverlay, foundIdmap, foundCopy, foundNoSwap, foundNoDereference bool
 	)
 
 	newOptions := make([]string, 0, len(options))
 	for _, opt := range options {
 		// Some options have parameters - size, mode
-		splitOpt := strings.SplitN(opt, "=", 2)
+		key, _, _ := strings.Cut(opt, "=")
 
 		// add advanced options such as upperdir=/path and workdir=/path, when overlay is specified
 		if foundOverlay {
@@ -47,11 +47,11 @@ func ProcessOptions(options []string, isTmpfs bool, sourcePath string) ([]string
 				continue
 			}
 		}
-		if strings.HasPrefix(splitOpt[0], "subpath") {
+		if strings.HasPrefix(key, "subpath") {
 			newOptions = append(newOptions, opt)
 			continue
 		}
-		if strings.HasPrefix(splitOpt[0], "idmap") {
+		if strings.HasPrefix(key, "idmap") {
 			if foundIdmap {
 				return nil, fmt.Errorf("the 'idmap' option can only be set once: %w", ErrDupeMntOption)
 			}
@@ -60,7 +60,7 @@ func ProcessOptions(options []string, isTmpfs bool, sourcePath string) ([]string
 			continue
 		}
 
-		switch splitOpt[0] {
+		switch key {
 		case "copy", "nocopy":
 			if foundCopy {
 				return nil, fmt.Errorf("only one of 'nocopy' and 'copy' can be used: %w", ErrDupeMntOption)
@@ -148,6 +148,11 @@ func ProcessOptions(options []string, isTmpfs bool, sourcePath string) ([]string
 			foundNoSwap = true
 			newOptions = append(newOptions, opt)
 			continue
+		case "no-dereference":
+			if foundNoDereference {
+				return nil, fmt.Errorf("the 'no-dereference' option can only be set once: %w", ErrDupeMntOption)
+			}
+			foundNoDereference = true
 		case define.TypeBind, "rbind":
 			if isTmpfs {
 				return nil, fmt.Errorf("the 'bind' and 'rbind' options are not allowed with tmpfs mounts: %w", ErrBadMntOption)
@@ -205,13 +210,13 @@ func ProcessOptions(options []string, isTmpfs bool, sourcePath string) ([]string
 }
 
 func ParseDriverOpts(option string) (string, string, error) {
-	token := strings.SplitN(option, "=", 2)
-	if len(token) != 2 {
+	_, val, hasVal := strings.Cut(option, "=")
+	if !hasVal {
 		return "", "", fmt.Errorf("cannot parse driver opts: %w", ErrBadMntOption)
 	}
-	opt := strings.SplitN(token[1], "=", 2)
-	if len(opt) != 2 {
+	optKey, optVal, hasOptVal := strings.Cut(val, "=")
+	if !hasOptVal {
 		return "", "", fmt.Errorf("cannot parse driver opts: %w", ErrBadMntOption)
 	}
-	return opt[0], opt[1], nil
+	return optKey, optVal, nil
 }

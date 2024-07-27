@@ -51,7 +51,7 @@ function _run_podman_remote() {
 # Very basic test, does not actually connect at any time
 @test "podman system connection - basic add / ls / remove" {
     run_podman system connection ls
-    is "$output" "Name        URI         Identity    Default" \
+    is "$output" "Name        URI         Identity    Default     ReadWrite" \
        "system connection ls: no connections"
 
     c1="c1_$(random_string 15)"
@@ -61,8 +61,8 @@ function _run_podman_remote() {
     run_podman context create --docker "host=tcp://localhost:54321" $c2
     run_podman system connection ls
     is "$output" \
-       ".*$c1[ ]\+tcp://localhost:12345[ ]\+true
-$c2[ ]\+tcp://localhost:54321[ ]\+false" \
+       ".*$c1[ ]\+tcp://localhost:12345[ ]\+true[ ]\+true
+$c2[ ]\+tcp://localhost:54321[ ]\+false[ ]\+true" \
        "system connection ls"
     run_podman system connection ls -q
     is "$(echo $(sort <<<$output))" \
@@ -75,14 +75,14 @@ $c2[ ]\+tcp://localhost:54321[ ]\+false" \
     run_podman context use $c2
     run_podman system connection ls
     is "$output" \
-       ".*$c1[ ]\+tcp://localhost:12345[ ]\+false
-$c2[ ]\+tcp://localhost:54321[ ]\+true" \
+       ".*$c1[ ]\+tcp://localhost:12345[ ]\+false[ ]\+true
+$c2[ ]\+tcp://localhost:54321[ ]\+true[ ]\+true" \
        "system connection ls"
 
     # Remove default connection; the remaining one should still not be default
     run_podman system connection rm $c2
     run_podman context ls
-    is "$output" ".*$c1[ ]\+tcp://localhost:12345[ ]\+false" \
+    is "$output" ".*$c1[ ]\+tcp://localhost:12345[ ]\+false[ ]\+true" \
        "system connection ls (after removing default connection)"
 
     run_podman context rm $c1
@@ -108,8 +108,7 @@ $c2[ ]\+tcp://localhost:54321[ ]\+true" \
     # Start service. Now podman info should work fine. The %%-remote*
     # converts "podman-remote --opts" to just "podman", which is what
     # we need for the server.
-    ${PODMAN%%-remote*} --root ${PODMAN_TMPDIR}/root \
-                        --runroot ${PODMAN_TMPDIR}/runroot \
+    ${PODMAN%%-remote*} $(podman_isolation_opts ${PODMAN_TMPDIR}) \
                         system service -t 99 tcp://localhost:$_SERVICE_PORT &
     _SERVICE_PID=$!
     # Wait for the port and the podman-service to be ready.

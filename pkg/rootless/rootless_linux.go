@@ -1,5 +1,4 @@
 //go:build linux && cgo
-// +build linux,cgo
 
 package rootless
 
@@ -19,7 +18,7 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/containers/podman/v4/pkg/errorhandling"
+	"github.com/containers/podman/v5/pkg/errorhandling"
 	"github.com/containers/storage/pkg/idtools"
 	pmount "github.com/containers/storage/pkg/mount"
 	"github.com/containers/storage/pkg/unshare"

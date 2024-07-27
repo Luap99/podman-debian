@@ -1,6 +1,4 @@
 //go:build !remote && (linux || freebsd)
-// +build !remote
-// +build linux freebsd
 
 package libpod
 
@@ -13,8 +11,8 @@ import (
 	buildahCopiah "github.com/containers/buildah/copier"
 	"github.com/containers/buildah/pkg/chrootuser"
 	"github.com/containers/buildah/util"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/rootless"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/pkg/rootless"
 	"github.com/containers/storage/pkg/archive"
 	"github.com/containers/storage/pkg/idtools"
 	"github.com/opencontainers/runtime-spec/specs-go"

@@ -22,10 +22,6 @@ source $(dirname $0)/lib.sh
 showrun echo "starting"
 
 function _run_validate() {
-    # TODO: aarch64 images need python3-devel installed
-    # https://github.com/containers/automation_images/issues/159
-    showrun bigto ooe.sh dnf install -y python3-devel
-
     # git-validation tool fails if $EPOCH_TEST_COMMIT is empty
     # shellcheck disable=SC2154
     if [[ -n "$EPOCH_TEST_COMMIT" ]]; then
@@ -33,7 +29,8 @@ function _run_validate() {
     else
         warn "Skipping git-validation since \$EPOCH_TEST_COMMIT is empty"
     fi
-
+    # make sure PRs have tests
+    showrun make tests-included
 }
 
 function _run_unit() {
@@ -171,9 +168,6 @@ function _run_swagger() {
     local envvarsfile
     req_env_vars GCPJSON GCPNAME GCPPROJECT CTR_FQIN
 
-    [[ -x /usr/local/bin/swagger ]] || \
-        die "Expecting swagger binary to be present and executable."
-
     # The filename and bucket depend on the automation context
     #shellcheck disable=SC2154,SC2153
     if [[ -n "$CIRRUS_PR" ]]; then
@@ -281,6 +275,8 @@ function _run_altbuild() {
             rm -rf $context_dir
             ;;
         *Windows*)
+	    showrun make .install.pre-commit
+            showrun make lint GOOS=windows CGO_ENABLED=0
             showrun make podman-remote-release-windows_amd64.zip
             ;;
         *RPM*)

@@ -7,11 +7,10 @@ import (
 	"strings"
 
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v4/cmd/podman/common"
-	"github.com/containers/podman/v4/cmd/podman/registry"
-	"github.com/containers/podman/v4/cmd/podman/utils"
-	"github.com/containers/podman/v4/pkg/farm"
+	"github.com/containers/podman/v5/cmd/podman/common"
+	"github.com/containers/podman/v5/cmd/podman/registry"
+	"github.com/containers/podman/v5/cmd/podman/utils"
+	"github.com/containers/podman/v5/pkg/farm"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -50,14 +49,8 @@ func init() {
 	cleanupFlag := "cleanup"
 	flags.BoolVar(&buildOpts.buildOptions.Cleanup, cleanupFlag, false, "Remove built images from farm nodes on success")
 
-	podmanConfig := registry.PodmanConfig()
 	farmFlagName := "farm"
-	// If remote, don't read the client's containers.conf file
-	defaultFarm := ""
-	if !registry.IsRemote() {
-		defaultFarm = podmanConfig.ContainersConfDefaultsRO.Farms.Default
-	}
-	flags.StringVar(&buildOpts.farm, farmFlagName, defaultFarm, "Farm to use for builds")
+	flags.StringVar(&buildOpts.farm, farmFlagName, "", "Farm to use for builds")
 	_ = buildCommand.RegisterFlagCompletionFunc(farmFlagName, common.AutoCompleteFarms)
 
 	localFlagName := "local"
@@ -116,29 +109,21 @@ func build(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	opts.IIDFile = iidFile
-	tlsVerify, err := cmd.Flags().GetBool("tls-verify")
-	if err != nil {
-		return err
-	}
-	opts.SkipTLSVerify = !tlsVerify
-
-	cfg, err := config.ReadCustomConfig()
-	if err != nil {
-		return err
-	}
-
-	defaultFarm := cfg.Farms.Default
-	if cmd.Flags().Changed("farm") {
-		f, err := cmd.Flags().GetString("farm")
+	// only set tls-verify if it has been changed by the user
+	// if it hasn't we will read the registries.conf on the farm
+	// nodes for further configuration
+	if changed := cmd.Flags().Changed("tls-verify"); changed {
+		tlsVerify, err := cmd.Flags().GetBool("tls-verify")
 		if err != nil {
 			return err
 		}
-		defaultFarm = f
+		skipTLSVerify := !tlsVerify
+		opts.SkipTLSVerify = &skipTLSVerify
 	}
 
 	localEngine := registry.ImageEngine()
 	ctx := registry.Context()
-	farm, err := farm.NewFarm(ctx, defaultFarm, localEngine, buildOpts.local)
+	farm, err := farm.NewFarm(ctx, buildOpts.farm, localEngine, buildOpts.local)
 	if err != nil {
 		return fmt.Errorf("initializing: %w", err)
 	}

@@ -1,5 +1,4 @@
 //go:build !remote
-// +build !remote
 
 package autoupdate
 
@@ -12,12 +11,12 @@ import (
 	"github.com/containers/common/libimage"
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/image/v5/docker"
-	"github.com/containers/podman/v4/libpod"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/libpod/events"
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/containers/podman/v4/pkg/systemd"
-	systemdDefine "github.com/containers/podman/v4/pkg/systemd/define"
+	"github.com/containers/podman/v5/libpod"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/libpod/events"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	"github.com/containers/podman/v5/pkg/systemd"
+	systemdDefine "github.com/containers/podman/v5/pkg/systemd/define"
 	"github.com/coreos/go-systemd/v22/dbus"
 	"github.com/sirupsen/logrus"
 )
@@ -317,7 +316,7 @@ func (t *task) localUpdateAvailable() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return localImg.Digest().String() != t.image.Digest().String(), nil
+	return localImg.ID() != t.image.ID(), nil
 }
 
 // rollbackImage rolls back the task's image to the previous version before the update.
