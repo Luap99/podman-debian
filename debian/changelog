@@ -1,13 +1,58 @@
+libpod (5.0.3+ds1-3) experimental; urgency=medium
+
+  * Add conflicts relationship to docker-cli, Closes: #1076373
+
+ -- Reinhard Tartler <siretart@tauware.de>  Tue, 23 Jul 2024 09:42:05 +0200
+
+libpod (5.0.3+ds1-2) experimental; urgency=medium
+
+  * Tighten dependency on rootlesskit v2
+
+ -- Reinhard Tartler <siretart@tauware.de>  Sat, 13 Jul 2024 00:33:33 -0400
+
+libpod (5.0.3+ds1-1) experimental; urgency=medium
+
+  * New upstream release: 5.0.3,
+    Addresses: CVE-2024-3727
+  * Enable HEREDOC support, image signing
+  * compile against docker 26.1, containerd 1.7, rootlesskit v2
+
+ -- Reinhard Tartler <siretart@tauware.de>  Fri, 12 Jul 2024 18:04:56 -0400
+
 libpod (4.9.5+ds1-1) unstable; urgency=medium
 
   * New upstream version
     - compiled against newer containers/image to address CVE-2024-3727,
       and also enables image signing and verification with sigstore
   * Move systemd files from /lib to /usr/lib, closes: #1073740
-  * Add tipp to reset configuration to help with networking issues, 
+  * Add tipp to reset configuration to help with networking issues,
     Closes: #1066139
-  
+
  -- Reinhard Tartler <siretart@tauware.de>  Thu, 04 Jul 2024 17:11:36 -0400
+
+libpod (5.0.2+ds1-3) experimental; urgency=medium
+
+  * Build against buildah 1.35
+
+ -- Reinhard Tartler <siretart@tauware.de>  Sun, 05 May 2024 07:43:03 -0400
+
+libpod (5.0.2+ds1-2) experimental; urgency=medium
+
+  * Fix build on !amd64,!arm64
+
+ -- Reinhard Tartler <siretart@tauware.de>  Sat, 04 May 2024 08:33:41 -0400
+
+libpod (5.0.2+ds1-1) experimental; urgency=medium
+
+  * New upstream release
+
+ -- Reinhard Tartler <siretart@tauware.de>  Sat, 27 Apr 2024 18:45:03 -0400
+
+libpod (5.0.0+ds1-1) experimental; urgency=medium
+
+  * New upstream release
+
+ -- Reinhard Tartler <siretart@tauware.de>  Mon, 08 Apr 2024 21:24:24 +0000
 
 libpod (4.9.4+ds1-1) unstable; urgency=medium
 

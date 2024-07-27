@@ -1,8 +1,20 @@
-Index: libpod/libpod/container_internal_common.go
+From: Debian Go Packaging Team <pkg-go-maintainers@lists.alioth.debian.org>
+Date: Fri, 12 Jul 2024 18:14:17 -0400
+Subject: downgrade-checkpoint-restore-criu
+
 ===================================================================
---- libpod.orig/libpod/container_internal_common.go
-+++ libpod/libpod/container_internal_common.go
-@@ -21,7 +21,7 @@ import (
+---
+ libpod/container_internal_common.go                | 2 +-
+ pkg/checkpoint/crutils/checkpoint_restore_utils.go | 2 +-
+ pkg/criu/criu_linux.go                             | 4 ++--
+ test/e2e/checkpoint_test.go                        | 2 +-
+ 4 files changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/libpod/container_internal_common.go b/libpod/container_internal_common.go
+index 3bb6dfe..21390f7 100644
+--- a/libpod/container_internal_common.go
++++ b/libpod/container_internal_common.go
+@@ -20,7 +20,7 @@ import (
  	"time"
  
  	metadata "github.com/checkpoint-restore/checkpointctl/lib"
@@ -11,10 +23,10 @@ Index: libpod/libpod/container_internal_common.go
  	"github.com/containers/buildah"
  	"github.com/containers/buildah/pkg/chrootuser"
  	"github.com/containers/buildah/pkg/overlay"
-Index: libpod/pkg/checkpoint/crutils/checkpoint_restore_utils.go
-===================================================================
---- libpod.orig/pkg/checkpoint/crutils/checkpoint_restore_utils.go
-+++ libpod/pkg/checkpoint/crutils/checkpoint_restore_utils.go
+diff --git a/pkg/checkpoint/crutils/checkpoint_restore_utils.go b/pkg/checkpoint/crutils/checkpoint_restore_utils.go
+index 07f3b76..1702387 100644
+--- a/pkg/checkpoint/crutils/checkpoint_restore_utils.go
++++ b/pkg/checkpoint/crutils/checkpoint_restore_utils.go
 @@ -10,7 +10,7 @@ import (
  	"path/filepath"
  
@@ -24,11 +36,11 @@ Index: libpod/pkg/checkpoint/crutils/checkpoint_restore_utils.go
  	"github.com/containers/storage/pkg/archive"
  	"github.com/opencontainers/selinux/go-selinux/label"
  )
-Index: libpod/pkg/criu/criu_linux.go
-===================================================================
---- libpod.orig/pkg/criu/criu_linux.go
-+++ libpod/pkg/criu/criu_linux.go
-@@ -6,8 +6,8 @@ package criu
+diff --git a/pkg/criu/criu_linux.go b/pkg/criu/criu_linux.go
+index 75fd962..d148834 100644
+--- a/pkg/criu/criu_linux.go
++++ b/pkg/criu/criu_linux.go
+@@ -5,8 +5,8 @@ package criu
  import (
  	"fmt"
  
@@ -39,16 +51,16 @@ Index: libpod/pkg/criu/criu_linux.go
  
  	"google.golang.org/protobuf/proto"
  )
-Index: libpod/test/e2e/checkpoint_test.go
-===================================================================
---- libpod.orig/test/e2e/checkpoint_test.go
-+++ libpod/test/e2e/checkpoint_test.go
+diff --git a/test/e2e/checkpoint_test.go b/test/e2e/checkpoint_test.go
+index dc1a47a..909b8a4 100644
+--- a/test/e2e/checkpoint_test.go
++++ b/test/e2e/checkpoint_test.go
 @@ -10,7 +10,7 @@ import (
  	"strings"
  	"time"
  
 -	"github.com/checkpoint-restore/go-criu/v7/stats"
 +	"github.com/checkpoint-restore/go-criu/v6/stats"
- 	"github.com/containers/podman/v4/pkg/checkpoint/crutils"
- 	"github.com/containers/podman/v4/pkg/criu"
- 	"github.com/containers/podman/v4/pkg/domain/entities"
+ 	"github.com/containers/podman/v5/pkg/checkpoint/crutils"
+ 	"github.com/containers/podman/v5/pkg/criu"
+ 	"github.com/containers/podman/v5/pkg/domain/entities"
