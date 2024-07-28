@@ -113,6 +113,7 @@ Depends:
  conmon,
  crun | runc,
  golang-github-containers-common,
+ netavark,
  ${misc:Depends},
  ${shlibs:Depends},
 Recommends:
