@@ -1,3 +1,10 @@
+libpod (5.0.3+ds1-5) unstable; urgency=medium
+
+  * Team Upload.
+  * Add netavark to Depends (Fixes autopkgtest)
+
+ -- Nilesh Patra <nilesh@iki.fi>  Sun, 28 Jul 2024 23:09:36 +0530
+
 libpod (5.0.3+ds1-4) unstable; urgency=medium
 
   * Team upload
