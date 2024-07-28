@@ -1,8 +1,17 @@
-Index: libpod/pkg/bindings/generator/generator.go
+From: Debian Go Packaging Team <pkg-go-maintainers@lists.alioth.debian.org>
+Date: Fri, 12 Jul 2024 18:14:17 -0400
+Subject: system-goimports
+
 ===================================================================
---- libpod.orig/pkg/bindings/generator/generator.go
-+++ libpod/pkg/bindings/generator/generator.go
-@@ -170,7 +170,7 @@ func main() {
+---
+ pkg/bindings/generator/generator.go | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/pkg/bindings/generator/generator.go b/pkg/bindings/generator/generator.go
+index 8f6234d..c74d505 100644
+--- a/pkg/bindings/generator/generator.go
++++ b/pkg/bindings/generator/generator.go
+@@ -169,7 +169,7 @@ func main() {
  		}
  
  		// go import file

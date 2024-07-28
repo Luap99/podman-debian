@@ -8,11 +8,11 @@ import (
 	"strings"
 
 	"github.com/containers/common/pkg/completion"
-	"github.com/containers/podman/v4/cmd/podman/common"
-	"github.com/containers/podman/v4/cmd/podman/registry"
-	"github.com/containers/podman/v4/cmd/podman/utils"
-	"github.com/containers/podman/v4/cmd/podman/validate"
-	"github.com/containers/podman/v4/pkg/domain/entities"
+	"github.com/containers/podman/v5/cmd/podman/common"
+	"github.com/containers/podman/v5/cmd/podman/registry"
+	"github.com/containers/podman/v5/cmd/podman/utils"
+	"github.com/containers/podman/v5/cmd/podman/validate"
+	"github.com/containers/podman/v5/pkg/domain/entities"
 	"github.com/spf13/cobra"
 )
 
@@ -30,7 +30,6 @@ var (
 		},
 		ValidArgsFunction: common.AutocompleteContainersRunning,
 		Example: `podman stop ctrID
-  podman stop --latest
   podman stop --time 2 mywebserver 6e534f14da9d`,
 	}
 
@@ -44,7 +43,6 @@ var (
 		},
 		ValidArgsFunction: stopCommand.ValidArgsFunction,
 		Example: `podman container stop ctrID
-  podman container stop --latest
   podman container stop --time 2 mywebserver 6e534f14da9d`,
 	}
 )
@@ -121,11 +119,11 @@ func stop(cmd *cobra.Command, args []string) error {
 	}
 
 	for _, f := range filters {
-		split := strings.SplitN(f, "=", 2)
-		if len(split) < 2 {
+		fname, filter, hasFilter := strings.Cut(f, "=")
+		if !hasFilter {
 			return fmt.Errorf("invalid filter %q", f)
 		}
-		stopOptions.Filters[split[0]] = append(stopOptions.Filters[split[0]], split[1])
+		stopOptions.Filters[fname] = append(stopOptions.Filters[fname], filter)
 	}
 
 	responses, err := registry.ContainerEngine().ContainerStop(context.Background(), args, stopOptions)

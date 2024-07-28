@@ -43,14 +43,4 @@ and check the corresponding man page for details:
     containers-policy.json(5)
 
 
-Kernel options
-==============
-
-We higly recommended to add "swapaccount=1" to default Linux boot options
-(e.g. "/etc/default/grub" :: "GRUB_CMDLINE_LINUX_DEFAULT").
-
-    sudo dpkg-reconfigure grub-pc
-
-Then add "swapaccount=1" to "Linux default command line".
-
- -- Reinhard Tartler <siretart@tauware.de>, Thu,  4 Jul 2024 17:10:07 -0400
+ -- Reinhard Tartler <siretart@tauware.de>, Sun, 28 Jan 2024 07:38:28 -0500

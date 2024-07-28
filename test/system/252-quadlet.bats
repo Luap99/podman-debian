@@ -91,10 +91,7 @@ function service_setup() {
         local activestate="inactive"
     fi
 
-    echo "$_LOG_PROMPT systemctl $startargs start $service"
-    run systemctl $startargs start "$service"
-    echo "$output"
-    assert $status -eq 0 "Error starting systemd unit $service"
+    systemctl_start $startargs "$service"
 
     # FIXME FIXME FIXME: this is racy with short-lived containers!
     echo "$_LOG_PROMPT systemctl status $service"
@@ -147,6 +144,8 @@ function remove_secret() {
 }
 
 @test "quadlet - basic" {
+    # Network=none is to work around a Pasta bug, can be removed once a patched Pasta is available.
+    # Ref https://github.com/containers/podman/pull/21563#issuecomment-1965145324
     local quadlet_file=$PODMAN_TMPDIR/basic_$(random_string).container
     cat > $quadlet_file <<EOF
 [Container]
@@ -154,7 +153,13 @@ Image=$IMAGE
 Exec=sh -c "echo STARTED CONTAINER; echo "READY=1" | socat -u STDIN unix-sendto:\$NOTIFY_SOCKET; sleep inf"
 Notify=yes
 LogDriver=passthrough
+Network=none
 EOF
+
+    # FIXME: Temporary until podman fully removes cgroupsv1 support; see #21431
+    if [[ -n "$PODMAN_IGNORE_CGROUPSV1_WARNING" ]]; then
+        skip "Way too complicated to test under cgroupsv1, and not worth the effort"
+    fi
 
     run_quadlet "$quadlet_file"
     service_setup $QUADLET_SERVICE_NAME
@@ -798,7 +803,7 @@ ExecStart=/bin/bash -c "echo %T >$percent_t_file"
 Type=oneshot
 EOF
     systemctl daemon-reload
-    systemctl --wait start $service
+    systemctl_start --wait $service
     percent_t=$(< $percent_t_file)
     # Clean up. Don't bother to systemctl-reload, service_setup does that below.
     rm -f $unitfile
@@ -1410,6 +1415,65 @@ EOF
     service_cleanup $container_service failed
     run_podman image rm --ignore $image_for_test
     run_podman rmi --ignore $(pause_image)
+}
+
+@test "quadlet - pod simple" {
+    local quadlet_tmpdir=$PODMAN_TMPDIR/quadlets
+
+    local test_pod_name=pod_test_$(random_string)
+    local quadlet_pod_unit=$test_pod_name.pod
+    local quadlet_pod_file=$PODMAN_TMPDIR/$quadlet_pod_unit
+    cat > $quadlet_pod_file <<EOF
+[Pod]
+PodName=$test_pod_name
+EOF
+
+    local quadlet_container_unit=pod_test_$(random_string).container
+    local quadlet_container_file=$PODMAN_TMPDIR/$quadlet_container_unit
+    cat > $quadlet_container_file <<EOF
+[Container]
+Image=$IMAGE
+Exec=sh -c "echo STARTED CONTAINER; echo "READY=1" | socat -u STDIN unix-sendto:\$NOTIFY_SOCKET; sleep inf"
+Pod=$quadlet_pod_unit
+EOF
+
+    # Use the same directory for all quadlet files to make sure later steps access previous ones
+    mkdir $quadlet_tmpdir
+
+    # Have quadlet create the systemd unit file for the pod unit
+    run_quadlet "$quadlet_pod_file" "$quadlet_tmpdir"
+    # Save the pod service name since the variable will be overwritten
+    local pod_service=$QUADLET_SERVICE_NAME
+
+    # Have quadlet create the systemd unit file for the container unit
+    run_quadlet "$quadlet_container_file" "$quadlet_tmpdir"
+    local container_service=$QUADLET_SERVICE_NAME
+    local container_name=$QUADLET_CONTAINER_NAME
+
+    # Start the pod service
+    service_setup $pod_service
+
+    # Pod should exist
+    run_podman pod exists ${test_pod_name}
+
+    # Wait for systemd to activate the container service
+    wait_for_command_output "systemctl show --property=ActiveState $container_service" "ActiveState=active"
+
+    # Container should exist
+    run_podman container exists ${container_name}
+
+    # Shutdown the service
+    service_cleanup $pod_service inactive
+
+    # The service of the container should be active
+    run systemctl show --property=ActiveState "$container_service"
+    assert "ActiveState=failed" \
+           "quadlet - pod base: container service ActiveState"
+
+    # Container should not exist
+    run_podman 1 container exists ${container_name}
+
+    run_podman rmi $(pause_image)
 }
 
 # This test reproduces https://github.com/containers/podman/issues/20432

@@ -5,9 +5,9 @@ import (
 	"fmt"
 
 	"github.com/containers/common/libimage"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	"golang.org/x/exp/slices"
 )
 
 func (ir *ImageEngine) List(ctx context.Context, opts entities.ImageListOptions) ([]*entities.ImageSummary, error) {
@@ -15,7 +15,7 @@ func (ir *ImageEngine) List(ctx context.Context, opts entities.ImageListOptions)
 		Filters:     opts.Filter,
 		SetListData: true,
 	}
-	if !opts.All && !util.StringInSlice("intermediate=true", listImagesOptions.Filters) {
+	if !opts.All && !slices.Contains(listImagesOptions.Filters, "intermediate=true") {
 		// Filter intermediate images unless we want to list *all*.
 		// NOTE: it's a positive filter, so `intermediate=false` means
 		// to display non-intermediate images.

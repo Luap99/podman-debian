@@ -73,11 +73,10 @@ Fully qualified path of the ignition file.
 If an ignition file is provided, the file
 is copied into the user's CONF_DIR and renamed.  Additionally, no SSH keys are generated, nor are any system connections made.  It is assumed that the user does these things manually or handled otherwise.
 
-#### **--image-path**
+#### **--image**
 
-Fully qualified path or URL to the VM image.
-Can also be set to `testing`, `next`, or `stable` to pull down default image.
-Defaults to `testing`.
+Fully qualified registry, path, or URL to a VM image.
+Registry target must be in the form of `docker://registry/repo/image:version`.
 
 #### **--memory**, **-m**=*number*
 
@@ -167,14 +166,43 @@ Driver to use for mounting volumes from the host, such as `virtfs`.
 
 ## EXAMPLES
 
+Initialize the default Podman machine, pulling the content from the internet.
 ```
 $ podman machine init
+```
+
+Initialize a Podman machine for the specified name pulling the content from the internet.
+```
 $ podman machine init myvm
+```
+
+Initialize the default Podman machine pulling the content from the internet defaulting to rootful mode. The default is rootless.
+```
 $ podman machine init --rootful
+```
+
+Initialize the default Podman machine overriding its disk size override, pulling the content from the internet.
+```
 $ podman machine init --disk-size 50
+```
+
+Initialize the specified Podman machine overriding its memory size, pulling the content from the internet.
+```
 $ podman machine init --memory=1024 myvm
+```
+
+Initialize the default Podman machine with the host directory `/Users` mounted into the VM at `/mnt/Users`.
+```
 $ podman machine init -v /Users:/mnt/Users
+```
+
+Initialize the default Podman machine with a usb device passthrough specified with options. Only supported for QEMU Machines.
+```
 $ podman machine init --usb vendor=13d3,product=5406
+```
+
+Initialize the default Podman machine with a usb device passthrough with specified with options. Only supported for QEMU Machines.
+```
 $ podman machine init --usb bus=1,devnum=3
 ```
 

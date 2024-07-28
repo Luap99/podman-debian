@@ -179,6 +179,22 @@ Build only on farm nodes that match the given platforms.
 
 @@option runtime-flag
 
+@@option sbom
+
+@@option sbom-image-output
+
+@@option sbom-image-purl-output
+
+@@option sbom-merge-strategy
+
+@@option sbom-output
+
+@@option sbom-purl-output
+
+@@option sbom-scanner-command
+
+@@option sbom-scanner-image
+
 @@option secret.image
 
 @@option security-opt.image
@@ -223,14 +239,24 @@ Build only on farm nodes that match the given platforms.
 
 ## EXAMPLES
 
+Build named image and manifest list using specified Containerfile with default farm:
 ```
 $ podman farm build --local -t name -f /path/to/containerfile .
+```
 
+Build named image and manifest list using the specified farm:
+```
 $ podman farm build --farm myfarm -t name .
+```
 
+Build named image and manifest list using the specified farm, removing all images from farm nodes, after they are pushed to registry:
+```
 $ podman farm build --farm myfarm --cleanup -t name .
+```
 
-$ podman farm build --platforms arm64,amd64 --cleanup -t name .
+Build named images and manifest list for specified platforms using default farm:
+```
+$ podman farm build --platforms arm64,amd64 -t name .
 ```
 
 ## SEE ALSO

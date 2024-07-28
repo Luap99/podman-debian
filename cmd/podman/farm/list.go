@@ -8,9 +8,9 @@ import (
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/report"
-	"github.com/containers/podman/v4/cmd/podman/common"
-	"github.com/containers/podman/v4/cmd/podman/registry"
-	"github.com/containers/podman/v4/cmd/podman/validate"
+	"github.com/containers/podman/v5/cmd/podman/common"
+	"github.com/containers/podman/v5/cmd/podman/registry"
+	"github.com/containers/podman/v5/cmd/podman/validate"
 	"github.com/spf13/cobra"
 )
 
@@ -20,13 +20,15 @@ var (
 List all available farms. The output of the farms can be filtered
 and the output format can be changed to JSON or a user specified Go template.`
 	lsCommand = &cobra.Command{
-		Use:               "list [options]",
-		Aliases:           []string{"ls"},
-		Args:              validate.NoArgs,
-		Short:             "List all existing farms",
-		Long:              farmLsDescription,
-		RunE:              list,
-		ValidArgsFunction: completion.AutocompleteNone,
+		Use:                "list [options]",
+		Aliases:            []string{"ls"},
+		Args:               validate.NoArgs,
+		Short:              "List all existing farms",
+		Long:               farmLsDescription,
+		PersistentPreRunE:  validate.NoOp,
+		RunE:               list,
+		PersistentPostRunE: validate.NoOp,
+		ValidArgsFunction:  completion.AutocompleteNone,
 	}
 
 	// Temporary struct to hold cli values.
@@ -44,50 +46,29 @@ func init() {
 
 	formatFlagName := "format"
 	flags.StringVar(&lsOpts.Format, formatFlagName, "", "Format farm output using Go template")
-	_ = lsCommand.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteFormat(&farmOut{}))
-}
-
-type farmOut struct {
-	Name        string
-	Connections []string
-	Default     bool
+	_ = lsCommand.RegisterFlagCompletionFunc(formatFlagName, common.AutocompleteFormat(&config.Farm{}))
 }
 
 func list(cmd *cobra.Command, args []string) error {
-	cfg, err := config.ReadCustomConfig()
-	if err != nil {
-		return err
-	}
-
 	format := lsOpts.Format
 	if format == "" && len(args) > 0 {
 		format = "json"
 	}
 
-	rows := make([]farmOut, 0)
-	for k, v := range cfg.Farms.List {
-		defaultFarm := false
-		if k == cfg.Farms.Default {
-			defaultFarm = true
-		}
-
-		r := farmOut{
-			Name:        k,
-			Connections: v,
-			Default:     defaultFarm,
-		}
-		rows = append(rows, r)
+	farms, err := registry.PodmanConfig().ContainersConfDefaultsRO.GetAllFarms()
+	if err != nil {
+		return err
 	}
 
-	sort.Slice(rows, func(i, j int) bool {
-		return rows[i].Name < rows[j].Name
+	sort.Slice(farms, func(i, j int) bool {
+		return farms[i].Name < farms[j].Name
 	})
 
 	rpt := report.New(os.Stdout, cmd.Name())
 	defer rpt.Flush()
 
 	if report.IsJSON(format) {
-		buf, err := registry.JSONLibrary().MarshalIndent(rows, "", "    ")
+		buf, err := registry.JSONLibrary().MarshalIndent(farms, "", "    ")
 		if err == nil {
 			fmt.Println(string(buf))
 		}
@@ -98,7 +79,7 @@ func list(cmd *cobra.Command, args []string) error {
 		rpt, err = rpt.Parse(report.OriginUser, format)
 	} else {
 		rpt, err = rpt.Parse(report.OriginPodman,
-			"{{range .}}{{.Name}}\t{{.Connections}}\t{{.Default}}\n{{end -}}")
+			"{{range .}}{{.Name}}\t{{.Connections}}\t{{.Default}}\t{{.ReadWrite}}\n{{end -}}")
 	}
 	if err != nil {
 		return err
@@ -109,11 +90,12 @@ func list(cmd *cobra.Command, args []string) error {
 			"Default":     "Default",
 			"Connections": "Connections",
 			"Name":        "Name",
+			"ReadWrite":   "ReadWrite",
 		}})
 		if err != nil {
 			return err
 		}
 	}
 
-	return rpt.Execute(rows)
+	return rpt.Execute(farms)
 }

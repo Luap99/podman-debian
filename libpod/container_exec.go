@@ -1,5 +1,4 @@
 //go:build !remote
-// +build !remote
 
 package libpod
 
@@ -15,8 +14,8 @@ import (
 
 	"github.com/containers/common/pkg/resize"
 	"github.com/containers/common/pkg/util"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/libpod/events"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/libpod/events"
 	"github.com/containers/storage/pkg/stringid"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
@@ -66,6 +65,9 @@ type ExecConfig struct {
 	// given is the number that will be passed into the exec session,
 	// starting at 3.
 	PreserveFDs uint `json:"preserveFds,omitempty"`
+	// PreserveFD is a list of additional file descriptors (in addition
+	// to 0, 1, 2) that will be passed to the executed process.
+	PreserveFD []uint `json:"preserveFd,omitempty"`
 	// ExitCommand is the exec session's exit command.
 	// This command will be executed when the exec session exits.
 	// If unset, no command will be executed.
@@ -820,7 +822,7 @@ func (c *Container) exec(config *ExecConfig, streams *define.AttachStreams, resi
 			if err != nil {
 				return -1, fmt.Errorf("retrieving exec session %s exit code: %w", sessionID, err)
 			}
-			return diedEvent.ContainerExitCode, nil
+			return *diedEvent.ContainerExitCode, nil
 		}
 		return -1, err
 	}
@@ -888,6 +890,13 @@ func (c *Container) execExitFileDir(sessionID string) string {
 	return filepath.Join(c.execBundlePath(sessionID), "exit")
 }
 
+// execPersistDir gets the path to the container's persist directory
+// The persist directory container the exit file and oom file (if oomkilled)
+// of a container
+func (c *Container) execPersistDir(sessionID string) string {
+	return filepath.Join(c.execBundlePath(sessionID), "persist", c.ID())
+}
+
 // execOCILog returns the file path for the exec sessions oci log
 func (c *Container) execOCILog(sessionID string) string {
 	if !c.ociRuntime.SupportsJSONErrors() {
@@ -914,6 +923,9 @@ func (c *Container) createExecBundle(sessionID string) (retErr error) {
 		if !os.IsExist(err) {
 			return fmt.Errorf("creating OCI runtime exit file path %s: %w", c.execExitFileDir(sessionID), err)
 		}
+	}
+	if err := os.MkdirAll(c.execPersistDir(sessionID), execDirPermission); err != nil {
+		return fmt.Errorf("creating OCI runtime persist directory path %s: %w", c.execPersistDir(sessionID), err)
 	}
 	return nil
 }
@@ -1092,6 +1104,7 @@ func prepareForExec(c *Container, session *ExecSession) (*ExecOptions, error) {
 	opts.Cwd = session.Config.WorkDir
 	opts.User = session.Config.User
 	opts.PreserveFDs = session.Config.PreserveFDs
+	opts.PreserveFD = session.Config.PreserveFD
 	opts.DetachKeys = session.Config.DetachKeys
 	opts.ExitCommand = session.Config.ExitCommand
 	opts.ExitCommandDelay = session.Config.ExitCommandDelay

@@ -1,5 +1,4 @@
 //go:build !remote
-// +build !remote
 
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -13,10 +12,15 @@ package libpod
 import "github.com/containers/common/libnetwork/pasta"
 
 func (r *Runtime) setupPasta(ctr *Container, netns string) error {
-	return pasta.Setup(&pasta.SetupOptions{
+	res, err := pasta.Setup2(&pasta.SetupOptions{
 		Config:       r.config,
 		Netns:        netns,
 		Ports:        ctr.convertPortMappings(),
 		ExtraOptions: ctr.config.NetworkOptions[pasta.BinaryName],
 	})
+	if err != nil {
+		return err
+	}
+	ctr.pastaResult = res
+	return nil
 }
