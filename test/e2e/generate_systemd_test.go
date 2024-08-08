@@ -2,53 +2,27 @@ package integration
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 
-	. "github.com/containers/podman/v4/test/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/containers/podman/v5/test/utils"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
 )
 
 var _ = Describe("Podman generate systemd", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
-
-	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-
-	})
 
 	It("podman generate systemd on bogus container/pod", func() {
 		session := podmanTest.Podman([]string{"generate", "systemd", "foobar"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).To(ExitWithError())
-	})
-
-	It("podman generate systemd bad restart policy", func() {
-		session := podmanTest.Podman([]string{"generate", "systemd", "--restart-policy", "never", "foobar"})
-		session.WaitWithDefaultTimeout()
-		Expect(session).To(ExitWithError())
+		Expect(session).To(ExitWithError(125, `foobar does not refer to a container or pod: no pod with name or ID foobar found: no such pod: no container with name or ID "foobar" found: no such container`))
 	})
 
 	It("podman generate systemd bad timeout value", func() {
 		session := podmanTest.Podman([]string{"generate", "systemd", "--time", "-1", "foobar"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).To(ExitWithError())
+		Expect(session).To(ExitWithError(125, `invalid argument "-1" for "-t, --time" flag: strconv.ParseUint: parsing "-1": invalid syntax`))
 	})
 
 	It("podman generate systemd bad restart-policy value", func() {
@@ -58,8 +32,7 @@ var _ = Describe("Podman generate systemd", func() {
 
 		session = podmanTest.Podman([]string{"generate", "systemd", "--restart-policy", "bogus", "foobar"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).To(ExitWithError())
-		Expect(session.ErrorToString()).To(ContainSubstring("bogus is not a valid restart policy"))
+		Expect(session).To(ExitWithError(125, "bogus is not a valid restart policy"))
 	})
 
 	It("podman generate systemd with --no-header=true", func() {
@@ -236,6 +209,20 @@ var _ = Describe("Podman generate systemd", func() {
 		Expect(strings.Count(output, "RequiresMountsFor="+podmanTest.RunRoot)).To(Equal(3))
 		// The podman commands in the unit should not contain the root flags
 		Expect(output).ToNot(ContainSubstring(" --runroot"))
+
+		// Generating pod/container units for an init container is not
+		// supported (see #18585).
+		n = podmanTest.Podman([]string{"create", "--pod", "foo", "--init-ctr", "always", "--name", "foo-init", "alpine", "top"})
+		n.WaitWithDefaultTimeout()
+		Expect(n).Should(Exit(0))
+		// Fail for the pod
+		session = podmanTest.Podman([]string{"generate", "systemd", "foo"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(ExitWithError(125, "cannot generate systemd units for init containers"))
+		// Fail for the init container
+		session = podmanTest.Podman([]string{"generate", "systemd", "foo-init"})
+		session.WaitWithDefaultTimeout()
+		Expect(session).Should(ExitWithError(125, "cannot generate systemd units for init containers"))
 	})
 
 	It("podman generate systemd pod --name --files", func() {
@@ -549,10 +536,7 @@ var _ = Describe("Podman generate systemd", func() {
 	})
 
 	It("podman generate systemd pod with containers --new", func() {
-		tmpDir, err := os.MkdirTemp("", "")
-		Expect(err).ToNot(HaveOccurred())
-		tmpFile := tmpDir + "podID"
-		defer os.RemoveAll(tmpDir)
+		tmpFile := filepath.Join(tempdir, "podID")
 
 		n := podmanTest.Podman([]string{"pod", "create", "--pod-id-file", tmpFile, "--name", "foo"})
 		n.WaitWithDefaultTimeout()
@@ -635,8 +619,7 @@ var _ = Describe("Podman generate systemd", func() {
 
 		session = podmanTest.Podman([]string{"generate", "systemd", "--env", "=bar", "-e", "hoge=fuga", "test"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(125))
-		Expect(session.ErrorToString()).To(ContainSubstring("invalid variable"))
+		Expect(session).Should(ExitWithError(125, "invalid variable"))
 
 		// Use -e/--env option with --new option
 		session = podmanTest.Podman([]string{"generate", "systemd", "--env", "foo=bar", "-e", "hoge=fuga", "--new", "test"})
@@ -647,8 +630,7 @@ var _ = Describe("Podman generate systemd", func() {
 
 		session = podmanTest.Podman([]string{"generate", "systemd", "--env", "foo=bar", "-e", "=fuga", "--new", "test"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(125))
-		Expect(session.ErrorToString()).To(ContainSubstring("invalid variable"))
+		Expect(session).Should(ExitWithError(125, "invalid variable"))
 
 		// Escape systemd arguments
 		session = podmanTest.Podman([]string{"generate", "systemd", "--env", "BAR=my test", "-e", "USER=%a", "test"})

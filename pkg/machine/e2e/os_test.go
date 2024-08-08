@@ -1,27 +1,16 @@
 package e2e_test
 
 // import (
-// 	. "github.com/onsi/ginkgo"
+// 	. "github.com/onsi/ginkgo/v2"
 // 	. "github.com/onsi/gomega"
 // 	. "github.com/onsi/gomega/gexec"
 // )
 
 // var _ = Describe("podman machine os apply", func() {
-// 	var (
-// 		mb      *machineTestBuilder
-// 		testDir string
-// 	)
-
-// 	BeforeEach(func() {
-// 		testDir, mb = setup()
-// 	})
-// 	AfterEach(func() {
-// 		teardown(originalHomeDir, testDir, mb)
-// 	})
 
 // 	It("apply machine", func() {
 // 		i := new(initMachine)
-// 		foo1, err := mb.setName("foo1").setCmd(i.withImagePath(mb.imagePath)).run()
+// 		foo1, err := mb.setName("foo1").setCmd(i.withImage(mb.imagePath)).run()
 // 		Expect(err).ToNot(HaveOccurred())
 // 		Expect(foo1).To(Exit(0))
 
@@ -33,7 +22,7 @@ package e2e_test
 
 // 	It("apply machine from containers-storage", func() {
 // 		i := new(initMachine)
-// 		foo1, err := mb.setName("foo1").setCmd(i.withImagePath(mb.imagePath)).run()
+// 		foo1, err := mb.setName("foo1").setCmd(i.withImage(mb.imagePath)).run()
 // 		Expect(err).ToNot(HaveOccurred())
 // 		Expect(foo1).To(Exit(0))
 

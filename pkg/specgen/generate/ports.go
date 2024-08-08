@@ -1,18 +1,19 @@
+//go:build !remote
+
 package generate
 
 import (
 	"fmt"
 	"net"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/containers/common/libimage"
 	"github.com/containers/common/libnetwork/types"
-	"github.com/containers/podman/v4/utils"
-
-	"github.com/containers/common/pkg/util"
-	"github.com/containers/podman/v4/pkg/specgen"
-	"github.com/containers/podman/v4/pkg/specgenutil"
+	"github.com/containers/podman/v5/pkg/specgen"
+	"github.com/containers/podman/v5/pkg/specgenutil"
+	"github.com/containers/podman/v5/utils"
 	"github.com/sirupsen/logrus"
 )
 
@@ -330,7 +331,7 @@ func ParsePortMapping(portMappings []types.PortMapping, exposePorts map[uint16][
 
 func appendProtocolsNoDuplicates(slice []string, protocols []string) []string {
 	for _, proto := range protocols {
-		if util.StringInSlice(proto, slice) {
+		if slices.Contains(slice, proto) {
 			continue
 		}
 		slice = append(slice, proto)
@@ -364,7 +365,7 @@ func createPortMappings(s *specgen.SpecGenerator, imageData *libimage.ImageData)
 	}
 
 	publishPorts := toExpose
-	if !s.PublishExposedPorts {
+	if s.PublishExposedPorts == nil || !*s.PublishExposedPorts {
 		publishPorts = nil
 	}
 

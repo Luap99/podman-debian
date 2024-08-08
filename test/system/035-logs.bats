@@ -89,36 +89,30 @@ function _log_test_multi() {
 
     skip_if_remote "logs does not support multiple containers when run remotely"
 
-    # Under k8s file, 'podman logs' returns just the facts, Ma'am.
-    # Under journald, there may be other cruft (e.g. container removals)
-    local etc=
-    if [[ $driver =~ journal ]]; then
-        etc='.*'
-    fi
-
     local events_backend=$(_additional_events_backend $driver)
 
     # Simple helper to make the container starts, below, easier to read
     local -a cid
     doit() {
-        run_podman ${events_backend} run --log-driver=$driver --rm -d --name "$1" $IMAGE sh -c "$2";
+        run_podman ${events_backend} run --log-driver=$driver -d \
+            --name "$1" $IMAGE sh -c "$2";
         cid+=($(echo "${output:0:12}"))
     }
 
-    # Not really a guarantee that we'll get a-b-c-d in order, but it's
-    # the best we can do. The trailing 'sleep' in each container
-    # minimizes the chance of a race condition in which the container
-    # is removed before 'podman logs' has a chance to wake up and read
-    # the final output.
-    doit c1         "echo a;sleep 10;echo d;sleep 3"
-    doit c2 "sleep 1;echo b;sleep  2;echo c;sleep 3"
+    doit c1 "echo a1; echo a2"
+    doit c2 "echo b1; echo b2"
 
+    # Reading logs only guarantees the order for a single container,
+    # when using multiple containers the line order between them can vary.
     run_podman ${events_backend} logs -f c1 c2
     assert "$output" =~ \
-       "${cid[0]} a$etc
-${cid[1]} b$etc
-${cid[1]} c$etc
-${cid[0]} d"   "Sequential output from logs"
+       ".*^${cid[0]} a1\$.*
+${cid[0]} a2"   "Sequential output from c1"
+    assert "$output" =~ \
+       ".*^${cid[1]} b1\$.*
+${cid[1]} b2"   "Sequential output from c2"
+
+    run_podman rm -f -t0 ${cid[0]} ${cid[1]}
 }
 
 @test "podman logs - multi k8s-file" {
@@ -149,6 +143,8 @@ function _log_test_restarted() {
     expected=$(mktemp -p ${PODMAN_TMPDIR} expectedXXXXXXXX)
     seq 1 20  > $expected
     diff -u ${expected} ${logfile}
+
+    run_podman rm -f -t0 logtest
 }
 
 @test "podman logs restarted - k8s-file" {
@@ -171,6 +167,7 @@ function _log_test_restarted() {
     run_podman --events-backend=file logs test
     run_podman 125 --events-backend=file logs --follow test
     is "$output" "Error: using --follow with the journald --log-driver but without the journald --events-backend (file) is not supported" "journald logger requires journald eventer"
+    run_podman rm test
 }
 
 function _log_test_since() {
@@ -181,9 +178,11 @@ function _log_test_since() {
 
     before=$(date --iso-8601=seconds)
     run_podman run --log-driver=$driver -d --name test $IMAGE sh -c \
-        "echo $s_before; trap 'echo $s_after; exit' SIGTERM; while :; do sleep 1; done"
+        "echo $s_before; trap 'echo $s_after; exit' SIGTERM; while :; do sleep 0.1; done"
+    wait_for_output "$s_before" test
 
     # sleep a second to make sure the date is after the first echo
+    # (We could instead use iso-8601=ns but seconds feels more real-world)
     sleep 1
     after=$(date --iso-8601=seconds)
     run_podman stop test
@@ -223,7 +222,7 @@ function _log_test_until() {
     before=$(date --iso-8601=seconds)
     sleep 1
     run_podman run --log-driver=$driver -d --name test $IMAGE sh -c \
-        "echo $s_before; trap 'echo $s_after; exit' SIGTERM; while :; do sleep 1; done"
+        "echo $s_before; trap 'echo $s_after; exit' SIGTERM; while :; do sleep 0.1; done"
 
     # sleep a second to make sure the date is after the first echo
     sleep 1
@@ -248,7 +247,7 @@ $s_after"
     run_podman logs --until $before test
     is "$output" "" "podman logs --until before"
 
-    after=$(date --date='+1 second' --iso-8601=seconds)
+    after=$(date --date='+1 second' --iso-8601=ns)
 
     run_podman logs --until $after test
     is "$output" "$s_both" "podman logs --until after"
@@ -322,7 +321,7 @@ function _log_test_follow_since() {
         sh -c "sleep 1; while :; do echo $content && sleep 5; done"
 
     # sleep is required to make sure the podman event backend no longer sees the start event in the log
-    # This value must be greater or equal than the the value given in --since below
+    # This value must be greater or equal than the value given in --since below
     sleep 0.2
 
     # Make sure podman logs actually follows by giving a low timeout and check that the command times out
@@ -337,6 +336,7 @@ timeout: sending signal TERM to command.*" "logs --since -f on running container
     _log_test_follow_since k8s-file
 }
 
+# bats test_tags=distro-integration
 @test "podman logs - --since --follow journald" {
     # We can't use journald on RHEL as rootless: rhbz#1895105
     skip_if_journald_unavailable
@@ -355,7 +355,7 @@ function _log_test_follow_until() {
     fi
 
     run_podman ${events_backend} run --log-driver=$driver --name $cname -d $IMAGE \
-        sh -c "n=1;while :; do echo $content--\$n; n=\$((n+1));sleep 1; done"
+        sh -c "n=1;while :; do echo $content--\$n; n=\$((n+1));sleep 0.1; done"
 
     t0=$SECONDS
     # The logs command should exit after the until time even when follow is set
@@ -379,10 +379,58 @@ $content--2.*" "logs --until -f on running container works"
     _log_test_follow_until k8s-file
 }
 
+# bats test_tags=distro-integration
 @test "podman logs - --until --follow journald" {
     # We can't use journald on RHEL as rootless: rhbz#1895105
     skip_if_journald_unavailable
 
     _log_test_follow_until journald
 }
+
+# https://github.com/containers/podman/issues/19545
+@test "podman logs --tail, k8s-file with partial lines" {
+    cname="tail_container"
+
+    # "-t" gives us ^Ms (CRs) in the log
+    run_podman run --name $cname --log-driver k8s-file -t $IMAGE echo hi
+
+    # Hand-craft a log file with partial lines and carriage returns
+    run_podman inspect --format '{{.HostConfig.LogConfig.Path}}' $cname
+    logpath="$output"
+    timestamp=$(head -n1 "$logpath" | awk '{print $1}')
+    cr=$'\r'
+    nl=$'\n'
+    # Delete, don't overwrite, in case conmon still has the fd open
+    rm -f $logpath
+    cat > $logpath <<EOF
+$timestamp stdout F podman1$cr
+$timestamp stdout P podman2
+$timestamp stdout F $cr
+$timestamp stdout F podman3$cr
+EOF
+
+    # FIXME: remove after 2024-01-01 if no more flakes seen.
+    cat -vET $logpath
+
+    expect1="podman3${cr}"
+    expect2="podman2${cr}${nl}podman3${cr}"
+    expect3="podman1${cr}${nl}podman2${cr}${nl}podman3${cr}"
+
+    # This always worked
+    run_podman logs --tail 1 $cname
+    assert "$output" = "$expect1" "--tail 1"
+
+    # Prior to this PR, the first line would be "^M" without the podman
+    run_podman logs --tail 2 $cname
+    assert "$output" = "$expect2" "--tail 2"
+
+    # Confirm that we won't overrun
+    for i in 3 4 5; do
+        run_podman logs --tail $i $cname
+        assert "$output" = "$expect3" "--tail $i"
+    done
+
+    run_podman rm $cname
+}
+
 # vim: filetype=sh

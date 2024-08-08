@@ -1,18 +1,14 @@
 //go:build amd64 || arm64
-// +build amd64 arm64
 
 package machine
 
 import (
-	"bufio"
-	"fmt"
-	"os"
-	"strings"
-
-	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v4/cmd/podman/registry"
-	"github.com/containers/podman/v4/libpod/events"
-	"github.com/containers/podman/v4/pkg/machine"
+	"github.com/containers/podman/v5/cmd/podman/registry"
+	"github.com/containers/podman/v5/libpod/events"
+	"github.com/containers/podman/v5/pkg/machine"
+	"github.com/containers/podman/v5/pkg/machine/env"
+	"github.com/containers/podman/v5/pkg/machine/shim"
+	"github.com/containers/podman/v5/pkg/machine/vmconfigs"
 	"github.com/spf13/cobra"
 )
 
@@ -21,10 +17,10 @@ var (
 		Use:               "rm [options] [MACHINE]",
 		Short:             "Remove an existing machine",
 		Long:              "Remove a managed virtual machine ",
-		PersistentPreRunE: rootlessOnly,
+		PersistentPreRunE: machinePreRunE,
 		RunE:              rm,
 		Args:              cobra.MaximumNArgs(1),
-		Example:           `podman machine rm myvm`,
+		Example:           `podman machine rm podman-machine-default`,
 		ValidArgsFunction: autocompleteMachine,
 	}
 )
@@ -43,9 +39,6 @@ func init() {
 	formatFlagName := "force"
 	flags.BoolVarP(&destroyOptions.Force, formatFlagName, "f", false, "Stop and do not prompt before rming")
 
-	keysFlagName := "save-keys"
-	flags.BoolVar(&destroyOptions.SaveKeys, keysFlagName, false, "Do not delete SSH keys")
-
 	ignitionFlagName := "save-ignition"
 	flags.BoolVar(&destroyOptions.SaveIgnition, ignitionFlagName, false, "Do not delete ignition file")
 
@@ -56,59 +49,25 @@ func init() {
 func rm(_ *cobra.Command, args []string) error {
 	var (
 		err error
-		vm  machine.VM
 	)
 	vmName := defaultMachineName
 	if len(args) > 0 && len(args[0]) > 0 {
 		vmName = args[0]
 	}
 
-	provider := GetSystemDefaultProvider()
-	vm, err = provider.LoadVMByName(vmName)
-	if err != nil {
-		return err
-	}
-	confirmationMessage, remove, err := vm.Remove(vmName, destroyOptions)
+	dirs, err := env.GetMachineDirs(provider.VMType())
 	if err != nil {
 		return err
 	}
 
-	if !destroyOptions.Force {
-		// Warn user
-		fmt.Println(confirmationMessage)
-		reader := bufio.NewReader(os.Stdin)
-		fmt.Print("Are you sure you want to continue? [y/N] ")
-		answer, err := reader.ReadString('\n')
-		if err != nil {
-			return err
-		}
-		if strings.ToLower(answer)[0] != 'y' {
-			return nil
-		}
-	}
-	err = remove()
+	mc, err := vmconfigs.LoadMachineByName(vmName, dirs)
 	if err != nil {
+		return err
+	}
+
+	if err := shim.Remove(mc, provider, dirs, destroyOptions); err != nil {
 		return err
 	}
 	newMachineEvent(events.Remove, events.Event{Name: vmName})
-	err = updateDefaultMachineInConfig(vmName)
-	if err != nil {
-		return fmt.Errorf("failed to update default machine: %v", err)
-	}
 	return nil
-}
-
-func updateDefaultMachineInConfig(vmName string) error {
-	cfg, err := config.ReadCustomConfig()
-	if err != nil {
-		return err
-	}
-	if cfg.Engine.ActiveService == vmName {
-		cfg.Engine.ActiveService = ""
-		for machine := range cfg.Engine.ServiceDestinations {
-			cfg.Engine.ActiveService = machine
-			break
-		}
-	}
-	return cfg.Write()
 }

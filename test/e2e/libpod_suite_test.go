@@ -1,13 +1,12 @@
 //go:build !remote_testing
-// +build !remote_testing
 
 package integration
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 
@@ -38,8 +37,12 @@ func (p *PodmanTestIntegration) PodmanExtraFiles(args []string, extraFiles []*os
 }
 
 func (p *PodmanTestIntegration) setDefaultRegistriesConfigEnv() {
-	defaultFile := filepath.Join(INTEGRATION_ROOT, "test/registries.conf")
-	err := os.Setenv("CONTAINERS_REGISTRIES_CONF", defaultFile)
+	defaultFile := "registries.conf"
+	if UsingCacheRegistry() {
+		defaultFile = "registries-cached.conf"
+	}
+	defaultPath := filepath.Join(INTEGRATION_ROOT, "test", defaultFile)
+	err := os.Setenv("CONTAINERS_REGISTRIES_CONF", defaultPath)
 	Expect(err).ToNot(HaveOccurred())
 }
 
@@ -62,7 +65,7 @@ func PodmanTestCreate(tempDir string) *PodmanTestIntegration {
 func (p *PodmanTestIntegration) RestoreArtifact(image string) error {
 	tarball := imageTarPath(image)
 	if _, err := os.Stat(tarball); err == nil {
-		fmt.Printf("Restoring %s...\n", image)
+		GinkgoWriter.Printf("Restoring %s...\n", image)
 		restore := p.PodmanNoEvents([]string{"load", "-q", "-i", tarball})
 		restore.Wait(90)
 	}

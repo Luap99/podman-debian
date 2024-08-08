@@ -1,45 +1,24 @@
-//go:build arm64 && darwin
-// +build arm64,darwin
+//go:build darwin
 
 package applehv
 
 import (
-	"time"
-
-	"github.com/containers/podman/v4/pkg/machine"
+	"github.com/containers/podman/v5/pkg/machine/define"
+	"github.com/containers/podman/v5/pkg/machine/vmconfigs"
 )
 
-var (
-	// vmtype refers to qemu (vs libvirt, krun, etc).
-	vmtype = machine.AppleHvVirt
-)
-
-func GetVirtualizationProvider() machine.VirtProvider {
-	return &Virtualization{
-		artifact:    machine.None,
-		compression: machine.Xz,
-		format:      machine.Qcow,
-	}
+func (a *AppleHVStubber) Remove(mc *vmconfigs.MachineConfig) ([]string, func() error, error) {
+	return []string{}, func() error { return nil }, nil
 }
 
-const (
-	// Some of this will need to change when we are closer to having
-	// working code.
-	VolumeTypeVirtfs     = "virtfs"
-	MountType9p          = "9p"
-	dockerSock           = "/var/run/docker.sock"
-	dockerConnectTimeout = 5 * time.Second
-	apiUpTimeout         = 20 * time.Second
-)
+func (a *AppleHVStubber) State(mc *vmconfigs.MachineConfig, _ bool) (define.Status, error) {
+	vmStatus, err := mc.AppleHypervisor.Vfkit.State()
+	if err != nil {
+		return "", err
+	}
+	return vmStatus, nil
+}
 
-type apiForwardingState int
-
-const (
-	noForwarding apiForwardingState = iota
-	claimUnsupported
-	notInstalled
-	machineLocal
-	dockerGlobal
-)
-
+func (a *AppleHVStubber) StopVM(mc *vmconfigs.MachineConfig, _ bool) error {
+	return mc.AppleHypervisor.Vfkit.Stop(false, true)
 }

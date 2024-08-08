@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/user"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"unicode"
@@ -87,6 +88,11 @@ func newUnitGroup(name string) *unitGroup {
 
 func (g *unitGroup) addLine(line *unitLine) {
 	g.lines = append(g.lines, line)
+}
+
+func (g *unitGroup) prependLine(line *unitLine) {
+	n := []*unitLine{line}
+	g.lines = append(n, g.lines...)
 }
 
 func (g *unitGroup) addComment(line *unitLine) {
@@ -182,7 +188,7 @@ func (f *UnitFile) ensureGroup(groupName string) *unitGroup {
 	return g
 }
 
-func (f *UnitFile) merge(source *UnitFile) {
+func (f *UnitFile) Merge(source *UnitFile) {
 	for _, srcGroup := range source.groups {
 		group := f.ensureGroup(srcGroup.name)
 		group.merge(srcGroup)
@@ -193,7 +199,7 @@ func (f *UnitFile) merge(source *UnitFile) {
 func (f *UnitFile) Dup() *UnitFile {
 	copy := NewUnitFile()
 
-	copy.merge(f)
+	copy.Merge(f)
 	copy.Filename = f.Filename
 	return copy
 }
@@ -373,9 +379,17 @@ func (p *UnitFileParser) flushPendingComments(toComment bool) {
 func nextLine(data string, afterPos int) (string, string) {
 	rest := data[afterPos:]
 	if i := strings.Index(rest, "\n"); i >= 0 {
-		return data[:i+afterPos], data[i+afterPos+1:]
+		return strings.TrimSpace(data[:i+afterPos]), data[i+afterPos+1:]
 	}
 	return data, ""
+}
+
+func trimSpacesFromLines(data string) string {
+	lines := strings.Split(data, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimSpace(line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // Parse an already loaded unit file (in the form of a string)
@@ -384,18 +398,23 @@ func (f *UnitFile) Parse(data string) error {
 		file:   f,
 		lineNr: 1,
 	}
+
+	data = trimSpacesFromLines(data)
+
 	for len(data) > 0 {
 		origdata := data
 		nLines := 1
 		var line string
 		line, data = nextLine(data, 0)
 
-		// Handle multi-line continuations
-		// Note: This doesn't support comments in the middle of the continuation, which systemd does
-		if lineIsKeyValuePair(line) {
-			for len(data) > 0 && line[len(line)-1] == '\\' {
-				line, data = nextLine(origdata, len(line)+1)
-				nLines++
+		if !lineIsComment(line) {
+			// Handle multi-line continuations
+			// Note: This doesn't support comments in the middle of the continuation, which systemd does
+			if lineIsKeyValuePair(line) {
+				for len(data) > 0 && line[len(line)-1] == '\\' {
+					line, data = nextLine(origdata, len(line)+1)
+					nLines++
+				}
 			}
 		}
 
@@ -611,7 +630,7 @@ func (f *UnitFile) Lookup(groupName string, key string) (string, bool) {
 		return "", false
 	}
 
-	return strings.TrimRightFunc(v, unicode.IsSpace), true
+	return strings.Trim(strings.TrimRightFunc(v, unicode.IsSpace), "\""), true
 }
 
 // Lookup the last instance of a key and convert the value to a bool
@@ -907,4 +926,80 @@ func (f *UnitFile) PrependComment(groupName string, comments ...string) {
 	for i := len(comments) - 1; i >= 0; i-- {
 		group.prependComment(newUnitLine("", "# "+comments[i], true))
 	}
+}
+
+func (f *UnitFile) PrependUnitLine(groupName string, key string, value string) {
+	var group *unitGroup
+	if groupName == "" && len(f.groups) > 0 {
+		group = f.groups[0]
+	} else {
+		// Uses magic "" for first comment-only group if no other groups
+		group = f.ensureGroup(groupName)
+	}
+	group.prependLine(newUnitLine(key, value, false))
+}
+
+func (f *UnitFile) GetTemplateParts() (string, string, bool) {
+	ext := filepath.Ext(f.Filename)
+	basename := strings.TrimSuffix(f.Filename, ext)
+	parts := strings.SplitN(basename, "@", 2)
+	if len(parts) < 2 {
+		return parts[0], "", false
+	}
+	return parts[0], parts[1], true
+}
+
+func (f *UnitFile) GetUnitDropinPaths() []string {
+	unitName, instanceName, isTemplate := f.GetTemplateParts()
+
+	ext := filepath.Ext(f.Filename)
+	dropinExt := ext + ".d"
+
+	dropinPaths := []string{}
+
+	// Add top-level drop-in location (pod.d, container.d, etc)
+	topLevelDropIn := strings.TrimPrefix(dropinExt, ".")
+	dropinPaths = append(dropinPaths, topLevelDropIn)
+
+	truncatedParts := strings.Split(unitName, "-")
+	// If the unit contains any '-', then there are truncated paths to search.
+	if len(truncatedParts) > 1 {
+		// We don't need the last item because that would be the full path
+		truncatedParts = truncatedParts[:len(truncatedParts)-1]
+		// Truncated instance names are not included in the drop-in search path
+		// i.e. template-unit@base-instance.service does not search template-unit@base-.service
+		// So we only search truncations of the template name, i.e. template-@.service, and unit name, i.e. template-.service
+		// or only the unit name if it is not a template.
+		for i := range truncatedParts {
+			truncatedUnitPath := strings.Join(truncatedParts[:i+1], "-") + "-"
+			dropinPaths = append(dropinPaths, truncatedUnitPath+dropinExt)
+			// If the unit is a template, add the truncated template name as well.
+			if isTemplate {
+				truncatedTemplatePath := truncatedUnitPath + "@"
+				dropinPaths = append(dropinPaths, truncatedTemplatePath+dropinExt)
+			}
+		}
+	}
+	// For instanced templates, add the base template unit search path
+	if instanceName != "" {
+		dropinPaths = append(dropinPaths, unitName+"@"+dropinExt)
+	}
+	// Add the drop-in directory for the full filename
+	dropinPaths = append(dropinPaths, f.Filename+".d")
+	// Finally, reverse the list so that when drop-ins are parsed,
+	// the most specific are applied instead of the most broad.
+	// dropinPaths should be a list where the items are in order of specific -> broad
+	// i.e., the most specific search path is dropinPaths[0], and broadest search path is dropinPaths[len(dropinPaths)-1]
+	// Uses https://go.dev/wiki/SliceTricks#reversing
+	for i := len(dropinPaths)/2 - 1; i >= 0; i-- {
+		opp := len(dropinPaths) - 1 - i
+		dropinPaths[i], dropinPaths[opp] = dropinPaths[opp], dropinPaths[i]
+	}
+	return dropinPaths
+}
+
+func PathEscape(path string) string {
+	var escaped strings.Builder
+	escapeString(&escaped, path, true)
+	return escaped.String()
 }

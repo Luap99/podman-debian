@@ -8,9 +8,8 @@ import (
 	"reflect"
 	"strings"
 
-	. "github.com/containers/podman/v4/test/utils"
-	. "github.com/onsi/ginkgo"
-	. "github.com/onsi/ginkgo/extensions/table"
+	. "github.com/containers/podman/v5/test/utils"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
 
@@ -28,22 +27,9 @@ var _ = Describe("Common functions test", func() {
 		ProcessOneCgroupPath = defaultCgroupPath
 	})
 
-	It("Test CreateTempDirInTempDir", func() {
-		tmpDir, _ := CreateTempDirInTempDir()
-		_, err := os.Stat(tmpDir)
-		Expect(os.IsNotExist(err)).ShouldNot(BeTrue(), "Directory is not created as expect")
-	})
-
 	It("Test SystemExec", func() {
 		session := SystemExec(GoechoPath, []string{})
 		Expect(session.Command.Process).ShouldNot(BeNil(), "SystemExec cannot start a process")
-	})
-
-	It("Test StringInSlice", func() {
-		testSlice := []string{"apple", "peach", "pear"}
-		Expect(StringInSlice("apple", testSlice)).To(BeTrue(), "apple should in ['apple', 'peach', 'pear']")
-		Expect(StringInSlice("banana", testSlice)).ShouldNot(BeTrue(), "banana should not in ['apple', 'peach', 'pear']")
-		Expect(StringInSlice("anything", []string{})).ShouldNot(BeTrue(), "anything should not in empty slice")
 	})
 
 	DescribeTable("Test GetHostDistributionInfo",

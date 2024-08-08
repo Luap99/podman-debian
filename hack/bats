@@ -23,6 +23,9 @@ $0 is a wrapper for invoking podman system tests.
                     runs only subtests within FILENAME-PATTERH whose names
                     match that string.
 
+   --tag=TAG      Passed on to bats as '--filter-tags TAG'
+                  As of 2023-07-26 the only tag used is 'distro-integration'
+
    -T             Passed on to bats, which will then show timing data
 
    --help         display usage message
@@ -61,9 +64,6 @@ Examples:
 export PODMAN=${PODMAN:-$(pwd)/bin/podman}
 export QUADLET=${QUADLET:-$(pwd)/bin/quadlet}
 
-# Because 'make' doesn't do this by default
-chcon -t container_runtime_exec_t $PODMAN
-
 # Directory in which
 TESTS=test/system
 
@@ -83,6 +83,7 @@ for i;do
         --rootless) TEST_ROOT= ;;
         --remote)   REMOTE=remote ;;
         --ts|-T)    bats_opts+=("-T") ;;
+        --tag=*)    bats_filter=("--filter-tags" "$value") ;;
         */*.bats)   TESTS=$i ;;
         *)
             if [[ $i =~ : ]]; then
@@ -123,6 +124,9 @@ fi
 
 # Used in 120-load test to identify rootless destination for podman image scp
 export PODMAN_ROOTLESS_USER=$(id -un)
+
+# Make sure to always check for leaks when running locally
+export PODMAN_BATS_LEAK_CHECK=1
 
 # Root
 if [[ "$TEST_ROOT" ]]; then

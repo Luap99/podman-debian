@@ -51,9 +51,9 @@ const (
 // AttachStreams contains streams that will be attached to the container
 type AttachStreams struct {
 	// OutputStream will be attached to container's STDOUT
-	OutputStream io.WriteCloser
+	OutputStream io.Writer
 	// ErrorStream will be attached to container's STDERR
-	ErrorStream io.WriteCloser
+	ErrorStream io.Writer
 	// InputStream will be attached to container's STDIN
 	InputStream *bufio.Reader
 	// AttachOutput is whether to attach to STDOUT
@@ -81,6 +81,9 @@ const NoLogging = "none"
 
 // PassthroughLogging is the string conmon expects when specifying to use the passthrough driver
 const PassthroughLogging = "passthrough"
+
+// PassthroughTTYLogging is the string conmon expects when specifying to use the passthrough driver even on a tty.
+const PassthroughTTYLogging = "passthrough-tty"
 
 // DefaultRlimitValue is the value set by default for nofile and nproc
 const RLimitDefaultValue = uint64(1048576)

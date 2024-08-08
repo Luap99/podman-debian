@@ -8,14 +8,6 @@ load helpers.network
 
 CHECKED_ROOTLESS=
 function setup() {
-    # FIXME: https://bugs.launchpad.net/ubuntu/+source/linux/+bug/1857257
-    # TL;DR they keep fixing it then breaking it again. There's a test we
-    # could run to see if it's fixed, but it's way too complicated. Since
-    # integration tests also skip checkpoint tests on Ubuntu, do the same here.
-    if is_ubuntu; then
-        skip "FIXME: checkpointing broken in Ubuntu 2004, 2104, 2110, 2204, ..."
-    fi
-
     # None of these tests work rootless....
     if is_rootless; then
         # ...however, is that a genuine cast-in-stone limitation, or one
@@ -28,6 +20,14 @@ function setup() {
             CHECKED_ROOTLESS=y
         fi
         skip "checkpoint does not work rootless"
+    fi
+
+    # As of 2024-05, crun on Debian is not built with criu support:
+    # https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1008249
+    runtime=$(podman_runtime)
+    run $runtime checkpoint --help
+    if [[ $status -ne 0 ]]; then
+        skip "runtime $runtime does not support checkpoint/restore"
     fi
 
     basic_setup
@@ -75,13 +75,19 @@ function teardown() {
     is "$output" "running:true:false:false" \
        "State. Status:Running:Pause:Checkpointed"
 
-    # Pause briefly to let restarted container emit some output
-    sleep 0.3
-
-    # Get full logs, and make sure something changed
-    run_podman logs $cid
-    local nlines_after="${#lines[*]}"
-    assert $nlines_after -gt $nlines_before \
+    # Re-fetch logs, and ensure that they continue growing.
+    # Allow a short while for container process to actually restart.
+    local retries=10
+    while [[ $retries -gt 0 ]]; do
+        run_podman logs $cid
+        local nlines_after="${#lines[*]}"
+        if [[ $nlines_after -gt $nlines_before ]]; then
+            break
+        fi
+        sleep 0.1
+        retries=$((retries - 1))
+    done
+    assert "$retries" -gt 0 \
            "Container failed to output new lines after first restore"
 
     # Same thing again: test for https://github.com/containers/crun/issues/756
@@ -91,12 +97,18 @@ function teardown() {
     nlines_before="${#lines[*]}"
     run_podman container restore $cid
 
-    # Give container time to write new output; then confirm that something
-    # was emitted
-    sleep 0.3
-    run_podman container logs $cid
-    nlines_after="${#lines[*]}"
-    assert $nlines_after -gt $nlines_before \
+    # Same as above, confirm that we get new output
+    retries=10
+    while [[ $retries -gt 0 ]]; do
+        run_podman logs $cid
+        local nlines_after="${#lines[*]}"
+        if [[ $nlines_after -gt $nlines_before ]]; then
+            break
+        fi
+        sleep 0.1
+        retries=$((retries - 1))
+    done
+    assert "$retries" -gt 0 \
            "stdout went away after second restore (crun issue 756)"
 
     run_podman rm -t 0 -f $cid
@@ -125,13 +137,8 @@ function teardown() {
 @test "podman checkpoint --export, with volumes" {
     skip_if_remote "Test uses --root/--runroot, which are N/A over remote"
 
-    # Create a root in tempdir. We will run a container here.
-    local p_root=${PODMAN_TMPDIR}/testroot/root
-    local p_runroot=${PODMAN_TMPDIR}/testroot/runroot
-    mkdir -p $p_root $p_runroot
-
     # To avoid network pull, copy $IMAGE straight to temp root
-    local p_opts="--root $p_root --runroot $p_runroot --events-backend file"
+    local p_opts="$(podman_isolation_opts ${PODMAN_TMPDIR}) --events-backend file"
     run_podman         save -o $PODMAN_TMPDIR/image.tar $IMAGE
     run_podman $p_opts load -i $PODMAN_TMPDIR/image.tar
 
@@ -211,7 +218,9 @@ function teardown() {
     is "$output" "$cid" "podman container restore"
 
     # Signal the container to continue; this is where the 1-2-3s will come from
-    run_podman exec $cid rm /wait
+    # The '-d' is because container exit is racy: the exec process itself
+    # could get caught and killed by cleanup, causing this step to exit 137
+    run_podman exec -d $cid rm /wait
 
     # Wait for the container to stop
     run_podman wait $cid
@@ -219,6 +228,8 @@ function teardown() {
     run_podman logs $cid
     trim=$(sed -z -e 's/[\r\n]\+//g' <<<"$output")
     is "$trim" "READY123123" "File lock restored"
+
+    run_podman rm $cid
 }
 
 @test "podman checkpoint/restore ip and mac handling" {
@@ -228,13 +239,16 @@ function teardown() {
     local subnet="$(random_rfc1918_subnet)"
     run_podman network create --subnet "$subnet.0/24" $netname
 
-    run_podman run -d --network $netname $IMAGE sleep inf
+    run_podman run -d --network $netname $IMAGE top
     cid="$output"
     # get current ip and mac
     run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname\").IPAddress}}"
     ip1="$output"
     run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname\").MacAddress}}"
     mac1="$output"
+
+    run_podman exec $cid cat /etc/hosts /etc/resolv.conf
+    pre_hosts_resolv_conf_output="$output"
 
     run_podman container checkpoint $cid
     is "$output" "$cid"
@@ -246,6 +260,10 @@ function teardown() {
     ip2="$output"
     run_podman inspect $cid --format "{{(index .NetworkSettings.Networks \"$netname\").MacAddress}}"
     mac2="$output"
+
+    # Make sure hosts and resolv.conf are the same after restore (#22901)
+    run_podman exec $cid cat /etc/hosts /etc/resolv.conf
+    assert "$output" == "$pre_hosts_resolv_conf_output" "hosts/resolv.conf must be the same after checkpoint"
 
     assert "$ip2" == "$ip1" "ip after restore should match"
     assert "$mac2" == "$mac1" "mac after restore should match"
@@ -316,7 +334,7 @@ function teardown() {
     # now create a container with a static mac and ip
     local static_ip="$subnet.2"
     local static_mac="92:d0:c6:0a:29:38"
-    run_podman run -d --network "$netname:ip=$static_ip,mac=$static_mac" $IMAGE sleep inf
+    run_podman run -d --network "$netname:ip=$static_ip,mac=$static_mac" $IMAGE top
     cid="$output"
 
     run_podman container checkpoint $cid
@@ -346,7 +364,7 @@ function teardown() {
     run_podman rm -t 0 -f $cid
 
     # now create container again and try the same again with --export and --import
-    run_podman run -d --network "$netname:ip=$static_ip,mac=$static_mac" $IMAGE sleep inf
+    run_podman run -d --network "$netname:ip=$static_ip,mac=$static_mac" $IMAGE top
     cid="$output"
 
     run_podman container checkpoint --export "$archive" $cid

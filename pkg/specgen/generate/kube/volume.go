@@ -1,14 +1,18 @@
+//go:build !remote
+
 package kube
 
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 
 	"github.com/containers/common/pkg/parse"
 	"github.com/containers/common/pkg/secrets"
-	"github.com/containers/podman/v4/libpod"
-	v1 "github.com/containers/podman/v4/pkg/k8s.io/api/core/v1"
+	"github.com/containers/podman/v5/libpod"
+	v1 "github.com/containers/podman/v5/pkg/k8s.io/api/core/v1"
+	"github.com/containers/storage/pkg/fileutils"
 
 	"github.com/sirupsen/logrus"
 	"sigs.k8s.io/yaml"
@@ -32,6 +36,7 @@ const (
 	KubeVolumeTypeCharDevice
 	KubeVolumeTypeSecret
 	KubeVolumeTypeEmptyDir
+	KubeVolumeTypeEmptyDirTmpfs
 )
 
 //nolint:revive
@@ -48,6 +53,9 @@ type KubeVolume struct {
 	// If the volume is optional, we can move on if it is not found
 	// Only used when there are volumes in a yaml that refer to a configmap
 	Optional bool
+	// DefaultMode sets the permissions on files created for the volume
+	// This is optional and defaults to 0644
+	DefaultMode int32
 }
 
 // Create a KubeVolume from an HostPathVolumeSource
@@ -63,7 +71,7 @@ func VolumeFromHostPath(hostPath *v1.HostPathVolumeSource, mountLabel string) (*
 				return nil, fmt.Errorf("giving %s a label: %w", hostPath.Path, err)
 			}
 		case v1.HostPathFileOrCreate:
-			if _, err := os.Stat(hostPath.Path); os.IsNotExist(err) {
+			if err := fileutils.Exists(hostPath.Path); errors.Is(err, fs.ErrNotExist) {
 				f, err := os.OpenFile(hostPath.Path, os.O_RDONLY|os.O_CREATE, kubeFilePermission)
 				if err != nil {
 					return nil, fmt.Errorf("creating HostPath: %w", err)
@@ -132,9 +140,18 @@ func VolumeFromHostPath(hostPath *v1.HostPathVolumeSource, mountLabel string) (*
 // VolumeFromSecret creates a new kube volume from a kube secret.
 func VolumeFromSecret(secretSource *v1.SecretVolumeSource, secretsManager *secrets.SecretsManager) (*KubeVolume, error) {
 	kv := &KubeVolume{
-		Type:   KubeVolumeTypeSecret,
-		Source: secretSource.SecretName,
-		Items:  map[string][]byte{},
+		Type:        KubeVolumeTypeSecret,
+		Source:      secretSource.SecretName,
+		Items:       map[string][]byte{},
+		DefaultMode: v1.SecretVolumeSourceDefaultMode,
+	}
+	// Set the defaultMode if set in the kube yaml
+	validMode, err := isValidDefaultMode(secretSource.DefaultMode)
+	if err != nil {
+		return nil, fmt.Errorf("invalid DefaultMode for secret %q: %w", secretSource.SecretName, err)
+	}
+	if validMode {
+		kv.DefaultMode = *secretSource.DefaultMode
 	}
 
 	// returns a byte array of a kube secret data, meaning this needs to go into a string map
@@ -188,8 +205,9 @@ func VolumeFromPersistentVolumeClaim(claim *v1.PersistentVolumeClaimVolumeSource
 func VolumeFromConfigMap(configMapVolumeSource *v1.ConfigMapVolumeSource, configMaps []v1.ConfigMap) (*KubeVolume, error) {
 	var configMap *v1.ConfigMap
 	kv := &KubeVolume{
-		Type:  KubeVolumeTypeConfigMap,
-		Items: map[string][]byte{},
+		Type:        KubeVolumeTypeConfigMap,
+		Items:       map[string][]byte{},
+		DefaultMode: v1.ConfigMapVolumeSourceDefaultMode,
 	}
 	for _, cm := range configMaps {
 		if cm.Name == configMapVolumeSource.Name {
@@ -199,6 +217,14 @@ func VolumeFromConfigMap(configMapVolumeSource *v1.ConfigMapVolumeSource, config
 			configMap = &matchedCM
 			break
 		}
+	}
+	// Set the defaultMode if set in the kube yaml
+	validMode, err := isValidDefaultMode(configMapVolumeSource.DefaultMode)
+	if err != nil {
+		return nil, fmt.Errorf("invalid DefaultMode for configMap %q: %w", configMapVolumeSource.Name, err)
+	}
+	if validMode {
+		kv.DefaultMode = *configMapVolumeSource.DefaultMode
 	}
 
 	if configMap == nil {
@@ -240,7 +266,17 @@ func VolumeFromConfigMap(configMapVolumeSource *v1.ConfigMapVolumeSource, config
 
 // Create a kubeVolume for an emptyDir volume
 func VolumeFromEmptyDir(emptyDirVolumeSource *v1.EmptyDirVolumeSource, name string) (*KubeVolume, error) {
-	return &KubeVolume{Type: KubeVolumeTypeEmptyDir, Source: name}, nil
+	if emptyDirVolumeSource.Medium == v1.StorageMediumMemory {
+		return &KubeVolume{
+			Type:   KubeVolumeTypeEmptyDirTmpfs,
+			Source: name,
+		}, nil
+	} else {
+		return &KubeVolume{
+			Type:   KubeVolumeTypeEmptyDir,
+			Source: name,
+		}, nil
+	}
 }
 
 // Create a KubeVolume from one of the supported VolumeSource
@@ -275,4 +311,15 @@ func InitializeVolumes(specVolumes []v1.Volume, configMaps []v1.ConfigMap, secre
 	}
 
 	return volumes, nil
+}
+
+// isValidDefaultMode returns true if mode is between 0 and 0777
+func isValidDefaultMode(mode *int32) (bool, error) {
+	if mode == nil {
+		return false, nil
+	}
+	if *mode >= 0 && *mode <= int32(os.ModePerm) {
+		return true, nil
+	}
+	return false, errors.New("must be between 0000 and 0777")
 }

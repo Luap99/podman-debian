@@ -6,6 +6,7 @@
 
 load helpers
 
+# bats test_tags=distro-integration
 @test "podman build - basic test" {
     rand_filename=$(random_string 20)
     rand_content=$(random_string 50)
@@ -23,6 +24,10 @@ EOF
     PODMAN_TIMEOUT=240 run_podman build -t build_test --format=docker $tmpdir
     is "$output" ".*COMMIT" "COMMIT seen in log"
 
+    # $IMAGE is preloaded, so we should never re-pull
+    assert "$output" !~ "Trying to pull" "Default pull policy should be 'missing'"
+    assert "$output" !~ "Writing manifest" "Default pull policy should be 'missing'"
+
     run_podman run --rm build_test cat /$rand_filename
     is "$output"   "$rand_content"   "reading generated file in image"
 
@@ -30,11 +35,6 @@ EOF
 }
 
 @test "podman buildx - basic test" {
-    run_podman info --format "{{.Store.GraphDriverName}}"
-    if [[ "$output" == "vfs" ]]; then
-        skip "Test not supported with VFS podman storage driver (#17520)"
-    fi
-
     rand_filename=$(random_string 20)
     rand_content=$(random_string 50)
 
@@ -77,9 +77,14 @@ EOF
     assert "${lines[0]}" = "${lines[5]}" "devnum( / ) = devnum( /[etc )"
     assert "${lines[0]}" = "${lines[7]}" "devnum( / ) = devnum( /etc )"
     assert "${lines[6]}" = "${lines[8]}" "devnum( /[etc/foo, ) = devnum( /etc/bar] )"
-    # ...then, each volume should be different
-    assert "${lines[0]}" != "${lines[3]}" "devnum( / ) != devnum( volume0 )"
-    assert "${lines[0]}" != "${lines[6]}" "devnum( / ) != devnum( volume1 )"
+    # ...then, check volumes; these differ between overlay and vfs.
+    # Under Overlay (usual case), these will be different. On VFS, they're the same.
+    local op="!="
+    if [[ "$(podman_storage_driver)" == "vfs" ]]; then
+        op="="
+    fi
+    assert "${lines[0]}" $op "${lines[3]}" "devnum( / ) $op devnum( volume0 )"
+    assert "${lines[0]}" $op "${lines[6]}" "devnum( / ) $op devnum( volume1 )"
 
     # FIXME: is this expected? I thought /a/b/c and /[etc/foo, would differ
     assert "${lines[3]}" = "${lines[6]}" "devnum( volume0 ) = devnum( volume1 )"
@@ -219,8 +224,11 @@ FROM $IMAGE
 RUN echo $rand_content > /$rand_filename
 EOF
 
+    # "TMPDIR=relative-path" tests buildah PR #5084. Prior to that, podman failed in RUN:
+    #   error running container: checking permissions on "sub-tmp-dir/buildah2917655141": ENOENT
     cd $PODMAN_TMPDIR
-    run_podman build -t build_test -f ./reldir/Containerfile --format=docker $tmpdir
+    mkdir sub-tmp-dir
+    TMPDIR=sub-tmp-dir run_podman build -t build_test -f ./reldir/Containerfile --format=docker $tmpdir
     is "$output" ".*COMMIT" "COMMIT seen in log"
 
     run_podman run --rm build_test cat /$rand_filename
@@ -238,15 +246,22 @@ FROM $IMAGE
 RUN echo hi
 EOF
 
-    local count=30
+    local count=10
     for i in $(seq --format '%02g' 1 $count); do
         timeout --foreground -v --kill=10 60 \
-                $PODMAN build -t i$i $PODMAN_TMPDIR &>/dev/null &
+                $PODMAN build -t i$i $PODMAN_TMPDIR &> $PODMAN_TMPDIR/log.$i &
     done
 
     # Wait for all background builds to complete. Note that this succeeds
     # even if some of the individual builds fail! Our actual test is below.
     wait
+
+    # For debugging, e.g., #21742
+    for log in $PODMAN_TMPDIR/log.*;do
+        echo
+        echo $log ":"
+        cat $log
+    done
 
     # Now delete all built images. If any image wasn't built, rmi will fail
     # and test will fail.
@@ -272,6 +287,7 @@ EOF
 }
 
 
+# bats test_tags=distro-integration
 @test "podman build - workdir, cmd, env, label" {
     tmpdir=$PODMAN_TMPDIR/build-test
     mkdir -p $tmpdir
@@ -344,11 +360,11 @@ LABEL $label_name=$label_value
 WORKDIR $workdir
 
 # Test for #7094 - chowning of invalid symlinks
-RUN mkdir -p /a/b/c
-RUN ln -s /no/such/nonesuch /a/b/c/badsymlink
-RUN ln -s /bin/mydefaultcmd /a/b/c/goodsymlink
-RUN touch /a/b/c/myfile
-RUN chown -h 1:2 /a/b/c/badsymlink /a/b/c/goodsymlink && chown -h 4:5 /a/b/c/myfile
+RUN mkdir -p /a/b/c && \
+    ln -s /no/such/nonesuch /a/b/c/badsymlink && \
+    ln -s /bin/mydefaultcmd /a/b/c/goodsymlink && \
+    touch /a/b/c/myfile && \
+    chown -h 1:2 /a/b/c/badsymlink /a/b/c/goodsymlink && chown -h 4:5 /a/b/c/myfile
 VOLUME /a/b/c
 
 # Test for environment passing and override
@@ -358,17 +374,16 @@ ENV MYENV3 this-should-be-overridden-by-env-file
 ENV MYENV4 this-should-be-overridden-by-cmdline
 ENV http_proxy http-proxy-in-image
 ENV ftp_proxy  ftp-proxy-in-image
+
 ADD mycmd /bin/mydefaultcmd
-RUN chmod 755 /bin/mydefaultcmd
-RUN chown 2:3 /bin/mydefaultcmd
-
-RUN $CAT_SECRET
-
-RUN echo explicit-build-arg=\$arg_explicit
-RUN echo implicit-build-arg=\$arg_implicit
+RUN chmod 755 /bin/mydefaultcmd && \
+    chown 2:3 /bin/mydefaultcmd && \
+    $CAT_SECRET && \
+    echo explicit-build-arg=\$arg_explicit && \
+    echo implicit-build-arg=\$arg_implicit && \
+    cat /etc/resolv.conf
 
 CMD ["/bin/mydefaultcmd","$s_echo"]
-RUN cat /etc/resolv.conf
 EOF
 
     # The goal is to test that a missing value will be inherited from
@@ -442,7 +457,8 @@ EOF
               --env-file=$PODMAN_TMPDIR/env-file1 \
               --env-file=$PODMAN_TMPDIR/env-file2 \
               build_test \
-              printenv http_proxy https_proxy ftp_proxy
+              sh -c "printenv http_proxy https_proxy ftp_proxy &&
+                pwd"
     is "${lines[0]}" "http-proxy-in-env-file"  "env-file overrides env"
     is "${lines[1]}" "https-proxy-in-env-file" "env-file sets proxy var"
 
@@ -453,8 +469,7 @@ EOF
     fi
 
     # test that workdir is set for command-line commands also
-    run_podman run --rm build_test pwd
-    is "$output" "$workdir" "pwd command in container"
+    is "${lines[3]}" "$workdir" "pwd command in container"
 
     # Determine buildah version, so we can confirm it gets into Labels
     # Multiple --format options confirm command-line override (last one wins)
@@ -478,10 +493,8 @@ Cmd[0]             | /bin/mydefaultcmd
 Cmd[1]             | $s_echo
 WorkingDir         | $workdir
 Labels.$label_name | $label_value
+Labels.\"io.buildah.version\" | $buildah_version
 "
-    # FIXME: 2021-02-24: Fixed in buildah #3036; re-enable this once podman
-    #        vendors in a newer buildah!
-    # Labels.\"io.buildah.version\" | $buildah_version
 
     parse_table "$tests" | while read field expect; do
         actual=$(jq -r ".[0].Config.$field" <<<"$output")
@@ -493,19 +506,18 @@ Labels.$label_name | $label_value
     # get here because any 'podman run' on a volume that had symlinks,
     # be they dangling or valid, would barf with
     #    Error: chown <mountpath>/_data/symlink: ENOENT
-    run_podman run --rm build_test stat -c'%u:%g:%N' /a/b/c/badsymlink
-    is "$output" "1:2:'/a/b/c/badsymlink' -> '/no/such/nonesuch'" \
+    run_podman run --rm build_test \
+        stat -c'%u:%g:%N'   /a/b/c/badsymlink \
+                            /a/b/c/goodsymlink \
+                            /bin/mydefaultcmd \
+                            /a/b/c/myfile
+
+    is "${lines[0]}" "1:2:'/a/b/c/badsymlink' -> '/no/such/nonesuch'" \
        "bad symlink to nonexistent file is chowned and preserved"
-
-    run_podman run --rm build_test stat -c'%u:%g:%N' /a/b/c/goodsymlink
-    is "$output" "1:2:'/a/b/c/goodsymlink' -> '/bin/mydefaultcmd'" \
+    is "${lines[1]}" "1:2:'/a/b/c/goodsymlink' -> '/bin/mydefaultcmd'" \
        "good symlink to existing file is chowned and preserved"
-
-    run_podman run --rm build_test stat -c'%u:%g' /bin/mydefaultcmd
-    is "$output" "2:3" "target of symlink is not chowned"
-
-    run_podman run --rm build_test stat -c'%u:%g:%N' /a/b/c/myfile
-    is "$output" "4:5:/a/b/c/myfile" "file in volume is chowned"
+    is "${lines[2]}" "2:3:/bin/mydefaultcmd" "target of symlink is not chowned"
+    is "${lines[3]}" "4:5:/a/b/c/myfile" "file in volume is chowned"
 
     # Hey, as long as we have an image with lots of layers, let's
     # confirm that 'image tree' works as expected
@@ -660,9 +672,27 @@ EOF
     mv $tmpdir/Dockerfile $tmpdir/foofile
 
     run_podman 125 build -t build_test $tmpdir
-    is "$output" ".*Dockerfile: no such file or directory"
-
+    is "$output" "Error: no Containerfile or Dockerfile specified or found in context directory, $tmpdir: no such file or directory"
     run_podman build -t build_test -f $tmpdir/foofile $tmpdir
+
+    # Clean up
+    run_podman rmi -f build_test
+}
+
+# Regression test for #20259
+@test "podman build with ignore '*' and containerfile outside of build context" {
+    local tmpdir=$PODMAN_TMPDIR/build-test-$(random_string 10)
+    mkdir -p $tmpdir
+    mkdir -p $tmpdir/context
+
+    cat >$tmpdir/Containerfile <<EOF
+FROM scratch
+EOF
+
+    cat >$tmpdir/context/.containerignore <<EOF
+*
+EOF
+    run_podman build -t build_test -f $tmpdir/Containerfile $tmpdir/context
 
     # Clean up
     run_podman rmi -f build_test
@@ -730,7 +760,7 @@ EOF
     if is_remote; then remote_extra=".*";fi
     expect="${random1}
 .*
-STEP 1/2: FROM $IMAGE
+\[[0-9:.]\+\] STEP 1/2: FROM $IMAGE
 STEP 2/2: RUN echo x${random2}y
 x${random2}y${remote_extra}
 COMMIT build_test${remote_extra}
@@ -941,29 +971,41 @@ EOF
 }
 
 @test "podman build COPY hardlinks " {
-    tmpdir=$PODMAN_TMPDIR/build-test
-    subdir=$tmpdir/subdir
-    subsubdir=$subdir/subsubdir
-    mkdir -p $subsubdir
+    local build_dir=$PODMAN_TMPDIR/build-test
 
-    dockerfile=$tmpdir/Dockerfile
+    mkdir -p $build_dir
+    dockerfile=$build_dir/Dockerfile
     cat >$dockerfile <<EOF
 FROM $IMAGE
 COPY . /test
 EOF
-    ln $dockerfile $tmpdir/hardlink1
-    ln $dockerfile $subdir/hardlink2
-    ln $dockerfile $subsubdir/hardlink3
 
-    run_podman build -t build_test $tmpdir
-    run_podman run --rm build_test stat -c '%i' /test/Dockerfile
-    dinode=$output
-    run_podman run --rm build_test stat -c '%i' /test/hardlink1
-    is "$output"   "$dinode"   "COPY hardlinks work"
-    run_podman run --rm build_test stat -c '%i' /test/subdir/hardlink2
-    is "$output"   "$dinode"   "COPY hardlinks work"
-    run_podman run --rm build_test stat -c '%i' /test/subdir/subsubdir/hardlink3
-    is "$output"   "$dinode"   "COPY hardlinks work"
+    # Create all our hardlinks, including their parent directories
+    local -a linkfiles=(hardlink1 subdir/hardlink2 subdir/subsubdir/hardlink3)
+    for l in "${linkfiles[@]}"; do
+        mkdir -p $(dirname $build_dir/$l)
+        ln $dockerfile $build_dir/$l
+    done
+
+    run_podman build -t build_test $build_dir
+
+    # Stat() all files in one fell swoop, because it seems impossible
+    # for inode numbers to change within the scope of one exec, but
+    # maybe they do across different runs?? fuse-overlay maybe?? #17979
+    run_podman run --rm build_test \
+               stat -c '%i %n' /test/Dockerfile "${linkfiles[@]/#//test/}"
+
+    # First output line is the inode of our reference file and its filename.
+    # Slash-replacement strips off everything after the space.
+    local dinode="${lines[0]/ */}"
+
+    # All subsequent inodes must match the first one. We check filename (%n)
+    # simply out of unwarranted paranoia.
+    local i=1
+    for l in "${linkfiles[@]}"; do
+        assert "${lines[$i]}" = "$dinode /test/$l" "line $i: inode of $l"
+        i=$((i + 1))
+    done
 
     run_podman rmi -f build_test
 }
@@ -1068,6 +1110,12 @@ EOF
     run_podman build -t build_test $tmpdir/link
 }
 
+@test "podman build --squash --squash-all should conflict" {
+    echo FROM scratch > $PODMAN_TMPDIR/Dockerfile
+    run_podman 125 build -t build_test --squash-all --squash $PODMAN_TMPDIR
+    is "$output" "Error: cannot specify --squash-all with --squash" "--squash and --sqaush-all should conflict"
+}
+
 @test "podman build --volumes-from conflict" {
     rand_content=$(random_string 50)
 
@@ -1086,6 +1134,25 @@ EOF
     run_podman run --rm --volumes-from test_ctr $IMAGE  echo $rand_content
     is "$output"   "$rand_content"   "No error should be thrown about volume in use"
 
+    run_podman rm -f -v -t0 test_ctr
+    run_podman rmi -f build_test
+}
+
+@test "podman build empty context dir" {
+    buildcontextdir=$PODMAN_TMPDIR/emptydir
+    mkdir -p $buildcontextdir
+    containerfile=$PODMAN_TMPDIR/Containerfile
+    echo FROM scratch >$containerfile
+
+    run_podman build -t build_test -f $containerfile $buildcontextdir
+    assert "$output" !~ "EOF" "output should not contain EOF error"
+
+    run_podman rmi -f build_test
+}
+
+@test "podman build --file=https" {
+    run_podman build -t build_test --file=https://raw.githubusercontent.com/containers/podman/main/test/build/from-scratch/Dockerfile $PODMAN_TMPDIR
+
     run_podman rmi -f build_test
 }
 
@@ -1100,6 +1167,11 @@ function teardown() {
     run_podman '?' image prune -f
 
     basic_teardown
+}
+
+@test "podman build --help defaults" {
+    run_podman build --help
+    assert "$output" =~ "--pull.*(default \"missing\")" "pull should default to missing"
 }
 
 # vim: filetype=sh

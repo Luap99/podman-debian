@@ -1,3 +1,5 @@
+//go:build !remote
+
 package libpod
 
 import (
@@ -10,14 +12,13 @@ import (
 	"strings"
 	"time"
 
-	types040 "github.com/containernetworking/cni/pkg/types/040"
-	"github.com/containers/common/libnetwork/cni"
+	"github.com/containers/common/libnetwork/pasta"
 	"github.com/containers/common/libnetwork/types"
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/common/pkg/secrets"
 	"github.com/containers/image/v5/manifest"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/libpod/lock"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/libpod/lock"
 	"github.com/containers/storage"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
@@ -117,6 +118,10 @@ type Container struct {
 	rootlessPortSyncR *os.File
 	rootlessPortSyncW *os.File
 
+	// reservedPorts contains the fds for the bound ports when using the
+	// bridge network mode as root.
+	reservedPorts []*os.File
+
 	// perNetworkOpts should be set when you want to use special network
 	// options when calling network setup/teardown. This should be used for
 	// container restore or network reload for example. Leave this nil if
@@ -127,6 +132,7 @@ type Container struct {
 	restoreFromCheckpoint bool
 
 	slirp4netnsSubnet *net.IPNet
+	pastaResult       *pasta.SetupResult
 }
 
 // ContainerState contains the current state of the container
@@ -173,13 +179,6 @@ type ContainerState struct {
 	LegacyExecSessions map[string]*legacyExecSession `json:"execSessions,omitempty"`
 	// NetNS is the path or name of the NetNS
 	NetNS string `json:"netns,omitempty"`
-	// NetworkStatusOld contains the configuration results for all networks
-	// the pod is attached to. Only populated if we created a network
-	// namespace for the container, and the network namespace is currently
-	// active.
-	// These are DEPRECATED and will be removed in a future release.
-	// This field is only used for backwarts compatibility.
-	NetworkStatusOld []*types040.Result `json:"networkResults,omitempty"`
 	// NetworkStatus contains the network Status for all networks
 	// the container is attached to. Only populated if we created a network
 	// namespace for the container, and the network namespace is currently
@@ -203,7 +202,6 @@ type ContainerState struct {
 	// restart policy. This is NOT incremented by normal container restarts
 	// (only by restart policy).
 	RestartCount uint `json:"restartCount,omitempty"`
-
 	// StartupHCPassed indicates that the startup healthcheck has
 	// succeeded and the main healthcheck can begin.
 	StartupHCPassed bool `json:"startupHCPassed,omitempty"`
@@ -215,6 +213,9 @@ type ContainerState struct {
 	// healthcheck. The container will be restarted if this exceed a set
 	// number in the startup HC config.
 	StartupHCFailureCount int `json:"startupHCFailureCount,omitempty"`
+	// HCUnitName records the name of the healthcheck unit.
+	// Automatically generated when the healthcheck is started.
+	HCUnitName string `json:"hcUnitName,omitempty"`
 
 	// ExtensionStageHooks holds hooks which will be executed by libpod
 	// and not delegated to the OCI runtime.
@@ -281,6 +282,8 @@ type ContainerImageVolume struct {
 	Dest string `json:"dest"`
 	// ReadWrite sets the volume writable.
 	ReadWrite bool `json:"rw"`
+	// SubPath determines which part of the image will be mounted into the container.
+	SubPath string `json:"subPath,omitempty"`
 }
 
 // ContainerSecret is a secret that is mounted in a container
@@ -684,6 +687,15 @@ func (c *Container) Hostname() string {
 		return c.config.Spec.Hostname
 	}
 
+	// if the container is not running in a private UTS namespace,
+	// return the host's hostname.
+	privateUTS := c.hasPrivateUTS()
+	if !privateUTS {
+		hostname, err := os.Hostname()
+		if err == nil {
+			return hostname
+		}
+	}
 	if len(c.ID()) < 11 {
 		return c.ID()
 	}
@@ -714,6 +726,14 @@ func (c *Container) LinuxResources() *spec.LinuxResources {
 	return nil
 }
 
+// Env returns the default environment variables defined for the container
+func (c *Container) Env() []string {
+	if c.config.Spec != nil && c.config.Spec.Process != nil {
+		return c.config.Spec.Process.Env
+	}
+	return nil
+}
+
 // State Accessors
 // Require locking
 
@@ -728,6 +748,18 @@ func (c *Container) State() (define.ContainerStatus, error) {
 		}
 	}
 	return c.state.State, nil
+}
+
+func (c *Container) RestartCount() (uint, error) {
+	if !c.batched {
+		c.lock.Lock()
+		defer c.lock.Unlock()
+
+		if err := c.syncContainer(); err != nil {
+			return 0, err
+		}
+	}
+	return c.state.RestartCount, nil
 }
 
 // Mounted returns whether the container is mounted and the path it is mounted
@@ -1199,29 +1231,14 @@ func (c *Container) HostNetwork() bool {
 	if c.config.CreateNetNS || c.config.NetNsCtr != "" {
 		return false
 	}
-	for _, ns := range c.config.Spec.Linux.Namespaces {
-		if ns.Type == spec.NetworkNamespace {
-			return false
+	if c.config.Spec.Linux != nil {
+		for _, ns := range c.config.Spec.Linux.Namespaces {
+			if ns.Type == spec.NetworkNamespace {
+				return false
+			}
 		}
 	}
 	return true
-}
-
-// ContainerState returns containerstate struct
-func (c *Container) ContainerState() (*ContainerState, error) {
-	if !c.batched {
-		c.lock.Lock()
-		defer c.lock.Unlock()
-
-		if err := c.syncContainer(); err != nil {
-			return nil, err
-		}
-	}
-	returnConfig := new(ContainerState)
-	if err := JSONDeepCopy(c.state, returnConfig); err != nil {
-		return nil, fmt.Errorf("copying container %s state: %w", c.ID(), err)
-	}
-	return c.state, nil
 }
 
 // HasHealthCheck returns bool as to whether there is a health check
@@ -1343,39 +1360,25 @@ func (d ContainerNetworkDescriptions) getInterfaceByName(networkName string) (st
 	return fmt.Sprintf("eth%d", val), exists
 }
 
-// getNetworkStatus get the current network status from the state. If the container
-// still uses the old network status it is converted to the new format. This function
+// GetNetworkStatus returns the current network status for this container.
+// This returns a map without deep copying which means this should only ever
+// be used as read only access, do not modify this status.
+func (c *Container) GetNetworkStatus() (map[string]types.StatusBlock, error) {
+	if !c.batched {
+		c.lock.Lock()
+		defer c.lock.Unlock()
+
+		if err := c.syncContainer(); err != nil {
+			return nil, err
+		}
+	}
+	return c.getNetworkStatus(), nil
+}
+
+// getNetworkStatus get the current network status from the state. This function
 // should be used instead of reading c.state.NetworkStatus directly.
 func (c *Container) getNetworkStatus() map[string]types.StatusBlock {
-	if c.state.NetworkStatus != nil {
-		return c.state.NetworkStatus
-	}
-	if c.state.NetworkStatusOld != nil {
-		networks, err := c.networks()
-		if err != nil {
-			return nil
-		}
-		if len(networks) != len(c.state.NetworkStatusOld) {
-			return nil
-		}
-		result := make(map[string]types.StatusBlock, len(c.state.NetworkStatusOld))
-		i := 0
-		// Note: NetworkStatusOld does not contain the network names so we get them extra
-		// We cannot guarantee the same order but after a state refresh it should work
-		for netName := range networks {
-			status, err := cni.CNIResultToStatus(c.state.NetworkStatusOld[i])
-			if err != nil {
-				return nil
-			}
-			result[netName] = status
-			i++
-		}
-		c.state.NetworkStatus = result
-		_ = c.save()
-
-		return result
-	}
-	return nil
+	return c.state.NetworkStatus
 }
 
 func (c *Container) NamespaceMode(ns spec.LinuxNamespaceType, ctrSpec *spec.Spec) string {

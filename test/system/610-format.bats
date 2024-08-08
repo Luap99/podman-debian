@@ -25,6 +25,8 @@ history           | $IMAGE
 image history     | $IMAGE
 image inspect     | $IMAGE
 container inspect | mycontainer
+inspect           | mycontainer
+
 
 volume inspect    | -a
 secret inspect    | mysecret
@@ -53,6 +55,12 @@ can_run_stats=
 #        > run the command with --format '{{"\n"}}' and make sure it passes
 function check_subcommand() {
     for cmd in $(_podman_commands "$@"); do
+        # Skip the compose command which is calling `docker-compose --help`
+        # and hence won't match the assumptions made below.
+        if [[ "$cmd" == "compose" ]]; then
+            continue
+        fi
+        # Human-readable podman command string, with multiple spaces collapsed
         # Special case: 'podman machine' can only be run under ideal conditions
         if [[ "$cmd" = "machine" ]] && [[ -z "$can_run_podman_machine" ]]; then
             continue
@@ -141,7 +149,7 @@ function check_subcommand() {
     # ...or machine. But podman machine is ultra-finicky, it fails as root
     # or if qemu is missing. Instead of checking for all the possible ways
     # to skip it, just try running init. If it works, we can test it.
-    run_podman '?' machine init --image-path=/dev/null mymachine
+    run_podman '?' machine init --image=/dev/null mymachine
     if [[ $status -eq 0 ]]; then
         can_run_podman_machine=true
         extra_args_table+="

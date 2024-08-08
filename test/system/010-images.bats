@@ -26,10 +26,12 @@ load helpers
 {{.Labels.created_at}}   | 20[0-9-]\\\+T[0-9:]\\\+Z
 "
 
-    parse_table "$tests" | while read fmt expect; do
+    defer-assertion-failures
+
+    while read fmt expect; do
         run_podman images --format "$fmt"
         is "$output" "$expect" "podman images --format '$fmt'"
-    done
+    done < <(parse_table "$tests")
 
     run_podman images --format "{{.ID}}" --no-trunc
     is "$output" "sha256:[0-9a-f]\\{64\\}\$" "podman images --no-trunc"
@@ -49,43 +51,44 @@ Labels.created_at | 20[0-9-]\\\+T[0-9:]\\\+Z
 
     run_podman images -a --format json
 
-    parse_table "$tests" | while read field expect; do
+    while read field expect; do
         actual=$(echo "$output" | jq -r ".[0].$field")
         dprint "# actual=<$actual> expect=<$expect}>"
         is "$actual" "$expect" "jq .$field"
-    done
-
+    done < <(parse_table "$tests")
 }
 
 @test "podman images - history output" {
     # podman history is persistent: it permanently alters our base image.
     # Create a dummy image here so we leave our setup as we found it.
     # Multiple --name options confirm command-line override (last one wins)
-    run_podman run --name ignore-me --name my-container $IMAGE true
-    run_podman commit my-container my-test-image
+    cname=c_$(safename)
+    iname=i_$(safename)
+    run_podman run --name ignore-me --name $cname $IMAGE true
+    run_podman commit $cname $iname
 
-    run_podman images my-test-image --format '{{ .History }}'
-    is "$output" "localhost/my-test-image:latest" "image history with initial name"
+    run_podman images $iname --format '{{ .History }}'
+    is "$output" "localhost/$iname:latest" "image history with initial name"
 
-    # Generate two randomish tags; 'tr' because they must be all lower-case
-    rand_name1="test-image-history-$(random_string 10 | tr A-Z a-z)"
-    rand_name2="test-image-history-$(random_string 10 | tr A-Z a-z)"
+    # Generate two randomish tags
+    rand_name1="test-image-history-1-$(safename)"
+    rand_name2="test-image-history-2-$(safename)"
 
     # Tag once, rmi, and make sure the tag name appears in history
-    run_podman tag my-test-image $rand_name1
+    run_podman tag $iname $rand_name1
     run_podman rmi $rand_name1
-    run_podman images my-test-image --format '{{ .History }}'
-    is "$output" "localhost/my-test-image:latest, localhost/${rand_name1}:latest" "image history after one tag"
+    run_podman images $iname --format '{{ .History }}'
+    is "$output" "localhost/$iname:latest, localhost/${rand_name1}:latest" "image history after one tag"
 
     # Repeat with second tag. Now both tags should be in history
-    run_podman tag my-test-image $rand_name2
+    run_podman tag $iname $rand_name2
     run_podman rmi $rand_name2
-    run_podman images my-test-image --format '{{ .History }}'
-    is "$output" "localhost/my-test-image:latest, localhost/${rand_name2}:latest, localhost/${rand_name1}:latest" \
+    run_podman images $iname --format '{{ .History }}'
+    is "$output" "localhost/$iname:latest, localhost/${rand_name2}:latest, localhost/${rand_name1}:latest" \
        "image history after two tags"
 
-    run_podman rmi my-test-image
-    run_podman rm my-container
+    run_podman rmi $iname
+    run_podman rm $cname
 }
 
 @test "podman images - filter" {
@@ -101,31 +104,40 @@ Labels.created_at | 20[0-9-]\\\+T[0-9:]\\\+Z
 
     # Create a dummy container, then commit that as an image. We will
     # now be able to use before/after/since queries
-    run_podman run --name mytinycontainer $IMAGE true
-    run_podman commit -q  mytinycontainer mynewimage
+    cname=c_$(safename)
+    iname=i_$(safename)
+    run_podman run --name $cname $IMAGE true
+    run_podman commit -q  $cname $iname
     new_iid=$output
 
     # (refactor common options for legibility)
     opts='--noheading --no-trunc --format={{.ID}}--{{.Repository}}:{{.Tag}}'
 
     run_podman images ${opts} --filter=after=$iid
-    is "$output" "sha256:$new_iid--localhost/mynewimage:latest" "filter: after"
+    is "$output" "sha256:$new_iid--localhost/$iname:latest" "filter: after"
 
     # Same thing, with 'since' instead of 'after'
     run_podman images ${opts} --filter=since=$iid
-    is "$output" "sha256:$new_iid--localhost/mynewimage:latest" "filter: since"
+    is "$output" "sha256:$new_iid--localhost/$iname:latest" "filter: since"
 
-    run_podman images ${opts} --filter=before=mynewimage
+    run_podman images ${opts} --filter=before=$iname
     is "$output" "sha256:$iid--$IMAGE" "filter: before"
 
+    run_podman 125 image list -f json
+    is "$output" 'Error: invalid image filter "json": must be in the format "filter=value or filter!=value"' "Invalid filter"
+
     # Clean up
-    run_podman rmi mynewimage
-    run_podman rm  mytinycontainer
+    run_podman rmi $iname
+    run_podman rm  $cname
 }
 
 # Regression test for https://github.com/containers/podman/issues/7651
 # in which "podman pull image-with-sha" causes "images -a" to crash
 @test "podman images -a, after pulling by sha " {
+    # This test requires that $IMAGE be 100% the same as the registry one
+    run_podman rmi -a -f
+    _prefetch $IMAGE
+
     # Get a baseline for 'images -a'
     run_podman images -a
     local images_baseline="$output"
@@ -233,7 +245,7 @@ Labels.created_at | 20[0-9-]\\\+T[0-9:]\\\+Z
 }
 
 @test "podman images - rmi -af removes all containers and pods" {
-    pname=$(random_string)
+    pname=p_$(safename)
     run_podman create --pod new:$pname $IMAGE
 
     run_podman inspect --format '{{.ID}}' $IMAGE
@@ -269,7 +281,7 @@ Deleted: $pauseID" "infra images gets removed as well"
 }
 
 @test "podman images - rmi -f can remove infra images" {
-    pname=$(random_string)
+    pname=p_$(safename)
     run_podman create --pod new:$pname $IMAGE
 
     pauseImage=$(pause_image)
@@ -294,8 +306,7 @@ Deleted: $pauseID"
 }
 
 @test "podman rmi --ignore" {
-    random_image_name=$(random_string)
-    random_image_name=${random_image_name,,} # name must be lowercase
+    random_image_name=i_$(safename)
     run_podman 1 rmi $random_image_name
     is "$output" "Error: $random_image_name: image not known.*"
     run_podman rmi --ignore $random_image_name
@@ -307,6 +318,116 @@ Deleted: $pauseID"
     is "$output" "Error: bogus: image not known" "Should print error"
     run_podman image rm --force bogus
     is "$output" "" "Should print no output"
+
+    random_image_name=i_$(safename)
+    run_podman image tag $IMAGE $random_image_name
+    run_podman image rm --force bogus $random_image_name
+    assert "$output" = "Untagged: localhost/$random_image_name:latest" "removed image"
+
+    run_podman images
+    assert "$output" !~ "$random_image_name" "image must be removed"
 }
+
+@test "podman images - commit docker with comment" {
+    cname=c_$(safename)
+    iname=i_$(safename)
+    run_podman run --name $cname -d $IMAGE top
+    run_podman 125 commit -m comment $cname $iname
+    assert "$output" == "Error: messages are only compatible with the docker image format (-f docker)" "podman should fail unless docker format"
+
+    # Without -q: verbose output, but only on podman-local, not remote
+    run_podman commit $cname --format docker -m comment ${iname}_2
+    if ! is_remote; then
+        assert "$output" =~ "Getting image.*Writing manif" \
+               "Without -q, verbose output"
+    fi
+
+    # With -q, both local and remote: only an image ID
+    run_podman commit -q $cname --format docker -m comment ${iname}_3
+    assert "$output" =~ "^[0-9a-f]{64}\$" \
+           "With -q, output is a commit ID, no warnings or other output"
+
+    run_podman rmi ${iname}_2 ${iname}_3
+    run_podman rm $cname --force -t 0
+}
+
+@test "podman pull image with additional store" {
+    skip_if_remote "only works on local"
+
+    # overlay or vfs
+    local storagedriver="$(podman_storage_driver)"
+
+    local imstore=$PODMAN_TMPDIR/imagestore
+    local sconf=$PODMAN_TMPDIR/storage.conf
+    cat >$sconf <<EOF
+[storage]
+driver="$storagedriver"
+
+[storage.options]
+additionalimagestores = [ "$imstore/root" ]
+EOF
+
+    # If composefs (root only) is enabled, we must mirror that setting in our conf
+    if grep -q 'BEGIN CI-enabled composefs' /etc/containers/storage.conf; then
+        sed -ne '/BEGIN CI-enabled composefs/,/END CI-enabled composefs/p' /etc/containers/storage.conf \
+            | grep -vF '[storage.options]' >>$sconf
+    fi
+
+    skopeo copy containers-storage:$IMAGE \
+           containers-storage:\[${storagedriver}@${imstore}/root+${imstore}/runroot\]$IMAGE
+
+    # IMPORTANT! Use -2/-1 indices, not 0/1, because $SYSTEMD_IMAGE may be
+    # present in store, and if it is it will precede $IMAGE.
+    CONTAINERS_STORAGE_CONF=$sconf run_podman images -a -n --format "{{.Repository}}:{{.Tag}} {{.ReadOnly}}"
+    assert "${#lines[*]}" -ge 2 "at least 2 lines from 'podman images'"
+    is "${lines[-2]}" "$IMAGE false" "image from readonly store"
+    is "${lines[-1]}" "$IMAGE true" "image from readwrite store"
+
+    CONTAINERS_STORAGE_CONF=$sconf run_podman images -a -n --format "{{.Id}}"
+    id=${lines[-1]}
+
+    CONTAINERS_STORAGE_CONF=$sconf run_podman pull -q $IMAGE
+    is "$output" "$id" "pull -q $IMAGE, using storage.conf"
+
+    run_podman --root $imstore/root rmi --all
+}
+
+@test "podman images with concurrent removal" {
+    skip_if_remote "following test is not supported for remote clients"
+    local count=5
+
+    # First build $count images
+    for i in $(seq --format '%02g' 1 $count); do
+        cat >$PODMAN_TMPDIR/Containerfile <<EOF
+FROM $IMAGE
+RUN echo $i
+EOF
+        run_podman build -q -t i$i $PODMAN_TMPDIR
+    done
+
+    run_podman images
+    # Now remove all images in parallel and in the background and make sure
+    # that listing all images does not fail (see BZ 2216700).
+    for i in $(seq --format '%02g' 1 $count); do
+        timeout --foreground -v --kill=10 60 \
+                $PODMAN rmi i$i &
+    done
+
+    tries=100
+    while [[ ${#lines[*]} -gt 1 ]] && [[ $tries -gt 0 ]]; do
+        # Prior to #18980, 'podman images' during rmi could fail with 'image not known'
+        # '0+w' because we sometimes get warnings.
+        run_podman 0+w images --format "{{.ID}} {{.Names}}"
+        allow_warnings "Top layer .* of image .* not found in layer tree"
+        tries=$((tries - 1))
+    done
+
+    if [[ $tries -eq 0 ]]; then
+        die "Timed out waiting for images to be removed"
+    fi
+
+    wait
+}
+
 
 # vim: filetype=sh

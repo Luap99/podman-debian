@@ -15,7 +15,7 @@ import (
 
 	"github.com/blang/semver/v4"
 	"github.com/containers/common/pkg/ssh"
-	"github.com/containers/podman/v4/version"
+	"github.com/containers/podman/v5/version"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/net/proxy"
 )
@@ -36,6 +36,22 @@ const (
 	clientKey  = valueKey("Client")
 	versionKey = valueKey("ServiceVersion")
 )
+
+type ConnectError struct {
+	Err error
+}
+
+func (c ConnectError) Error() string {
+	return "unable to connect to Podman socket: " + c.Err.Error()
+}
+
+func (c ConnectError) Unwrap() error {
+	return c.Err
+}
+
+func newConnectError(err error) error {
+	return ConnectError{Err: err}
+}
 
 // GetClient from context build by NewConnection()
 func GetClient(ctx context.Context) (*Connection, error) {
@@ -107,7 +123,7 @@ func NewConnectionWithIdentity(ctx context.Context, uri string, identity string,
 			InsecureIsMachineConnection: machine,
 		}, "golang")
 		if err != nil {
-			return nil, err
+			return nil, newConnectError(err)
 		}
 		connection = Connection{URI: _url}
 		connection.Client = &http.Client{
@@ -129,20 +145,17 @@ func NewConnectionWithIdentity(ctx context.Context, uri string, identity string,
 		}
 		conn, err := tcpClient(_url)
 		if err != nil {
-			return nil, err
+			return nil, newConnectError(err)
 		}
 		connection = conn
 	default:
 		return nil, fmt.Errorf("unable to create connection. %q is not a supported schema", _url.Scheme)
 	}
-	if err != nil {
-		return nil, fmt.Errorf("unable to connect to Podman. failed to create %sClient: %w", _url.Scheme, err)
-	}
 
 	ctx = context.WithValue(ctx, clientKey, &connection)
 	serviceVersion, err := pingNewConnection(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("unable to connect to Podman socket: %w", err)
+		return nil, newConnectError(err)
 	}
 	ctx = context.WithValue(ctx, versionKey, serviceVersion)
 	return ctx, nil
@@ -308,30 +321,35 @@ func (c *Connection) GetDialer(ctx context.Context) (net.Conn, error) {
 
 // IsInformational returns true if the response code is 1xx
 func (h *APIResponse) IsInformational() bool {
+	//nolint:usestdlibvars // linter wants to use http.StatusContinue over 100 but that makes less readable IMO
 	return h.Response.StatusCode/100 == 1
 }
 
 // IsSuccess returns true if the response code is 2xx
 func (h *APIResponse) IsSuccess() bool {
+	//nolint:usestdlibvars // linter wants to use http.StatusContinue over 100 but that makes less readable IMO
 	return h.Response.StatusCode/100 == 2
 }
 
 // IsRedirection returns true if the response code is 3xx
 func (h *APIResponse) IsRedirection() bool {
+	//nolint:usestdlibvars // linter wants to use http.StatusContinue over 100 but that makes less readable IMO
 	return h.Response.StatusCode/100 == 3
 }
 
 // IsClientError returns true if the response code is 4xx
 func (h *APIResponse) IsClientError() bool {
+	//nolint:usestdlibvars // linter wants to use http.StatusContinue over 100 but that makes less readable IMO
 	return h.Response.StatusCode/100 == 4
 }
 
 // IsConflictError returns true if the response code is 409
 func (h *APIResponse) IsConflictError() bool {
-	return h.Response.StatusCode == 409
+	return h.Response.StatusCode == http.StatusConflict
 }
 
 // IsServerError returns true if the response code is 5xx
 func (h *APIResponse) IsServerError() bool {
+	//nolint:usestdlibvars // linter wants to use http.StatusContinue over 100 but that makes less readable IMO
 	return h.Response.StatusCode/100 == 5
 }

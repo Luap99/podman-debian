@@ -1,7 +1,10 @@
+//go:build !remote
+
 package autoupdate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -9,12 +12,12 @@ import (
 	"github.com/containers/common/libimage"
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/image/v5/docker"
-	"github.com/containers/podman/v4/libpod"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/libpod/events"
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/containers/podman/v4/pkg/systemd"
-	systemdDefine "github.com/containers/podman/v4/pkg/systemd/define"
+	"github.com/containers/podman/v5/libpod"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/libpod/events"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	"github.com/containers/podman/v5/pkg/systemd"
+	systemdDefine "github.com/containers/podman/v5/pkg/systemd/define"
 	"github.com/coreos/go-systemd/v22/dbus"
 	"github.com/sirupsen/logrus"
 )
@@ -249,16 +252,7 @@ func (t *task) report() *entities.AutoUpdateReport {
 func (t *task) updateAvailable(ctx context.Context) (bool, error) {
 	switch t.policy {
 	case PolicyRegistryImage:
-		// Errors checking for updates only should not be fatal.
-		// Especially on Edge systems, connection may be limited or
-		// there may just be a temporary downtime of the registry.
-		// But make sure to leave some breadcrumbs in the debug logs
-		// such that potential issues _can_ be analyzed if needed.
-		available, err := t.registryUpdateAvailable(ctx)
-		if err != nil {
-			logrus.Debugf("Error checking updates for image %s: %v (ignoring error)", t.rawImageName, err)
-		}
-		return available, nil
+		return t.registryUpdateAvailable(ctx)
 	case PolicyLocalImage:
 		return t.localUpdateAvailable()
 	default:
@@ -291,7 +285,10 @@ func (t *task) registryUpdateAvailable(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	options := &libimage.HasDifferentDigestOptions{AuthFilePath: t.authfile}
+	options := &libimage.HasDifferentDigestOptions{
+		AuthFilePath:          t.authfile,
+		InsecureSkipTLSVerify: t.auto.options.InsecureSkipTLSVerify,
+	}
 	return t.image.HasDifferentDigest(ctx, remoteRef, options)
 }
 
@@ -305,6 +302,7 @@ func (t *task) registryUpdate(ctx context.Context) error {
 	pullOptions := &libimage.PullOptions{}
 	pullOptions.AuthFilePath = t.authfile
 	pullOptions.Writer = os.Stderr
+	pullOptions.InsecureSkipTLSVerify = t.auto.options.InsecureSkipTLSVerify
 	if _, err := t.auto.runtime.LibimageRuntime().Pull(ctx, t.rawImageName, config.PullPolicyAlways, pullOptions); err != nil {
 		return err
 	}
@@ -319,7 +317,7 @@ func (t *task) localUpdateAvailable() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return localImg.Digest().String() != t.image.Digest().String(), nil
+	return localImg.ID() != t.image.ID(), nil
 }
 
 // rollbackImage rolls back the task's image to the previous version before the update.
@@ -334,16 +332,8 @@ func (t *task) rollbackImage() error {
 
 // restartSystemdUnit restarts the systemd unit the container is running in.
 func (u *updater) restartSystemdUnit(ctx context.Context, unit string) error {
-	if err := u.stopSystemdUnit(ctx, unit); err != nil {
-		return err
-	}
-	return u.startSystemdUnit(ctx, unit)
-}
-
-// startSystemdUnit starts the systemd unit the container is running in.
-func (u *updater) startSystemdUnit(ctx context.Context, unit string) error {
 	restartChan := make(chan string)
-	if _, err := u.conn.StartUnitContext(ctx, unit, "replace", restartChan); err != nil {
+	if _, err := u.conn.RestartUnitContext(ctx, unit, "replace", restartChan); err != nil {
 		return err
 	}
 
@@ -357,28 +347,7 @@ func (u *updater) startSystemdUnit(ctx context.Context, unit string) error {
 		return nil
 
 	default:
-		return fmt.Errorf("error starting systemd unit %q expected %q but received %q", unit, "done", result)
-	}
-}
-
-// stopSystemdUnit stop the systemd unit the container is running in.
-func (u *updater) stopSystemdUnit(ctx context.Context, unit string) error {
-	restartChan := make(chan string)
-	if _, err := u.conn.StopUnitContext(ctx, unit, "replace", restartChan); err != nil {
-		return err
-	}
-
-	// Wait for the restart to finish and actually check if it was
-	// successful or not.
-	result := <-restartChan
-
-	switch result {
-	case "done":
-		logrus.Infof("Successfully stopped systemd unit %q", unit)
-		return nil
-
-	default:
-		return fmt.Errorf("error stopping systemd unit %q expected %q but received %q", unit, "done", result)
+		return fmt.Errorf("error restarting systemd unit %q expected %q but received %q", unit, "done", result)
 	}
 }
 
@@ -399,12 +368,15 @@ func (u *updater) assembleTasks(ctx context.Context) []error {
 
 	u.unitToTasks = make(map[string][]*task)
 
-	errors := []error{}
+	errs := []error{}
 	for _, c := range allContainers {
 		ctr := c
 		state, err := ctr.State()
 		if err != nil {
-			errors = append(errors, err)
+			// container may have been removed in the meantime ignore it and not print errors
+			if !errors.Is(err, define.ErrNoSuchCtr) {
+				errs = append(errs, err)
+			}
 			continue
 		}
 		// Only update running containers.
@@ -421,7 +393,7 @@ func (u *updater) assembleTasks(ctx context.Context) []error {
 		}
 		policy, err := LookupPolicy(value)
 		if err != nil {
-			errors = append(errors, err)
+			errs = append(errs, err)
 			continue
 		}
 		if policy == PolicyDefault {
@@ -432,11 +404,11 @@ func (u *updater) assembleTasks(ctx context.Context) []error {
 		// stored as a label at container creation.
 		unit, exists, err := u.systemdUnitForContainer(ctr, labels)
 		if err != nil {
-			errors = append(errors, err)
+			errs = append(errs, err)
 			continue
 		}
 		if !exists {
-			errors = append(errors, fmt.Errorf("auto-updating container %q: no %s label found", ctr.ID(), systemdDefine.EnvVariable))
+			errs = append(errs, fmt.Errorf("auto-updating container %q: no %s label found", ctr.ID(), systemdDefine.EnvVariable))
 			continue
 		}
 
@@ -444,18 +416,24 @@ func (u *updater) assembleTasks(ctx context.Context) []error {
 		image, exists := imageMap[id]
 		if !exists {
 			err := fmt.Errorf("internal error: no image found for ID %s", id)
-			errors = append(errors, err)
+			errs = append(errs, err)
 			continue
 		}
 
 		rawImageName := ctr.RawImageName()
 		if rawImageName == "" {
-			errors = append(errors, fmt.Errorf("locally auto-updating container %q: raw-image name is empty", ctr.ID()))
+			errs = append(errs, fmt.Errorf("locally auto-updating container %q: raw-image name is empty", ctr.ID()))
 			continue
 		}
 
+		// Use user-specified auth file (CLI or env variable) unless
+		// the container was created with the auth-file label.
+		authfile := u.options.Authfile
+		if fromContainer, ok := labels[define.AutoUpdateAuthfileLabel]; ok {
+			authfile = fromContainer
+		}
 		t := task{
-			authfile:     labels[define.AutoUpdateAuthfileLabel],
+			authfile:     authfile,
 			auto:         u,
 			container:    ctr,
 			policy:       policy,
@@ -469,7 +447,7 @@ func (u *updater) assembleTasks(ctx context.Context) []error {
 		u.unitToTasks[unit] = append(u.unitToTasks[unit], &t)
 	}
 
-	return errors
+	return errs
 }
 
 // systemdUnitForContainer returns the name of the container's systemd unit.

@@ -10,10 +10,11 @@ import (
 
 	"github.com/containers/common/pkg/completion"
 	"github.com/containers/common/pkg/download"
-	"github.com/containers/podman/v4/cmd/podman/registry"
-	"github.com/containers/podman/v4/cmd/podman/validate"
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v5/cmd/podman/registry"
+	"github.com/containers/podman/v5/cmd/podman/validate"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	"github.com/containers/podman/v5/pkg/util"
+	"github.com/containers/storage/pkg/fileutils"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -85,7 +86,7 @@ func load(cmd *cobra.Command, args []string) error {
 			loadOpts.Input = tmpfile
 		}
 
-		if _, err := os.Stat(loadOpts.Input); err != nil {
+		if err := fileutils.Exists(loadOpts.Input); err != nil {
 			return err
 		}
 	} else {

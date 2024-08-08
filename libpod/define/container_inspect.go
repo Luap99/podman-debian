@@ -1,9 +1,13 @@
 package define
 
 import (
+	"encoding/json"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/containers/image/v5/manifest"
+	"github.com/containers/podman/v5/pkg/signal"
 )
 
 type InspectIDMappings struct {
@@ -44,7 +48,7 @@ type InspectContainerConfig struct {
 	// Container working directory
 	WorkingDir string `json:"WorkingDir"`
 	// Container entrypoint
-	Entrypoint string `json:"Entrypoint"`
+	Entrypoint []string `json:"Entrypoint"`
 	// On-build arguments - presently unused. More of Buildah's domain.
 	OnBuild *string `json:"OnBuild"`
 	// Container labels
@@ -52,7 +56,7 @@ type InspectContainerConfig struct {
 	// Container annotations
 	Annotations map[string]string `json:"Annotations"`
 	// Container stop signal
-	StopSignal uint `json:"StopSignal"`
+	StopSignal string `json:"StopSignal"`
 	// Configured healthcheck for the container
 	Healthcheck *manifest.Schema2HealthConfig `json:"Healthcheck,omitempty"`
 	// HealthcheckOnFailureAction defines an action to take once the container turns unhealthy.
@@ -85,6 +89,77 @@ type InspectContainerConfig struct {
 	SdNotifyMode string `json:"sdNotifyMode,omitempty"`
 	// SdNotifySocket is the NOTIFY_SOCKET in use by/configured for the container.
 	SdNotifySocket string `json:"sdNotifySocket,omitempty"`
+
+	// V4PodmanCompatMarshal indicates that the json marshaller should
+	// use the old v4 inspect format to keep API compatibility.
+	V4PodmanCompatMarshal bool `json:"-"`
+}
+
+// UnmarshalJSON allow compatibility with podman V4 API
+func (insp *InspectContainerConfig) UnmarshalJSON(data []byte) error {
+	type Alias InspectContainerConfig
+	aux := &struct {
+		Entrypoint interface{} `json:"Entrypoint"`
+		StopSignal interface{} `json:"StopSignal"`
+		*Alias
+	}{
+		Alias: (*Alias)(insp),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	switch entrypoint := aux.Entrypoint.(type) {
+	case string:
+		insp.Entrypoint = strings.Split(entrypoint, " ")
+	case []string:
+		insp.Entrypoint = entrypoint
+	case []interface{}:
+		insp.Entrypoint = []string{}
+		for _, entry := range entrypoint {
+			if str, ok := entry.(string); ok {
+				insp.Entrypoint = append(insp.Entrypoint, str)
+			}
+		}
+	case nil:
+		insp.Entrypoint = []string{}
+	default:
+		return fmt.Errorf("cannot unmarshal Config.Entrypoint of type  %T", entrypoint)
+	}
+
+	switch stopsignal := aux.StopSignal.(type) {
+	case string:
+		insp.StopSignal = stopsignal
+	case float64:
+		insp.StopSignal = signal.ToDockerFormat(uint(stopsignal))
+	case nil:
+		break
+	default:
+		return fmt.Errorf("cannot unmarshal Config.StopSignal of type  %T", stopsignal)
+	}
+	return nil
+}
+
+func (insp *InspectContainerConfig) MarshalJSON() ([]byte, error) {
+	// the alias is needed otherwise MarshalJSON will
+	type Alias InspectContainerConfig
+	conf := (*Alias)(insp)
+	if !insp.V4PodmanCompatMarshal {
+		return json.Marshal(conf)
+	}
+
+	type v4InspectContainerConfig struct {
+		Entrypoint string `json:"Entrypoint"`
+		StopSignal uint   `json:"StopSignal"`
+		*Alias
+	}
+	stopSignal, _ := signal.ParseSignal(insp.StopSignal)
+	newConf := &v4InspectContainerConfig{
+		Entrypoint: strings.Join(insp.Entrypoint, " "),
+		StopSignal: uint(stopSignal),
+		Alias:      conf,
+	}
+	return json.Marshal(newConf)
 }
 
 // InspectRestartPolicy holds information about the container's restart policy.
@@ -206,33 +281,34 @@ type InspectMount struct {
 // Docker, but here we see more fields that are unused (nonsensical in the
 // context of Libpod).
 type InspectContainerState struct {
-	OciVersion     string             `json:"OciVersion"`
-	Status         string             `json:"Status"`
-	Running        bool               `json:"Running"`
-	Paused         bool               `json:"Paused"`
-	Restarting     bool               `json:"Restarting"` // TODO
-	OOMKilled      bool               `json:"OOMKilled"`
-	Dead           bool               `json:"Dead"`
-	Pid            int                `json:"Pid"`
-	ConmonPid      int                `json:"ConmonPid,omitempty"`
-	ExitCode       int32              `json:"ExitCode"`
-	Error          string             `json:"Error"` // TODO
-	StartedAt      time.Time          `json:"StartedAt"`
-	FinishedAt     time.Time          `json:"FinishedAt"`
-	Health         HealthCheckResults `json:"Health,omitempty"`
-	Checkpointed   bool               `json:"Checkpointed,omitempty"`
-	CgroupPath     string             `json:"CgroupPath,omitempty"`
-	CheckpointedAt time.Time          `json:"CheckpointedAt,omitempty"`
-	RestoredAt     time.Time          `json:"RestoredAt,omitempty"`
-	CheckpointLog  string             `json:"CheckpointLog,omitempty"`
-	CheckpointPath string             `json:"CheckpointPath,omitempty"`
-	RestoreLog     string             `json:"RestoreLog,omitempty"`
-	Restored       bool               `json:"Restored,omitempty"`
+	OciVersion     string              `json:"OciVersion"`
+	Status         string              `json:"Status"`
+	Running        bool                `json:"Running"`
+	Paused         bool                `json:"Paused"`
+	Restarting     bool                `json:"Restarting"` // TODO
+	OOMKilled      bool                `json:"OOMKilled"`
+	Dead           bool                `json:"Dead"`
+	Pid            int                 `json:"Pid"`
+	ConmonPid      int                 `json:"ConmonPid,omitempty"`
+	ExitCode       int32               `json:"ExitCode"`
+	Error          string              `json:"Error"` // TODO
+	StartedAt      time.Time           `json:"StartedAt"`
+	FinishedAt     time.Time           `json:"FinishedAt"`
+	Health         *HealthCheckResults `json:"Health,omitempty"`
+	Checkpointed   bool                `json:"Checkpointed,omitempty"`
+	CgroupPath     string              `json:"CgroupPath,omitempty"`
+	CheckpointedAt time.Time           `json:"CheckpointedAt,omitempty"`
+	RestoredAt     time.Time           `json:"RestoredAt,omitempty"`
+	CheckpointLog  string              `json:"CheckpointLog,omitempty"`
+	CheckpointPath string              `json:"CheckpointPath,omitempty"`
+	RestoreLog     string              `json:"RestoreLog,omitempty"`
+	Restored       bool                `json:"Restored,omitempty"`
+	StoppedByUser  bool                `json:"StoppedByUser,omitempty"`
 }
 
 // Healthcheck returns the HealthCheckResults. This is used for old podman compat
 // to make the "Healthcheck" key available in the go template.
-func (s *InspectContainerState) Healthcheck() HealthCheckResults {
+func (s *InspectContainerState) Healthcheck() *HealthCheckResults {
 	return s.Health
 }
 
@@ -314,6 +390,9 @@ type InspectContainerHostConfig struct {
 	// It is not handled directly within libpod and is stored in an
 	// annotation.
 	AutoRemove bool `json:"AutoRemove"`
+	// Annotations are provided to the runtime when the container is
+	// started.
+	Annotations map[string]string `json:"Annotations"`
 	// VolumeDriver is presently unused and is retained for Docker
 	// compatibility.
 	VolumeDriver string `json:"VolumeDriver"`
@@ -566,6 +645,9 @@ type InspectContainerHostConfig struct {
 	IOMaximumBandwidth uint64 `json:"IOMaximumBandwidth"`
 	// CgroupConf is the configuration for cgroup v2.
 	CgroupConf map[string]string `json:"CgroupConf"`
+	// IntelRdtClosID defines the Intel RDT CAT Class Of Service (COS) that
+	// all processes of the container should run in.
+	IntelRdtClosID string `json:"IntelRdtClosID,omitempty"`
 }
 
 // Address represents an IP address.
@@ -654,44 +736,46 @@ type InspectNetworkSettings struct {
 // compatible with `docker inspect` JSON, but additional fields have been added
 // as required to share information not in the original output.
 type InspectContainerData struct {
-	ID              string                      `json:"Id"`
-	Created         time.Time                   `json:"Created"`
-	Path            string                      `json:"Path"`
-	Args            []string                    `json:"Args"`
-	State           *InspectContainerState      `json:"State"`
-	Image           string                      `json:"Image"`
-	ImageDigest     string                      `json:"ImageDigest"`
-	ImageName       string                      `json:"ImageName"`
-	Rootfs          string                      `json:"Rootfs"`
-	Pod             string                      `json:"Pod"`
-	ResolvConfPath  string                      `json:"ResolvConfPath"`
-	HostnamePath    string                      `json:"HostnamePath"`
-	HostsPath       string                      `json:"HostsPath"`
-	StaticDir       string                      `json:"StaticDir"`
-	OCIConfigPath   string                      `json:"OCIConfigPath,omitempty"`
-	OCIRuntime      string                      `json:"OCIRuntime,omitempty"`
-	ConmonPidFile   string                      `json:"ConmonPidFile"`
-	PidFile         string                      `json:"PidFile"`
-	Name            string                      `json:"Name"`
-	RestartCount    int32                       `json:"RestartCount"`
-	Driver          string                      `json:"Driver"`
-	MountLabel      string                      `json:"MountLabel"`
-	ProcessLabel    string                      `json:"ProcessLabel"`
-	AppArmorProfile string                      `json:"AppArmorProfile"`
-	EffectiveCaps   []string                    `json:"EffectiveCaps"`
-	BoundingCaps    []string                    `json:"BoundingCaps"`
-	ExecIDs         []string                    `json:"ExecIDs"`
-	GraphDriver     *DriverData                 `json:"GraphDriver"`
-	SizeRw          *int64                      `json:"SizeRw,omitempty"`
-	SizeRootFs      int64                       `json:"SizeRootFs,omitempty"`
-	Mounts          []InspectMount              `json:"Mounts"`
-	Dependencies    []string                    `json:"Dependencies"`
-	NetworkSettings *InspectNetworkSettings     `json:"NetworkSettings"`
-	Namespace       string                      `json:"Namespace"`
-	IsInfra         bool                        `json:"IsInfra"`
-	IsService       bool                        `json:"IsService"`
-	Config          *InspectContainerConfig     `json:"Config"`
-	HostConfig      *InspectContainerHostConfig `json:"HostConfig"`
+	ID                      string                      `json:"Id"`
+	Created                 time.Time                   `json:"Created"`
+	Path                    string                      `json:"Path"`
+	Args                    []string                    `json:"Args"`
+	State                   *InspectContainerState      `json:"State"`
+	Image                   string                      `json:"Image"`
+	ImageDigest             string                      `json:"ImageDigest"`
+	ImageName               string                      `json:"ImageName"`
+	Rootfs                  string                      `json:"Rootfs"`
+	Pod                     string                      `json:"Pod"`
+	ResolvConfPath          string                      `json:"ResolvConfPath"`
+	HostnamePath            string                      `json:"HostnamePath"`
+	HostsPath               string                      `json:"HostsPath"`
+	StaticDir               string                      `json:"StaticDir"`
+	OCIConfigPath           string                      `json:"OCIConfigPath,omitempty"`
+	OCIRuntime              string                      `json:"OCIRuntime,omitempty"`
+	ConmonPidFile           string                      `json:"ConmonPidFile"`
+	PidFile                 string                      `json:"PidFile"`
+	Name                    string                      `json:"Name"`
+	RestartCount            int32                       `json:"RestartCount"`
+	Driver                  string                      `json:"Driver"`
+	MountLabel              string                      `json:"MountLabel"`
+	ProcessLabel            string                      `json:"ProcessLabel"`
+	AppArmorProfile         string                      `json:"AppArmorProfile"`
+	EffectiveCaps           []string                    `json:"EffectiveCaps"`
+	BoundingCaps            []string                    `json:"BoundingCaps"`
+	ExecIDs                 []string                    `json:"ExecIDs"`
+	GraphDriver             *DriverData                 `json:"GraphDriver"`
+	SizeRw                  *int64                      `json:"SizeRw,omitempty"`
+	SizeRootFs              int64                       `json:"SizeRootFs,omitempty"`
+	Mounts                  []InspectMount              `json:"Mounts"`
+	Dependencies            []string                    `json:"Dependencies"`
+	NetworkSettings         *InspectNetworkSettings     `json:"NetworkSettings"`
+	Namespace               string                      `json:"Namespace"`
+	IsInfra                 bool                        `json:"IsInfra"`
+	IsService               bool                        `json:"IsService"`
+	KubeExitCodePropagation string                      `json:"KubeExitCodePropagation"`
+	LockNumber              uint32                      `json:"lockNumber"`
+	Config                  *InspectContainerConfig     `json:"Config"`
+	HostConfig              *InspectContainerHostConfig `json:"HostConfig"`
 }
 
 // InspectExecSession contains information about a given exec session.

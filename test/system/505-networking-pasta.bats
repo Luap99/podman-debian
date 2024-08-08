@@ -18,48 +18,136 @@ function setup() {
     XFER_FILE="${PODMAN_TMPDIR}/pasta.bin"
 }
 
-# pasta_test_do() - Run tests involving clients and servers
-# $1:    IP version: 4 or 6
-# $2:    Interface type: "tap" or "loopback"
-# $3:    Protocol: "tcp" or "udp"
-# $4:    Size of port range, 1 for tests over a single port
-# $5:    Delta for remapped destination ports in guest
-# $6:    How specifically pasta will bind: "port", "address", or "interface"
-# $7:    Bytes to transfer, with multiplicative suffixes as supported by dd(1)
-function pasta_test_do() {
-    local ip_ver="${1}"
-    local iftype="${2}"
-    local proto="${3}"
-    local range="${4}"
-    local delta="${5}"
-    local bind_type="${6}"
-    local bytes="${7}"
+# _set_opt() - meta-helper for pasta_test_do.
+#
+# Sets an option, but panics if option is already set (e.g. UDP+TCP, IPv4/v6)
+function _set_opt() {
+    local opt_name=$1
+    local -n opt_ref=$1
+    local newval=$2
 
+    if [[ -n "$opt_ref" ]]; then
+        # $kw sneakily inherited from caller
+        die "'$kw' in test name sets $opt_name='$newval', but $opt_name has already been set to '$opt_ref'"
+    fi
+    opt_ref=$newval
+}
+
+# pasta_test_do() - Run tests involving clients and servers
+#
+# This helper function is invoked without arguments; it determines what to do
+# based on the @test name.
+function pasta_test_do() {
+    local ip_ver iftype proto range delta bind_type bytes
+
+    # Normalize test name back to human-readable form. BATS gives us a
+    # sanitized string with non-alnum converted to '-XX' (dash-hexbyte)
+    # and spaces converted to underscores. Convert all of those to spaces.
+    # This then gives us only the important (mutable) part of the test:
+    #
+    #    test_TCP_translated_..._forwarding-2c_IPv4-2c_loopback
+    # ->      TCP translated ... forwarding    IPv4    loopback
+    # ->      TCP translated     forwarding    IPv4    loopback
+    local test_name=$(printf "$(sed \
+                      -e 's/^test_//'                 \
+                      -e 's/-\([0-9a-f]\{2\}\)/ /gI' \
+                      -e 's/_/ /g'                   \
+                      <<<"${BATS_TEST_NAME}")")
+
+    # We now have the @test name as specified in the script, minus punctuation.
+    # From each of the name components, determine an action.
+    #
+    #    TCP translated port range forwarding  IPv4  loopback
+    #    |   |          |    |     |           |     \__ iftype=loopback
+    #    |   |          |    |     |           \________ ip_ver=4
+    #    |   |          |    |     \____________________ bytes=1
+    #    |   |          |    \__________________________ range=3
+    #    |   |          \_______________________________ (ignored)
+    #    |   \__________________________________________ delta=1
+    #    \______________________________________________ proto=tcp
+    #
+    # Each keyword maps to one option. Conflicts ("TCP ... UDP") are fatal
+    # errors, as are unknown keywords.
+    for kw in $test_name; do
+        case $kw in
+            TCP|UDP)           _set_opt proto ${kw,,} ;;
+            IPv*)              _set_opt ip_ver $(expr "$kw" : "IPv\(.\)") ;;
+            Single)            _set_opt range 1 ;;
+            range)             _set_opt range 3 ;;
+            Address|Interface) _set_opt bind_type ${kw,,} ;;
+            bound)             assert "$bind_type" != "" "WHAT-bound???" ;;
+            [Tt]ranslated)     _set_opt delta    1 ;;
+            loopback|tap)      _set_opt iftype $kw ;;
+            port)              ;;   # always occurs with 'forwarding'; ignore
+            forwarding)        _set_opt bytes   1 ;;
+            large|small)       _set_opt bytes $kw ;;
+            transfer)          assert "$bytes" != "" "'transfer' must be preceded by 'large' or 'small'" ;;
+            *)                 die "cannot grok '$kw' in test name" ;;
+        esac
+    done
+
+    # Sanity checks: all test names must include IPv4/6 and TCP/UDP
+    test -n "$ip_ver" || die "Test name must include IPv4 or IPv6"
+    test -n "$proto"  || die "Test name must include TCP or UDP"
+    test -n "$bytes"  || die "Test name must include 'forwarding' or 'large/small transfer'"
+
+    # Major decision point: simple forwarding test, or multi-byte transfer?
+    if [[ $bytes -eq 1 ]]; then
+        # Simple forwarding check
+        # We can't always determine these from the test name. Use sane defaults.
+        range=${range:-1}
+        delta=${delta:-0}
+        bind_type=${bind_type:-port}
+    else
+        # Data transfer. Translate small/large to dd-recognizable sizes
+        case "$bytes" in
+            small)  bytes="2k" ;;
+            large)  case "$proto" in
+                        tcp) bytes="10M" ;;
+                        udp) bytes=$(($(cat /proc/sys/net/core/wmem_default) / 4)) ;;
+                        *)   die "Internal error: unknown proto '$proto'" ;;
+                    esac
+                    ;;
+            *)      die "Internal error: unknown transfer size '$bytes'" ;;
+        esac
+
+        # On data transfers, no other input args can be set in test name.
+        # Confirm that they are not defined, and set to a suitable default.
+        kw="something"
+        _set_opt range     1
+        _set_opt delta     0
+        _set_opt bind_type port
+    fi
+
+    # Dup check: make sure we haven't already run this combination of settings.
+    # This serves two purposes:
+    #  1) prevent developer from accidentally copy/pasting the same test
+    #  2) make sure our test-name-parsing code isn't missing anything important
+    local tests_run=${BATS_FILE_TMPDIR}/tests_run
+    touch ${tests_run}
+    local testid="IPv${ip_ver} $proto $iftype $bind_type range=$range delta=$delta bytes=$bytes"
+    if grep -q -F -- "$testid" ${tests_run}; then
+        die "Duplicate test! Have already run $testid"
+    fi
+    echo "$testid" >>${tests_run}
+
+    # Done figuring out test params. Now do the real work.
     # Calculate and set addresses,
     if [ ${ip_ver} -eq 4 ]; then
         skip_if_no_ipv4 "IPv4 not routable on the host"
-        if [ ${iftype} = "loopback" ]; then
-            local addr="127.0.0.1"
-        else
-            local addr="$(ipv4_get_addr_global)"
-        fi
     elif [ ${ip_ver} -eq 6 ]; then
         skip_if_no_ipv6 "IPv6 not routable on the host"
-        if [ ${iftype} = "loopback" ]; then
-            local addr="::1"
-        else
-            local addr="$(ipv6_get_addr_global)"
-        fi
     else
         skip "Unsupported IP version"
     fi
 
-    # interface names,
     if [ ${iftype} = "loopback" ]; then
         local ifname="lo"
     else
-        local ifname="$(ether_get_name)"
+        local ifname="$(default_ifname "${ip_ver}")"
     fi
+
+    local addr="$(default_addr "${ip_ver}" "${ifname}")"
 
     # ports,
     if [ ${range} -gt 1 ]; then
@@ -69,7 +157,7 @@ function pasta_test_do() {
         local xseq="$(echo ${xport} | tr '-' ' ')"
     else
         local port=$(random_free_port "" ${address} ${proto})
-        local xport="$((port + port_delta))"
+        local xport="$((port + delta))"
         local seq="${port} ${port}"
         local xseq="${xport} ${xport}"
     fi
@@ -91,13 +179,6 @@ function pasta_test_do() {
         recv="STDOUT"
     else
         recv="EXEC:md5sum"
-    fi
-
-    # socat options for first <address> in client ("OPEN" or "EXEC"),
-    if [ "${bytes}" = "1" ]; then
-        send="EXEC:printf x"
-    else
-        send="OPEN:${XFER_FILE}"
     fi
 
     # and port forwarding configuration for Podman and pasta.
@@ -124,6 +205,7 @@ function pasta_test_do() {
         dd if=/dev/urandom bs=${bytes} count=1 of="${XFER_FILE}"
         local expect="$(cat "${XFER_FILE}" | md5sum)"
     else
+        printf "x" > "${XFER_FILE}"
         local expect="$(for i in $(seq ${seq}); do printf "x"; done)"
     fi
 
@@ -142,12 +224,13 @@ function pasta_test_do() {
         local connect="${proto_upper}${ip_ver}:[${addr}]:${one_port}"
         [ "${proto}" = "udp" ] && connect="${connect},shut-null"
 
-        (while sleep ${delay} && ! socat -u "${send}" "${connect}"; do :
+        local retries=10
+        (while sleep ${delay} && test $((retries--)) -gt 0 && ! timeout --foreground -v --kill=5 90 socat -u "OPEN:${XFER_FILE}" "${connect}"; do :
          done) &
     done
 
     # and server,
-    run_podman run --net=pasta"${pasta_spec}" -p "${podman_spec}" "${IMAGE}" \
+    run_podman run --rm --net=pasta"${pasta_spec}" -p "${podman_spec}" "${IMAGE}" \
                    sh -c 'for port in $(seq '"${xseq}"'); do '\
 '                             socat -u '"${bind}"' '"${recv}"' & '\
 '                         done; wait'
@@ -156,28 +239,24 @@ function pasta_test_do() {
     assert "${output}" = "${expect}" "Mismatch between data sent and received"
 }
 
-function teardown() {
-    rm -f "${XFER_FILE}"
-}
-
 ### Addresses ##################################################################
 
-@test "podman networking with pasta(1) - IPv4 default address assignment" {
+@test "IPv4 default address assignment" {
     skip_if_no_ipv4 "IPv4 not routable on the host"
 
-    run_podman run --net=pasta $IMAGE ip -j -4 address show
+    run_podman run --rm --net=pasta $IMAGE ip -j -4 address show
 
     local container_address="$(ipv4_get_addr_global "${output}")"
-    local host_address="$(ipv4_get_addr_global)"
+    local host_address="$(default_addr 4)"
 
     assert "${container_address}" = "${host_address}" \
            "Container address not matching host"
 }
 
-@test "podman networking with pasta(1) - IPv4 address assignment" {
+@test "IPv4 address assignment" {
     skip_if_no_ipv4 "IPv4 not routable on the host"
 
-    run_podman run --net=pasta:-a,192.0.2.1 $IMAGE ip -j -4 address show
+    run_podman run --rm --net=pasta:-a,192.0.2.1 $IMAGE ip -j -4 address show
 
     local container_address="$(ipv4_get_addr_global "${output}")"
 
@@ -185,11 +264,11 @@ function teardown() {
            "Container address not matching configured value"
 }
 
-@test "podman networking with pasta(1) - No IPv4" {
+@test "No IPv4" {
     skip_if_no_ipv4 "IPv4 not routable on the host"
     skip_if_no_ipv6 "IPv6 not routable on the host"
 
-    run_podman run --net=pasta:-6 $IMAGE ip -j -4 address show
+    run_podman run --rm --net=pasta:-6 $IMAGE ip -j -4 address show
 
     local container_address="$(ipv4_get_addr_global "${output}")"
 
@@ -197,22 +276,22 @@ function teardown() {
            "Container has IPv4 global address with IPv4 disabled"
 }
 
-@test "podman networking with pasta(1) - IPv6 default address assignment" {
+@test "IPv6 default address assignment" {
     skip_if_no_ipv6 "IPv6 not routable on the host"
 
-    run_podman run --net=pasta $IMAGE ip -j -6 address show
+    run_podman run --rm --net=pasta $IMAGE ip -j -6 address show
 
     local container_address="$(ipv6_get_addr_global "${output}")"
-    local host_address="$(ipv6_get_addr_global)"
+    local host_address="$(default_addr 6)"
 
     assert "${container_address}" = "${host_address}" \
            "Container address not matching host"
 }
 
-@test "podman networking with pasta(1) - IPv6 address assignment" {
+@test "IPv6 address assignment" {
     skip_if_no_ipv6 "IPv6 not routable on the host"
 
-    run_podman run --net=pasta:-a,2001:db8::1 $IMAGE ip -j -6 address show
+    run_podman run --rm --net=pasta:-a,2001:db8::1 $IMAGE ip -j -6 address show
 
     local container_address="$(ipv6_get_addr_global "${output}")"
 
@@ -220,11 +299,11 @@ function teardown() {
            "Container address not matching configured value"
 }
 
-@test "podman networking with pasta(1) - No IPv6" {
+@test "No IPv6" {
     skip_if_no_ipv6 "IPv6 not routable on the host"
     skip_if_no_ipv4 "IPv4 not routable on the host"
 
-    run_podman run --net=pasta:-4 $IMAGE ip -j -6 address show
+    run_podman run --rm --net=pasta:-4 $IMAGE ip -j -6 address show
 
     local container_address="$(ipv6_get_addr_global "${output}")"
 
@@ -232,12 +311,27 @@ function teardown() {
            "Container has IPv6 global address with IPv6 disabled"
 }
 
-### Routes #####################################################################
-
-@test "podman networking with pasta(1) - IPv4 default route" {
+@test "podman puts pasta IP in /etc/hosts" {
     skip_if_no_ipv4 "IPv4 not routable on the host"
 
-    run_podman run --net=pasta $IMAGE ip -j -4 route show
+    pname="p$(random_string 30)"
+    ip="$(default_addr 4)"
+
+    run_podman pod create --net=pasta --name "${pname}"
+    run_podman run --pod="${pname}" "${IMAGE}" getent hosts "${pname}"
+
+    assert "$(echo ${output} | cut -f1 -d' ')" = "${ip}" "Correct /etc/hosts entry missing"
+
+    run_podman pod rm "${pname}"
+    run_podman rmi $(pause_image)
+}
+
+### Routes #####################################################################
+
+@test "IPv4 default route" {
+    skip_if_no_ipv4 "IPv4 not routable on the host"
+
+    run_podman run --rm --net=pasta $IMAGE ip -j -4 route show
 
     local container_route="$(ipv4_get_route_default "${output}")"
     local host_route="$(ipv4_get_route_default)"
@@ -246,10 +340,10 @@ function teardown() {
            "Container route not matching host"
 }
 
-@test "podman networking with pasta(1) - IPv4 default route assignment" {
+@test "IPv4 default route assignment" {
     skip_if_no_ipv4 "IPv4 not routable on the host"
 
-    run_podman run --net=pasta:-a,192.0.2.2,-g,192.0.2.1 $IMAGE \
+    run_podman run --rm --net=pasta:-a,192.0.2.2,-g,192.0.2.1 $IMAGE \
         ip -j -4 route show
 
     local container_route="$(ipv4_get_route_default "${output}")"
@@ -258,10 +352,10 @@ function teardown() {
            "Container route not matching configured value"
 }
 
-@test "podman networking with pasta(1) - IPv6 default route" {
+@test "IPv6 default route" {
     skip_if_no_ipv6 "IPv6 not routable on the host"
 
-    run_podman run --net=pasta $IMAGE ip -j -6 route show
+    run_podman run --rm --net=pasta $IMAGE ip -j -6 route show
 
     local container_route="$(ipv6_get_route_default "${output}")"
     local host_route="$(ipv6_get_route_default)"
@@ -270,10 +364,10 @@ function teardown() {
            "Container route not matching host"
 }
 
-@test "podman networking with pasta(1) - IPv6 default route assignment" {
+@test "IPv6 default route assignment" {
     skip_if_no_ipv6 "IPv6 not routable on the host"
 
-    run_podman run --net=pasta:-a,2001:db8::2,-g,2001:db8::1 $IMAGE \
+    run_podman run --rm --net=pasta:-a,2001:db8::2,-g,2001:db8::1 $IMAGE \
         ip -j -6 route show
 
     local container_route="$(ipv6_get_route_default "${output}")"
@@ -284,8 +378,8 @@ function teardown() {
 
 ### Interfaces #################################################################
 
-@test "podman networking with pasta(1) - Default MTU" {
-    run_podman run --net=pasta $IMAGE ip -j link show
+@test "Default MTU" {
+    run_podman run --rm --net=pasta $IMAGE ip -j link show
 
     container_tap_mtu="$(ether_get_mtu "${output}")"
 
@@ -293,8 +387,8 @@ function teardown() {
            "Container's default MTU not 65220 bytes by default"
 }
 
-@test "podman networking with pasta(1) - MTU assignment" {
-    run_podman run --net=pasta:-m,1280 $IMAGE ip -j link show
+@test "MTU assignment" {
+    run_podman run --rm --net=pasta:-m,1280 $IMAGE ip -j link show
 
     container_tap_mtu="$(ether_get_mtu "${output}")"
 
@@ -302,8 +396,8 @@ function teardown() {
            "Container's default MTU not matching configured 1280 bytes"
 }
 
-@test "podman networking with pasta(1) - Loopback interface state" {
-    run_podman run --net=pasta $IMAGE ip -j link show
+@test "Loopback interface state" {
+    run_podman run --rm --net=pasta $IMAGE ip -j link show
 
     local jq_expr='.[] | select(.link_type == "loopback").flags | '\
 '              contains(["UP"])'
@@ -316,34 +410,37 @@ function teardown() {
 
 ### DNS ########################################################################
 
-@test "podman networking with pasta(1) - External resolver, IPv4" {
+@test "External resolver, IPv4" {
     skip_if_no_ipv4 "IPv4 not routable on the host"
 
-    run_podman '?' run --net=pasta $IMAGE nslookup 127.0.0.1
+    run_podman '?' run --rm --net=pasta $IMAGE nslookup 127.0.0.1
 
     assert "$output" =~ "1.0.0.127.in-addr.arpa" \
            "127.0.0.1 not resolved"
 }
 
-@test "podman networking with pasta(1) - External resolver, IPv6" {
+@test "External resolver, IPv6" {
     skip_if_no_ipv6 "IPv6 not routable on the host"
 
-    run_podman run --net=pasta $IMAGE nslookup ::1 || :
+    run_podman '?' run --rm --net=pasta $IMAGE nslookup ::1
 
     assert "$output" =~ "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa" \
            "::1 not resolved"
 }
 
-@test "podman networking with pasta(1) - Local forwarder, IPv4" {
+@test "Local forwarder, IPv4" {
     skip_if_no_ipv4 "IPv4 not routable on the host"
 
-    run_podman run --dns 198.51.100.1 \
-        --net=pasta:--dns-forward,198.51.100.1 $IMAGE nslookup 127.0.0.1 || :
+    # pasta is the default now so no need to set it
+    run_podman run --rm $IMAGE grep nameserver /etc/resolv.conf
+    assert "${lines[0]}" == "nameserver 169.254.0.1" "default dns forward server"
 
+    run_podman run --rm --net=pasta:--dns-forward,198.51.100.1 \
+        $IMAGE nslookup 127.0.0.1 || :
     assert "$output" =~ "1.0.0.127.in-addr.arpa" "No answer from resolver"
 }
 
-@test "podman networking with pasta(1) - Local forwarder, IPv6" {
+@test "Local forwarder, IPv6" {
     skip_if_no_ipv6 "IPv6 not routable on the host"
 
     # TODO: Two issues here:
@@ -371,313 +468,364 @@ function teardown() {
 
 ### TCP/IPv4 Port Forwarding ###################################################
 
-@test "podman networking with pasta(1) - Single TCP port forwarding, IPv4, tap" {
-    pasta_test_do 4 tap      tcp 1 0 "port"      1
+@test "Single TCP port forwarding, IPv4, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Single TCP port forwarding, IPv4, loopback" {
-    pasta_test_do 4 loopback tcp 1 0 "port"      1
+@test "Single TCP port forwarding, IPv4, loopback" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - TCP port range forwarding, IPv4, tap" {
-    pasta_test_do 4 tap      tcp 2 0 "port"      1
+@test "TCP port range forwarding, IPv4, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - TCP port range forwarding, IPv4, loopback" {
-    pasta_test_do 4 loopback tcp 2 0 "port"      1
+@test "TCP port range forwarding, IPv4, loopback" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Translated TCP port forwarding, IPv4, tap" {
-    pasta_test_do 4 tap      tcp 1 1 "port"      1
+@test "Translated TCP port forwarding, IPv4, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Translated TCP port forwarding, IPv4, loopback" {
-    pasta_test_do 4 loopback tcp 1 1 "port"      1
+@test "Translated TCP port forwarding, IPv4, loopback" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - TCP translated port range forwarding, IPv4, tap" {
-    pasta_test_do 4 tap      tcp 2 1 "port"      1
+@test "TCP translated port range forwarding, IPv4, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - TCP translated port range forwarding, IPv4, loopback" {
-    pasta_test_do 4 loopback tcp 2 1 "port"      1
+@test "TCP translated port range forwarding, IPv4, loopback" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Address-bound TCP port forwarding, IPv4, tap" {
-    pasta_test_do 4 tap      tcp 1 0 "address"   1
+@test "Address-bound TCP port forwarding, IPv4, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Address-bound TCP port forwarding, IPv4, loopback" {
-    pasta_test_do 4 loopback tcp 1 0 "address"   1
+@test "Address-bound TCP port forwarding, IPv4, loopback" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Interface-bound TCP port forwarding, IPv4, tap" {
-    pasta_test_do 4 tap      tcp 1 0 "interface" 1
+@test "Interface-bound TCP port forwarding, IPv4, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Interface-bound TCP port forwarding, IPv4, loopback" {
-    pasta_test_do 4 loopback tcp 1 0 "interface" 1
+@test "Interface-bound TCP port forwarding, IPv4, loopback" {
+    pasta_test_do
 }
 
 ### TCP/IPv6 Port Forwarding ###################################################
 
-@test "podman networking with pasta(1) - Single TCP port forwarding, IPv6, tap" {
-    pasta_test_do 6 tap      tcp 1 0 "port"      1
+@test "Single TCP port forwarding, IPv6, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Single TCP port forwarding, IPv6, loopback" {
-    pasta_test_do 6 loopback tcp 1 0 "port"      1
+@test "Single TCP port forwarding, IPv6, loopback" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - TCP port range forwarding, IPv6, tap" {
-    pasta_test_do 6 tap      tcp 2 0 "port"      1
+@test "TCP port range forwarding, IPv6, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - TCP port range forwarding, IPv6, loopback" {
-    pasta_test_do 6 loopback tcp 3 0 "port"      1
+@test "TCP port range forwarding, IPv6, loopback" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Translated TCP port forwarding, IPv6, tap" {
-    pasta_test_do 6 tap      tcp 1 1 "port"      1
+@test "Translated TCP port forwarding, IPv6, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Translated TCP port forwarding, IPv6, loopback" {
-    pasta_test_do 6 loopback tcp 1 1 "port"      1
+@test "Translated TCP port forwarding, IPv6, loopback" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - TCP translated port range forwarding, IPv6, tap" {
-    pasta_test_do 6 tap      tcp 2 1 "port"      1
+@test "TCP translated port range forwarding, IPv6, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - TCP translated port range forwarding, IPv6, loopback" {
-    pasta_test_do 6 loopback tcp 2 1 "port"      1
+@test "TCP translated port range forwarding, IPv6, loopback" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Address-bound TCP port forwarding, IPv6, tap" {
-    pasta_test_do 6 tap      tcp 1 0 "address"   1
+@test "Address-bound TCP port forwarding, IPv6, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Address-bound TCP port forwarding, IPv6, loopback" {
-    pasta_test_do 6 loopback tcp 1 0 "address"   1
+@test "Address-bound TCP port forwarding, IPv6, loopback" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Interface-bound TCP port forwarding, IPv6, tap" {
-    pasta_test_do 6 tap      tcp 1 0 "interface" 1
+@test "Interface-bound TCP port forwarding, IPv6, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Interface-bound TCP port forwarding, IPv6, loopback" {
-    pasta_test_do 6 loopback tcp 1 0 "interface" 1
+@test "Interface-bound TCP port forwarding, IPv6, loopback" {
+    pasta_test_do
 }
 
 ### UDP/IPv4 Port Forwarding ###################################################
 
-@test "podman networking with pasta(1) - Single UDP port forwarding, IPv4, tap" {
-    pasta_test_do 4 tap      udp 1 0 "port"      1
+@test "Single UDP port forwarding, IPv4, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Single UDP port forwarding, IPv4, loopback" {
-    pasta_test_do 4 loopback udp 1 0 "port"      1
+@test "Single UDP port forwarding, IPv4, loopback" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - UDP port range forwarding, IPv4, tap" {
-    pasta_test_do 4 tap      udp 3 0 "port"      1
+@test "UDP port range forwarding, IPv4, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - UDP port range forwarding, IPv4, loopback" {
-    pasta_test_do 4 loopback udp 3 0 "port"      1
+@test "UDP port range forwarding, IPv4, loopback" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Translated UDP port forwarding, IPv4, tap" {
-    pasta_test_do 4 tap      udp 1 1 "port"      1
+@test "Translated UDP port forwarding, IPv4, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Translated UDP port forwarding, IPv4, loopback" {
-    pasta_test_do 4 loopback udp 1 1 "port"      1
+@test "Translated UDP port forwarding, IPv4, loopback" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - UDP translated port range forwarding, IPv4, tap" {
-    pasta_test_do 4 tap      udp 3 1 "port"      1
+@test "UDP translated port range forwarding, IPv4, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - UDP translated port range forwarding, IPv4, loopback" {
-    pasta_test_do 4 loopback udp 3 1 "port"      1
+@test "UDP translated port range forwarding, IPv4, loopback" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Address-bound UDP port forwarding, IPv4, tap" {
-    pasta_test_do 4 tap      udp 1 0 "address"   1
+@test "Address-bound UDP port forwarding, IPv4, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Address-bound UDP port forwarding, IPv4, loopback" {
-    pasta_test_do 4 loopback udp 1 0 "address"   1
+@test "Address-bound UDP port forwarding, IPv4, loopback" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Interface-bound UDP port forwarding, IPv4, tap" {
-    pasta_test_do 4 tap      udp 1 0 "interface" 1
+@test "Interface-bound UDP port forwarding, IPv4, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Interface-bound UDP port forwarding, IPv4, loopback" {
-    pasta_test_do 4 loopback udp 1 0 "interface" 1
+@test "Interface-bound UDP port forwarding, IPv4, loopback" {
+    pasta_test_do
 }
 
 ### UDP/IPv6 Port Forwarding ###################################################
 
-@test "podman networking with pasta(1) - Single UDP port forwarding, IPv6, tap" {
-    pasta_test_do 6 tap      udp 1 0 "port"      1
+@test "Single UDP port forwarding, IPv6, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Single UDP port forwarding, IPv6, loopback" {
-    pasta_test_do 6 loopback udp 1 0 "port"      1
+@test "Single UDP port forwarding, IPv6, loopback" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - UDP port range forwarding, IPv6, tap" {
-    pasta_test_do 6 tap      udp 3 0 "port"      1
+@test "UDP port range forwarding, IPv6, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - UDP port range forwarding, IPv6, loopback" {
-    pasta_test_do 6 loopback udp 3 0 "port"      1
+@test "UDP port range forwarding, IPv6, loopback" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Translated UDP port forwarding, IPv6, tap" {
-    pasta_test_do 6 tap      udp 1 1 "port"      1
+@test "Translated UDP port forwarding, IPv6, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Translated UDP port forwarding, IPv6, loopback" {
-    pasta_test_do 6 loopback udp 1 1 "port"      1
+@test "Translated UDP port forwarding, IPv6, loopback" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - UDP translated port range forwarding, IPv6, tap" {
-    pasta_test_do 6 tap      udp 3 1 "port"      1
+@test "UDP translated port range forwarding, IPv6, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - UDP translated port range forwarding, IPv6, loopback" {
-    pasta_test_do 6 loopback udp 3 1 "port"      1
+@test "UDP translated port range forwarding, IPv6, loopback" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Address-bound UDP port forwarding, IPv6, tap" {
-    pasta_test_do 6 tap      udp 1 0 "address"   1
+@test "Address-bound UDP port forwarding, IPv6, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Address-bound UDP port forwarding, IPv6, loopback" {
-    pasta_test_do 6 loopback udp 1 0 "address"   1
+@test "Address-bound UDP port forwarding, IPv6, loopback" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Interface-bound UDP port forwarding, IPv6, tap" {
-    pasta_test_do 6 tap      udp 1 0 "interface" 1
+@test "Interface-bound UDP port forwarding, IPv6, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - Interface-bound UDP port forwarding, IPv6, loopback" {
-    pasta_test_do 6 loopback udp 1 0 "interface" 1
+@test "Interface-bound UDP port forwarding, IPv6, loopback" {
+    pasta_test_do
 }
 
 ### TCP/IPv4 transfer ##########################################################
 
-@test "podman networking with pasta(1) - TCP/IPv4 small transfer, tap" {
-    pasta_test_do 4 tap      tcp 1 0 "port"      2k
+@test "TCP/IPv4 small transfer, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - TCP/IPv4 small transfer, loopback" {
-    pasta_test_do 4 loopback tcp 1 0 "port"      2k
+@test "TCP/IPv4 small transfer, loopback" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - TCP/IPv4 large transfer, tap" {
-    pasta_test_do 4 tap      tcp 1 0 "port"      10M
+@test "TCP/IPv4 large transfer, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - TCP/IPv4 large transfer, loopback" {
-    pasta_test_do 4 loopback tcp 1 0 "port"      10M
+@test "TCP/IPv4 large transfer, loopback" {
+    pasta_test_do
 }
 
 ### TCP/IPv6 transfer ##########################################################
 
-@test "podman networking with pasta(1) - TCP/IPv6 small transfer, tap" {
-    pasta_test_do 6 tap      tcp 1 0 "port"      2k
+@test "TCP/IPv6 small transfer, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - TCP/IPv6 small transfer, loopback" {
-    pasta_test_do 6 loopback tcp 1 0 "port"      2k
+@test "TCP/IPv6 small transfer, loopback" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - TCP/IPv6 large transfer, tap" {
-    pasta_test_do 6 tap      tcp 1 0 "port"      10M
+@test "TCP/IPv6 large transfer, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - TCP/IPv6 large transfer, loopback" {
-    pasta_test_do 6 loopback tcp 1 0 "port"      10M
+@test "TCP/IPv6 large transfer, loopback" {
+    pasta_test_do
 }
 
 ### UDP/IPv4 transfer ##########################################################
 
-@test "podman networking with pasta(1) - UDP/IPv4 small transfer, tap" {
-    pasta_test_do 4 tap      udp 1 0 "port"      2k
+@test "UDP/IPv4 small transfer, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - UDP/IPv4 small transfer, loopback" {
-    pasta_test_do 4 loopback udp 1 0 "port"      2k
+@test "UDP/IPv4 small transfer, loopback" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - UDP/IPv4 large transfer, tap" {
-    pasta_test_do 4 tap      udp 1 0 "port"       $(($(cat /proc/sys/net/core/wmem_default) / 4))
+@test "UDP/IPv4 large transfer, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - UDP/IPv4 large transfer, loopback" {
-    pasta_test_do 4 loopback udp 1 0 "port"       $(($(cat /proc/sys/net/core/wmem_default) / 4))
+@test "UDP/IPv4 large transfer, loopback" {
+    pasta_test_do
 }
 
 ### UDP/IPv6 transfer ##########################################################
 
-@test "podman networking with pasta(1) - UDP/IPv6 small transfer, tap" {
-    pasta_test_do 6 tap      udp 1 0 "port"      2k
+@test "UDP/IPv6 small transfer, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - UDP/IPv6 small transfer, loopback" {
-    pasta_test_do 6 loopback udp 1 0 "port"      2k
+@test "UDP/IPv6 small transfer, loopback" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - UDP/IPv6 large transfer, tap" {
-    pasta_test_do 6 tap      udp 1 0 "port"       $(($(cat /proc/sys/net/core/wmem_default) / 4))
+@test "UDP/IPv6 large transfer, tap" {
+    pasta_test_do
 }
 
-@test "podman networking with pasta(1) - UDP/IPv6 large transfer, loopback" {
-    pasta_test_do 6 loopback udp 1 0 "port"       $(($(cat /proc/sys/net/core/wmem_default) / 4))
-}
-
-### ICMP, ICMPv6 ###############################################################
-
-@test "podman networking with pasta(1) - ICMP echo request" {
-    skip_if_no_ipv4 "IPv6 not routable on the host"
-
-    local minuid=$(cut -f1 /proc/sys/net/ipv4/ping_group_range)
-    local maxuid=$(cut -f2 /proc/sys/net/ipv4/ping_group_range)
-
-    if [ $(id -u) -lt ${minuid} ] || [ $(id -u) -gt ${maxuid} ]; then
-        skip "ICMP echo sockets not available for this UID"
-    fi
-
-    run_podman run --net=pasta $IMAGE \
-        sh -c 'ping -c3 -W1 $(sed -nr "s/^nameserver[ ]{1,}([^.]*).(.*)/\1.\2/p" /etc/resolv.conf | head -1)'
-}
-
-@test "podman networking with pasta(1) - ICMPv6 echo request" {
-    skip "Unsupported test, see the 'Local forwarder, IPv6' case for details"
-    skip_if_no_ipv6 "IPv6 not routable on the host"
-
-    local minuid=$(cut -f1 /proc/sys/net/ipv4/ping_group_range)
-    local maxuid=$(cut -f2 /proc/sys/net/ipv4/ping_group_range)
-
-    if [ $(id -u) -lt ${minuid} ] || [ $(id -u) -gt ${maxuid} ]; then
-        skip "ICMPv6 echo sockets not available for this UID"
-    fi
-
-    run_podman run --net=pasta $IMAGE \
-        sh -c 'ping -c3 -W1 $(sed -nr "s/^nameserver[ ]{1,}([^:]*):(.*)/\1:\2/p" /etc/resolv.conf | head -1)'
+@test "UDP/IPv6 large transfer, loopback" {
+    pasta_test_do
 }
 
 ### Lifecycle ##################################################################
 
-@test "podman networking with pasta(1) - pasta(1) quits when the namespace is gone" {
+@test "pasta(1) quits when the namespace is gone" {
     local pidfile="${PODMAN_TMPDIR}/pasta.pid"
 
-    run_podman run "--net=pasta:--pid,${pidfile}" $IMAGE true
+    run_podman run --rm "--net=pasta:--pid,${pidfile}" $IMAGE true
     sleep 1
     ! ps -p $(cat "${pidfile}") && rm "${pidfile}"
+}
+
+### Options ####################################################################
+@test "Unsupported protocol in port forwarding" {
+    local port=$(random_free_port "" "" tcp)
+
+    run_podman 126 run --rm --net=pasta -p "${port}:${port}/sctp" $IMAGE true
+    is "$output" "Error: .*can't forward protocol: sctp"
+}
+
+@test "Use options from containers.conf" {
+    skip_if_remote "containers.conf must be set for the server"
+
+    containersconf=$PODMAN_TMPDIR/containers.conf
+    mac="9a:dd:31:ea:92:98"
+    cat >$containersconf <<EOF
+[network]
+default_rootless_network_cmd = "pasta"
+pasta_options = ["-I", "myname", "--ns-mac-addr", "$mac"]
+EOF
+
+    # 2023-06-29 DO NOT INCLUDE "--net=pasta" on this line!
+    # This tests containers.conf:default_rootless_network_cmd (pr #19032)
+    CONTAINERS_CONF_OVERRIDE=$containersconf run_podman run --rm $IMAGE ip link show myname
+    assert "$output" =~ "$mac" "mac address is set on custom interface"
+
+    # now, again but this time overwrite a option on the cli.
+    mac2="aa:bb:cc:dd:ee:ff"
+    CONTAINERS_CONF_OVERRIDE=$containersconf run_podman run --rm \
+        --net=pasta:--ns-mac-addr,"$mac2" $IMAGE ip link show myname
+    assert "$output" =~ "$mac2" "mac address from cli is set on custom interface"
+}
+
+### Rootless unshare testing
+
+@test "Podman unshare --rootless-netns with Pasta" {
+    skip_if_remote "unshare is local-only"
+
+    pasta_iface=$(default_ifname 4)
+    assert "$pasta_iface" != "" "pasta_iface is set"
+
+    # First let's force a setup error by making pasta be "false".
+    ln -s /usr/bin/false $PODMAN_TMPDIR/pasta
+    CONTAINERS_HELPER_BINARY_DIR="$PODMAN_TMPDIR" run_podman 125 unshare --rootless-netns ip addr
+    assert "$output" =~ "pasta failed with exit code 1"
+
+    # Now this should recover from the previous error and setup the netns correctly.
+    run_podman unshare --rootless-netns ip addr
+    is "$output" ".*${pasta_iface}.*"
+}
+
+# https://github.com/containers/podman/issues/22653
+@test "pasta/bridge and host.containers.internal" {
+    skip_if_no_ipv4 "IPv4 not routable on the host"
+    pasta_ip="$(default_addr 4)"
+    host_ips=$(ip -4 -j addr | jq -r '.[] | select(.ifname != "lo") | .addr_info[].local')
+
+    netname=n_$(safename)
+    run_podman network create $netname
+
+    for network in "pasta" "$netname"; do
+        # special exit code logic needed here, it is possible that there is no host.containers.internal
+        # when there is only one ip one the host and that one is used by pasta.
+        # As such we have to deal with both cases.
+        run_podman '?' run --rm --network=$network $IMAGE grep host.containers.internal /etc/hosts
+        if [ "$status" -eq 0 ]; then
+            assert "$output" !~ "$pasta_ip" "pasta host ip must not be assigned ($network)"
+            assert "$host_ips" =~ "$(cut -f1 <<<$output)" "ip is one of the host ips ($network)"
+        elif [ "$status" -eq 1 ]; then
+            # if only pasta ip then we cannot have a host.containers.internal entry
+            # make sure this fact is actually the case
+            assert "$pasta_ip" == "$host_ips" "pasta ip must the only one one the host ($network)"
+        else
+            die "unexpected exit code '$status' from grep or podman ($network)"
+        fi
+    done
+
+    run_podman network rm $netname
+
+    first_host_ip=$(head -n 1 <<<"$host_ips")
+    run_podman run --rm --network=pasta:-a,169.254.0.2,-g,169.254.0.1,-n,24 $IMAGE grep host.containers.internal /etc/hosts
+    assert "$output" =~ "^$first_host_ip" "uses host first ip"
 }

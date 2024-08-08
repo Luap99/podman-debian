@@ -1,41 +1,23 @@
 package integration
 
 import (
-	"os"
+	"fmt"
 
-	. "github.com/containers/podman/v4/test/utils"
-	. "github.com/onsi/ginkgo"
+	. "github.com/containers/podman/v5/test/utils"
+	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	. "github.com/onsi/gomega/gexec"
 )
 
 var _ = Describe("Podman pod restart", func() {
-	var (
-		tempdir    string
-		err        error
-		podmanTest *PodmanTestIntegration
-	)
-
-	BeforeEach(func() {
-		tempdir, err = CreateTempDirInTempDir()
-		if err != nil {
-			os.Exit(1)
-		}
-		podmanTest = PodmanTestCreate(tempdir)
-		podmanTest.Setup()
-	})
-
-	AfterEach(func() {
-		podmanTest.Cleanup()
-		f := CurrentGinkgoTestDescription()
-		processTestResult(f)
-
-	})
 
 	It("podman pod restart bogus pod", func() {
 		session := podmanTest.Podman([]string{"pod", "restart", "123"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(125))
+		expect := "no pod with name or ID 123 found: no such pod"
+		if IsRemote() {
+			expect = `unable to find pod "123": no such pod`
+		}
+		Expect(session).Should(ExitWithError(125, expect))
 	})
 
 	It("podman pod restart single empty pod", func() {
@@ -44,7 +26,7 @@ var _ = Describe("Podman pod restart", func() {
 
 		session := podmanTest.Podman([]string{"pod", "restart", podid})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(125))
+		Expect(session).Should(ExitWithError(125, fmt.Sprintf("no containers in pod %s have no dependencies, cannot start pod: no such container", podid)))
 	})
 
 	It("podman pod restart single pod by name", func() {
@@ -53,14 +35,14 @@ var _ = Describe("Podman pod restart", func() {
 
 		session := podmanTest.RunTopContainerInPod("test1", "foobar99")
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 
 		startTime := podmanTest.Podman([]string{"inspect", "--format='{{.State.StartedAt}}'", "test1"})
 		startTime.WaitWithDefaultTimeout()
 
 		session = podmanTest.Podman([]string{"pod", "restart", "foobar99"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 
 		restartTime := podmanTest.Podman([]string{"inspect", "--format='{{.State.StartedAt}}'", "test1"})
 		restartTime.WaitWithDefaultTimeout()
@@ -73,29 +55,29 @@ var _ = Describe("Podman pod restart", func() {
 
 		session := podmanTest.RunTopContainerInPod("test1", "foobar99")
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 
 		_, ec, _ = podmanTest.CreatePod(map[string][]string{"--name": {"foobar100"}})
 		Expect(ec).To(Equal(0))
 
 		session = podmanTest.RunTopContainerInPod("test2", "foobar100")
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 
 		session = podmanTest.RunTopContainerInPod("test3", "foobar100")
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 
 		session = podmanTest.RunTopContainerInPod("test4", "foobar100")
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 
 		startTime := podmanTest.Podman([]string{"inspect", "--format='{{.State.StartedAt}}'", "test1", "test2", "test3", "test4"})
 		startTime.WaitWithDefaultTimeout()
 
 		session = podmanTest.Podman([]string{"pod", "restart", "foobar99", "foobar100"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 
 		restartTime := podmanTest.Podman([]string{"inspect", "--format='{{.State.StartedAt}}'", "test1", "test2", "test3", "test4"})
 		restartTime.WaitWithDefaultTimeout()
@@ -111,21 +93,21 @@ var _ = Describe("Podman pod restart", func() {
 
 		session := podmanTest.RunTopContainerInPod("test1", "foobar99")
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 
 		_, ec, _ = podmanTest.CreatePod(map[string][]string{"--name": {"foobar100"}})
 		Expect(ec).To(Equal(0))
 
 		session = podmanTest.RunTopContainerInPod("test2", "foobar100")
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 
 		startTime := podmanTest.Podman([]string{"inspect", "--format='{{.State.StartedAt}}'", "test1", "test2"})
 		startTime.WaitWithDefaultTimeout()
 
 		session = podmanTest.Podman([]string{"pod", "restart", "-a"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 
 		restartTime := podmanTest.Podman([]string{"inspect", "--format='{{.State.StartedAt}}'", "test1", "test2"})
 		restartTime.WaitWithDefaultTimeout()
@@ -139,14 +121,14 @@ var _ = Describe("Podman pod restart", func() {
 
 		session := podmanTest.RunTopContainerInPod("test1", "foobar99")
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 
 		_, ec, _ = podmanTest.CreatePod(map[string][]string{"--name": {"foobar100"}})
 		Expect(ec).To(Equal(0))
 
 		session = podmanTest.RunTopContainerInPod("test2", "foobar100")
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 
 		startTime := podmanTest.Podman([]string{"inspect", "--format='{{.State.StartedAt}}'", "test1", "test2"})
 		startTime.WaitWithDefaultTimeout()
@@ -157,7 +139,7 @@ var _ = Describe("Podman pod restart", func() {
 		}
 		session = podmanTest.Podman([]string{"pod", "restart", podid})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 
 		restartTime := podmanTest.Podman([]string{"inspect", "--format='{{.State.StartedAt}}'", "test1", "test2"})
 		restartTime.WaitWithDefaultTimeout()
@@ -171,10 +153,14 @@ var _ = Describe("Podman pod restart", func() {
 
 		session := podmanTest.RunTopContainerInPod("", "foobar99")
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		Expect(session).Should(ExitCleanly())
 
 		session = podmanTest.Podman([]string{"pod", "restart", podid1, "doesnotexist"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(125))
+		expect := "no pod with name or ID doesnotexist found: no such pod"
+		if IsRemote() {
+			expect = `unable to find pod "doesnotexist": no such pod`
+		}
+		Expect(session).Should(ExitWithError(125, expect))
 	})
 })

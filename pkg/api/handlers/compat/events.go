@@ -4,13 +4,12 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/containers/podman/v4/libpod"
-	"github.com/containers/podman/v4/libpod/events"
-	"github.com/containers/podman/v4/pkg/api/handlers/utils"
-	api "github.com/containers/podman/v4/pkg/api/types"
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/containers/podman/v4/pkg/util"
-	"github.com/gorilla/schema"
+	"github.com/containers/podman/v5/libpod"
+	"github.com/containers/podman/v5/libpod/events"
+	"github.com/containers/podman/v5/pkg/api/handlers/utils"
+	api "github.com/containers/podman/v5/pkg/api/types"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	"github.com/containers/podman/v5/pkg/util"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/sirupsen/logrus"
 )
@@ -19,7 +18,7 @@ import (
 func GetEvents(w http.ResponseWriter, r *http.Request) {
 	var (
 		fromStart bool
-		decoder   = r.Context().Value(api.DecoderKey).(*schema.Decoder)
+		decoder   = utils.GetDecoder(r)
 		runtime   = r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 		json      = jsoniter.ConfigCompatibleWithStandardLibrary // FIXME: this should happen on the package level
 	)
@@ -44,7 +43,7 @@ func GetEvents(w http.ResponseWriter, r *http.Request) {
 
 	libpodFilters, err := util.FiltersFromRequest(r)
 	if err != nil {
-		utils.Error(w, http.StatusBadRequest, fmt.Errorf("failed to parse parameters for %s: %w", r.URL.String(), err))
+		utils.Error(w, http.StatusBadRequest, fmt.Errorf("failed to parse filters for %s: %w", r.URL.String(), err))
 		return
 	}
 	eventChannel := make(chan *events.Event)
@@ -69,8 +68,13 @@ func GetEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	flush()
+	wroteContent := false
+	defer func() {
+		if !wroteContent {
+			w.WriteHeader(http.StatusOK)
+			flush()
+		}
+	}()
 
 	coder := json.NewEncoder(w)
 	coder.SetEscapeHTML(true)
@@ -79,8 +83,8 @@ func GetEvents(w http.ResponseWriter, r *http.Request) {
 		select {
 		case err := <-errorChannel:
 			if err != nil {
-				// FIXME StatusOK already sent above cannot send 500 here
 				utils.InternalServerError(w, err)
+				wroteContent = true
 			}
 			return
 		case evt := <-eventChannel:
@@ -104,6 +108,7 @@ func GetEvents(w http.ResponseWriter, r *http.Request) {
 			if err := coder.Encode(e); err != nil {
 				logrus.Errorf("Unable to write json: %q", err)
 			}
+			wroteContent = true
 			flush()
 		case <-r.Context().Done():
 			return

@@ -19,19 +19,13 @@ set -eo pipefail
 # shellcheck source=contrib/cirrus/lib.sh
 source $(dirname $0)/lib.sh
 
-function _run_validate() {
-    # TODO: aarch64 images need python3-devel installed
-    # https://github.com/containers/automation_images/issues/159
-    bigto ooe.sh dnf install -y python3-devel
+showrun echo "starting"
 
-    # git-validation tool fails if $EPOCH_TEST_COMMIT is empty
-    # shellcheck disable=SC2154
-    if [[ -n "$EPOCH_TEST_COMMIT" ]]; then
-        make validate
-    else
-        warn "Skipping git-validation since \$EPOCH_TEST_COMMIT is empty"
-    fi
+function _run_validate-source() {
+    showrun make validate-source
 
+    # make sure PRs have tests
+    showrun make tests-included
 }
 
 function _run_unit() {
@@ -42,61 +36,46 @@ function _run_unit() {
         # shellcheck disable=SC2154
         die "$TEST_FLAVOR: Unsupported PODBIN_NAME='$PODBIN_NAME'"
     fi
-    make localunit
+    showrun make localunit
 }
 
 function _run_apiv2() {
     _bail_if_test_can_be_skipped test/apiv2
 
     (
-        make localapiv2-bash
+        showrun make localapiv2-bash
         source .venv/requests/bin/activate
-        make localapiv2-python
+        showrun make localapiv2-python
     ) |& logformatter
-}
-
-function _run_compose() {
-    _bail_if_test_can_be_skipped test/compose
-
-    ./test/compose/test-compose |& logformatter
 }
 
 function _run_compose_v2() {
     _bail_if_test_can_be_skipped test/compose
 
-    ./test/compose/test-compose |& logformatter
+    showrun ./test/compose/test-compose |& logformatter
 }
 
 function _run_int() {
-    _bail_if_test_can_be_skipped test/e2e
-
     dotest integration
 }
 
 function _run_sys() {
-    _bail_if_test_can_be_skipped test/system
-
     dotest system
 }
 
 function _run_upgrade_test() {
-    _bail_if_test_can_be_skipped test/upgrade
+    _bail_if_test_can_be_skipped test/system test/upgrade
 
-    bats test/upgrade |& logformatter
+    showrun bats test/upgrade |& logformatter
 }
 
 function _run_bud() {
-    _bail_if_test_can_be_skipped test/buildah-bud
-
-    ./test/buildah-bud/run-buildah-bud-tests |& logformatter
+    showrun ./test/buildah-bud/run-buildah-bud-tests |& logformatter
 }
 
 function _run_bindings() {
     # install ginkgo
-    make .install.ginkgo
-
-    # shellcheck disable=SC2155
-    export PATH=$PATH:$GOSRC/hack:$GOSRC/test/tools/build
+    showrun make .install.ginkgo
 
     # if logformatter sees this, it can link directly to failing source lines
     local gitcommit_magic=
@@ -105,23 +84,23 @@ function _run_bindings() {
     fi
 
     (echo "$gitcommit_magic" && \
-        make testbindings) |& logformatter
+        showrun make testbindings) |& logformatter
 }
 
 function _run_docker-py() {
     source .venv/docker-py/bin/activate
-    make run-docker-py-tests
+    showrun make run-docker-py-tests
 }
 
 function _run_endpoint() {
-    make test-binaries
-    make endpoint
+    showrun make test-binaries
+    showrun make endpoint
 }
 
-function _run_minikube() {
-    _bail_if_test_can_be_skipped test/minikube
-    msg "Testing  minikube."
-    bats test/minikube |& logformatter
+function _run_farm() {
+    _bail_if_test_can_be_skipped test/farm test/system
+    msg "Testing podman farm."
+    showrun bats test/farm |& logformatter
 }
 
 exec_container() {
@@ -145,9 +124,11 @@ exec_container() {
 
     # VM Images and Container images are built using (nearly) identical operations.
     set -x
+    env CONTAINERS_REGISTRIES_CONF=/dev/null bin/podman pull -q $CTR_FQIN
     # shellcheck disable=SC2154
     exec bin/podman run --rm --privileged --net=host --cgroupns=host \
-        -v `mktemp -d -p /var/tmp`:/tmp:Z \
+        -v `mktemp -d -p /var/tmp`:/var/tmp:Z \
+        --tmpfs /tmp:mode=1777 \
         -v /dev/fuse:/dev/fuse \
         -v "$GOPATH:$GOPATH:Z" \
         --workdir "$GOSRC" \
@@ -162,9 +143,6 @@ function _run_swagger() {
     local download_url
     local envvarsfile
     req_env_vars GCPJSON GCPNAME GCPPROJECT CTR_FQIN
-
-    [[ -x /usr/local/bin/swagger ]] || \
-        die "Expecting swagger binary to be present and executable."
 
     # The filename and bucket depend on the automation context
     #shellcheck disable=SC2154,SC2153
@@ -187,10 +165,10 @@ function _run_swagger() {
 
     # Swagger validation takes a significant amount of time
     msg "Pulling \$CTR_FQIN '$CTR_FQIN' (background process)"
-    bin/podman pull --quiet $CTR_FQIN &
+    showrun bin/podman pull --quiet $CTR_FQIN &
 
     cd $GOSRC
-    make swagger
+    showrun make swagger
 
     # Cirrus-CI Artifact instruction expects file here
     cp -v $GOSRC/pkg/api/swagger.yaml ./
@@ -209,7 +187,7 @@ eof
 
     msg "Waiting for backgrounded podman pull to complete..."
     wait %%
-    bin/podman run -it --rm --security-opt label=disable \
+    showrun bin/podman run -it --rm --security-opt label=disable \
         --env-file=$envvarsfile \
         -v $GOSRC:$GOSRC:ro \
         --workdir $GOSRC \
@@ -218,10 +196,18 @@ eof
 }
 
 function _run_build() {
+    local vb_target
+
+    # There's no reason to validate-binaries across multiple linux platforms
+    # shellcheck disable=SC2154
+    if [[ "$DISTRO_NV" =~ $FEDORA_NAME ]]; then
+        vb_target=validate-binaries
+    fi
+
     # Ensure always start from clean-slate with all vendor modules downloaded
-    make clean
-    make vendor
-    make podman-release  # includes podman, podman-remote, and docs
+    showrun make clean
+    showrun make vendor
+    showrun make podman-release $vb_target # includes podman, podman-remote, and docs
 
     # Last-minute confirmation that we're testing the desired runtime.
     # This Can't Possibly Fail™ in regular CI; only when updating VMs.
@@ -252,7 +238,11 @@ function _run_altbuild() {
     cd $GOSRC
     case "$ALT_NAME" in
         *Each*)
-            git fetch origin
+            if [[ -z "$CIRRUS_PR" ]]; then
+                echo ".....only meaningful on PRs"
+                return
+            fi
+            showrun git fetch origin
             # The make-and-check-size script, introduced 2022-03-22 in #13518,
             # runs 'make' (the original purpose of this check) against
             # each commit, then checks image sizes to make sure that
@@ -263,48 +253,64 @@ function _run_altbuild() {
             context_dir=$(mktemp -d --tmpdir make-size-check.XXXXXXX)
             savedhead=$(git rev-parse HEAD)
             # Push to PR base. First run of the script will write size files
-            pr_base=$(git merge-base origin/$DEST_BRANCH HEAD)
-            git checkout $pr_base
-            hack/make-and-check-size $context_dir
+            # shellcheck disable=SC2154
+            pr_base=$PR_BASE_SHA
+            showrun git checkout $pr_base
+            showrun hack/make-and-check-size $context_dir
             # pop back to PR, and run incremental makes. Subsequent script
             # invocations will compare against original size.
-            git checkout $savedhead
-            git rebase $pr_base -x "hack/make-and-check-size $context_dir"
+            showrun git checkout $savedhead
+            showrun git rebase $pr_base -x "hack/make-and-check-size $context_dir"
             rm -rf $context_dir
             ;;
         *Windows*)
-            make podman-remote-release-windows_amd64.zip
-            make podman.msi
-            ;;
-        *Without*)
-            make build-no-cgo
+	    showrun make .install.pre-commit
+            showrun make lint GOOS=windows CGO_ENABLED=0
+            showrun make podman-remote-release-windows_amd64.zip
             ;;
         *RPM*)
-            make package
+            showrun make package
             ;;
-        FreeBSD*Cross)
-            make bin/podman.cross.freebsd.amd64
-            ;;
-        Alt*Cross)
+        Alt*x86*Cross)
             arches=(\
                 amd64
-                ppc64le
+                386)
+            _build_altbuild_archs "${arches[@]}"
+            ;;
+        Alt*ARM*Cross)
+            arches=(\
                 arm
-                arm64
-                386
-                s390x
+                arm64)
+            _build_altbuild_archs "${arches[@]}"
+            ;;
+        Alt*Other*Cross)
+            arches=(\
+                ppc64le
+                s390x)
+            _build_altbuild_archs "${arches[@]}"
+            ;;
+        Alt*MIPS*Cross)
+            arches=(\
                 mips
-                mipsle
+                mipsle)
+            _build_altbuild_archs "${arches[@]}"
+            ;;
+        Alt*MIPS64*Cross*)
+            arches=(\
                 mips64
                 mips64le)
-            for arch in "${arches[@]}"; do
-                msg "Building release archive for $arch"
-                make podman-release-${arch}.tar.gz GOARCH=$arch
-            done
+            _build_altbuild_archs "${arches[@]}"
             ;;
         *)
             die "Unknown/Unsupported \$$ALT_NAME '$ALT_NAME'"
     esac
+}
+
+function _build_altbuild_archs() {
+    for arch in "$@"; do
+        msg "Building release archive for $arch"
+        showrun make podman-release-${arch}.tar.gz GOARCH=$arch
+    done
 }
 
 function _run_release() {
@@ -344,6 +350,7 @@ function _run_gitlab() {
         go-junit-report > $GOSRC/gitlab-runner-podman.xml
     return $ret
 }
+
 
 # Name pattern for logformatter output file, derived from environment
 function output_name() {
@@ -398,20 +405,32 @@ dotest() {
         die "Found fallback podman '$fallback_podman' in \$PATH; tests require none, as a guarantee that we're testing the right binary."
     fi
 
-    make ${localremote}${testsuite} PODMAN_SERVER_LOG=$PODMAN_SERVER_LOG \
+    # Catch invalid "TMPDIR == /tmp" assumptions; PR #19281
+    TMPDIR=$(mktemp --tmpdir -d CI_XXXX)
+    # tmp dir is commonly 1777 to allow all user to read/write
+    chmod 1777 $TMPDIR
+    export TMPDIR
+    fstype=$(findmnt -n -o FSTYPE --target $TMPDIR)
+    if [[ "$fstype" != "tmpfs" ]]; then
+        die "The CI test TMPDIR is not on a tmpfs mount, we need tmpfs to make the tests faster"
+    fi
+
+    showrun make ${localremote}${testsuite} PODMAN_SERVER_LOG=$PODMAN_SERVER_LOG \
         |& logformatter
+
+    # FIXME: https://github.com/containers/podman/issues/22642
+    # Cannot delete this due cleanup errors, as the VM is basically
+    # done after this anyway let's not block on this for now.
+    # rm -rf $TMPDIR
+    # unset TMPDIR
 }
 
-_run_machine() {
-    # This environment is convenient for executing some benchmarking
-    localbenchmarks
-
-    # N/B: Can't use _bail_if_test_can_be_skipped here b/c content isn't under test/
-    make localmachine |& logformatter
+_run_machine-linux() {
+    showrun make localmachine |& logformatter
 }
 
 # Optimization: will exit if the only PR diffs are under docs/ or tests/
-# with the exception of any given arguments. E.g., don't run e2e or upgrade
+# with the exception of any given arguments. E.g., don't run e2e or unit
 # or bud tests if the only PR changes are in test/system.
 function _bail_if_test_can_be_skipped() {
     local head base diffs
@@ -433,12 +452,14 @@ function _bail_if_test_can_be_skipped() {
     # Defined by Cirrus-CI for all tasks
     # shellcheck disable=SC2154
     head=$CIRRUS_CHANGE_IN_REPO
-    base=$(git merge-base $DEST_BRANCH $head)
+    # shellcheck disable=SC2154
+    base=$PR_BASE_SHA
+    echo "_bail_if_test_can_be_skipped: head=$head  base=$base"
     diffs=$(git diff --name-only $base $head)
 
     # If PR touches any files in an argument directory, we cannot skip
     for subdir in "$@"; do
-        if egrep -q "^$subdir/" <<<"$diffs"; then
+        if grep -E -q "^$subdir/" <<<"$diffs"; then
             return 0
         fi
     done
@@ -448,7 +469,7 @@ function _bail_if_test_can_be_skipped() {
     # filtering these out from the diff results.
     for subdir in docs test; do
         # || true needed because we're running with set -e
-        diffs=$(egrep -v "^$subdir/" <<<"$diffs" || true)
+        diffs=$(grep -E -v "^$subdir/" <<<"$diffs" || true)
     done
 
     # If we still have diffs, they indicate files outside of docs & test.
@@ -526,4 +547,6 @@ if [ "$(type -t $handler)" != "function" ]; then
     die "Unknown/Unsupported \$TEST_FLAVOR=$TEST_FLAVOR"
 fi
 
-$handler
+showrun $handler
+
+showrun echo "finished"

@@ -2,8 +2,9 @@
 package swagger
 
 import (
-	"github.com/containers/podman/v4/pkg/domain/entities"
-	"github.com/docker/docker/api/types"
+	"github.com/containers/podman/v5/pkg/domain/entities"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
 )
 
 // Details for creating a volume
@@ -31,15 +32,15 @@ type volumeCreate struct {
 
 // Network create
 // swagger:model
-type networkCreate types.NetworkCreateRequest
+type networkCreate network.CreateRequest
 
 // Network connect
 // swagger:model
-type networkConnectRequest types.NetworkConnect
+type networkConnectRequest network.ConnectOptions
 
 // Network disconnect
 // swagger:model
-type networkDisconnectRequest types.NetworkDisconnect
+type networkDisconnectRequest network.DisconnectOptions
 
 // Network connect
 // swagger:model
@@ -48,3 +49,7 @@ type networkConnectRequestLibpod entities.NetworkConnectOptions
 // Network update
 // swagger:model
 type networkUpdateRequestLibpod entities.NetworkUpdateOptions
+
+// Container update
+// swagger:model
+type containerUpdateRequest container.UpdateConfig

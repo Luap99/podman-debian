@@ -4,6 +4,7 @@ import (
 	"net"
 
 	"github.com/containers/image/v5/types"
+	entitiesTypes "github.com/containers/podman/v5/pkg/domain/entities/types"
 )
 
 // PlayKubeOptions controls playing kube YAML files.
@@ -21,6 +22,9 @@ type PlayKubeOptions struct {
 	// Down indicates whether to bring contents of a yaml file "down"
 	// as in stop
 	Down bool
+	// ExitCodePropagation decides how the main PID of the Kube service
+	// should exit depending on the containers' exit codes.
+	ExitCodePropagation string
 	// Replace indicates whether to delete and recreate a yaml file
 	Replace bool
 	// Do not create /etc/hosts within the pod's containers,
@@ -56,6 +60,9 @@ type PlayKubeOptions struct {
 	Start types.OptionalBool
 	// ServiceContainer - creates a service container that is started before and is stopped after all pods.
 	ServiceContainer bool
+	// UseLongAnnotations - use annotations that were not truncated to the
+	// Kubernetes maximum length of 63 characters
+	UseLongAnnotations bool
 	// Userns - define the user namespace to use.
 	Userns string
 	// IsRemote - was the request triggered by running podman-remote
@@ -64,45 +71,24 @@ type PlayKubeOptions struct {
 	Force bool
 	// PublishPorts - configure how to expose ports configured inside the K8S YAML file
 	PublishPorts []string
+	// PublishAllPorts - whether to publish all ports defined in the K8S YAML file
+	// (containerPort, hostPort) otherwise only hostPort will be published
+	PublishAllPorts bool
 	// Wait - indicates whether to return after having created the pods
 	Wait bool
+	// SystemContext - used when building the image
+	SystemContext *types.SystemContext
 }
 
 // PlayKubePod represents a single pod and associated containers created by play kube
-type PlayKubePod struct {
-	// ID - ID of the pod created as a result of play kube.
-	ID string
-	// Containers - the IDs of the containers running in the created pod.
-	Containers []string
-	// InitContainers - the IDs of the init containers to be run in the created pod.
-	InitContainers []string
-	// Logs - non-fatal errors and log messages while processing.
-	Logs []string
-	// ContainerErrors - any errors that occurred while starting containers
-	// in the pod.
-	ContainerErrors []string
-}
+type PlayKubePod = entitiesTypes.PlayKubePod
 
 // PlayKubeVolume represents a single volume created by play kube.
-type PlayKubeVolume struct {
-	// Name - Name of the volume created by play kube.
-	Name string
-}
+type PlayKubeVolume entitiesTypes.PlayKubeVolume
 
 // PlayKubeReport contains the results of running play kube.
-type PlayKubeReport struct {
-	// Pods - pods created by play kube.
-	Pods []PlayKubePod
-	// Volumes - volumes created by play kube.
-	Volumes []PlayKubeVolume
-	PlayKubeTeardown
-	// Secrets - secrets created by play kube
-	Secrets []PlaySecret
-	// ServiceContainerID - ID of the service container if one is created
-	ServiceContainerID string
-}
-
-type KubePlayReport = PlayKubeReport
+type PlayKubeReport = entitiesTypes.PlayKubeReport
+type KubePlayReport = entitiesTypes.KubePlayReport
 
 // PlayKubeDownOptions are options for tearing down pods
 type PlayKubeDownOptions struct {
@@ -111,13 +97,6 @@ type PlayKubeDownOptions struct {
 }
 
 // PlayKubeDownReport contains the results of tearing down play kube
-type PlayKubeTeardown struct {
-	StopReport     []*PodStopReport
-	RmReport       []*PodRmReport
-	VolumeRmReport []*VolumeRmReport
-	SecretRmReport []*SecretRmReport
-}
+type PlayKubeTeardown = entitiesTypes.PlayKubeTeardown
 
-type PlaySecret struct {
-	CreateReport *SecretCreateReport
-}
+type PlaySecret = entitiesTypes.PlaySecret

@@ -1,20 +1,21 @@
 ![PODMAN logo](https://raw.githubusercontent.com/containers/common/main/logos/podman-logo-full-vert.png)
 
 # Podman: A tool for managing OCI containers and pods
+![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)
+![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/containers/podman)
+[![Go Report Card](https://goreportcard.com/badge/github.com/containers/libpod)](https://goreportcard.com/report/github.com/containers/libpod)
+
+<br/>
 
 Podman (the POD MANager) is a tool for managing containers and images, volumes mounted into those containers, and pods made from groups of containers.
 Podman runs containers on Linux, but can also be used on Mac and Windows systems using a Podman-managed virtual machine.
 Podman is based on libpod, a library for container lifecycle management that is also contained in this repository. The libpod library provides APIs for managing containers, pods, container images, and volumes.
 
-* [Latest Version: 4.4.0](https://github.com/containers/podman/releases/tag/v4.4.0)
-  * Latest Remote client for Windows
-  * Latest Remote client for macOS
-  * Latest Static Remote client for Linux
 
 All releases are GPG signed. Public keys of members of the team approved to make releases are located [here](https://github.com/containers/release-keys/tree/main/podman).
 
 * Continuous Integration:
-  * [![Build Status](https://api.cirrus-ci.com/github/containers/podman.svg)](https://cirrus-ci.com/github/containers/podman/master)
+  * [![Build Status](https://api.cirrus-ci.com/github/containers/podman.svg)](https://cirrus-ci.com/github/containers/podman/main)
   * [GoDoc: ![GoDoc](https://godoc.org/github.com/containers/podman/libpod?status.svg)](https://godoc.org/github.com/containers/podman/libpod)
   * [Downloads](DOWNLOADS.md)
 
@@ -36,9 +37,11 @@ At a high level, the scope of Podman and libpod is the following:
 
 ## Roadmap
 
-1. A fully-featured GUI frontend for `podman machine`
-1. Further improvements to `podman generate kube` and `podman play kube`
-1. Improvements to Pods, including the addition of pod-level resource limits
+1. Further improvements to `podman machine` to better support Podman Desktop and other developer usecases.
+1. Support for [conmon-rs](https://github.com/containers/conmon-rs), which will improve container logging.
+1. Support for the BuildKit API.
+1. Performance and stability improvements.
+1. Reductions to the size of the Podman binary.
 
 ## Communications
 
@@ -71,7 +74,10 @@ A little configuration by an administrator is required before rootless Podman ca
 
 ## Podman Desktop
 
-[Podman Desktop](https://podman-desktop.io/) is a new project under the container organization built to help the developers working with containers from their local environment with a desktop UI. Podman Desktop is still in its early days, but already provides capabilities to list your images, interact with containers (access logs, get a terminal), connect to registries (pull private images, push your images) and configure podman settings (proxies). The project develops on [Github](https://github.com/containers/podman-desktop) and contributors are welcome.
+[Podman Desktop](https://podman-desktop.io/) provides a local development environment for Podman and Kubernetes on Linux, Windows, and Mac machines.
+It is a full-featured desktop UI frontend for Podman which uses the `podman machine` backend on non-Linux operating systems to run containers.
+It supports full container lifecycle management (building, pulling, and pushing images, creating and managing containers, creating and managing pods, and working with Kubernetes YAML).
+The project develops on [GitHub](https://github.com/containers/podman-desktop) and contributions are welcome.
 
 ## Out of scope
 
@@ -98,7 +104,7 @@ For blogs, release announcements and more, please checkout the [podman.io](https
 **[Installation notes](install.md)**
 Information on how to install Podman in your environment.
 
-**[OCI Hooks Support](pkg/hooks/README.md)**
+**[OCI Hooks Support](https://github.com/containers/common/blob/main/pkg/hooks/README.md)**
 Information on how Podman configures [OCI Hooks][spec-hooks] to run when launching a container.
 
 **[Podman API](https://docs.podman.io/en/latest/_static/api.html)**
@@ -107,6 +113,9 @@ Documentation on the Podman REST API.
 **[Podman Commands](https://podman.readthedocs.io/en/latest/Commands.html)**
 A list of the Podman commands with links to their man pages and in many cases videos
 showing the commands in use.
+
+**[Podman Container Images](https://github.com/containers/image_build/blob/main/podman/README.md)**
+Information on the Podman Container Images found on [quay.io](https://quay.io/podman/stable).
 
 **[Podman Troubleshooting Guide](troubleshooting.md)**
 A list of common issues and solutions for Podman.
@@ -170,7 +179,7 @@ you to manage and maintain those images and containers in a production environme
 familiar container cli commands.  For more details, see the
 [Container Tools Guide](https://github.com/containers/buildah/tree/main/docs/containertools).
 
-## [Podman Hello](https://podman.io/images/podman-hello.jpg)
+## Podman Hello
 ```
 $ podman run quay.io/podman/hello
 Trying to pull quay.io/podman/hello:latest...
@@ -196,8 +205,3 @@ Website:   https://podman.io
 Documents: https://docs.podman.io
 Twitter:   @Podman_io
 ```
-
-## Podman Former API (Varlink)
-Podman formerly offered a Varlink-based API for remote management of containers. However, this API
-was replaced by the REST API. Varlink support has been removed as of the 3.0 release.
-For more details, you can see [this blog](https://podman.io/blogs/2020/01/17/podman-new-api.html).

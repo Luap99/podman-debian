@@ -1,12 +1,14 @@
+//go:build !remote
+
 package libpod
 
 import (
 	"time"
 
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/libpod/lock"
-	"github.com/containers/podman/v4/libpod/plugin"
-	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/libpod/lock"
+	"github.com/containers/podman/v5/libpod/plugin"
+	"github.com/containers/storage/pkg/directory"
 )
 
 // Volume is a libpod named volume.
@@ -96,6 +98,10 @@ type VolumeState struct {
 	// a container, the container will chown the volume to the container process
 	// UID/GID.
 	NeedsChown bool `json:"notYetChowned,omitempty"`
+	// Indicates that a copy-up event occurred during the current mount of
+	// the volume into a container.
+	// We use this to determine if a chown is appropriate.
+	CopiedUp bool `json:"copiedUp,omitempty"`
 	// UIDChowned is the UID the volume was chowned to.
 	UIDChowned int `json:"uidChowned,omitempty"`
 	// GIDChowned is the GID the volume was chowned to.
@@ -109,7 +115,8 @@ func (v *Volume) Name() string {
 
 // Returns the size on disk of volume
 func (v *Volume) Size() (uint64, error) {
-	return util.SizeOfPath(v.config.MountPoint)
+	size, err := directory.Size(v.config.MountPoint)
+	return uint64(size), err
 }
 
 // Driver retrieves the volume's driver.

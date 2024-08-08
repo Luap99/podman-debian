@@ -1,3 +1,5 @@
+//go:build !remote
+
 package libpod
 
 import (
@@ -6,7 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/containers/podman/v4/libpod/events"
+	"github.com/containers/podman/v5/libpod/events"
 	"github.com/sirupsen/logrus"
 )
 
@@ -26,22 +28,29 @@ func (r *Runtime) newEventer() (events.Eventer, error) {
 
 // newContainerEvent creates a new event based on a container
 func (c *Container) newContainerEvent(status events.Status) {
-	if err := c.newContainerEventWithInspectData(status, false); err != nil {
+	if err := c.newContainerEventWithInspectData(status, "", false); err != nil {
+		logrus.Errorf("Unable to write container event: %v", err)
+	}
+}
+
+// newContainerHealthCheckEvent creates a new healthcheck event with the given status
+func (c *Container) newContainerHealthCheckEvent(healthStatus string) {
+	if err := c.newContainerEventWithInspectData(events.HealthStatus, healthStatus, false); err != nil {
 		logrus.Errorf("Unable to write container event: %v", err)
 	}
 }
 
 // newContainerEventWithInspectData creates a new event and sets the
 // ContainerInspectData field if inspectData is set.
-func (c *Container) newContainerEventWithInspectData(status events.Status, inspectData bool) error {
+func (c *Container) newContainerEventWithInspectData(status events.Status, healthStatus string, inspectData bool) error {
 	e := events.NewEvent(status)
 	e.ID = c.ID()
 	e.Name = c.Name()
 	e.Image = c.config.RootfsImageName
 	e.Type = events.Container
+	e.HealthStatus = healthStatus
 
 	e.Details = events.Details{
-		ID:         e.ID,
 		PodID:      c.PodID(),
 		Attributes: c.Labels(),
 	}
@@ -64,14 +73,12 @@ func (c *Container) newContainerEventWithInspectData(status events.Status, inspe
 		}
 	}
 
-	// if the current event is a HealthStatus event, we need to get the current
-	// status of the container to pass to the event
-	if status == events.HealthStatus {
-		containerHealthStatus, err := c.healthCheckStatus()
-		if err != nil {
-			e.HealthStatus = fmt.Sprintf("%v", err)
+	if status == events.Remove {
+		exitCode, err := c.runtime.state.GetContainerExitCode(c.ID())
+		if err == nil {
+			intExitCode := int(exitCode)
+			e.ContainerExitCode = &intExitCode
 		}
-		e.HealthStatus = containerHealthStatus
 	}
 
 	return c.runtime.eventer.Write(e)
@@ -85,10 +92,10 @@ func (c *Container) newContainerExitedEvent(exitCode int32) {
 	e.Image = c.config.RootfsImageName
 	e.Type = events.Container
 	e.PodID = c.PodID()
-	e.ContainerExitCode = int(exitCode)
+	intExitCode := int(exitCode)
+	e.ContainerExitCode = &intExitCode
 
 	e.Details = events.Details{
-		ID:         e.ID,
 		Attributes: c.Labels(),
 	}
 
@@ -104,12 +111,12 @@ func (c *Container) newExecDiedEvent(sessionID string, exitCode int) {
 	e.Name = c.Name()
 	e.Image = c.config.RootfsImageName
 	e.Type = events.Container
-	e.ContainerExitCode = exitCode
+	intExitCode := exitCode
+	e.ContainerExitCode = &intExitCode
 	e.Attributes = make(map[string]string)
 	e.Attributes["execID"] = sessionID
 
 	e.Details = events.Details{
-		ID:         e.ID,
 		Attributes: c.Labels(),
 	}
 
@@ -118,7 +125,7 @@ func (c *Container) newExecDiedEvent(sessionID string, exitCode int) {
 	}
 }
 
-// netNetworkEvent creates a new event based on a network connect/disconnect
+// newNetworkEvent creates a new event based on a network connect/disconnect
 func (c *Container) newNetworkEvent(status events.Status, netName string) {
 	e := events.NewEvent(status)
 	e.ID = c.ID()

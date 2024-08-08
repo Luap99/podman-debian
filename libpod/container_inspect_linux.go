@@ -1,3 +1,5 @@
+//go:build !remote
+
 package libpod
 
 import (
@@ -6,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/containers/common/pkg/config"
-	"github.com/containers/podman/v4/libpod/define"
-	"github.com/containers/podman/v4/pkg/util"
+	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/pkg/util"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/runtime-tools/generate"
 	"github.com/opencontainers/runtime-tools/validate/capabilities"
@@ -21,8 +23,14 @@ func (c *Container) platformInspectContainerHostConfig(ctrSpec *spec.Spec, hostC
 	// there are things that require a major:minor to path translation.
 	var deviceNodes map[string]string
 
-	// Resource limits
 	if ctrSpec.Linux != nil {
+		if ctrSpec.Linux.IntelRdt != nil {
+			if ctrSpec.Linux.IntelRdt.ClosID != "" {
+				// container is assigned to a ClosID
+				hostConfig.IntelRdtClosID = ctrSpec.Linux.IntelRdt.ClosID
+			}
+		}
+		// Resource limits
 		if ctrSpec.Linux.Resources != nil {
 			if ctrSpec.Linux.Resources.CPU != nil {
 				if ctrSpec.Linux.Resources.CPU.Shares != nil {
@@ -140,7 +148,7 @@ func (c *Container) platformInspectContainerHostConfig(ctrSpec *spec.Spec, hostC
 		// Max an O(1) lookup table for default bounding caps.
 		boundingCaps := make(map[string]bool)
 		if !hostConfig.Privileged {
-			for _, cap := range c.runtime.config.Containers.DefaultCapabilities {
+			for _, cap := range c.runtime.config.Containers.DefaultCapabilities.Get() {
 				boundingCaps[cap] = true
 			}
 		} else {
