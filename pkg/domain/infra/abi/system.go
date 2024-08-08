@@ -15,6 +15,7 @@ import (
 	"github.com/containers/podman/v5/pkg/util"
 	"github.com/containers/storage"
 	"github.com/containers/storage/pkg/directory"
+	"github.com/containers/storage/pkg/fileutils"
 	"github.com/sirupsen/logrus"
 )
 
@@ -51,7 +52,7 @@ func (ic *ContainerEngine) Info(ctx context.Context) (*define.Info, error) {
 	}
 
 	if uri.Scheme == "unix" {
-		_, err := os.Stat(uri.Path)
+		err := fileutils.Exists(uri.Path)
 		info.Host.RemoteSocket.Exists = err == nil
 	} else {
 		info.Host.RemoteSocket.Exists = true
@@ -197,23 +198,24 @@ func (ic *ContainerEngine) SystemDf(ctx context.Context, options entities.System
 		iid, _ := c.Image()
 		state, err := c.State()
 		if err != nil {
+			if errors.Is(err, define.ErrNoSuchCtr) {
+				continue
+			}
 			return nil, fmt.Errorf("failed to get state of container %s: %w", c.ID(), err)
 		}
 		conSize, err := c.RootFsSize()
 		if err != nil {
-			if errors.Is(err, storage.ErrContainerUnknown) {
-				logrus.Error(fmt.Errorf("failed to get root file system size of container %s: %w", c.ID(), err))
-			} else {
-				return nil, fmt.Errorf("failed to get root file system size of container %s: %w", c.ID(), err)
+			if errors.Is(err, storage.ErrContainerUnknown) || errors.Is(err, define.ErrNoSuchCtr) {
+				continue
 			}
+			return nil, fmt.Errorf("failed to get root file system size of container %s: %w", c.ID(), err)
 		}
 		rwsize, err := c.RWSize()
 		if err != nil {
-			if errors.Is(err, storage.ErrContainerUnknown) {
-				logrus.Error(fmt.Errorf("failed to get read/write size of container %s: %w", c.ID(), err))
-			} else {
-				return nil, fmt.Errorf("failed to get read/write size of container %s: %w", c.ID(), err)
+			if errors.Is(err, storage.ErrContainerUnknown) || errors.Is(err, define.ErrNoSuchCtr) {
+				continue
 			}
+			return nil, fmt.Errorf("failed to get read/write size of container %s: %w", c.ID(), err)
 		}
 		report := entities.SystemDfContainerReport{
 			ContainerID:  c.ID(),
@@ -240,6 +242,9 @@ func (ic *ContainerEngine) SystemDf(ctx context.Context, options entities.System
 		var reclaimableSize int64
 		mountPoint, err := v.MountPoint()
 		if err != nil {
+			if errors.Is(err, define.ErrNoSuchVolume) {
+				continue
+			}
 			return nil, err
 		}
 		if mountPoint == "" {
@@ -254,6 +259,9 @@ func (ic *ContainerEngine) SystemDf(ctx context.Context, options entities.System
 		}
 		inUse, err := v.VolumeInUse()
 		if err != nil {
+			if errors.Is(err, define.ErrNoSuchVolume) {
+				continue
+			}
 			return nil, err
 		}
 		if len(inUse) == 0 {
@@ -334,5 +342,13 @@ func (ic ContainerEngine) Locks(ctx context.Context) (*entities.LocksReport, err
 	}
 	report.LockConflicts = conflicts
 	report.LocksHeld = held
+	return &report, nil
+}
+
+func (ic ContainerEngine) SystemCheck(ctx context.Context, options entities.SystemCheckOptions) (*entities.SystemCheckReport, error) {
+	report, err := ic.Libpod.SystemCheck(ctx, options)
+	if err != nil {
+		return nil, err
+	}
 	return &report, nil
 }

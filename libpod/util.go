@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 	"github.com/containers/common/pkg/config"
 	"github.com/containers/podman/v5/libpod/define"
 	"github.com/containers/podman/v5/pkg/api/handlers/utils/apiutil"
+	"github.com/containers/storage/pkg/fileutils"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/selinux/go-selinux/label"
 	"github.com/sirupsen/logrus"
@@ -104,14 +106,14 @@ func DefaultSeccompPath() (string, error) {
 		return def.Containers.SeccompProfile, nil
 	}
 
-	_, err = os.Stat(config.SeccompOverridePath)
+	err = fileutils.Exists(config.SeccompOverridePath)
 	if err == nil {
 		return config.SeccompOverridePath, nil
 	}
 	if !os.IsNotExist(err) {
 		return "", err
 	}
-	if _, err := os.Stat(config.SeccompDefaultPath); err != nil {
+	if err := fileutils.Exists(config.SeccompDefaultPath); err != nil {
 		if !os.IsNotExist(err) {
 			return "", err
 		}
@@ -286,4 +288,23 @@ func writeStringToPath(path, contents, mountLabel string, uid, gid int) error {
 	}
 
 	return nil
+}
+
+// If the given path exists, evaluate any symlinks in it. If it does not, clean
+// the path and return it. Used to try and verify path equality in a somewhat
+// sane fashion.
+func evalSymlinksIfExists(toCheck string) (string, error) {
+	checkedVal, err := filepath.EvalSymlinks(toCheck)
+	if err != nil {
+		// If the error is not ENOENT, something more serious has gone
+		// wrong, return it.
+		if !errors.Is(err, fs.ErrNotExist) {
+			return "", err
+		}
+		// This is an ENOENT. On ENOENT, EvalSymlinks returns "".
+		// We don't want that. Return a cleaned version of the original
+		// path.
+		return filepath.Clean(toCheck), nil
+	}
+	return checkedVal, nil
 }

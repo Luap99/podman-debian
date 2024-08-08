@@ -83,10 +83,11 @@ var _ = Describe("Podman Info", func() {
 
 		rootlessStoragePath := `"/tmp/$HOME/$USER/$UID/storage"`
 		driver := `"overlay"`
-		storageOpt := `"/usr/bin/fuse-overlayfs"`
-		storageConf := []byte(fmt.Sprintf("[storage]\ndriver=%s\nrootless_storage_path=%s\n[storage.options]\nmount_program=%s", driver, rootlessStoragePath, storageOpt))
+		storageConf := []byte(fmt.Sprintf("[storage]\ndriver=%s\nrootless_storage_path=%s\n[storage.options]\n", driver, rootlessStoragePath))
 		err = os.WriteFile(configPath, storageConf, os.ModePerm)
 		Expect(err).ToNot(HaveOccurred())
+		// Failures in this test are impossible to debug without breadcrumbs
+		GinkgoWriter.Printf("CONTAINERS_STORAGE_CONF=%s:\n%s\n", configPath, storageConf)
 
 		u, err := user.Current()
 		Expect(err).ToNot(HaveOccurred())
@@ -96,8 +97,9 @@ var _ = Describe("Podman Info", func() {
 		podmanPath := podmanTest.PodmanTest.PodmanBinary
 		cmd := exec.Command(podmanPath, "info", "--format", "{{.Store.GraphRoot -}}")
 		out, err := cmd.CombinedOutput()
-		Expect(err).ToNot(HaveOccurred())
-		Expect(string(out)).To(Equal(expect))
+		GinkgoWriter.Printf("Running: podman info --format {{.Store.GraphRoot -}}\nOutput: %s\n", string(out))
+		Expect(err).ToNot(HaveOccurred(), "podman info")
+		Expect(string(out)).To(Equal(expect), "output from podman info")
 	})
 
 	It("check RemoteSocket ", func() {
@@ -115,13 +117,11 @@ var _ = Describe("Podman Info", func() {
 			Expect(session.OutputToString()).To(Equal("false"))
 		}
 
-		session = podmanTest.Podman([]string{"info", "--format", "{{.Host.RemoteSocket.Exists}}"})
-		session.WaitWithDefaultTimeout()
-		Expect(session).Should(ExitCleanly())
 		if IsRemote() {
-			Expect(session.OutputToString()).To(ContainSubstring("true"))
-		} else {
-			Expect(session.OutputToString()).To(ContainSubstring("false"))
+			session = podmanTest.Podman([]string{"info", "--format", "{{.Host.RemoteSocket.Exists}}"})
+			session.WaitWithDefaultTimeout()
+			Expect(session).Should(ExitCleanly())
+			Expect(session.OutputToString()).To(Equal("true"))
 		}
 
 	})
@@ -222,8 +222,7 @@ var _ = Describe("Podman Info", func() {
 		// make sure we get an error for bogus values
 		session := podmanTest.Podman([]string{"--db-backend", "bogus", "info", "--format", "{{.Host.DatabaseBackend}}"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).To(Exit(125))
-		Expect(session.ErrorToString()).To(Equal("Error: unsupported database backend: \"bogus\""))
+		Expect(session).To(ExitWithError(125, `Error: unsupported database backend: "bogus"`))
 	})
 
 	It("Podman info: check desired storage driver", func() {
@@ -239,6 +238,18 @@ var _ = Describe("Podman Info", func() {
 		session.WaitWithDefaultTimeout()
 		Expect(session).To(ExitCleanly())
 		Expect(session.OutputToString()).To(Equal(want), ".Store.GraphDriverName from podman info")
+
+		// Confirm desired setting of composefs
+		if want == "overlay" {
+			expect := "<no value>"
+			if os.Getenv("CI_DESIRED_COMPOSEFS") != "" {
+				expect = "true"
+			}
+			session = podmanTest.Podman([]string{"info", "--format", `{{index .Store.GraphOptions "overlay.use_composefs"}}`})
+			session.WaitWithDefaultTimeout()
+			Expect(session).To(ExitCleanly())
+			Expect(session.OutputToString()).To(Equal(expect), ".Store.GraphOptions -> overlay.use_composefs")
+		}
 	})
 
 	It("Podman info: check lock count", Serial, func() {

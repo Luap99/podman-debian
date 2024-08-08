@@ -27,6 +27,7 @@ import (
 	"github.com/containers/podman/v5/pkg/specgen"
 	"github.com/containers/podman/v5/pkg/specgenutil"
 	"github.com/containers/storage"
+	"github.com/containers/storage/pkg/fileutils"
 	"github.com/docker/docker/api/types/mount"
 )
 
@@ -451,6 +452,7 @@ func cliOpts(cc handlers.CreateContainerConfig, rtc *config.Config) (*entities.C
 		ReadOnly:          cc.HostConfig.ReadonlyRootfs,
 		ReadWriteTmpFS:    true, // podman default
 		Rm:                cc.HostConfig.AutoRemove,
+		Annotation:        stringMaptoArray(cc.HostConfig.Annotations),
 		SecurityOpt:       cc.HostConfig.SecurityOpt,
 		StopSignal:        cc.Config.StopSignal,
 		StopTimeout:       rtc.Engine.StopTimeout, // podman default
@@ -526,7 +528,7 @@ func cliOpts(cc handlers.CreateContainerConfig, rtc *config.Config) (*entities.C
 			continue
 		}
 		// If volume already exists, there is nothing to do
-		if _, err := os.Stat(vol); err == nil {
+		if err := fileutils.Exists(vol); err == nil {
 			continue
 		}
 		if err := os.MkdirAll(vol, 0o755); err != nil {

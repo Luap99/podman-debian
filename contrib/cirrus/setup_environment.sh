@@ -38,10 +38,29 @@ do
     fi
 done
 
-cp hack/podman-registry /bin
-
 # Bypass git safety/security checks when operating in a throwaway environment
 showrun git config --global --add safe.directory $GOSRC
+
+# Special case: "composefs" is not a valid setting but it's useful for
+# readability in .cirrus.yml. Here we translate that to overlayfs (the
+# actual filesystem) along with extra magic envariables.
+# Be sure to do this before writing /etc/ci_environment.
+export CI_DESIRED_COMPOSEFS=
+# shellcheck disable=SC2154
+if [[ "$CI_DESIRED_STORAGE" = "composefs" ]]; then
+    CI_DESIRED_STORAGE="overlay"
+
+    # composefs is root only
+    if [[ "$PRIV_NAME" == "root" ]]; then
+        CI_DESIRED_COMPOSEFS="+composefs"
+
+        # KLUDGE ALERT! Magic options needed for testing composefs.
+        # This option was intended for passing one arg to --storage-opt
+        # but we're hijacking it to pass an extra option+arg. And it
+        # actually works.
+        export STORAGE_OPTIONS_OVERLAY='overlay.use_composefs=true --pull-option=enable_partial_images=true --pull-option=convert_images=true'
+    fi
+fi
 
 # Ensure that all lower-level contexts and child-processes have
 # ready access to higher level orchestration (e.g Cirrus-CI)
@@ -76,24 +95,9 @@ cd "${GOSRC}/"
 
 mkdir -p /etc/containers/containers.conf.d
 
-# Defined by lib.sh: Does the host support cgroups v1 or v2? Use runc or crun
-# respectively.
-# **IMPORTANT**: $OCI_RUNTIME is a fakeout! It is used only in e2e tests.
-# For actual podman, as in system tests, we force runtime in containers.conf
-showrun echo "conditional check: CG_FS_TYPE [=$CG_FS_TYPE]"
-case "$CG_FS_TYPE" in
-    tmpfs)
-        if ((CONTAINER==0)); then
-            warn "Forcing testing with runc instead of crun"
-            echo "OCI_RUNTIME=runc" >> /etc/ci_environment
-            printf "[engine]\nruntime=\"runc\"\n" > /etc/containers/containers.conf.d/90-runtime.conf
-        fi
-        ;;
-    cgroup2fs)
-        # Nothing to do: podman defaults to crun
-        ;;
-    *) die_unknown CG_FS_TYPE
-esac
+# Only cgroups v2 is supported, die if anything else.
+[[ "$CG_FS_TYPE" == "cgroup2fs" ]] || \
+    die "Only cgroups v2 CI VMs are supported, not: '$CG_FS_TYPE'"
 
 # For testing boltdb without having to use --db-backend.
 # As of #20318 (2023-10-10) sqlite is the default, so do not create
@@ -134,12 +138,7 @@ fi
 # Which distribution are we testing on.
 case "$OS_RELEASE_ID" in
     debian)
-        showrun echo "more conditional setup for debian"
-        # FIXME 2023-04-11: workaround for runc regression causing failure
-        # in system tests: "skipping device /dev/char/10:200 for systemd"
-        # (Checked on 2023-08-08 and it's still too old: 1.1.5)
-        # FIXME: please remove this once runc >= 1.2 makes it into debian.
-        showrun modprobe tun
+        showrun echo "No-op conditional setup for debian"
         ;;
     fedora)
         showrun echo "conditional setup for fedora"
@@ -148,6 +147,11 @@ case "$OS_RELEASE_ID" in
             msg "Enabling container_manage_cgroup"
             showrun setsebool container_manage_cgroup true
         fi
+
+        # Test nftables driver, https://fedoraproject.org/wiki/Changes/NetavarkNftablesDefault
+        # We can drop this once this implemented and pushed into fedora stable. We cannot test it on
+        # debian because the netavark version there is way to old for nftables support.
+        printf "[network]\nfirewall_driver=\"nftables\"\n" > /etc/containers/containers.conf.d/90-nftables.conf
         ;;
     *) die_unknown OS_RELEASE_ID
 esac
@@ -177,7 +181,7 @@ esac
 # This is (sigh) different because e2e tests have their own special way
 # of ignoring system defaults.
 # shellcheck disable=SC2154
-showrun echo "Setting CI_DESIRED_STORAGE [=$CI_DESIRED_STORAGE] for *system* tests"
+showrun echo "Setting CI_DESIRED_STORAGE [=$CI_DESIRED_STORAGE$CI_DESIRED_COMPOSEFS] for *system* tests"
 conf=/etc/containers/storage.conf
 if [[ -e $conf ]]; then
     die "FATAL! INTERNAL ERROR! Cannot override $conf"
@@ -189,10 +193,22 @@ runroot = "/run/containers/storage"
 graphroot = "/var/lib/containers/storage"
 EOF
 
-# Since we've potentially changed important config settings, reset.
-# This prevents `database graph driver "" does not match "overlay"`
-# on Debian.
-rm -rf /var/lib/containers/storage
+if [[ -n "$CI_DESIRED_COMPOSEFS" ]]; then
+    cat <<EOF >>$conf
+
+# BEGIN CI-enabled composefs
+[storage.options]
+pull_options = {enable_partial_images = "true", use_hard_links = "false", ostree_repos="", convert_images = "true"}
+
+[storage.options.overlay]
+use_composefs = "true"
+# END CI-enabled composefs
+EOF
+fi
+
+# mount a tmpfs for the container storage to speed up the IO
+# side effect is we clear all potentially pre existing data so we know we always start "clean"
+mount -t tmpfs -o size=75%,mode=0700 none /var/lib/containers
 
 # shellcheck disable=SC2154
 showrun echo "Setting CI_DESIRED_STORAGE [=$CI_DESIRED_STORAGE] for *e2e* tests"
@@ -204,6 +220,7 @@ showrun echo "about to set up for TEST_ENVIRON [=$TEST_ENVIRON]"
 case "$TEST_ENVIRON" in
     host)
         # The e2e tests wrongly guess `--cgroup-manager` option
+        # under some runtime contexts like rootless.
         # shellcheck disable=SC2154
         if [[ "$CG_FS_TYPE" == "cgroup2fs" ]] || [[ "$PRIV_NAME" == "root" ]]
         then
@@ -323,14 +340,24 @@ case "$PODBIN_NAME" in
     *) die_unknown PODBIN_NAME
 esac
 
+# As of July 2024, CI VMs come built-in with a registry.
+LCR=/var/cache/local-registry/local-cache-registry
+if [[ -x $LCR ]]; then
+    # Images in cache registry are prepopulated at the time
+    # VMs are built. If any PR adds a dependency on new images,
+    # those must be fetched now, at VM start time. This should
+    # be rare, and must be fixed in next automation_images build.
+    while read new_image; do
+        $LCR cache $new_image
+    done < <(grep '^[^#]' test/NEW-IMAGES || true)
+fi
+
 # Required to be defined by caller: The primary type of testing that will be performed
 # shellcheck disable=SC2154
 showrun echo "about to set up for TEST_FLAVOR [=$TEST_FLAVOR]"
 case "$TEST_FLAVOR" in
-    validate)
-        showrun dnf install -y $PACKAGE_DOWNLOAD_DIR/python3*.rpm
-        # For some reason, this is also needed for validation
-        showrun make .install.pre-commit .install.gitvalidation
+    validate-source)
+        # NOOP
         ;;
     altbuild)
         # Defined in .cirrus.yml
@@ -343,8 +370,6 @@ case "$TEST_FLAVOR" in
         remove_packaged_podman_files
         showrun make install PREFIX=/usr ETCDIR=/etc
 
-        msg "Installing previously downloaded/cached packages"
-        showrun dnf install -y $PACKAGE_DOWNLOAD_DIR/python3*.rpm
         virtualenv .venv/docker-py
         source .venv/docker-py/bin/activate
         showrun pip install --upgrade pip
@@ -367,15 +392,16 @@ case "$TEST_FLAVOR" in
         showrun pip install --upgrade pip
         showrun pip install --requirement $GOSRC/test/apiv2/python/requirements.txt
         ;&  # continue with next item
-    compose)
-        showrun make install.tools
-        showrun dnf remove -y gvisor-tap-vsock
-        showrun dnf install -y podman-docker*
-        ;&  # continue with next item
     int)
         showrun make .install.ginkgo
         ;&
-    sys) ;&
+    sys)
+        # when run nighlty check for system test leaks
+        # shellcheck disable=SC2154
+        if [[ "$CIRRUS_CRON" != '' ]]; then
+            export PODMAN_BATS_LEAK_CHECK=1
+        fi
+        ;&
     upgrade_test) ;&
     bud) ;&
     bindings) ;&
@@ -408,18 +434,19 @@ case "$TEST_FLAVOR" in
         showrun make install PREFIX=/usr ETCDIR=/etc
         install_test_configs
         ;;
-    minikube)
-        showrun dnf install -y $PACKAGE_DOWNLOAD_DIR/minikube-latest*
-        remove_packaged_podman_files
-        showrun make install.tools
-        showrun make install PREFIX=/usr ETCDIR=/etc
-        showrun minikube config set driver podman
-        install_test_configs
-        ;;
     machine-linux)
-        showrun dnf install -y podman-gvproxy*
+        showrun dnf install -y podman-gvproxy* virtiofsd
+        # Bootstrap this link if it isn't yet in the package; xref
+        # https://github.com/containers/podman/pull/22920
+        if ! test -L /usr/libexec/podman/virtiofsd; then
+            showrun ln -sfr /usr/libexec/virtiofsd /usr/libexec/podman/virtiofsd
+        fi
         remove_packaged_podman_files
         showrun make install PREFIX=/usr ETCDIR=/etc
+        # machine-os image changes too frequently, can't be precached
+        # FIXME: I don't think we can use version.go, because of chicken-egg
+        # problem when that gets bumped. Ideas welcome.
+        $LCR cache podman/machine-os:5.2
         install_test_configs
         ;;
     swagger)

@@ -2,6 +2,7 @@ package integration
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -83,13 +84,12 @@ var _ = Describe("Podman manifest", func() {
 
 			session = podmanTest.Podman([]string{"manifest", "create", "foo"})
 			session.WaitWithDefaultTimeout()
-			Expect(session).To(ExitWithError())
+			Expect(session).To(ExitWithError(125, `image name "localhost/foo:latest" is already associated with image `))
 
 			session = podmanTest.Podman([]string{"manifest", "push", "--all", "foo"})
 			session.WaitWithDefaultTimeout()
-			Expect(session).To(ExitWithError())
-			// Push should actually fail since its not valid registry
-			Expect(session.ErrorToString()).To(ContainSubstring("requested access to the resource is denied"))
+			// Push should actually fail since it's not valid registry
+			Expect(session).To(ExitWithError(125, "requested access to the resource is denied"))
 			Expect(session.OutputToString()).To(Not(ContainSubstring("accepts 2 arg(s), received 1")))
 
 			session = podmanTest.Podman([]string{"manifest", "create", amend, "foo"})
@@ -233,12 +233,11 @@ var _ = Describe("Podman manifest", func() {
 		// 4 images must be pushed two for gzip and two for zstd
 		Expect(output).To(ContainSubstring("Copying 4 images generated from 2 images in list"))
 
-		session = podmanTest.Podman([]string{"run", "--rm", "--net", "host", "quay.io/skopeo/stable", "inspect", "--tls-verify=false", "--raw", "docker://localhost:5007/list:latest"})
-		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(0))
+		skopeo := SystemExec("skopeo", []string{"inspect", "--tls-verify=false", "--raw", "docker://localhost:5007/list:latest"})
+		Expect(skopeo).Should(ExitCleanly())
+		inspectData := []byte(skopeo.OutputToString())
 		var index imgspecv1.Index
-		inspectData := []byte(session.OutputToString())
-		err := json.Unmarshal(inspectData, &index)
+		err = json.Unmarshal(inspectData, &index)
 		Expect(err).ToNot(HaveOccurred())
 
 		Expect(verifyInstanceCompression(index.Manifests, "zstd", "amd64")).Should(BeTrue())
@@ -254,10 +253,9 @@ var _ = Describe("Podman manifest", func() {
 		// 4 images must be pushed two for gzip and two for zstd
 		Expect(output).To(ContainSubstring("Copying 4 images generated from 2 images in list"))
 
-		session = podmanTest.Podman([]string{"run", "--rm", "--net", "host", "quay.io/skopeo/stable", "inspect", "--tls-verify=false", "--raw", "docker://localhost:5007/list:latest"})
-		session.WaitWithDefaultTimeout()
-		Expect(session).Should(ExitCleanly())
-		inspectData = []byte(session.OutputToString())
+		skopeo = SystemExec("skopeo", []string{"inspect", "--tls-verify=false", "--raw", "docker://localhost:5007/list:latest"})
+		Expect(skopeo).Should(ExitCleanly())
+		inspectData = []byte(skopeo.OutputToString())
 		err = json.Unmarshal(inspectData, &index)
 		Expect(err).ToNot(HaveOccurred())
 
@@ -280,10 +278,9 @@ add_compression = ["zstd"]`), 0o644)
 		// 4 images must be pushed two for gzip and two for zstd
 		Expect(output).To(ContainSubstring("Copying 4 images generated from 2 images in list"))
 
-		session = podmanTest.Podman([]string{"run", "--rm", "--net", "host", "quay.io/skopeo/stable", "inspect", "--tls-verify=false", "--raw", "docker://localhost:5007/list:latest"})
-		session.WaitWithDefaultTimeout()
-		Expect(session).Should(ExitCleanly())
-		inspectData = []byte(session.OutputToString())
+		skopeo = SystemExec("skopeo", []string{"inspect", "--tls-verify=false", "--raw", "docker://localhost:5007/list:latest"})
+		Expect(skopeo).Should(ExitCleanly())
+		inspectData = []byte(skopeo.OutputToString())
 		err = json.Unmarshal(inspectData, &index)
 		Expect(err).ToNot(HaveOccurred())
 
@@ -301,10 +298,9 @@ add_compression = ["zstd"]`), 0o644)
 		// 4 images must be pushed two for gzip and two for zstd
 		Expect(output).To(ContainSubstring("Copying 4 images generated from 2 images in list"))
 
-		session = podmanTest.Podman([]string{"run", "--rm", "--net", "host", "quay.io/skopeo/stable", "inspect", "--tls-verify=false", "--raw", "docker://localhost:5007/list:latest"})
-		session.WaitWithDefaultTimeout()
-		Expect(session).Should(ExitCleanly())
-		inspectData = []byte(session.OutputToString())
+		skopeo = SystemExec("skopeo", []string{"inspect", "--tls-verify=false", "--raw", "docker://localhost:5007/list:latest"})
+		Expect(skopeo).Should(ExitCleanly())
+		inspectData = []byte(skopeo.OutputToString())
 		err = json.Unmarshal(inspectData, &index)
 		Expect(err).ToNot(HaveOccurred())
 
@@ -341,8 +337,8 @@ add_compression = ["zstd"]`), 0o644)
 		Expect(session).Should(ExitCleanly())
 		session = podmanTest.Podman([]string{"manifest", "add", "--annotation", "hoge", "foo", imageList})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(125))
-		Expect(session.ErrorToString()).To(ContainSubstring("no value given for annotation"))
+		Expect(session).Should(ExitWithError(125, "no value given for annotation"))
+
 		session = podmanTest.Podman([]string{"manifest", "add", "--annotation", "hoge=fuga", "--annotation", "key=val,withcomma", "foo", imageList})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(ExitCleanly())
@@ -421,9 +417,18 @@ add_compression = ["zstd"]`), 0o644)
 		session = podmanTest.Podman([]string{"manifest", "add", "foo", imageList})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(ExitCleanly())
-		session = podmanTest.Podman([]string{"manifest", "remove", "foo", "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"})
+		bogusID := "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+		session = podmanTest.Podman([]string{"manifest", "remove", "foo", bogusID})
 		session.WaitWithDefaultTimeout()
-		Expect(session).To(ExitWithError())
+
+		// FIXME-someday: figure out why message differs in podman-remote
+		expectMessage := "removing from manifest list foo: "
+		if IsRemote() {
+			expectMessage += "removing from manifest foo"
+		} else {
+			expectMessage += fmt.Sprintf(`no instance matching digest %q found in manifest list: file does not exist`, bogusID)
+		}
+		Expect(session).To(ExitWithError(125, expectMessage))
 
 		session = podmanTest.Podman([]string{"manifest", "rm", "foo"})
 		session.WaitWithDefaultTimeout()
@@ -493,9 +498,7 @@ RUN touch /file
 		tmpDir := filepath.Join(podmanTest.TempDir, "wrong-compression")
 		session = podmanTest.Podman([]string{"manifest", "push", "--compression-format", "gzip", "--compression-level", "50", "foo", "oci:" + tmpDir})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(125))
-		output := session.ErrorToString()
-		Expect(output).To(ContainSubstring("invalid compression level"))
+		Expect(session).Should(ExitWithError(125, "invalid compression level"))
 
 		dest := filepath.Join(podmanTest.TempDir, "pushed")
 		err := os.MkdirAll(dest, os.ModePerm)
@@ -564,7 +567,7 @@ RUN touch /file
 
 		push := podmanTest.Podman([]string{"manifest", "push", "--all", "--tls-verify=false", "--remove-signatures", "foo", "localhost:7000/bogus"})
 		push.WaitWithDefaultTimeout()
-		Expect(push).Should(Exit(125))
+		Expect(push).Should(ExitWithError(125, "Failed, retrying in 1s ... (1/3)"))
 		Expect(push.ErrorToString()).To(MatchRegexp("Copying blob.*Failed, retrying in 1s \\.\\.\\. \\(1/3\\).*Copying blob.*Failed, retrying in 2s"))
 	})
 
@@ -614,8 +617,7 @@ RUN touch /file
 
 		push = podmanTest.Podman([]string{"manifest", "push", "--compression-format=gzip", "--compression-level=2", "--tls-verify=false", "--creds=podmantest:wrongpasswd", "foo", "localhost:" + registry.Port + "/credstest"})
 		push.WaitWithDefaultTimeout()
-		Expect(push).To(ExitWithError())
-		Expect(push.ErrorToString()).To(ContainSubstring(": authentication required"))
+		Expect(push).To(ExitWithError(125, ": authentication required"))
 
 		// push --rm after pull image (#15033)
 		push = podmanTest.Podman([]string{"manifest", "push", "-q", "--rm", "--tls-verify=false", "--creds=" + registry.User + ":" + registry.Password, "foo", "localhost:" + registry.Port + "/rmtest"})
@@ -631,8 +633,7 @@ RUN touch /file
 	It("push with error", func() {
 		session := podmanTest.Podman([]string{"manifest", "push", "badsrcvalue", "baddestvalue"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(ExitWithError())
-		Expect(session.ErrorToString()).To(ContainSubstring("retrieving local image from image name badsrcvalue: badsrcvalue: image not known"))
+		Expect(session).Should(ExitWithError(125, "retrieving local image from image name badsrcvalue: badsrcvalue: image not known"))
 	})
 
 	It("push --rm to local directory", func() {
@@ -654,8 +655,8 @@ RUN touch /file
 		Expect(session).Should(ExitCleanly())
 		session = podmanTest.Podman([]string{"manifest", "push", "-p", "foo", "dir:" + dest})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(125))
-		Expect(session.ErrorToString()).To(ContainSubstring("retrieving local image from image name foo: foo: image not known"))
+		Expect(session).Should(ExitWithError(125, "retrieving local image from image name foo: foo: image not known"))
+
 		session = podmanTest.Podman([]string{"images", "-q", "foo"})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(ExitCleanly())
@@ -682,9 +683,9 @@ RUN touch /file
 
 		session = podmanTest.Podman([]string{"manifest", "rm", "foo", "bar"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(ExitWithError())
-		Expect(session.ErrorToString()).To(ContainSubstring("foo: image not known"))
-		Expect(session.ErrorToString()).To(ContainSubstring("bar: image not known"))
+		Expect(session).Should(ExitWithError(1, " 2 errors occurred:"))
+		Expect(session.ErrorToString()).To(ContainSubstring("* foo: image not known"))
+		Expect(session.ErrorToString()).To(ContainSubstring("* bar: image not known"))
 	})
 
 	It("exists", func() {
@@ -699,7 +700,7 @@ RUN touch /file
 
 		session = podmanTest.Podman([]string{"manifest", "exists", "no-manifest"})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(1))
+		Expect(session).Should(ExitWithError(1, ""))
 	})
 
 	It("rm should not remove referenced images", func() {
@@ -732,8 +733,7 @@ RUN touch /file
 		// manifest rm should fail with `image is not a manifest list`
 		session := podmanTest.Podman([]string{"manifest", "rm", ALPINE})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(125))
-		Expect(session.ErrorToString()).To(ContainSubstring("image is not a manifest list"))
+		Expect(session).Should(ExitWithError(125, "image is not a manifest list"))
 
 		manifestName := "testmanifest:sometag"
 		session = podmanTest.Podman([]string{"manifest", "create", manifestName})
@@ -753,6 +753,6 @@ RUN touch /file
 		// verify that manifest should not exist
 		session = podmanTest.Podman([]string{"manifest", "exists", manifestName})
 		session.WaitWithDefaultTimeout()
-		Expect(session).Should(Exit(1))
+		Expect(session).Should(ExitWithError(1, ""))
 	})
 })

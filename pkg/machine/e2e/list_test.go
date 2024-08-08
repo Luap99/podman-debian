@@ -1,6 +1,7 @@
 package e2e_test
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -10,21 +11,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
-	"golang.org/x/exp/slices"
 )
 
 var _ = Describe("podman machine list", func() {
-	var (
-		mb      *machineTestBuilder
-		testDir string
-	)
-
-	BeforeEach(func() {
-		testDir, mb = setup()
-	})
-	AfterEach(func() {
-		teardown(originalHomeDir, testDir, mb)
-	})
 
 	It("list machine", func() {
 		list := new(listMachine)

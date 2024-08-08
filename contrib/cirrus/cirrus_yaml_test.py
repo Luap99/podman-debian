@@ -60,6 +60,21 @@ class TestDependsOn(TestCaseBase):
                 msg=('No success aggregation task depends_on "{0}"'.format(task_name))
                 self.assertIn(task_name, success_deps, msg=msg)
 
+    def test_only_if(self):
+        """2024-07 PR#23174: ugly but necessary duplication in only_if conditions. Prevent typos or unwanted changes."""
+        beginning = "$CIRRUS_PR == '' || $CIRRUS_CHANGE_TITLE =~ '.*CI:ALL.*' || changesInclude('.cirrus.yml', 'Makefile', 'contrib/cirrus/**', 'vendor/**', 'test/tools/**', 'hack/**', 'version/rawversion/*') || "
+        real_source_changes = " || (changesInclude('**/*.go', '**/*.c', '**/*.h') && !changesIncludeOnly('test/**', 'pkg/machine/e2e/**'))"
+
+        for task_name in self.ALL_TASK_NAMES:
+            task = self.CIRRUS_YAML[task_name + '_task']
+            if 'only_if' in task:
+                only_if = task['only_if']
+                if 'changesInclude' in only_if:
+                    msg = ('{0}: invalid only_if'.format(task_name))
+                    self.assertEqual(only_if[:len(beginning)], beginning, msg=msg+": beginning part is wrong")
+                    if 'changesIncludeOnly' in only_if:
+                        self.assertEqual(only_if[len(only_if)-len(real_source_changes):], real_source_changes, msg=msg+": changesIncludeOnly() part is wrong")
+
     def not_task(self):
         """Ensure no task is named 'task'"""
         self.assertNotIn('task', self.ALL_TASK_NAMES)

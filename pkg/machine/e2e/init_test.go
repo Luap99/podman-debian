@@ -9,33 +9,23 @@ import (
 	"strings"
 	"time"
 
+	"github.com/containers/common/pkg/strongunits"
 	"github.com/containers/podman/v5/pkg/machine/define"
 	"github.com/containers/podman/v5/utils"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	. "github.com/onsi/gomega/gexec"
+	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/sirupsen/logrus"
 )
 
 var _ = Describe("podman machine init", func() {
-	var (
-		mb      *machineTestBuilder
-		testDir string
-	)
-
-	BeforeEach(func() {
-		testDir, mb = setup()
-	})
-	AfterEach(func() {
-		teardown(originalHomeDir, testDir, mb)
-	})
-
 	cpus := runtime.NumCPU() / 2
 	if cpus == 0 {
 		cpus = 1
 	}
 
-	It("bad init name", func() {
+	It("bad init", func() {
 		i := initMachine{}
 		reallyLongName := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 		session, err := mb.setName(reallyLongName).setCmd(&i).run()
@@ -77,6 +67,16 @@ var _ = Describe("podman machine init", func() {
 		Expect(err).ToNot(HaveOccurred())
 		Expect(session).To(Exit(125))
 		Expect(session.errorToString()).To(ContainSubstring(`invalid username "-/a": names must match [a-zA-Z0-9][a-zA-Z0-9_.-]*: invalid argument`))
+
+		// this comes in bytes
+		memStat, err := mem.VirtualMemory()
+		Expect(err).ToNot(HaveOccurred())
+		total := strongunits.ToMib(strongunits.B(memStat.Total)) + 1024
+
+		badMem := initMachine{}
+		badMemSession, err := mb.setCmd(badMem.withMemory(uint(total))).run()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(badMemSession).To(Exit(125))
 	})
 
 	It("simple init", func() {
@@ -370,6 +370,100 @@ var _ = Describe("podman machine init", func() {
 		Expect(err).ToNot(HaveOccurred())
 		Expect(inspectShouldPass).To(Exit(0))
 	})
+
+	It("machine init with rosetta=true", func() {
+		skipIfVmtype(define.QemuVirt, "Test is only for AppleHv")
+		skipIfVmtype(define.WSLVirt, "Test is only for AppleHv")
+		skipIfVmtype(define.HyperVVirt, "Test is only for AppleHv")
+		skipIfVmtype(define.LibKrun, "Test is only for AppleHv")
+		if runtime.GOARCH != "arm64" {
+			Skip("Test is only for AppleHv with arm64 architecture")
+		}
+
+		i := initMachine{}
+		name := randomString()
+		session, err := mb.setName(name).setCmd(i.withImage(mb.imagePath)).run()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(session).To(Exit(0))
+
+		s := startMachine{}
+		ssession, err := mb.setCmd(s).setTimeout(time.Minute * 10).run()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(ssession).Should(Exit(0))
+
+		inspect := new(inspectMachine)
+		inspect = inspect.withFormat("{{.Rosetta}}")
+		inspectSession, err := mb.setName(name).setCmd(inspect).run()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(inspectSession).To(Exit(0))
+		Expect(inspectSession.outputToString()).To(Equal("true"))
+
+		mnt := sshMachine{}
+		mntSession, err := mb.setName(name).setCmd(mnt.withSSHCommand([]string{"ls -d /mnt/rosetta"})).run()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(mntSession).To(Exit(0))
+		Expect(mntSession.outputToString()).To(ContainSubstring("/mnt/rosetta"))
+
+		proc := sshMachine{}
+		procSession, err := mb.setName(name).setCmd(proc.withSSHCommand([]string{"ls -d /proc/sys/fs/binfmt_misc/rosetta"})).run()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(procSession).To(Exit(0))
+		Expect(procSession.outputToString()).To(ContainSubstring("/proc/sys/fs/binfmt_misc/rosetta"))
+
+		proc2 := sshMachine{}
+		proc2Session, err := mb.setName(name).setCmd(proc2.withSSHCommand([]string{"ls -d /proc/sys/fs/binfmt_misc/qemu-x86_64"})).run()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(proc2Session.ExitCode()).To(Equal(2))
+	})
+
+	It("machine init with rosetta=false", func() {
+		skipIfVmtype(define.QemuVirt, "Test is only for AppleHv")
+		skipIfVmtype(define.WSLVirt, "Test is only for AppleHv")
+		skipIfVmtype(define.HyperVVirt, "Test is only for AppleHv")
+		skipIfVmtype(define.LibKrun, "Test is only for AppleHv")
+		if runtime.GOARCH != "arm64" {
+			Skip("Test is only for AppleHv with arm64 architecture")
+		}
+		configDir := filepath.Join(testDir, ".config", "containers")
+		err := os.MkdirAll(configDir, 0755)
+		Expect(err).ToNot(HaveOccurred())
+
+		err = os.WriteFile(filepath.Join(configDir, "containers.conf"), rosettaConfig, 0644)
+		Expect(err).ToNot(HaveOccurred())
+
+		i := initMachine{}
+		name := randomString()
+		session, err := mb.setName(name).setCmd(i.withImage(mb.imagePath)).run()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(session).To(Exit(0))
+
+		s := startMachine{}
+		ssession, err := mb.setCmd(s).setTimeout(time.Minute * 10).run()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(ssession).Should(Exit(0))
+
+		inspect := new(inspectMachine)
+		inspect = inspect.withFormat("{{.Rosetta}}")
+		inspectSession, err := mb.setName(name).setCmd(inspect).run()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(inspectSession).To(Exit(0))
+		Expect(inspectSession.outputToString()).To(Equal("false"))
+
+		mnt := sshMachine{}
+		mntSession, err := mb.setName(name).setCmd(mnt.withSSHCommand([]string{"ls -d /mnt/rosetta"})).run()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(mntSession.ExitCode()).To(Equal(2))
+
+		proc := sshMachine{}
+		procSession, err := mb.setName(name).setCmd(proc.withSSHCommand([]string{"ls -d /proc/sys/fs/binfmt_misc/rosetta"})).run()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(procSession.ExitCode()).To(Equal(2))
+
+		proc2 := sshMachine{}
+		proc2Session, err := mb.setName(name).setCmd(proc2.withSSHCommand([]string{"ls -d /proc/sys/fs/binfmt_misc/qemu-x86_64"})).run()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(proc2Session.outputToString()).To(ContainSubstring("/proc/sys/fs/binfmt_misc/qemu-x86_64"))
+	})
 })
 
 var p4Config = []byte(`{
@@ -454,4 +548,9 @@ var p4Config = []byte(`{
  "Created": "2024-02-08T10:34:14.067604999-06:00",
  "LastUp": "0001-01-01T00:00:00Z"
 }
+`)
+
+var rosettaConfig = []byte(`
+[machine]
+rosetta=false
 `)

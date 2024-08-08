@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -30,7 +31,6 @@ import (
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/runtime-tools/generate"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/exp/slices"
 )
 
 // Contains the public Runtime API for containers
@@ -585,7 +585,7 @@ func (r *Runtime) setupContainer(ctx context.Context, ctr *Container) (_ *Contai
 	}
 
 	if ctr.runtime.config.Engine.EventsContainerCreateInspectData {
-		if err := ctr.newContainerEventWithInspectData(events.Create, true); err != nil {
+		if err := ctr.newContainerEventWithInspectData(events.Create, "", true); err != nil {
 			return nil, err
 		}
 	} else {
@@ -991,12 +991,6 @@ func (r *Runtime) removeContainer(ctx context.Context, c *Container, opts ctrRmO
 		reportErrorf("cleaning up storage: %w", err)
 	}
 
-	// Remove the container's CID file on container removal.
-	if cidFile, ok := c.config.Spec.Annotations[define.InspectAnnotationCIDFile]; ok {
-		if err := os.Remove(cidFile); err != nil && !errors.Is(err, os.ErrNotExist) {
-			reportErrorf("cleaning up CID file: %w", err)
-		}
-	}
 	// Remove the container from the state
 	if c.config.Pod != "" {
 		// If we're removing the pod, the container will be evicted
@@ -1010,6 +1004,13 @@ func (r *Runtime) removeContainer(ctx context.Context, c *Container, opts ctrRmO
 		}
 	}
 	removedCtrs[c.ID()] = nil
+
+	// Remove the container's CID file on container removal.
+	if cidFile, ok := c.config.Spec.Annotations[define.InspectAnnotationCIDFile]; ok {
+		if err := os.Remove(cidFile); err != nil && !errors.Is(err, os.ErrNotExist) {
+			reportErrorf("cleaning up CID file: %w", err)
+		}
+	}
 
 	// Deallocate the container's lock
 	if err := c.lock.Free(); err != nil && !errors.Is(err, fs.ErrNotExist) {

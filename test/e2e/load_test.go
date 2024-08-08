@@ -86,11 +86,7 @@ var _ = Describe("Podman load", func() {
 		result := podmanTest.Podman([]string{"load", "-q", "--signature-policy", "/etc/containers/policy.json", "-i", outfile})
 		result.WaitWithDefaultTimeout()
 		if IsRemote() {
-			Expect(result).To(ExitWithError())
-			Expect(result.ErrorToString()).To(ContainSubstring("unknown flag"))
-			result = podmanTest.Podman([]string{"load", "-i", outfile})
-			result.WaitWithDefaultTimeout()
-			Expect(result).Should(ExitCleanly())
+			Expect(result).To(ExitWithError(125, "unknown flag: --signature-policy"))
 		} else {
 			Expect(result).Should(ExitCleanly())
 		}
@@ -138,16 +134,13 @@ var _ = Describe("Podman load", func() {
 
 		result := podmanTest.Podman([]string{"load", "-i", podmanTest.TempDir})
 		result.WaitWithDefaultTimeout()
-		Expect(result).Should(Exit(125))
-
-		errMsg := fmt.Sprintf("remote client supports archives only but %q is a directory", podmanTest.TempDir)
-		Expect(result.ErrorToString()).To(ContainSubstring(errMsg))
+		Expect(result).Should(ExitWithError(125, fmt.Sprintf("remote client supports archives only but %q is a directory", podmanTest.TempDir)))
 	})
 
 	It("podman load bogus file", func() {
 		save := podmanTest.Podman([]string{"load", "-i", "foobar.tar"})
 		save.WaitWithDefaultTimeout()
-		Expect(save).To(ExitWithError())
+		Expect(save).To(ExitWithError(125, "faccessat foobar.tar: no such file or directory"))
 	})
 
 	It("podman load multiple tags", func() {
@@ -155,7 +148,7 @@ var _ = Describe("Podman load", func() {
 			Skip("skip on ppc64le")
 		}
 		outfile := filepath.Join(podmanTest.TempDir, "alpine.tar")
-		alpVersion := "quay.io/libpod/alpine:3.2"
+		alpVersion := "quay.io/libpod/alpine:3.10.2"
 
 		pull := podmanTest.Podman([]string{"pull", "-q", alpVersion})
 		pull.WaitWithDefaultTimeout()
@@ -176,9 +169,12 @@ var _ = Describe("Podman load", func() {
 		inspect := podmanTest.Podman([]string{"inspect", ALPINE})
 		inspect.WaitWithDefaultTimeout()
 		Expect(result).Should(ExitCleanly())
+		Expect(result.OutputToString()).To(ContainSubstring(alpVersion))
+
 		inspect = podmanTest.Podman([]string{"inspect", alpVersion})
 		inspect.WaitWithDefaultTimeout()
 		Expect(result).Should(ExitCleanly())
+		Expect(result.OutputToString()).To(ContainSubstring(alpVersion))
 	})
 
 	It("podman load localhost registry from scratch", func() {

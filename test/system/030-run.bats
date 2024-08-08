@@ -37,10 +37,7 @@ echo $rand        |   0 | $rand
         # a way to do so.
         eval set "$cmd"
 
-        # FIXME: The </dev/null is a hack, necessary because as of 2019-09
-        #        podman-remote has a bug in which it silently slurps up stdin,
-        #        including the output of parse_table (i.e. tests to be run).
-        run_podman $expected_rc run $IMAGE "$@"
+        run_podman $expected_rc run --rm $IMAGE "$@"
         is "$output" "$expected_output" "podman run $cmd - output"
 
         tests_run=$(expr $tests_run + 1)
@@ -125,12 +122,9 @@ echo $rand        |   0 | $rand
 }
 
 @test "podman run --name" {
-    randomname=$(random_string 30)
+    randomname=c_$(safename)
 
-    # Assume that 4 seconds gives us enough time for 3 quick tests (or at
-    # least for the 'ps'; the 'container exists' should pass even in the
-    # unlikely case that the container exits before we get to them)
-    run_podman run -d --name $randomname $IMAGE sleep 4
+    run_podman run -d --name $randomname $IMAGE sleep inf
     cid=$output
 
     run_podman ps --format '{{.Names}}--{{.ID}}'
@@ -140,7 +134,7 @@ echo $rand        |   0 | $rand
     run_podman container exists $cid
 
     # Done with live-container tests; now let's test after container finishes
-    run_podman wait $cid
+    run_podman stop -t0 $cid
 
     # Container still exists even after stopping:
     run_podman container exists $randomname
@@ -198,7 +192,8 @@ echo $rand        |   0 | $rand
     run_podman 1 image exists $NONLOCAL_IMAGE
 
     # Run a container, without --rm; this should block subsequent --rmi
-    run_podman run --name /keepme $NONLOCAL_IMAGE /bin/true
+    cname=c_$(safename)
+    run_podman run --name /$cname $NONLOCAL_IMAGE /bin/true
     run_podman image exists $NONLOCAL_IMAGE
 
     # Now try running with --rmi : it should succeed, but not remove the image
@@ -208,7 +203,7 @@ echo $rand        |   0 | $rand
     run_podman image exists $NONLOCAL_IMAGE
 
     # Remove the stray container, and run one more time with --rmi.
-    run_podman rm /keepme
+    run_podman rm /$cname
     run_podman run --rmi $NONLOCAL_IMAGE /bin/true
     run_podman 1 image exists $NONLOCAL_IMAGE
 
@@ -226,7 +221,7 @@ echo $rand        |   0 | $rand
     # on write.
     echo "$(random_string 120)" > $cidfile
 
-    cname=$(random_string)
+    cname=c_$(safename)
     run_podman run --name $cname \
                --conmon-pidfile=$pidfile \
                --cidfile=$cidfile \
@@ -261,23 +256,25 @@ echo $rand        |   0 | $rand
     skip_if_remote "podman-remote does not support docker-archive"
 
     # Create an image that, when run, outputs a random magic string
+    cname=c_$(safename)
     expect=$(random_string 20)
-    run_podman run --name myc --entrypoint="[\"/bin/echo\",\"$expect\"]" $IMAGE
+    run_podman run --name $cname --entrypoint="[\"/bin/echo\",\"$expect\"]" $IMAGE
     is "$output" "$expect" "podman run --entrypoint echo-randomstring"
 
     # Save it as a tar archive
-    run_podman commit myc myi
+    iname=i_$(safename)
+    run_podman commit $cname $iname
     archive=$PODMAN_TMPDIR/archive.tar
-    run_podman save --quiet myi -o $archive
+    run_podman save --quiet $iname -o $archive
     is "$output" "" "podman save"
 
     # Clean up image and container from container storage...
-    run_podman rmi myi
-    run_podman rm myc
+    run_podman rmi $iname
+    run_podman rm $cname
 
     # ... then confirm we can run from archive. This re-imports the image
     # and runs it, producing our random string as the last line.
-    run_podman run docker-archive:$archive
+    run_podman run --name ${cname}_2 docker-archive:$archive
     is "${lines[0]}" "Getting image source signatures" "podman run docker-archive, first line of output"
     is "$output" ".*Copying blob"     "podman run docker-archive"
     is "$output" ".*Copying config"   "podman run docker-archive"
@@ -285,8 +282,8 @@ echo $rand        |   0 | $rand
     is "${lines[-1]}" "$expect" "podman run docker-archive: expected random string output"
 
     # Clean up container as well as re-imported image
-    run_podman rm -a
-    run_podman rmi myi
+    run_podman rm ${cname}_2
+    run_podman rmi $iname
 
     # Repeat the above, with podman-create and podman-start.
     run_podman create docker-archive:$archive
@@ -297,7 +294,7 @@ echo $rand        |   0 | $rand
 
     # Clean up.
     run_podman rm $cid
-    run_podman rmi myi
+    run_podman rmi $iname
 }
 
 # #6735 : complex interactions with multiple user namespaces
@@ -311,12 +308,10 @@ echo $rand        |   0 | $rand
         for user in "--user=0" "--user=100"; do
             for keepid in "" ${keep}; do
                 opts="$priv $user $keepid"
-
-                for dir in /etc /usr;do
-                    run_podman run --rm $opts $IMAGE stat -c '%u:%g:%n' $dir
-                    remove_same_dev_warning      # grumble
-                    is "$output" "0:0:$dir" "run $opts ($dir)"
-                done
+                run_podman run --rm $opts $IMAGE stat -c '%u:%g:%n' $dir /etc /usr
+                remove_same_dev_warning      # grumble
+                is "${lines[0]}" "0:0:/etc" "run $opts /etc"
+                is "${lines[1]}" "0:0:/usr" "run $opts /usr"
             done
         done
     done
@@ -415,15 +410,16 @@ json-file | f
 
     while read driver do_check; do
         msg=$(random_string 15)
-        run_podman run --name myctr --log-driver $driver $IMAGE echo $msg
+        cname=c_$(safename)
+        run_podman run --name $cname --log-driver $driver $IMAGE echo $msg
         is "$output" "$msg" "basic output sanity check (driver=$driver)"
 
         # Simply confirm that podman preserved our argument as-is
-        run_podman inspect --format '{{.HostConfig.LogConfig.Type}}' myctr
+        run_podman inspect --format '{{.HostConfig.LogConfig.Type}}' $cname
         is "$output" "$driver" "podman inspect: driver"
 
         # If LogPath is non-null, check that it exists and has a valid log
-        run_podman inspect --format '{{.HostConfig.LogConfig.Path}}' myctr
+        run_podman inspect --format '{{.HostConfig.LogConfig.Path}}' $cname
         if [[ $do_check != '-' ]]; then
             is "$output" "/.*" "LogPath (driver=$driver)"
             if ! test -e "$output"; then
@@ -441,17 +437,17 @@ json-file | f
                 # Cannot perform check
                 :
             else
-                run_podman logs myctr
+                run_podman logs $cname
                 is "$output" "$msg" "podman logs, with driver '$driver'"
             fi
         else
-            run_podman 125 logs myctr
+            run_podman 125 logs $cname
             if ! is_remote; then
                 is "$output" ".*this container is using the 'none' log driver, cannot read logs.*" \
                    "podman logs, with driver 'none', should fail with error"
             fi
         fi
-        run_podman rm myctr
+        run_podman rm $cname
     done < <(parse_table "$tests")
 
     # Invalid log-driver argument
@@ -470,13 +466,14 @@ json-file | f
     pidfile="${PODMAN_TMPDIR}/$(random_string 20)"
 
     # Multiple --log-driver options to confirm that last one wins
-    run_podman run --name myctr --log-driver=none --log-driver journald \
+    cname=c_$(safename)
+    run_podman run --name $cname --log-driver=none --log-driver journald \
                --conmon-pidfile $pidfile $IMAGE echo $msg
 
     journalctl --output cat  _PID=$(cat $pidfile)
     is "$output" "$msg" "check that journalctl output equals the container output"
 
-    run_podman rm myctr
+    run_podman rm $cname
 }
 
 @test "podman run --tz" {
@@ -506,6 +503,8 @@ json-file | f
 }
 
 @test "podman run --tz with zoneinfo" {
+    _prefetch $SYSTEMD_IMAGE
+
     # First make sure that zoneinfo is actually in the image otherwise the test is pointless
     run_podman run --rm $SYSTEMD_IMAGE ls /usr/share/zoneinfo
 
@@ -536,18 +535,20 @@ json-file | f
     rm -f $new_runtime
 }
 
-@test "podman --noout run should print output" {
-    run_podman --noout run -d --name test $IMAGE echo hi
+@test "podman --noout run should not print output" {
+    cname=c_$(safename)
+    run_podman --noout run -d --name $cname $IMAGE echo hi
     is "$output" "" "output should be empty"
-    run_podman wait test
-    run_podman --noout rm test
+    run_podman wait $cname
+    run_podman --noout rm $cname
     is "$output" "" "output should be empty"
 }
 
-@test "podman --noout create should print output" {
-    run_podman --noout create --name test $IMAGE echo hi
+@test "podman --noout create should not print output" {
+    cname=c_$(safename)
+    run_podman --noout create --name $cname $IMAGE echo hi
     is "$output" "" "output should be empty"
-    run_podman --noout rm test
+    run_podman --noout rm $cname
     is "$output" "" "output should be empty"
 }
 
@@ -555,15 +556,16 @@ json-file | f
     outfile=${PODMAN_TMPDIR}/out-results
 
     # first we'll need to run something, write its output to a file, and then read its contents.
-    run_podman --out $outfile run -d --name test $IMAGE echo hola
+    cname=c_$(safename)
+    run_podman --out $outfile run -d --name $cname $IMAGE echo hola
     is "$output" "" "output should be redirected"
-    run_podman wait test
+    run_podman wait $cname
 
     # compare the container id against the one in the file
-    run_podman container inspect --format '{{.Id}}' test
+    run_podman container inspect --format '{{.Id}}' $cname
     is "$output" "$(<$outfile)" "container id should match"
 
-    run_podman --out /dev/null rm test
+    run_podman --out /dev/null rm $cname
     is "$output" "" "output should be empty"
 }
 
@@ -571,22 +573,22 @@ json-file | f
     outfile=${PODMAN_TMPDIR}/out-results
 
     # first we'll need to run something, write its output to a file, and then read its contents.
-    run_podman --out $outfile create --name test $IMAGE echo hola
+    cname=c_$(safename)
+    run_podman --out $outfile create --name $cname $IMAGE echo hola
     is "$output" "" "output should be redirected"
 
     # compare the container id against the one in the file
-    run_podman container inspect --format '{{.Id}}' test
+    run_podman container inspect --format '{{.Id}}' $cname
     is "$output" "$(<$outfile)" "container id should match"
 
-    run_podman --out /dev/null rm test
+    run_podman --out /dev/null rm $cname
     is "$output" "" "output should be empty"
 }
 
 # Regression test for issue #8082
 @test "podman run : look up correct image name" {
-    # Create a 2nd tag for the local image. Force to lower case, and apply it.
-    local newtag="localhost/$(random_string 10)/$(random_string 8)"
-    newtag=${newtag,,}
+    # Create a 2nd tag for the local image.
+    local newtag="localhost/r_$(safename)/i_$(safename)"
     run_podman tag $IMAGE $newtag
 
     # Create a container with the 2nd tag and make sure that it's being
@@ -602,7 +604,7 @@ json-file | f
     newtag2="${newtag}:$(random_string 6|tr A-Z a-z)"
     run_podman tag $IMAGE $newtag2
 
-    cname="$(random_string 14|tr A-Z a-z)"
+    cname="c_$(safename)"
     run_podman create --name $cname $newtag2
     run_podman inspect --format "{{.ImageName}}" $cname
     is "$output" "$newtag2" \
@@ -627,7 +629,7 @@ json-file | f
 }
 
 @test "podman inspect includes image data" {
-    randomname=$(random_string 30)
+    randomname=c_$(safename)
 
     run_podman inspect $IMAGE --format "{{.ID}}"
     expected="$IMAGE $output"
@@ -656,7 +658,7 @@ json-file | f
     run_podman inspect --format '{{.ID}}' $IMAGE
     local iid="$output"
 
-    random_cname=c$(random_string 15 | tr A-Z a-z)
+    random_cname=c_$(safename)
     local rootless=0
     if is_rootless; then
         rootless=1
@@ -714,8 +716,8 @@ json-file | f
         run_podman image mount $IMAGE
         romount="$output"
 
-        randomname=$(random_string 30)
-        # FIXME FIXME FIXME: Remove :O once (if) #14504 is fixed!
+        randomname=c_$(safename)
+        # :O (overlay) required with rootfs; see #14504
         run_podman run --name=$randomname --rootfs $romount:O echo "Hello world"
         is "$output" "Hello world"
 
@@ -736,7 +738,7 @@ json-file | f
     char_count=700000
 
     # Container name; primarily needed when running podman-remote
-    cname=mybigdatacontainer
+    cname=c_$(safename)
 
     # This is one of those cases where BATS is not the best test framework.
     # We can't do any output redirection, because 'run' overrides it so
@@ -750,14 +752,15 @@ json-file | f
     is "${lines[1]}" "$char_count+0 records out" "dd: number of records out"
 
     # We don't have many tests for '-l'. This is as good a place as any
-    if ! is_remote; then
-        cname=-l
+    local dash_l=-l
+    if is_remote; then
+        dash_l=$cname
     fi
 
     # Now find that log file, and count the NULs in it.
     # The log file is of the form '<timestamp> <P|F> <data>', where P|F
     # is Partial/Full; I think that's called "kubernetes log format"?
-    run_podman inspect $cname --format '{{.HostConfig.LogConfig.Path}}'
+    run_podman inspect $dash_l --format '{{.HostConfig.LogConfig.Path}}'
     logfile="$output"
 
     count_zero=$(tr -cd '\0' <$logfile | wc -c)
@@ -774,24 +777,24 @@ json-file | f
 }
 
 @test "podman run --timeout - basic test" {
-    cid=timeouttest
+    cname=c_$(safename)
     t0=$SECONDS
-    run_podman 255 run --name $cid --timeout 10 $IMAGE sleep 60
+    run_podman 255 run --name $cname --timeout 2 $IMAGE sleep 60
     t1=$SECONDS
     # Confirm that container is stopped. Podman-remote unfortunately
     # cannot tell the difference between "stopped" and "exited", and
     # spits them out interchangeably, so we need to recognize either.
-    run_podman inspect --format '{{.State.Status}} {{.State.ExitCode}}' $cid
+    run_podman inspect --format '{{.State.Status}} {{.State.ExitCode}}' $cname
     is "$output" "\\(stopped\|exited\\) \-1" \
        "Status and exit code of stopped container"
 
     # This operation should take
     # exactly 10 seconds. Give it some leeway.
     delta_t=$(( $t1 - $t0 ))
-    assert "$delta_t" -gt  8 "podman stop: ran too quickly!"
-    assert "$delta_t" -le 14 "podman stop: took too long"
+    assert "$delta_t" -gt 1 "podman stop: ran too quickly!"
+    assert "$delta_t" -le 6 "podman stop: took too long"
 
-    run_podman rm $cid
+    run_podman rm $cname
 }
 
 @test "podman run no /etc/mtab " {
@@ -1016,6 +1019,7 @@ EOF
     run_podman rm $output
 }
 
+# bats file_tags=distro-integration
 @test "podman run --device-read-bps" {
     skip_if_rootless "cannot use this flag in rootless mode"
     # this test is a triple check on blkio flags since they seem to sneak by the tests
@@ -1034,21 +1038,26 @@ EOF
 @test "podman run failed --rm " {
     port=$(random_free_port)
 
+    # Container names must sort alphanumerically
+    c_ok=c1_$(safename)
+    c_fail_no_rm=c2_$(safename)
+    c_fail_with_rm=c3_$(safename)
+
     # Run two containers with the same port bindings. The second must fail
-    run_podman     run -p $port:80 --rm -d --name c_ok           $IMAGE top
-    run_podman 126 run -p $port:80      -d --name c_fail_no_rm   $IMAGE top
-    run_podman 126 run -p $port:80 --rm -d --name c_fail_with_rm $IMAGE top
+    run_podman     run -p $port:80 --rm -d --name $c_ok           $IMAGE top
+    run_podman 126 run -p $port:80      -d --name $c_fail_no_rm   $IMAGE top
+    run_podman 126 run -p $port:80 --rm -d --name $c_fail_with_rm $IMAGE top
     # Prior to #15060, the third container would still show up in ps -a
     run_podman ps -a --sort names --format '{{.Image}}--{{.Names}}'
-    is "$output" "$IMAGE--c_fail_no_rm
-$IMAGE--c_ok" \
+    is "$output" "$IMAGE--${c_ok}
+$IMAGE--${c_fail_no_rm}" \
        "podman ps -a shows running & failed containers, but not failed-with-rm"
 
-    run_podman container rm -f -t 0 c_ok c_fail_no_rm
+    run_podman container rm -f -t 0 $c_ok $c_fail_no_rm
 }
 
 @test "podman run --attach stdin prints container ID" {
-    ctr_name="container-$(random_string 5)"
+    ctr_name="container-$(safename)"
     run_podman run --name $ctr_name --attach stdin $IMAGE echo hello
     run_output=$output
     run_podman inspect --format "{{.Id}}" $ctr_name
@@ -1141,16 +1150,19 @@ EOF
 
     CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman 1 run --rm $IMAGE touch /testro
     CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm --read-only=false $IMAGE touch /testrw
-    CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm $IMAGE touch /tmp/testrw
-    for dir in /tmp /var/tmp /dev /dev/shm /run; do
-        CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm $IMAGE touch $dir/testro
-        CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm --read-only=false $IMAGE touch $dir/testro
-        CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm --read-only=false --read-only-tmpfs=true $IMAGE touch $dir/testro
-        CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm --read-only-tmpfs=true $IMAGE touch $dir/testro
 
-        CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman 1 run --rm --read-only-tmpfs=false $IMAGE touch $dir/testro
-        assert "$output" =~ "touch: $dir/testro: Read-only file system"
-    done
+    files="/tmp/a /var/tmp/b /dev/c /dev/shm/d /run/e"
+    CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm $IMAGE touch $files
+    CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm --read-only=false $IMAGE touch $files
+    CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm --read-only=false --read-only-tmpfs=true $IMAGE touch $files
+    CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman run --rm --read-only-tmpfs=true $IMAGE touch $files
+
+    CONTAINERS_CONF_OVERRIDE="$containersconf" run_podman 1 run --rm --read-only-tmpfs=false $IMAGE touch $files
+    assert "$output" == "touch: /tmp/a: Read-only file system
+touch: /var/tmp/b: Read-only file system
+touch: /dev/c: Read-only file system
+touch: /dev/shm/d: Read-only file system
+touch: /run/e: Read-only file system"
 }
 
 @test "podman run ulimit from containers.conf" {
@@ -1193,7 +1205,7 @@ EOF
 }
 
 @test "podman run bad --name" {
-    randomname=$(random_string 30)
+    randomname=c_$(safename)
     run_podman 125 create --name "$randomname/bad" $IMAGE
     run_podman create --name "/$randomname" $IMAGE
     run_podman ps -a --filter name="^/$randomname$" --format '{{ .Names }}'
@@ -1252,15 +1264,22 @@ EOF
 
     touch $romount/testfile
     chown 2000:2000 $romount/testfile
-    run_podman run --uidmap=0:1000:2 --rm --rootfs "$romount:idmap=uids=@2000-1-1;gids=@2000-1-1" stat -c %u:%g /testfile
+    run_podman run --uidmap=0:1000:200 --rm --rootfs "$romount:idmap=uids=@2000-1-1;gids=@2000-1-1" stat -c %u:%g /testfile
     is "$output" "1:1"
+
+    myvolume=my-volume-$(safename)
+    run_podman volume create $myvolume
+    mkdir $romount/volume
+    run_podman run --rm --uidmap=0:1000:10000 -v volume:/volume:idmap --rootfs $romount stat -c %u:%g /volume
+    is "$output" "0:0"
+    run_podman volume rm $myvolume
 
     rm -rf $romount
 }
 
 @test "podman run --restart=always -- wait" {
     # regression test for #18572 to make sure Podman waits less than 20 seconds
-    ctr=$(random_string)
+    ctr=c_$(safename)
     run_podman run -d --restart=always --name=$ctr $IMAGE false
     PODMAN_TIMEOUT=20 run_podman wait $ctr
     is "$output" "1" "container should exit 1"
@@ -1279,7 +1298,7 @@ cat >$containersconf <<EOF
 [engine]
 static_dir="$static_dir"
 EOF
-    ctr=$(random_string)
+    ctr=c_$(safename)
     CONTAINERS_CONF_OVERRIDE=$containersconf PODMAN_TIMEOUT=20 run_podman run --name=$ctr $IMAGE true
     CONTAINERS_CONF_OVERRIDE=$containersconf PODMAN_TIMEOUT=20 run_podman inspect --format "{{.ID}}" $ctr
     cid="$output"
@@ -1306,9 +1325,9 @@ kube play            | argument         |
 logout               | $IMAGE           |
 manifest add         | $IMAGE argument  |
 manifest inspect     | $IMAGE           |
-manifest push        | $IMAGE argument  |
-pull                 | $IMAGE argument  |
-push                 | $IMAGE argument  |
+manifest push        | $IMAGE           |
+pull                 | $IMAGE           |
+push                 | $IMAGE           |
 run                  | $IMAGE false     |
 search               | $IMAGE           |
 "
@@ -1330,7 +1349,7 @@ search               | $IMAGE           |
         if [[ "$args" = "''" ]]; then args=;fi
 
         run_podman 125 $command --authfile=$bogus $args
-        assert "$output" = "Error: credential file is not accessible: stat $bogus: no such file or directory" \
+        assert "$output" = "Error: credential file is not accessible: faccessat $bogus: no such file or directory" \
            "$command --authfile=nonexistent-path"
 
         if [[ "$command" != "logout" ]]; then
@@ -1339,6 +1358,9 @@ search               | $IMAGE           |
               "$command REGISTRY_AUTH_FILE=nonexistent-path"
         fi
     done < <(parse_table "$tests")
+
+    # test cases above create two containers
+    run_podman rm -fa
 }
 
 @test "podman --syslog and environment passed to conmon" {
@@ -1362,7 +1384,7 @@ search               | $IMAGE           |
 }
 
 @test "podman create container with conflicting name" {
-    local cname="$(random_string 10 | tr A-Z a-z)"
+    local cname=c_$(safename)
     local output_msg_ext="^Error: .*: the container name \"$cname\" is already in use by .* You have to remove that container to be able to reuse that name: that name is already in use by an external entity, or use --replace to instruct Podman to do so."
     local output_msg="^Error: .*: the container name \"$cname\" is already in use by .* You have to remove that container to be able to reuse that name: that name is already in use, or use --replace to instruct Podman to do so."
     if is_remote; then
@@ -1388,6 +1410,8 @@ search               | $IMAGE           |
 
 # https://issues.redhat.com/browse/RHEL-14469
 @test "podman run - /run must not be world-writable in systemd containers" {
+    _prefetch $SYSTEMD_IMAGE
+
     run_podman run -d --rm $SYSTEMD_IMAGE /usr/sbin/init
     cid=$output
 
@@ -1423,12 +1447,13 @@ search               | $IMAGE           |
 }
 
 @test "podman run - rm pod if container creation failed with -pod new:" {
-    run_podman run -d --name foobar $IMAGE hostname
+    cname=c_$(safename)
+    run_podman run -d --name $cname $IMAGE hostname
     cid=$output
 
-    podname=pod$(random_string)
-    run_podman 125 run --rm --pod "new:$podname" --name foobar $IMAGE hostname
-    is "$output" ".*creating container storage: the container name \"foobar\" is already in use by"
+    podname=pod_$(safename)
+    run_podman 125 run --rm --pod "new:$podname" --name $cname $IMAGE hostname
+    is "$output" ".*creating container storage: the container name \"$cname\" is already in use by"
 
     # pod should've been cleaned up
     # if container creation failed
@@ -1452,6 +1477,49 @@ search               | $IMAGE           |
     # The '.*' in the error below is for dealing with podman-remote, which
     # includes "error preparing container <sha> for attach" in output.
     is "$output" "Error.*: $expect" "podman emits useful diagnostic when no entrypoint is set"
+}
+
+@test "podman run - stopping loop" {
+    skip_if_remote "this doesn't work with with the REST service"
+
+    cname=c_$(safename)
+    run_podman run -d --name $cname --stop-timeout 240 $IMAGE sh -c 'echo READY; sleep 999'
+    cid="$output"
+    wait_for_ready $cname
+
+    run_podman inspect --format '{{ .State.ConmonPid }}' $cname
+    conmon_pid=$output
+
+    ${PODMAN} stop $cname &
+    stop_pid=$!
+
+    timeout=20
+    while :;do
+        sleep 0.5
+        run_podman container inspect --format '{{.State.Status}}' $cname
+        if [[ "$output" = "stopping" ]]; then
+            break
+        fi
+        timeout=$((timeout - 1))
+        if [[ $timeout == 0 ]]; then
+            run_podman ps -a
+            die "Timed out waiting for container to acknowledge signal"
+        fi
+    done
+
+    kill -9 ${stop_pid}
+    kill -9 ${conmon_pid}
+
+    # Unclear why `-t0` is required here, works locally without.
+    # But it shouldn't hurt and does make the test pass...
+    PODMAN_TIMEOUT=5 run_podman 125 stop -t0 $cname
+    is "$output" "Error: container .* conmon exited prematurely, exit code could not be retrieved: internal libpod error" "correct error on missing conmon"
+
+    # This should be safe because stop is guaranteed to call cleanup?
+    run_podman inspect --format "{{ .State.Status }}" $cname
+    is "$output" "exited" "container has successfully transitioned to exited state after stop"
+
+    run_podman rm -f -t0 $cname
 }
 
 # vim: filetype=sh

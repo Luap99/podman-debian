@@ -162,8 +162,8 @@ func eventsCmd(cmd *cobra.Command, _ []string) error {
 	}
 
 	go func() {
-		err := registry.ContainerEngine().Events(context.Background(), eventOptions)
-		errChannel <- err
+		errChannel <- registry.ContainerEngine().Events(context.Background(), eventOptions)
+		close(errChannel)
 	}()
 
 	for {
@@ -171,7 +171,8 @@ func eventsCmd(cmd *cobra.Command, _ []string) error {
 		case event, ok := <-eventChannel:
 			if !ok {
 				// channel was closed we can exit
-				return nil
+				// read the error channel blocking to make sure we are not missing any errors (#23165)
+				return <-errChannel
 			}
 			switch {
 			case doJSON:

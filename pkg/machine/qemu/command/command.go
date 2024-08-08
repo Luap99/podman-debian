@@ -12,6 +12,7 @@ import (
 
 	"github.com/containers/common/pkg/strongunits"
 	"github.com/containers/podman/v5/pkg/machine/define"
+	"github.com/containers/storage/pkg/fileutils"
 )
 
 // defaultQMPTimeout is the timeout duration for the
@@ -34,8 +35,10 @@ func NewQemuBuilder(binary string, options []string) QemuCmd {
 
 // SetMemory adds the specified amount of memory for the machine
 func (q *QemuCmd) SetMemory(m strongunits.MiB) {
-	// qemu accepts the memory in MiB
-	*q = append(*q, "-m", strconv.FormatUint(uint64(m), 10))
+	serializedMem := strconv.FormatUint(uint64(m), 10)
+	// In order to use virtiofsd, we must enable shared memory
+	*q = append(*q, "-object", fmt.Sprintf("memory-backend-memfd,id=mem,size=%sM,share=on", serializedMem))
+	*q = append(*q, "-m", serializedMem)
 }
 
 // SetCPUs adds the number of CPUs the machine will have
@@ -96,15 +99,6 @@ func (q *QemuCmd) SetSerialPort(readySocket, vmPidFile define.VMFile, name strin
 		"-pidfile", vmPidFile.GetPath())
 }
 
-// SetVirtfsMount adds a virtfs mount to the machine
-func (q *QemuCmd) SetVirtfsMount(source, tag, securityModel string, readonly bool) {
-	virtfsOptions := fmt.Sprintf("local,path=%s,mount_tag=%s,security_model=%s", source, tag, securityModel)
-	if readonly {
-		virtfsOptions += ",readonly"
-	}
-	*q = append(*q, "-virtfs", virtfsOptions)
-}
-
 // SetBootableImage specifies the image the machine will use to boot
 func (q *QemuCmd) SetBootableImage(image string) {
 	*q = append(*q, "-drive", "if=virtio,file="+image)
@@ -130,7 +124,7 @@ type Monitor struct {
 
 // NewQMPMonitor creates the monitor subsection of our vm
 func NewQMPMonitor(name string, machineRuntimeDir *define.VMFile) (Monitor, error) {
-	if _, err := os.Stat(machineRuntimeDir.GetPath()); errors.Is(err, fs.ErrNotExist) {
+	if err := fileutils.Exists(machineRuntimeDir.GetPath()); errors.Is(err, fs.ErrNotExist) {
 		if err := os.MkdirAll(machineRuntimeDir.GetPath(), 0755); err != nil {
 			return Monitor{}, err
 		}

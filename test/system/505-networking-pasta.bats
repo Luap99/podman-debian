@@ -230,7 +230,7 @@ function pasta_test_do() {
     done
 
     # and server,
-    run_podman run --net=pasta"${pasta_spec}" -p "${podman_spec}" "${IMAGE}" \
+    run_podman run --rm --net=pasta"${pasta_spec}" -p "${podman_spec}" "${IMAGE}" \
                    sh -c 'for port in $(seq '"${xseq}"'); do '\
 '                             socat -u '"${bind}"' '"${recv}"' & '\
 '                         done; wait'
@@ -244,7 +244,7 @@ function pasta_test_do() {
 @test "IPv4 default address assignment" {
     skip_if_no_ipv4 "IPv4 not routable on the host"
 
-    run_podman run --net=pasta $IMAGE ip -j -4 address show
+    run_podman run --rm --net=pasta $IMAGE ip -j -4 address show
 
     local container_address="$(ipv4_get_addr_global "${output}")"
     local host_address="$(default_addr 4)"
@@ -256,7 +256,7 @@ function pasta_test_do() {
 @test "IPv4 address assignment" {
     skip_if_no_ipv4 "IPv4 not routable on the host"
 
-    run_podman run --net=pasta:-a,192.0.2.1 $IMAGE ip -j -4 address show
+    run_podman run --rm --net=pasta:-a,192.0.2.1 $IMAGE ip -j -4 address show
 
     local container_address="$(ipv4_get_addr_global "${output}")"
 
@@ -268,7 +268,7 @@ function pasta_test_do() {
     skip_if_no_ipv4 "IPv4 not routable on the host"
     skip_if_no_ipv6 "IPv6 not routable on the host"
 
-    run_podman run --net=pasta:-6 $IMAGE ip -j -4 address show
+    run_podman run --rm --net=pasta:-6 $IMAGE ip -j -4 address show
 
     local container_address="$(ipv4_get_addr_global "${output}")"
 
@@ -279,7 +279,7 @@ function pasta_test_do() {
 @test "IPv6 default address assignment" {
     skip_if_no_ipv6 "IPv6 not routable on the host"
 
-    run_podman run --net=pasta $IMAGE ip -j -6 address show
+    run_podman run --rm --net=pasta $IMAGE ip -j -6 address show
 
     local container_address="$(ipv6_get_addr_global "${output}")"
     local host_address="$(default_addr 6)"
@@ -291,7 +291,7 @@ function pasta_test_do() {
 @test "IPv6 address assignment" {
     skip_if_no_ipv6 "IPv6 not routable on the host"
 
-    run_podman run --net=pasta:-a,2001:db8::1 $IMAGE ip -j -6 address show
+    run_podman run --rm --net=pasta:-a,2001:db8::1 $IMAGE ip -j -6 address show
 
     local container_address="$(ipv6_get_addr_global "${output}")"
 
@@ -303,7 +303,7 @@ function pasta_test_do() {
     skip_if_no_ipv6 "IPv6 not routable on the host"
     skip_if_no_ipv4 "IPv4 not routable on the host"
 
-    run_podman run --net=pasta:-4 $IMAGE ip -j -6 address show
+    run_podman run --rm --net=pasta:-4 $IMAGE ip -j -6 address show
 
     local container_address="$(ipv6_get_addr_global "${output}")"
 
@@ -331,7 +331,7 @@ function pasta_test_do() {
 @test "IPv4 default route" {
     skip_if_no_ipv4 "IPv4 not routable on the host"
 
-    run_podman run --net=pasta $IMAGE ip -j -4 route show
+    run_podman run --rm --net=pasta $IMAGE ip -j -4 route show
 
     local container_route="$(ipv4_get_route_default "${output}")"
     local host_route="$(ipv4_get_route_default)"
@@ -343,7 +343,7 @@ function pasta_test_do() {
 @test "IPv4 default route assignment" {
     skip_if_no_ipv4 "IPv4 not routable on the host"
 
-    run_podman run --net=pasta:-a,192.0.2.2,-g,192.0.2.1 $IMAGE \
+    run_podman run --rm --net=pasta:-a,192.0.2.2,-g,192.0.2.1 $IMAGE \
         ip -j -4 route show
 
     local container_route="$(ipv4_get_route_default "${output}")"
@@ -355,7 +355,7 @@ function pasta_test_do() {
 @test "IPv6 default route" {
     skip_if_no_ipv6 "IPv6 not routable on the host"
 
-    run_podman run --net=pasta $IMAGE ip -j -6 route show
+    run_podman run --rm --net=pasta $IMAGE ip -j -6 route show
 
     local container_route="$(ipv6_get_route_default "${output}")"
     local host_route="$(ipv6_get_route_default)"
@@ -367,7 +367,7 @@ function pasta_test_do() {
 @test "IPv6 default route assignment" {
     skip_if_no_ipv6 "IPv6 not routable on the host"
 
-    run_podman run --net=pasta:-a,2001:db8::2,-g,2001:db8::1 $IMAGE \
+    run_podman run --rm --net=pasta:-a,2001:db8::2,-g,2001:db8::1 $IMAGE \
         ip -j -6 route show
 
     local container_route="$(ipv6_get_route_default "${output}")"
@@ -379,7 +379,7 @@ function pasta_test_do() {
 ### Interfaces #################################################################
 
 @test "Default MTU" {
-    run_podman run --net=pasta $IMAGE ip -j link show
+    run_podman run --rm --net=pasta $IMAGE ip -j link show
 
     container_tap_mtu="$(ether_get_mtu "${output}")"
 
@@ -388,7 +388,7 @@ function pasta_test_do() {
 }
 
 @test "MTU assignment" {
-    run_podman run --net=pasta:-m,1280 $IMAGE ip -j link show
+    run_podman run --rm --net=pasta:-m,1280 $IMAGE ip -j link show
 
     container_tap_mtu="$(ether_get_mtu "${output}")"
 
@@ -397,7 +397,7 @@ function pasta_test_do() {
 }
 
 @test "Loopback interface state" {
-    run_podman run --net=pasta $IMAGE ip -j link show
+    run_podman run --rm --net=pasta $IMAGE ip -j link show
 
     local jq_expr='.[] | select(.link_type == "loopback").flags | '\
 '              contains(["UP"])'
@@ -413,7 +413,7 @@ function pasta_test_do() {
 @test "External resolver, IPv4" {
     skip_if_no_ipv4 "IPv4 not routable on the host"
 
-    run_podman '?' run --net=pasta $IMAGE nslookup 127.0.0.1
+    run_podman '?' run --rm --net=pasta $IMAGE nslookup 127.0.0.1
 
     assert "$output" =~ "1.0.0.127.in-addr.arpa" \
            "127.0.0.1 not resolved"
@@ -422,7 +422,7 @@ function pasta_test_do() {
 @test "External resolver, IPv6" {
     skip_if_no_ipv6 "IPv6 not routable on the host"
 
-    run_podman run --net=pasta $IMAGE nslookup ::1 || :
+    run_podman '?' run --rm --net=pasta $IMAGE nslookup ::1
 
     assert "$output" =~ "1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa" \
            "::1 not resolved"
@@ -743,7 +743,7 @@ function pasta_test_do() {
 @test "pasta(1) quits when the namespace is gone" {
     local pidfile="${PODMAN_TMPDIR}/pasta.pid"
 
-    run_podman run "--net=pasta:--pid,${pidfile}" $IMAGE true
+    run_podman run --rm "--net=pasta:--pid,${pidfile}" $IMAGE true
     sleep 1
     ! ps -p $(cat "${pidfile}") && rm "${pidfile}"
 }
@@ -752,7 +752,7 @@ function pasta_test_do() {
 @test "Unsupported protocol in port forwarding" {
     local port=$(random_free_port "" "" tcp)
 
-    run_podman 126 run --net=pasta -p "${port}:${port}/sctp" $IMAGE true
+    run_podman 126 run --rm --net=pasta -p "${port}:${port}/sctp" $IMAGE true
     is "$output" "Error: .*can't forward protocol: sctp"
 }
 
@@ -769,22 +769,63 @@ EOF
 
     # 2023-06-29 DO NOT INCLUDE "--net=pasta" on this line!
     # This tests containers.conf:default_rootless_network_cmd (pr #19032)
-    CONTAINERS_CONF_OVERRIDE=$containersconf run_podman run $IMAGE ip link show myname
+    CONTAINERS_CONF_OVERRIDE=$containersconf run_podman run --rm $IMAGE ip link show myname
     assert "$output" =~ "$mac" "mac address is set on custom interface"
 
     # now, again but this time overwrite a option on the cli.
     mac2="aa:bb:cc:dd:ee:ff"
-    CONTAINERS_CONF_OVERRIDE=$containersconf run_podman run --net=pasta:--ns-mac-addr,"$mac2" $IMAGE ip link show myname
+    CONTAINERS_CONF_OVERRIDE=$containersconf run_podman run --rm \
+        --net=pasta:--ns-mac-addr,"$mac2" $IMAGE ip link show myname
     assert "$output" =~ "$mac2" "mac address from cli is set on custom interface"
 }
 
-### Rootless unshare testins
+### Rootless unshare testing
 
 @test "Podman unshare --rootless-netns with Pasta" {
     skip_if_remote "unshare is local-only"
 
-    pasta_iface=$(default_ifname)
+    pasta_iface=$(default_ifname 4)
+    assert "$pasta_iface" != "" "pasta_iface is set"
 
+    # First let's force a setup error by making pasta be "false".
+    ln -s /usr/bin/false $PODMAN_TMPDIR/pasta
+    CONTAINERS_HELPER_BINARY_DIR="$PODMAN_TMPDIR" run_podman 125 unshare --rootless-netns ip addr
+    assert "$output" =~ "pasta failed with exit code 1"
+
+    # Now this should recover from the previous error and setup the netns correctly.
     run_podman unshare --rootless-netns ip addr
     is "$output" ".*${pasta_iface}.*"
+}
+
+# https://github.com/containers/podman/issues/22653
+@test "pasta/bridge and host.containers.internal" {
+    skip_if_no_ipv4 "IPv4 not routable on the host"
+    pasta_ip="$(default_addr 4)"
+    host_ips=$(ip -4 -j addr | jq -r '.[] | select(.ifname != "lo") | .addr_info[].local')
+
+    netname=n_$(safename)
+    run_podman network create $netname
+
+    for network in "pasta" "$netname"; do
+        # special exit code logic needed here, it is possible that there is no host.containers.internal
+        # when there is only one ip one the host and that one is used by pasta.
+        # As such we have to deal with both cases.
+        run_podman '?' run --rm --network=$network $IMAGE grep host.containers.internal /etc/hosts
+        if [ "$status" -eq 0 ]; then
+            assert "$output" !~ "$pasta_ip" "pasta host ip must not be assigned ($network)"
+            assert "$host_ips" =~ "$(cut -f1 <<<$output)" "ip is one of the host ips ($network)"
+        elif [ "$status" -eq 1 ]; then
+            # if only pasta ip then we cannot have a host.containers.internal entry
+            # make sure this fact is actually the case
+            assert "$pasta_ip" == "$host_ips" "pasta ip must the only one one the host ($network)"
+        else
+            die "unexpected exit code '$status' from grep or podman ($network)"
+        fi
+    done
+
+    run_podman network rm $netname
+
+    first_host_ip=$(head -n 1 <<<"$host_ips")
+    run_podman run --rm --network=pasta:-a,169.254.0.2,-g,169.254.0.1,-n,24 $IMAGE grep host.containers.internal /etc/hosts
+    assert "$output" =~ "^$first_host_ip" "uses host first ip"
 }

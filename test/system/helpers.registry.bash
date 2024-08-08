@@ -34,7 +34,7 @@ function start_registry() {
     mkdir -p $AUTHDIR
 
     # Registry image; copy of docker.io, but on our own registry
-    local REGISTRY_IMAGE="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/registry:2.8"
+    local REGISTRY_IMAGE="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/registry:2.8.2"
 
     # Pull registry image, but into a separate container storage and DB and everything
     PODMAN_LOGIN_ARGS="--storage-driver vfs $(podman_isolation_opts ${PODMAN_LOGIN_WORKDIR})"
@@ -112,6 +112,13 @@ function stop_registry() {
 
     # Make sure socket is closed
     if tcp_port_probe $PODMAN_LOGIN_REGISTRY_PORT; then
+        # for debugging flakes
+        echo ""
+        echo "ps auxww --forest"
+        ps auxww --forest
+        echo ""
+        echo "lsof -i -P"
+        lsof -i -P
         die "Socket still seems open"
     fi
 }

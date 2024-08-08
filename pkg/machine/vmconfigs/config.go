@@ -33,10 +33,11 @@ type MachineConfig struct {
 	ImagePath *define.VMFile // Temporary only until a proper image struct is worked out
 
 	// Provider stuff
-	AppleHypervisor  *AppleHVConfig `json:",omitempty"`
-	QEMUHypervisor   *QEMUConfig    `json:",omitempty"`
-	HyperVHypervisor *HyperVConfig  `json:",omitempty"`
-	WSLHypervisor    *WSLConfig     `json:",omitempty"`
+	AppleHypervisor   *AppleHVConfig `json:",omitempty"`
+	HyperVHypervisor  *HyperVConfig  `json:",omitempty"`
+	LibKrunHypervisor *LibKrunConfig `json:",omitempty"`
+	QEMUHypervisor    *QEMUConfig    `json:",omitempty"`
+	WSLHypervisor     *WSLConfig     `json:",omitempty"`
 
 	lock *lockfile.LockFile //nolint:unused
 
@@ -50,6 +51,8 @@ type MachineConfig struct {
 
 	// Starting is defined as "on" but not fully booted
 	Starting bool
+
+	Rosetta bool
 }
 
 type machineImage interface { //nolint:unused
@@ -98,6 +101,7 @@ type VMProvider interface { //nolint:interfacebloat
 	UseProviderNetworkSetup() bool
 	RequireExclusiveActive() bool
 	UpdateSSHPort(mc *MachineConfig, port int) error
+	GetRosetta(mc *MachineConfig) (bool, error)
 }
 
 // HostUser describes the host user

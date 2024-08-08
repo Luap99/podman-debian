@@ -58,8 +58,13 @@ func setupContainerEngine(cmd *cobra.Command) (entities.ContainerEngine, error) 
 	}
 	if !registry.IsRemote() {
 		_, noMoveProcess := cmd.Annotations[registry.NoMoveProcess]
+		cgroupMode := ""
 
-		err := containerEngine.SetupRootless(registry.Context(), noMoveProcess)
+		if flag := cmd.LocalFlags().Lookup("cgroups"); flag != nil {
+			cgroupMode = flag.Value.String()
+		}
+
+		err := containerEngine.SetupRootless(registry.Context(), noMoveProcess, cgroupMode)
 		if err != nil {
 			return nil, err
 		}
@@ -1423,7 +1428,7 @@ func AutocompleteEventFilter(cmd *cobra.Command, args []string, toComplete strin
 			events.PullError.String(), events.Push.String(), events.Refresh.String(), events.Remove.String(),
 			events.Rename.String(), events.Renumber.String(), events.Restart.String(), events.Restore.String(),
 			events.Save.String(), events.Start.String(), events.Stop.String(), events.Sync.String(), events.Tag.String(),
-			events.Unmount.String(), events.Unpause.String(), events.Untag.String(),
+			events.Unmount.String(), events.Unpause.String(), events.Untag.String(), events.Update.String(),
 		}, cobra.ShellCompDirectiveNoFileComp
 	}
 	eventTypes := func(_ string) ([]string, cobra.ShellCompDirective) {

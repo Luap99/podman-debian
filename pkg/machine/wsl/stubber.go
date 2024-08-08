@@ -3,6 +3,7 @@
 package wsl
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/containers/podman/v5/pkg/machine/shim/diskpull"
 	"github.com/containers/podman/v5/pkg/machine/stdpull"
 	"github.com/containers/podman/v5/pkg/machine/wsl/wutil"
+	"github.com/containers/podman/v5/utils"
 
 	gvproxy "github.com/containers/gvisor-tap-vsock/pkg/types"
 	"github.com/containers/podman/v5/pkg/machine"
@@ -109,7 +111,7 @@ func (w WSLStubber) Remove(mc *vmconfigs.MachineConfig) ([]string, func() error,
 	// of the vm
 	wslRemoveFunc := func() error {
 		if err := runCmdPassThrough(wutil.FindWSL(), "--unregister", env.WithPodmanPrefix(mc.Name)); err != nil {
-			logrus.Error(err)
+			return err
 		}
 		return nil
 	}
@@ -250,17 +252,21 @@ func (w WSLStubber) StopVM(mc *vmconfigs.MachineConfig, hardStop bool) error {
 
 	cmd := exec.Command(wutil.FindWSL(), "-u", "root", "-d", dist, "sh")
 	cmd.Stdin = strings.NewReader(waitTerm)
+	out := &bytes.Buffer{}
+	cmd.Stderr = out
+	cmd.Stdout = out
+
 	if err = cmd.Start(); err != nil {
 		return fmt.Errorf("executing wait command: %w", err)
 	}
 
 	exitCmd := exec.Command(wutil.FindWSL(), "-u", "root", "-d", dist, "/usr/local/bin/enterns", "systemctl", "exit", "0")
 	if err = exitCmd.Run(); err != nil {
-		return fmt.Errorf("stopping sysd: %w", err)
+		return fmt.Errorf("stopping systemd: %w", err)
 	}
 
 	if err = cmd.Wait(); err != nil {
-		return err
+		logrus.Warnf("Failed to wait for systemd to exit: (%s)", strings.TrimSpace(out.String()))
 	}
 
 	return terminateDist(dist)
@@ -303,8 +309,7 @@ func (w WSLStubber) GetDisk(userInputPath string, dirs *define.MachineDirs, mc *
 	// i.e.v39.0.31-rootfs.tar.xz
 	versionedBase := fmt.Sprintf("%s-%s", downloadVersion, filepath.Base(downloadURL.Path))
 
-	// TODO we need a mechanism for "flushing" old cache files
-	cachedFile, err := dirs.DataDir.AppendToNewVMFile(versionedBase, nil)
+	cachedFile, err := dirs.ImageCacheDir.AppendToNewVMFile(versionedBase, nil)
 	if err != nil {
 		return err
 	}
@@ -313,14 +318,36 @@ func (w WSLStubber) GetDisk(userInputPath string, dirs *define.MachineDirs, mc *
 	if _, err = os.Stat(cachedFile.GetPath()); err == nil {
 		logrus.Debugf("%q already exists locally", cachedFile.GetPath())
 		myDisk, err = stdpull.NewStdDiskPull(cachedFile.GetPath(), mc.ImagePath)
+		if err != nil {
+			return err
+		}
 	} else {
-		// no cached file
-		myDisk, err = stdpull.NewDiskFromURL(downloadURL.String(), mc.ImagePath, dirs.DataDir, &versionedBase)
-	}
-	if err != nil {
-		return err
+		files, err := os.ReadDir(dirs.ImageCacheDir.GetPath())
+		if err != nil {
+			logrus.Warn("failed to clean machine image cache: ", err)
+		} else {
+			defer func() {
+				for _, file := range files {
+					path := filepath.Join(dirs.ImageCacheDir.GetPath(), file.Name())
+					logrus.Debugf("cleaning cached image: %s", path)
+					err := utils.GuardedRemoveAll(path)
+					if err != nil && !errors.Is(err, os.ErrNotExist) {
+						logrus.Warn("failed to clean machine image cache: ", err)
+					}
+				}
+			}()
+		}
+
+		myDisk, err = stdpull.NewDiskFromURL(downloadURL.String(), mc.ImagePath, dirs.ImageCacheDir, &versionedBase, true)
+		if err != nil {
+			return err
+		}
 	}
 	// up until now, nothing has really happened
 	// pull if needed and decompress to image location
 	return myDisk.Get()
+}
+
+func (w WSLStubber) GetRosetta(mc *vmconfigs.MachineConfig) (bool, error) {
+	return false, nil
 }

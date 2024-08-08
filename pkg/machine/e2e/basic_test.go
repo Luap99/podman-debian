@@ -18,17 +18,6 @@ import (
 )
 
 var _ = Describe("run basic podman commands", func() {
-	var (
-		mb      *machineTestBuilder
-		testDir string
-	)
-
-	BeforeEach(func() {
-		testDir, mb = setup()
-	})
-	AfterEach(func() {
-		teardown(originalHomeDir, testDir, mb)
-	})
 
 	It("Basic ops", func() {
 		// golangci-lint has trouble with actually skipping tests marked Skip
@@ -99,6 +88,60 @@ var _ = Describe("run basic podman commands", func() {
 		runAlp, err := mb.setCmd(bm.withPodmanCommand([]string{"run", "-v", tDir + ":/test:Z", "quay.io/libpod/alpine_nginx", "ls", "/test/attr-test-file"})).run()
 		Expect(err).ToNot(HaveOccurred())
 		Expect(runAlp).To(Exit(0))
+	})
+
+	It("Volume should be virtiofs", func() {
+		// In theory this could run on MacOS too, but we know virtiofs works for that now,
+		// this is just testing linux
+		skipIfNotVmtype(define.QemuVirt, "This is just adding coverage for virtiofs on linux")
+
+		tDir, err := filepath.Abs(GinkgoT().TempDir())
+		Expect(err).ToNot(HaveOccurred())
+
+		err = os.WriteFile(filepath.Join(tDir, "testfile"), []byte("some test contents"), 0o644)
+		Expect(err).ToNot(HaveOccurred())
+
+		name := randomString()
+		i := new(initMachine).withImage(mb.imagePath).withNow()
+
+		// Ensure that this is a volume, it may not be automatically on qemu
+		i.withVolume(tDir)
+		session, err := mb.setName(name).setCmd(i).run()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(session).To(Exit(0))
+
+		ssh := new(sshMachine).withSSHCommand([]string{"findmnt", "-no", "FSTYPE", tDir})
+		findmnt, err := mb.setName(name).setCmd(ssh).run()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(findmnt).To(Exit(0))
+		Expect(findmnt.outputToString()).To(ContainSubstring("virtiofs"))
+	})
+
+	It("Volume should be disabled by command line", func() {
+		skipIfWSL("Requires standard volume handling")
+		skipIfVmtype(define.AppleHvVirt, "Skipped on Apple platform")
+		skipIfVmtype(define.LibKrun, "Skipped on Apple platform")
+
+		name := randomString()
+		i := new(initMachine).withImage(mb.imagePath).withNow()
+
+		// Empty arg forces no volumes
+		i.withVolume("")
+		session, err := mb.setName(name).setCmd(i).run()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(session).To(Exit(0))
+
+		ssh9p := new(sshMachine).withSSHCommand([]string{"findmnt", "-no", "FSTYPE", "-t", "9p"})
+		findmnt9p, err := mb.setName(name).setCmd(ssh9p).run()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(findmnt9p).To(Exit(0))
+		Expect(findmnt9p.outputToString()).To(BeEmpty())
+
+		sshVirtiofs := new(sshMachine).withSSHCommand([]string{"findmnt", "-no", "FSTYPE", "-t", "virtiofs"})
+		findmntVirtiofs, err := mb.setName(name).setCmd(sshVirtiofs).run()
+		Expect(err).ToNot(HaveOccurred())
+		Expect(findmntVirtiofs).To(Exit(0))
+		Expect(findmntVirtiofs.outputToString()).To(BeEmpty())
 	})
 
 	It("Podman ops with port forwarding and gvproxy", func() {

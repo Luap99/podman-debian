@@ -16,6 +16,7 @@ import (
 	"github.com/containers/podman/v5/cmd/podman/registry"
 	"github.com/containers/podman/v5/cmd/podman/validate"
 	"github.com/containers/podman/v5/libpod/define"
+	"github.com/containers/podman/v5/libpod/shutdown"
 	"github.com/containers/podman/v5/pkg/bindings"
 	"github.com/containers/podman/v5/pkg/checkpoint/crutils"
 	"github.com/containers/podman/v5/pkg/domain/entities"
@@ -124,9 +125,11 @@ func Execute() {
 		fmt.Fprintln(os.Stderr, formatError(err))
 	}
 
+	_ = shutdown.Stop()
+
 	if requireCleanup {
 		// The cobra post-run is not being executed in case of
-		// a previous error , so make sure that the engine(s)
+		// a previous error, so make sure that the engine(s)
 		// are correctly shutdown.
 		//
 		// See https://github.com/spf13/cobra/issues/914
@@ -175,6 +178,12 @@ func readRemoteCliFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig)
 		}
 	case host.Changed:
 		podmanConfig.URI = host.Value.String()
+	default:
+		// No cli options set, in case CONTAINER_CONNECTION was set to something
+		// invalid this contains the error, see setupRemoteConnection().
+		// Important so that we can show a proper useful error message but still
+		// allow the cli overwrites (https://github.com/containers/podman/pull/22997).
+		return podmanConfig.ConnectionError
 	}
 	return nil
 }
@@ -185,7 +194,8 @@ func readRemoteCliFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig)
 // 2. Env variables (CONTAINER_HOST and CONTAINER_CONNECTION);
 // 3. ActiveService from containers.conf;
 // 4. RemoteURI;
-func setupRemoteConnection(podmanConfig *entities.PodmanConfig) error {
+// Returns the name of the default connection if any.
+func setupRemoteConnection(podmanConfig *entities.PodmanConfig) string {
 	conf := podmanConfig.ContainersConfDefaultsRO
 	connEnv, hostEnv, sshkeyEnv := os.Getenv("CONTAINER_CONNECTION"), os.Getenv("CONTAINER_HOST"), os.Getenv("CONTAINER_SSHKEY")
 
@@ -193,11 +203,13 @@ func setupRemoteConnection(podmanConfig *entities.PodmanConfig) error {
 	case connEnv != "":
 		con, err := conf.GetConnection(connEnv, false)
 		if err != nil {
-			return err
+			podmanConfig.ConnectionError = err
+			return connEnv
 		}
 		podmanConfig.URI = con.URI
 		podmanConfig.Identity = con.Identity
 		podmanConfig.MachineMode = con.IsMachine
+		return con.Name
 	case hostEnv != "":
 		if sshkeyEnv != "" {
 			podmanConfig.Identity = sshkeyEnv
@@ -209,11 +221,11 @@ func setupRemoteConnection(podmanConfig *entities.PodmanConfig) error {
 			podmanConfig.URI = con.URI
 			podmanConfig.Identity = con.Identity
 			podmanConfig.MachineMode = con.IsMachine
-		} else {
-			podmanConfig.URI = registry.DefaultAPIAddress()
+			return con.Name
 		}
+		podmanConfig.URI = registry.DefaultAPIAddress()
 	}
-	return nil
+	return ""
 }
 
 func persistentPreRunE(cmd *cobra.Command, args []string) error {
@@ -362,8 +374,12 @@ func persistentPreRunE(cmd *cobra.Command, args []string) error {
 	// 3) command doesn't require Parent Namespace
 	_, found := cmd.Annotations[registry.ParentNSRequired]
 	if !registry.IsRemote() && !found {
+		cgroupMode := ""
 		_, noMoveProcess := cmd.Annotations[registry.NoMoveProcess]
-		err := registry.ContainerEngine().SetupRootless(registry.Context(), noMoveProcess)
+		if flag := cmd.LocalFlags().Lookup("cgroups"); flag != nil {
+			cgroupMode = flag.Value.String()
+		}
+		err := registry.ContainerEngine().SetupRootless(registry.Context(), noMoveProcess, cgroupMode)
 		if err != nil {
 			return err
 		}
@@ -459,9 +475,8 @@ func stdOutHook() {
 }
 
 func rootFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig) {
-	if err := setupRemoteConnection(podmanConfig); err != nil {
-		return
-	}
+	connectionName := setupRemoteConnection(podmanConfig)
+
 	lFlags := cmd.Flags()
 
 	sshFlagName := "ssh"
@@ -469,7 +484,7 @@ func rootFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig) {
 	_ = cmd.RegisterFlagCompletionFunc(sshFlagName, common.AutocompleteSSH)
 
 	connectionFlagName := "connection"
-	lFlags.StringP(connectionFlagName, "c", podmanConfig.ContainersConfDefaultsRO.Engine.ActiveService, "Connection to use for remote Podman service")
+	lFlags.StringP(connectionFlagName, "c", connectionName, "Connection to use for remote Podman service (CONTAINER_CONNECTION)")
 	_ = cmd.RegisterFlagCompletionFunc(connectionFlagName, common.AutocompleteSystemConnections)
 
 	urlFlagName := "url"
@@ -576,6 +591,8 @@ func rootFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig) {
 
 		pFlags.BoolVar(&podmanConfig.TransientStore, "transient-store", false, "Enable transient container storage")
 
+		pFlags.StringArrayVar(&podmanConfig.PullOptions, "pull-option", nil, "Specify an option to change how the image is pulled")
+
 		runtimeFlagName := "runtime"
 		pFlags.StringVar(&podmanConfig.RuntimePath, runtimeFlagName, podmanConfig.ContainersConfDefaultsRO.Engine.OCIRuntime, "Path to the OCI-compatible binary used to run containers.")
 		_ = cmd.RegisterFlagCompletionFunc(runtimeFlagName, completion.AutocompleteDefault)
@@ -602,6 +619,7 @@ func rootFlags(cmd *cobra.Command, podmanConfig *entities.PodmanConfig) {
 			"default-mounts-file",
 			"max-workers",
 			"memory-profile",
+			"pull-option",
 			"registries-conf",
 			"trace",
 		} {
