@@ -1,3 +1,14 @@
+libpod (5.2.0+ds1-1) experimental; urgency=medium
+
+  * New upstream release: 5.2.0
+  * Drop unneded patches
+  * Tighten deps on go-criu and checkpointctl
+  * Revert upstream change to compile against docker version 26.1
+  * Promote 'Suggests' on 'containers-storage' to Recommends,
+    Closes: #1065732, 1062176
+
+ -- Reinhard Tartler <siretart@tauware.de>  Thu, 08 Aug 2024 06:47:16 -0400
+
 libpod (5.0.3+ds1-3) experimental; urgency=medium
 
   * Add conflicts relationship to docker-cli, Closes: #1076373
