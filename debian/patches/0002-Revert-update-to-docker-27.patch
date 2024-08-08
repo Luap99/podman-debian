@@ -1,0 +1,530 @@
+From: Reinhard Tartler <siretart@tauware.de>
+Date: Wed, 7 Aug 2024 21:32:18 -0400
+Subject: Revert "update to docker 27"
+
+This reverts commit e24367aa14b7669d116a2a27ba12c69cbf51612b.
+---
+ go.mod                                            |  2 +-
+ go.sum                                            |  4 ++--
+ pkg/api/handlers/compat/containers.go             |  7 ++-----
+ pkg/api/handlers/compat/containers_stats_linux.go | 24 +++++++++++-----------
+ pkg/api/handlers/compat/images_prune.go           |  3 ++-
+ pkg/api/handlers/compat/networks.go               | 21 +++++++++----------
+ pkg/api/handlers/compat/system.go                 |  3 +--
+ pkg/api/handlers/compat/types.go                  | 25 ++++++++++++-----------
+ pkg/api/handlers/compat/volumes.go                | 19 +++++++++--------
+ pkg/api/handlers/swagger/models.go                |  8 ++++----
+ pkg/api/handlers/swagger/responses.go             | 13 ++++++------
+ 11 files changed, 63 insertions(+), 66 deletions(-)
+
+diff --git a/go.mod b/go.mod
+index 08cd2bc..22c0430 100644
+--- a/go.mod
++++ b/go.mod
+@@ -29,7 +29,7 @@ require (
+ 	github.com/cyphar/filepath-securejoin v0.3.1
+ 	github.com/digitalocean/go-qemu v0.0.0-20230711162256-2e3d0186973e
+ 	github.com/docker/distribution v2.8.3+incompatible
+-	github.com/docker/docker v27.1.1+incompatible
++	github.com/docker/docker v26.1.4+incompatible
+ 	github.com/docker/go-connections v0.5.0
+ 	github.com/docker/go-plugins-helpers v0.0.0-20211224144127-6eecb7beb651
+ 	github.com/docker/go-units v0.5.0
+diff --git a/go.sum b/go.sum
+index 8811f44..d4ac257 100644
+--- a/go.sum
++++ b/go.sum
+@@ -136,8 +136,8 @@ github.com/docker/cli v27.1.1+incompatible h1:goaZxOqs4QKxznZjjBWKONQci/MywhtRv2
+ github.com/docker/cli v27.1.1+incompatible/go.mod h1:JLrzqnKDaYBop7H2jaqPtU4hHvMKP+vjCwu2uszcLI8=
+ github.com/docker/distribution v2.8.3+incompatible h1:AtKxIZ36LoNK51+Z6RpzLpddBirtxJnzDrHLEKxTAYk=
+ github.com/docker/distribution v2.8.3+incompatible/go.mod h1:J2gT2udsDAN96Uj4KfcMRqY0/ypR+oyYUYmja8H+y+w=
+-github.com/docker/docker v27.1.1+incompatible h1:hO/M4MtV36kzKldqnA37IWhebRA+LnqqcqDja6kVaKY=
+-github.com/docker/docker v27.1.1+incompatible/go.mod h1:eEKB0N0r5NX/I1kEveEz05bcu8tLC/8azJZsviup8Sk=
++github.com/docker/docker v26.1.4+incompatible h1:vuTpXDuoga+Z38m1OZHzl7NKisKWaWlhjQk7IDPSLsU=
++github.com/docker/docker v26.1.4+incompatible/go.mod h1:eEKB0N0r5NX/I1kEveEz05bcu8tLC/8azJZsviup8Sk=
+ github.com/docker/docker-credential-helpers v0.8.2 h1:bX3YxiGzFP5sOXWc3bTPEXdEaZSeVMrFgOr3T+zrFAo=
+ github.com/docker/docker-credential-helpers v0.8.2/go.mod h1:P3ci7E3lwkZg6XiHdRKft1KckHiO9a2rNtyFbZ/ry9M=
+ github.com/docker/go-connections v0.5.0 h1:USnMq7hx7gwdVZq1L49hLXaFtUdTADjXGp+uj1Br63c=
+diff --git a/pkg/api/handlers/compat/containers.go b/pkg/api/handlers/compat/containers.go
+index dfaf6fb..08061c1 100644
+--- a/pkg/api/handlers/compat/containers.go
++++ b/pkg/api/handlers/compat/containers.go
+@@ -391,13 +391,10 @@ func LibpodToContainer(l *libpod.Container, sz bool) (*handlers.Container, error
+ 			Labels:     l.Labels(),
+ 			State:      stateStr,
+ 			Status:     status,
+-			// FIXME: this seems broken, the field is never shown in the API output.
+ 			HostConfig: struct {
+-				NetworkMode string            `json:",omitempty"`
+-				Annotations map[string]string `json:",omitempty"`
++				NetworkMode string `json:",omitempty"`
+ 			}{
+-				NetworkMode: "host",
+-				// TODO: add annotations here for >= v1.46
++				"host",
+ 			},
+ 			NetworkSettings: &networkSettings,
+ 			Mounts:          mounts,
+diff --git a/pkg/api/handlers/compat/containers_stats_linux.go b/pkg/api/handlers/compat/containers_stats_linux.go
+index 6c4d5f2..c529cb8 100644
+--- a/pkg/api/handlers/compat/containers_stats_linux.go
++++ b/pkg/api/handlers/compat/containers_stats_linux.go
+@@ -12,7 +12,7 @@ import (
+ 	"github.com/containers/podman/v5/pkg/api/handlers/utils"
+ 	api "github.com/containers/podman/v5/pkg/api/types"
+ 	"github.com/containers/storage/pkg/system"
+-	"github.com/docker/docker/api/types/container"
++	docker "github.com/docker/docker/api/types"
+ 	runccgroups "github.com/opencontainers/runc/libcontainer/cgroups"
+ 	"github.com/sirupsen/logrus"
+ )
+@@ -67,7 +67,7 @@ func StatsContainer(w http.ResponseWriter, r *http.Request) {
+ 		preRead = time.Now()
+ 		systemUsage, _ := cgroups.SystemCPUUsage()
+ 		preCPUStats = CPUStats{
+-			CPUUsage: container.CPUUsage{
++			CPUUsage: docker.CPUUsage{
+ 				TotalUsage:        stats.CPUNano,
+ 				PercpuUsage:       stats.PerCPU,
+ 				UsageInKernelmode: stats.CPUSystemNano,
+@@ -76,7 +76,7 @@ func StatsContainer(w http.ResponseWriter, r *http.Request) {
+ 			CPU:            stats.CPU,
+ 			SystemUsage:    systemUsage,
+ 			OnlineCPUs:     0,
+-			ThrottlingData: container.ThrottlingData{},
++			ThrottlingData: docker.ThrottlingData{},
+ 		}
+ 	}
+ 	onlineCPUs, err := libpod.GetOnlineCPUs(ctnr)
+@@ -119,9 +119,9 @@ streamLabel: // A label to flatten the scope
+ 			return
+ 		}
+ 
+-		net := make(map[string]container.NetworkStats)
++		net := make(map[string]docker.NetworkStats)
+ 		for netName, netStats := range stats.Network {
+-			net[netName] = container.NetworkStats{
++			net[netName] = docker.NetworkStats{
+ 				RxBytes:    netStats.RxBytes,
+ 				RxPackets:  netStats.RxPackets,
+ 				RxErrors:   netStats.RxErrors,
+@@ -156,11 +156,11 @@ streamLabel: // A label to flatten the scope
+ 			Stats: Stats{
+ 				Read:    time.Now(),
+ 				PreRead: preRead,
+-				PidsStats: container.PidsStats{
++				PidsStats: docker.PidsStats{
+ 					Current: cgroupStat.PidsStats.Current,
+ 					Limit:   0,
+ 				},
+-				BlkioStats: container.BlkioStats{
++				BlkioStats: docker.BlkioStats{
+ 					IoServiceBytesRecursive: toBlkioStatEntry(cgroupStat.BlkioStats.IoServiceBytesRecursive),
+ 					IoServicedRecursive:     nil,
+ 					IoQueuedRecursive:       nil,
+@@ -171,7 +171,7 @@ streamLabel: // A label to flatten the scope
+ 					SectorsRecursive:        nil,
+ 				},
+ 				CPUStats: CPUStats{
+-					CPUUsage: container.CPUUsage{
++					CPUUsage: docker.CPUUsage{
+ 						TotalUsage:        cgroupStat.CpuStats.CpuUsage.TotalUsage,
+ 						PercpuUsage:       cgroupStat.CpuStats.CpuUsage.PercpuUsage,
+ 						UsageInKernelmode: cgroupStat.CpuStats.CpuUsage.UsageInKernelmode,
+@@ -180,14 +180,14 @@ streamLabel: // A label to flatten the scope
+ 					CPU:         stats.CPU,
+ 					SystemUsage: systemUsage,
+ 					OnlineCPUs:  uint32(onlineCPUs),
+-					ThrottlingData: container.ThrottlingData{
++					ThrottlingData: docker.ThrottlingData{
+ 						Periods:          0,
+ 						ThrottledPeriods: 0,
+ 						ThrottledTime:    0,
+ 					},
+ 				},
+ 				PreCPUStats: preCPUStats,
+-				MemoryStats: container.MemoryStats{
++				MemoryStats: docker.MemoryStats{
+ 					Usage:             cgroupStat.MemoryStats.Usage.Usage,
+ 					MaxUsage:          cgroupStat.MemoryStats.Usage.MaxUsage,
+ 					Stats:             nil,
+@@ -236,8 +236,8 @@ streamLabel: // A label to flatten the scope
+ 	}
+ }
+ 
+-func toBlkioStatEntry(entries []runccgroups.BlkioStatEntry) []container.BlkioStatEntry {
+-	results := make([]container.BlkioStatEntry, len(entries))
++func toBlkioStatEntry(entries []runccgroups.BlkioStatEntry) []docker.BlkioStatEntry {
++	results := make([]docker.BlkioStatEntry, len(entries))
+ 	for i, e := range entries {
+ 		bits, err := json.Marshal(e)
+ 		if err != nil {
+diff --git a/pkg/api/handlers/compat/images_prune.go b/pkg/api/handlers/compat/images_prune.go
+index 8cc303a..d46b3df 100644
+--- a/pkg/api/handlers/compat/images_prune.go
++++ b/pkg/api/handlers/compat/images_prune.go
+@@ -13,6 +13,7 @@ import (
+ 	"github.com/containers/podman/v5/pkg/domain/entities"
+ 	"github.com/containers/podman/v5/pkg/domain/infra/abi"
+ 	"github.com/containers/podman/v5/pkg/util"
++	"github.com/docker/docker/api/types"
+ 	dockerImage "github.com/docker/docker/api/types/image"
+ )
+ 
+@@ -64,7 +65,7 @@ func PruneImages(w http.ResponseWriter, r *http.Request) {
+ 	}
+ 
+ 	payload := handlers.ImagesPruneReport{
+-		ImagesPruneReport: dockerImage.PruneReport{
++		ImagesPruneReport: types.ImagesPruneReport{
+ 			ImagesDeleted:  idr,
+ 			SpaceReclaimed: reclaimedSpace,
+ 		},
+diff --git a/pkg/api/handlers/compat/networks.go b/pkg/api/handlers/compat/networks.go
+index 598645b..b9130a5 100644
+--- a/pkg/api/handlers/compat/networks.go
++++ b/pkg/api/handlers/compat/networks.go
+@@ -16,6 +16,7 @@ import (
+ 	"github.com/containers/podman/v5/pkg/domain/entities"
+ 	"github.com/containers/podman/v5/pkg/domain/infra/abi"
+ 	"github.com/containers/podman/v5/pkg/util"
++	"github.com/docker/docker/api/types"
+ 	"golang.org/x/exp/maps"
+ 
+ 	dockerNetwork "github.com/docker/docker/api/types/network"
+@@ -66,8 +67,8 @@ func InspectNetwork(w http.ResponseWriter, r *http.Request) {
+ 	utils.WriteResponse(w, http.StatusOK, report)
+ }
+ 
+-func convertLibpodNetworktoDockerNetwork(runtime *libpod.Runtime, statuses []abi.ContainerNetStatus, network *nettypes.Network, changeDefaultName bool) *dockerNetwork.Inspect {
+-	containerEndpoints := make(map[string]dockerNetwork.EndpointResource, len(statuses))
++func convertLibpodNetworktoDockerNetwork(runtime *libpod.Runtime, statuses []abi.ContainerNetStatus, network *nettypes.Network, changeDefaultName bool) *types.NetworkResource {
++	containerEndpoints := make(map[string]types.EndpointResource, len(statuses))
+ 	for _, st := range statuses {
+ 		if netData, ok := st.Status[network.Name]; ok {
+ 			ipv4Address := ""
+@@ -86,7 +87,7 @@ func convertLibpodNetworktoDockerNetwork(runtime *libpod.Runtime, statuses []abi
+ 				macAddr = dev.MacAddress.String()
+ 				break
+ 			}
+-			containerEndpoint := dockerNetwork.EndpointResource{
++			containerEndpoint := types.EndpointResource{
+ 				Name:        st.Name,
+ 				MacAddress:  macAddr,
+ 				IPv4Address: ipv4Address,
+@@ -125,7 +126,7 @@ func convertLibpodNetworktoDockerNetwork(runtime *libpod.Runtime, statuses []abi
+ 	// https://github.com/containers/podman/issues/15580
+ 	delete(options, nettypes.IsolateOption)
+ 
+-	report := dockerNetwork.Inspect{
++	report := types.NetworkResource{
+ 		Name:       name,
+ 		ID:         network.ID,
+ 		Driver:     network.Driver,
+@@ -170,7 +171,7 @@ func ListNetworks(w http.ResponseWriter, r *http.Request) {
+ 		utils.InternalServerError(w, err)
+ 		return
+ 	}
+-	reports := make([]*dockerNetwork.Summary, 0, len(nets))
++	reports := make([]*types.NetworkResource, 0, len(nets))
+ 	for _, net := range nets {
+ 		report := convertLibpodNetworktoDockerNetwork(runtime, statuses, &net, true)
+ 		reports = append(reports, report)
+@@ -180,7 +181,7 @@ func ListNetworks(w http.ResponseWriter, r *http.Request) {
+ 
+ func CreateNetwork(w http.ResponseWriter, r *http.Request) {
+ 	var (
+-		networkCreate   dockerNetwork.CreateRequest
++		networkCreate   types.NetworkCreateRequest
+ 		network         nettypes.Network
+ 		responseWarning string
+ 	)
+@@ -197,9 +198,7 @@ func CreateNetwork(w http.ResponseWriter, r *http.Request) {
+ 	network.Driver = networkCreate.Driver
+ 	network.Labels = networkCreate.Labels
+ 	network.Internal = networkCreate.Internal
+-	if networkCreate.EnableIPv6 != nil {
+-		network.IPv6Enabled = *networkCreate.EnableIPv6
+-	}
++	network.IPv6Enabled = networkCreate.EnableIPv6
+ 
+ 	network.Options = make(map[string]string)
+ 
+@@ -358,7 +357,7 @@ func RemoveNetwork(w http.ResponseWriter, r *http.Request) {
+ func Connect(w http.ResponseWriter, r *http.Request) {
+ 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
+ 
+-	var netConnect dockerNetwork.ConnectOptions
++	var netConnect types.NetworkConnect
+ 	if err := json.NewDecoder(r.Body).Decode(&netConnect); err != nil {
+ 		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("Decode(): %w", err))
+ 		return
+@@ -440,7 +439,7 @@ func Connect(w http.ResponseWriter, r *http.Request) {
+ func Disconnect(w http.ResponseWriter, r *http.Request) {
+ 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
+ 
+-	var netDisconnect dockerNetwork.DisconnectOptions
++	var netDisconnect types.NetworkDisconnect
+ 	if err := json.NewDecoder(r.Body).Decode(&netDisconnect); err != nil {
+ 		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("Decode(): %w", err))
+ 		return
+diff --git a/pkg/api/handlers/compat/system.go b/pkg/api/handlers/compat/system.go
+index d53e9c3..9596027 100644
+--- a/pkg/api/handlers/compat/system.go
++++ b/pkg/api/handlers/compat/system.go
+@@ -58,8 +58,7 @@ func GetDiskUsage(w http.ResponseWriter, r *http.Request) {
+ 			State:      o.Status,
+ 			Status:     o.Status,
+ 			HostConfig: struct {
+-				NetworkMode string            `json:",omitempty"`
+-				Annotations map[string]string `json:",omitempty"`
++				NetworkMode string `json:",omitempty"`
+ 			}{},
+ 			NetworkSettings: nil,
+ 			Mounts:          nil,
+diff --git a/pkg/api/handlers/compat/types.go b/pkg/api/handlers/compat/types.go
+index 3c42190..f422784 100644
+--- a/pkg/api/handlers/compat/types.go
++++ b/pkg/api/handlers/compat/types.go
+@@ -3,13 +3,13 @@ package compat
+ import (
+ 	"time"
+ 
+-	"github.com/docker/docker/api/types/container"
++	docker "github.com/docker/docker/api/types"
+ )
+ 
+ // CPUStats aggregates and wraps all CPU related info of container
+ type CPUStats struct {
+ 	// CPU Usage. Linux and Windows.
+-	CPUUsage container.CPUUsage `json:"cpu_usage"`
++	CPUUsage docker.CPUUsage `json:"cpu_usage"`
+ 
+ 	// System Usage. Linux only.
+ 	SystemUsage uint64 `json:"system_cpu_usage,omitempty"`
+@@ -21,7 +21,7 @@ type CPUStats struct {
+ 	CPU float64 `json:"cpu"`
+ 
+ 	// Throttling Data. Linux only.
+-	ThrottlingData container.ThrottlingData `json:"throttling_data,omitempty"`
++	ThrottlingData docker.ThrottlingData `json:"throttling_data,omitempty"`
+ }
+ 
+ // Stats is Ultimate struct aggregating all types of stats of one container
+@@ -31,17 +31,17 @@ type Stats struct {
+ 	PreRead time.Time `json:"preread"`
+ 
+ 	// Linux specific stats, not populated on Windows.
+-	PidsStats  container.PidsStats  `json:"pids_stats,omitempty"`
+-	BlkioStats container.BlkioStats `json:"blkio_stats,omitempty"`
++	PidsStats  docker.PidsStats  `json:"pids_stats,omitempty"`
++	BlkioStats docker.BlkioStats `json:"blkio_stats,omitempty"`
+ 
+ 	// Windows specific stats, not populated on Linux.
+-	NumProcs     uint32                 `json:"num_procs"`
+-	StorageStats container.StorageStats `json:"storage_stats,omitempty"`
++	NumProcs     uint32              `json:"num_procs"`
++	StorageStats docker.StorageStats `json:"storage_stats,omitempty"`
+ 
+ 	// Shared stats
+-	CPUStats    CPUStats              `json:"cpu_stats,omitempty"`
+-	PreCPUStats CPUStats              `json:"precpu_stats,omitempty"` // "Pre"="Previous"
+-	MemoryStats container.MemoryStats `json:"memory_stats,omitempty"`
++	CPUStats    CPUStats           `json:"cpu_stats,omitempty"`
++	PreCPUStats CPUStats           `json:"precpu_stats,omitempty"` // "Pre"="Previous"
++	MemoryStats docker.MemoryStats `json:"memory_stats,omitempty"`
+ }
+ 
+ type StatsJSON struct {
+@@ -51,7 +51,7 @@ type StatsJSON struct {
+ 	ID   string `json:"Id,omitempty"`
+ 
+ 	// Networks request version >=1.21
+-	Networks map[string]container.NetworkStats `json:"networks,omitempty"`
++	Networks map[string]docker.NetworkStats `json:"networks,omitempty"`
+ }
+ 
+ // DockerStatsJSON is the same as StatsJSON except for the lowercase
+@@ -62,6 +62,7 @@ type DockerStatsJSON struct {
+ 
+ 	Name string `json:"name,omitempty"`
+ 	ID   string `json:"id,omitempty"`
++
+ 	// Networks request version >=1.21
+-	Networks map[string]container.NetworkStats `json:"networks,omitempty"`
++	Networks map[string]docker.NetworkStats `json:"networks,omitempty"`
+ }
+diff --git a/pkg/api/handlers/compat/volumes.go b/pkg/api/handlers/compat/volumes.go
+index 4bb0a16..18a85e8 100644
+--- a/pkg/api/handlers/compat/volumes.go
++++ b/pkg/api/handlers/compat/volumes.go
+@@ -17,7 +17,8 @@ import (
+ 	"github.com/containers/podman/v5/pkg/domain/filters"
+ 	"github.com/containers/podman/v5/pkg/domain/infra/abi/parse"
+ 	"github.com/containers/podman/v5/pkg/util"
+-	"github.com/docker/docker/api/types/volume"
++	docker_api_types "github.com/docker/docker/api/types"
++	docker_api_types_volume "github.com/docker/docker/api/types/volume"
+ )
+ 
+ func ListVolumes(w http.ResponseWriter, r *http.Request) {
+@@ -54,14 +55,14 @@ func ListVolumes(w http.ResponseWriter, r *http.Request) {
+ 		utils.InternalServerError(w, err)
+ 		return
+ 	}
+-	volumeConfigs := make([]*volume.Volume, 0, len(vols))
++	volumeConfigs := make([]*docker_api_types_volume.Volume, 0, len(vols))
+ 	for _, v := range vols {
+ 		mp, err := v.MountPoint()
+ 		if err != nil {
+ 			utils.InternalServerError(w, err)
+ 			return
+ 		}
+-		config := volume.Volume{
++		config := docker_api_types_volume.Volume{
+ 			Name:       v.Name(),
+ 			Driver:     v.Driver(),
+ 			Mountpoint: mp,
+@@ -72,7 +73,7 @@ func ListVolumes(w http.ResponseWriter, r *http.Request) {
+ 		}
+ 		volumeConfigs = append(volumeConfigs, &config)
+ 	}
+-	response := volume.ListResponse{
++	response := docker_api_types_volume.ListResponse{
+ 		Volumes:  volumeConfigs,
+ 		Warnings: []string{},
+ 	}
+@@ -93,7 +94,7 @@ func CreateVolume(w http.ResponseWriter, r *http.Request) {
+ 		return
+ 	}
+ 	// decode params from body
+-	input := volume.CreateOptions{}
++	input := docker_api_types_volume.CreateOptions{}
+ 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+ 		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("Decode(): %w", err))
+ 		return
+@@ -120,7 +121,7 @@ func CreateVolume(w http.ResponseWriter, r *http.Request) {
+ 			utils.InternalServerError(w, err)
+ 			return
+ 		}
+-		response := volume.Volume{
++		response := docker_api_types_volume.Volume{
+ 			CreatedAt:  existingVolume.CreatedTime().Format(time.RFC3339),
+ 			Driver:     existingVolume.Driver(),
+ 			Labels:     existingVolume.Labels(),
+@@ -165,7 +166,7 @@ func CreateVolume(w http.ResponseWriter, r *http.Request) {
+ 		utils.InternalServerError(w, err)
+ 		return
+ 	}
+-	volResponse := volume.Volume{
++	volResponse := docker_api_types_volume.Volume{
+ 		Name:       config.Name,
+ 		Driver:     config.Driver,
+ 		Mountpoint: mp,
+@@ -195,7 +196,7 @@ func InspectVolume(w http.ResponseWriter, r *http.Request) {
+ 		utils.InternalServerError(w, err)
+ 		return
+ 	}
+-	volResponse := volume.Volume{
++	volResponse := docker_api_types_volume.Volume{
+ 		Name:       vol.Name(),
+ 		Driver:     vol.Driver(),
+ 		Mountpoint: mp,
+@@ -306,7 +307,7 @@ func PruneVolumes(w http.ResponseWriter, r *http.Request) {
+ 	}
+ 
+ 	payload := handlers.VolumesPruneReport{
+-		VolumesPruneReport: volume.PruneReport{
++		VolumesPruneReport: docker_api_types.VolumesPruneReport{
+ 			VolumesDeleted: prunedIds,
+ 			SpaceReclaimed: reclaimedSpace,
+ 		},
+diff --git a/pkg/api/handlers/swagger/models.go b/pkg/api/handlers/swagger/models.go
+index d792c41..a58a6bd 100644
+--- a/pkg/api/handlers/swagger/models.go
++++ b/pkg/api/handlers/swagger/models.go
+@@ -3,8 +3,8 @@ package swagger
+ 
+ import (
+ 	"github.com/containers/podman/v5/pkg/domain/entities"
++	"github.com/docker/docker/api/types"
+ 	"github.com/docker/docker/api/types/container"
+-	"github.com/docker/docker/api/types/network"
+ )
+ 
+ // Details for creating a volume
+@@ -32,15 +32,15 @@ type volumeCreate struct {
+ 
+ // Network create
+ // swagger:model
+-type networkCreate network.CreateRequest
++type networkCreate types.NetworkCreateRequest
+ 
+ // Network connect
+ // swagger:model
+-type networkConnectRequest network.ConnectOptions
++type networkConnectRequest types.NetworkConnect
+ 
+ // Network disconnect
+ // swagger:model
+-type networkDisconnectRequest network.DisconnectOptions
++type networkDisconnectRequest types.NetworkDisconnect
+ 
+ // Network connect
+ // swagger:model
+diff --git a/pkg/api/handlers/swagger/responses.go b/pkg/api/handlers/swagger/responses.go
+index 5c0192f..c41a83a 100644
+--- a/pkg/api/handlers/swagger/responses.go
++++ b/pkg/api/handlers/swagger/responses.go
+@@ -11,8 +11,7 @@ import (
+ 	"github.com/containers/podman/v5/pkg/inspect"
+ 	dockerAPI "github.com/docker/docker/api/types"
+ 	dockerImage "github.com/docker/docker/api/types/image"
+-	"github.com/docker/docker/api/types/network"
+-	"github.com/docker/docker/api/types/volume"
++	dockerVolume "github.com/docker/docker/api/types/volume"
+ )
+ 
+ // Image Tree
+@@ -249,21 +248,21 @@ type containersList struct {
+ // swagger:response
+ type volumeInspect struct {
+ 	// in:body
+-	Body volume.Volume
++	Body dockerVolume.Volume
+ }
+ 
+ // Volume prune
+ // swagger:response
+ type volumePruneResponse struct {
+ 	// in:body
+-	Body volume.PruneReport
++	Body dockerAPI.VolumesPruneReport
+ }
+ 
+ // Volume List
+ // swagger:response
+ type volumeList struct {
+ 	// in:body
+-	Body volume.ListResponse
++	Body dockerVolume.ListResponse
+ }
+ 
+ // Volume list
+@@ -344,14 +343,14 @@ type containerWaitResponse struct {
+ // swagger:response
+ type networkInspectCompat struct {
+ 	// in:body
+-	Body network.Inspect
++	Body dockerAPI.NetworkResource
+ }
+ 
+ // Network list
+ // swagger:response
+ type networkListCompat struct {
+ 	// in:body
+-	Body []network.Summary
++	Body []dockerAPI.NetworkResource
+ }
+ 
+ // List Containers
