@@ -1,9 +1,9 @@
 CONTRIBUTING.md
-SECURITY.md
 README*
 RELEASE_NOTES*
+SECURITY.md
 commands*.md
+docs/tutorials/*_tutorial*.md
 rootless.md
 transfer.md
 troubleshooting.md
-docs/tutorials/*_tutorial*.md
