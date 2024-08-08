@@ -113,12 +113,13 @@ Depends: conmon,
          ${shlibs:Depends}
 Recommends: buildah (>= 1.31),
             catatonit | tini | dumb-init,
+            containers-storage,
             dbus-user-session,
             passt,
             slirp4netns,
             uidmap,
             ${misc:Recommends}
-Suggests: containers-storage, docker-compose, iptables, ${misc:Suggests}
+Suggests: docker-compose, iptables, ${misc:Suggests}
 Description: tool to manage containers and pods
  Podman (the POD MANager) is a tool for managing containers and images, volumes
  mounted into those containers, and pods made from groups of containers.
