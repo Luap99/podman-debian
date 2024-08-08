@@ -1,3 +1,9 @@
+libpod (5.2.0+ds1-2) experimental; urgency=medium
+
+  * Tighten dependencies on containers/{storage,image,common}
+
+ -- Reinhard Tartler <siretart@tauware.de>  Thu, 08 Aug 2024 08:11:05 -0400
+
 libpod (5.2.0+ds1-1) experimental; urgency=medium
 
   * New upstream release: 5.2.0
