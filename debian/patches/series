@@ -1,4 +1,1 @@
 system-goimports.patch
-downgrade-checkpoint-restore-criu.patch
-0003-Fix-reference-to-deprecated-types.Info.patch
-0004-update-github.com-rootless-containers-rootlesskit-to.patch
