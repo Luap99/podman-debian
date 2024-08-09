@@ -1,3 +1,14 @@
+libpod (5.2.0+ds1-3) experimental; urgency=medium
+
+  * Tighten build deps on golang-github-opencontainers-runc-dev
+  * Install recommends for tests
+  * Implement autopkgtest 'podman-info' into its own shell script
+  * Add recommends to ca-certificates
+  * Add test that runs hello-world
+  * Fix autopkgtest failure in qemu
+
+ -- Reinhard Tartler <siretart@tauware.de>  Fri, 09 Aug 2024 14:49:49 -0400
+
 libpod (5.2.0+ds1-2) experimental; urgency=medium
 
   * Tighten dependencies on containers/{storage,image,common}
