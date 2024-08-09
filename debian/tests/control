@@ -1,4 +1,4 @@
-Test-Command: podman info
+Tests: podman-info
 Depends: @, @recommends@
 Restrictions: needs-root, allow-stderr
 
