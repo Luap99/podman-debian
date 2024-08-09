@@ -1,0 +1,4 @@
+#!/bin/bash
+
+podman system reset -f
+podman run --rm docker.io/hello-world
