@@ -1,15 +1,7 @@
 Test-Command: podman info
+Depends: @, @recommends@
 Restrictions: needs-root, allow-stderr
 
 Tests: builtin-tests
-Depends: buildah,
-         catatonit,
-         containers-storage,
-         dbus-user-session,
-         fuse-overlayfs,
-         iptables,
-         slirp4netns,
-         uidmap,
-         @,
-         @builddeps@
+Depends: @, @builddeps@, @recommends@
 Restrictions: allow-stderr, needs-root, flaky
