@@ -1,3 +1,9 @@
+libpod (5.2.0+ds1-4) experimental; urgency=medium
+
+  * Recommend 'netavark'
+
+ -- Reinhard Tartler <siretart@tauware.de>  Sat, 10 Aug 2024 14:48:13 -0400
+
 libpod (5.2.0+ds1-3) experimental; urgency=medium
 
   * Tighten build deps on golang-github-opencontainers-runc-dev
