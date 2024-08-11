@@ -5,7 +5,7 @@ Restrictions: needs-root, allow-stderr
 Tests: podman-hello-world
 Architecture: amd64, arm64
 Depends: @, @recommends@
-Restrictions: needs-internet, allow-stderr
+Restrictions: needs-internet, allow-stderr, skippable
 
 Tests: builtin-tests
 Depends: @, @builddeps@, @recommends@

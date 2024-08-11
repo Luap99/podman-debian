@@ -1,4 +1,14 @@
 #!/bin/bash
 
-podman system reset -f
+set -eux
+
+id
+env | sort
+
+# pasta needs to be able to setup tun devices
+test -w /dev/net/tun || exit 77
+
+# This can fail in unpriviledged user namespaces
+podman system reset -f || exit 77
+
 podman run --rm docker.io/hello-world
