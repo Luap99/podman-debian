@@ -1,3 +1,11 @@
+libpod (5.2.0+ds1-5) experimental; urgency=medium
+
+  * Add sanity checks to podman-hello-world
+  * autopkgtest that run podman require isolation-machine
+  * Tigthen build-depends on buildah
+
+ -- Reinhard Tartler <siretart@tauware.de>  Sun, 11 Aug 2024 08:41:27 -0400
+
 libpod (5.2.0+ds1-4) experimental; urgency=medium
 
   * Recommend 'netavark'
