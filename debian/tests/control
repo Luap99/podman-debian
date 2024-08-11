@@ -1,11 +1,11 @@
 Tests: podman-info
 Depends: @, @recommends@
-Restrictions: needs-root, allow-stderr
+Restrictions: needs-root, allow-stderr, isolation-machine
 
 Tests: podman-hello-world
 Architecture: amd64, arm64
 Depends: @, @recommends@
-Restrictions: needs-internet, allow-stderr, skippable
+Restrictions: needs-internet, allow-stderr, skippable, isolation-machine
 
 Tests: builtin-tests
 Depends: @, @builddeps@, @recommends@
