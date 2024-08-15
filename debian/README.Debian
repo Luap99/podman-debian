@@ -1,3 +1,14 @@
+Troubleshooting networking issues
+=================================
+
+When experimenting with custom networks, with or wihtout netavark, you might
+get get into a situation that is hard to diagnose. Before reporting a bug
+report, please try resetting your podman configuration using the command:
+
+  podman system reset
+
+See https://bugs.debian.org/1066139 for one of such instances.
+
 Troubleshooting rootless mode
 =============================
 

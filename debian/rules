@@ -102,7 +102,7 @@ override_dh_auto_install:
 		-- \
 		--no-source
 	# generate and install systemd unit files, manpages, etc.
-	make DESTDIR=debian/tmp PREFIX=/usr \
+	make DESTDIR=debian/tmp PREFIX=/usr LIBDIR=/usr/lib \
 		install.systemd install.docker-full install.man
 
 execute_after_dh_installman:

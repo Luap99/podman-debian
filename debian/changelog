@@ -40,6 +40,20 @@ libpod (5.2.0+ds1-1) experimental; urgency=medium
 
  -- Reinhard Tartler <siretart@tauware.de>  Thu, 08 Aug 2024 06:47:16 -0400
 
+libpod (5.0.3+ds1-5) unstable; urgency=medium
+
+  * Team Upload.
+  * Add netavark to Depends (Fixes autopkgtest)
+
+ -- Nilesh Patra <nilesh@iki.fi>  Sun, 28 Jul 2024 23:09:36 +0530
+
+libpod (5.0.3+ds1-4) unstable; urgency=medium
+
+  * Team upload
+  * Upload changes from experimental to unstable
+
+ -- Mathias Gibbens <gibmat@debian.org>  Sat, 27 Jul 2024 01:35:14 +0000
+
 libpod (5.0.3+ds1-3) experimental; urgency=medium
 
   * Add conflicts relationship to docker-cli, Closes: #1076373
@@ -60,6 +74,17 @@ libpod (5.0.3+ds1-1) experimental; urgency=medium
   * compile against docker 26.1, containerd 1.7, rootlesskit v2
 
  -- Reinhard Tartler <siretart@tauware.de>  Fri, 12 Jul 2024 18:04:56 -0400
+
+libpod (4.9.5+ds1-1) unstable; urgency=medium
+
+  * New upstream version
+    - compiled against newer containers/image to address CVE-2024-3727,
+      and also enables image signing and verification with sigstore
+  * Move systemd files from /lib to /usr/lib, closes: #1073740
+  * Add tipp to reset configuration to help with networking issues,
+    Closes: #1066139
+
+ -- Reinhard Tartler <siretart@tauware.de>  Thu, 04 Jul 2024 17:11:36 -0400
 
 libpod (5.0.2+ds1-3) experimental; urgency=medium
 
@@ -84,6 +109,30 @@ libpod (5.0.0+ds1-1) experimental; urgency=medium
   * New upstream release
 
  -- Reinhard Tartler <siretart@tauware.de>  Mon, 08 Apr 2024 21:24:24 +0000
+
+libpod (4.9.5+ds1-1) unstable; urgency=medium
+
+  * New upstream version
+    - compiled against newer containers/image to address CVE-2024-3727,
+      and also enables image signing and verification with sigstore
+  * Move systemd files from /lib to /usr/lib, closes: #1073740
+  * Add tipp to reset configuration to help with networking issues,
+    Closes: #1066139
+
+ -- Reinhard Tartler <siretart@tauware.de>  Thu, 04 Jul 2024 17:11:36 -0400
+
+libpod (4.9.4+ds1-1) unstable; urgency=medium
+
+  * New upstream version
+    - picks up newer buildah to address CVE-2024-1753
+
+ -- Reinhard Tartler <siretart@tauware.de>  Thu, 28 Mar 2024 11:03:55 +0000
+
+libpod (4.9.3+ds1-1) unstable; urgency=medium
+
+  * New upstream release
+
+ -- Reinhard Tartler <siretart@tauware.de>  Tue, 13 Feb 2024 20:52:08 -0500
 
 libpod (4.9.2+ds1-2) unstable; urgency=medium
 
