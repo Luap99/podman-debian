@@ -1,3 +1,10 @@
+libpod (5.2.0+ds1-6) experimental; urgency=medium
+
+  * Merge in changes from branch 'debian/sid':
+    - Pick up changes to move alias files to /usr, Closes: #1078552
+
+ -- Reinhard Tartler <siretart@tauware.de>  Thu, 15 Aug 2024 07:48:39 -0400
+
 libpod (5.2.0+ds1-5) experimental; urgency=medium
 
   * Add sanity checks to podman-hello-world
