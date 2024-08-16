@@ -1,3 +1,9 @@
+libpod (5.2.1+ds1-1) experimental; urgency=medium
+
+  * New upstream release
+
+ -- Reinhard Tartler <siretart@tauware.de>  Thu, 15 Aug 2024 20:27:27 -0400
+
 libpod (5.2.0+ds1-6) experimental; urgency=medium
 
   * Merge in changes from branch 'debian/sid':
