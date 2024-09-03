@@ -7,7 +7,3 @@ usr/bin/podman                     /usr/bin
 usr/bin/quadlet                    /usr/libexec/podman/
 usr/bin/rootlessport               /usr/libexec/podman/
 usr/lib/systemd                    /usr/lib/
-
-# added in podman 5.0
-etc/profile.d
-
