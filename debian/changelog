@@ -1,3 +1,10 @@
+libpod (5.2.1+ds1-3) unstable; urgency=medium
+
+  * Don't set HOME unnecessarily, fixes LP: #2077610
+  * Ship etc/profile.d in the podman-docker package, Closes: #1080424
+
+ -- Reinhard Tartler <siretart@tauware.de>  Tue, 03 Sep 2024 18:23:12 -0400
+
 libpod (5.2.1+ds1-2) unstable; urgency=medium
 
   * Upload to unstable
