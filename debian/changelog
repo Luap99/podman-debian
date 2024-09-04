@@ -1,3 +1,9 @@
+libpod (5.2.1+ds1-4) unstable; urgency=medium
+
+  * Add appropriate Breaks/Replaces for podman-docker, Closes: #1080424
+
+ -- Reinhard Tartler <siretart@tauware.de>  Wed, 04 Sep 2024 06:20:50 -0400
+
 libpod (5.2.1+ds1-3) unstable; urgency=medium
 
   * Don't set HOME unnecessarily, fixes LP: #2077610
