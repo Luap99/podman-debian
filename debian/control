@@ -157,6 +157,8 @@ Package: podman-docker
 Architecture: any
 Built-Using: ${misc:Built-Using}
 Depends: podman, ${misc:Depends}, ${shlibs:Depends}
+Breaks: podman (<< 5.2.1+ds1-3)
+Replaces: podman (<< 5.2.1+ds1-3)
 Conflicts: docker-ce-cli, docker-cli, docker.io
 Recommends: docker-compose
 Description: tool to manage containers and pods (Docker CLI)
