@@ -1,3 +1,17 @@
+libpod (5.2.2+ds1-2) unstable; urgency=medium
+
+  [ Reinhard Tartler ]
+  * Merge from experimental
+  * Ship etc/profile.d in the podman-docker package, Closes: #1080424
+  * Fixup for fe0ce17dd1f040be77182f8b5a5c884c49d30b5d
+  * Add appropriate Breaks/Replaces for podman-docker, Closes: #1080424
+
+  [ Faidon Liambotis ]
+  * Ship completions for the fish shell (Closes: #1080291)
+  * Bump Standards-Version to 4.7.0
+
+ -- Reinhard Tartler <siretart@tauware.de>  Tue, 10 Sep 2024 07:42:57 -0400
+
 libpod (5.2.2+ds1-1) experimental; urgency=medium
 
   * New upstream release
