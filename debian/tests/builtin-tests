@@ -9,6 +9,7 @@ export DH_GOLANG_EXCLUDES="
 	test/e2e
 	test/endpoint
 	test/utils
+	cmd/podman/machine
 "
 
 dh_auto_configure -O--buildsystem=golang -O--builddirectory=_build
