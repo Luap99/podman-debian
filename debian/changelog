@@ -1,6 +1,7 @@
 podman (5.2.2+ds1-3) experimental; urgency=medium
 
   * Rename source package to 'podman', following upstream
+  * fix autopkgtest/builtin-tests: exclude cmd/podman/machine
 
  -- Reinhard Tartler <siretart@tauware.de>  Sat, 14 Sep 2024 10:21:52 -0400
 
