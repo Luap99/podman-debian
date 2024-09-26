@@ -1,3 +1,9 @@
+podman (5.2.3+ds1-1) unstable; urgency=medium
+
+  * New upstream release 5.2.3
+
+ -- Reinhard Tartler <siretart@tauware.de>  Thu, 26 Sep 2024 18:20:26 -0400
+
 podman (5.2.2+ds1-4) unstable; urgency=medium
 
   * Upload to unstable
