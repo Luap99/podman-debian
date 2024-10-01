@@ -1,3 +1,3 @@
 ## Too many Build-Depends we can't really do anything about...
 field-too-long Build-Depends *
-libpod source: absolute-symbolic-link-target-in-source /tmp/private_file [test/e2e/build/containerignore-symlink/.dockerignore]
+podman source: absolute-symbolic-link-target-in-source /tmp/private_file [test/e2e/build/containerignore-symlink/.dockerignore]
