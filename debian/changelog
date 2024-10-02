@@ -1,3 +1,18 @@
+podman (5.2.3+ds1-2) unstable; urgency=medium
+
+  [ Reinhard Tartler ]
+  * Enable CNI networking for now, closes: #1079327
+  * Reenable full salsa-ci pipeline
+  * simplify builtin-test
+  * builtin-tests: restrict to building the podman executable
+  * fix source/lintian-override
+  * Supress more "field-to-long" lintian warnings
+
+  [ Guillem Jover ]
+  * Do not hardcode gopsutil v3, closes: #1083117
+
+ -- Reinhard Tartler <siretart@tauware.de>  Wed, 02 Oct 2024 06:00:51 -0400
+
 podman (5.2.3+ds1-1) unstable; urgency=medium
 
   * New upstream release 5.2.3
