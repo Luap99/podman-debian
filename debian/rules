@@ -66,10 +66,10 @@ override_dh_auto_build:
 	$(MAKE) docs docker-docs GOMD2MAN=/usr/bin/go-md2man
 	DH_GOLANG_BUILDPKG="github.com/containers/podman/cmd/podman" \
 	dh_auto_build -v  --builddirectory=_output -- -tags "$(BUILDTAGS_REMOTE)" \
-          -ldflags "-X main.buildInfo=$(DEB_VERSION)"
+          -ldflags "-X github.com/containers/podman/libpod/define.buildInfo=$(SOURCE_DATE_EPOCH)"
 	mv _output/bin/podman _output/bin/podman-remote
 	dh_auto_build -v  --builddirectory=_output -- -tags "$(BUILDTAGS)" \
-          -ldflags "-X main.buildInfo=$(DEB_VERSION)"
+          -ldflags "-X github.com/containers/podman/libpod/define.buildInfo=$(SOURCE_DATE_EPOCH)"
 
 override_dh_auto_test:
 ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
