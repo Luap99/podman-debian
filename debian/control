@@ -121,7 +121,7 @@ Recommends: buildah (>= 1.31),
             slirp4netns,
             uidmap,
             ${misc:Recommends}
-Suggests: docker-compose, iptables, ${misc:Suggests}
+Suggests: containernetworking-plugins, docker-compose, iptables, ${misc:Suggests}
 Description: tool to manage containers and pods
  Podman (the POD MANager) is a tool for managing containers and images, volumes
  mounted into those containers, and pods made from groups of containers.
