@@ -1,12 +1,45 @@
 Tests: podman-info
 Depends: @, @recommends@
-Restrictions: needs-root, allow-stderr, isolation-machine
+Restrictions: allow-stderr, isolation-machine, needs-root
 
 Tests: podman-hello-world
 Architecture: amd64, arm64
 Depends: @, @recommends@
-Restrictions: needs-internet, allow-stderr, skippable, isolation-machine
+Restrictions: allow-stderr, isolation-machine, needs-internet, skippable
+
+Tests: localsystem
+Architecture: amd64, arm64
+Depends: aardvark-dns,
+         apache2-utils,
+         bats,
+         containernetworking-plugins,
+         curl,
+         ginkgo,
+         git,
+         iproute2,
+         iptables,
+         jq,
+         ncat,
+         netavark,
+         passt,
+         python3-yaml,
+         skopeo,
+         slirp4netns,
+         socat,
+         @,
+         @recommends@
+Restrictions: allow-stderr,
+              flaky,
+              isolation-machine,
+              needs-internet,
+              needs-root,
+              skippable
+
+Tests: e2e
+Architecture: amd64, arm64
+Depends: @, @builddeps@, @recommends@, aardvark-dns, apache2-utils, netavark, iproute2, iptables, skopeo, gnupg2, jq, ncat
+Restrictions: allow-stderr, flaky, isolation-machine, needs-internet, skippable
 
 Tests: builtin-tests
 Depends: @, @builddeps@, @recommends@
-Restrictions: allow-stderr, needs-root, flaky
+Restrictions: allow-stderr, flaky, needs-root

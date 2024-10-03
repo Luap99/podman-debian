@@ -1,0 +1,7 @@
+#!/bin/bash -ex
+
+export PODMAN=/usr/bin/podman
+export QUADLET=/usr/libexec/podman/quadlet
+export PODMAN_TESTING=/usr/libexec/podman/podman-testing
+
+exec bats --timing --tap --verbose-run --filter-tags !debian_ignore test/system
