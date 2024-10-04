@@ -2,3 +2,4 @@ system-goimports.patch
 0002-Revert-update-to-docker-27.patch
 0003-TestProviders-Skip-test-if-unable-to-list-providers.patch
 0004-Use-gopsutil-v4.patch
+0006-test-system-ignore-some-tests-that-are-broken-on-deb.patch
