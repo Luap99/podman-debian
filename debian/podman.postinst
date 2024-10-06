@@ -22,8 +22,13 @@ case "$1" in
             deb-systemd-helper purge  io.podman.service io.podman.socket >/dev/null || true
             deb-systemd-helper unmask io.podman.service io.podman.socket >/dev/null || true
         fi
-    ;;
 
+        # podman 5.2.2+ds1-2 moved files to podman-docker, cf. #1083242
+        if [ -z "$(dpkg-query -f '${Version}' -W podman-docker 2> /dev/null)" ]; then
+            dpkg-maintscript-helper rm_conffile /etc/profile.d/podman-docker.csh 5.2.2+ds1-2 -- "$@"
+            dpkg-maintscript-helper rm_conffile /etc/profile.d/podman-docker.sh 5.2.2+ds1-2 -- "$@"
+        fi
+    ;;
     *)
     ;;
 esac
