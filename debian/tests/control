@@ -35,6 +35,7 @@ Restrictions: allow-stderr,
               isolation-machine,
               needs-internet,
               needs-root,
+              rw-build-tree,
               skippable
 
 # works locally for me, but appears to take too long for debci
