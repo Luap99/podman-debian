@@ -1,3 +1,10 @@
+podman (5.2.4+ds1-1) unstable; urgency=medium
+
+  * New upstream release,
+    Fixes: CVE-2024-9407, CVE-2024-9341
+
+ -- Reinhard Tartler <siretart@tauware.de>  Thu, 17 Oct 2024 05:16:34 -0400
+
 podman (5.2.3+ds1-4) unstable; urgency=medium
 
   * Add missing test dependencies
