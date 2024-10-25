@@ -1,0 +1,22 @@
+From: Reinhard Tartler <siretart@tauware.de>
+Date: Fri, 25 Oct 2024 09:20:14 -0400
+Subject: test/localsystem: skip test 'podman network reload'
+
+this works around https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1085953
+---
+ test/system/500-networking.bats | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/test/system/500-networking.bats b/test/system/500-networking.bats
+index 0d21391..7f1dddb 100644
+--- a/test/system/500-networking.bats
++++ b/test/system/500-networking.bats
+@@ -295,6 +295,8 @@ load helpers.network
+     run_podman 1 network rm $mynetname
+ }
+ 
++# remove after https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=1085953 is resolved
++# bats test_tags=distro-integration, debian_ignore
+ @test "podman network reload" {
+     skip_if_remote "podman network reload does not have remote support"
+ 

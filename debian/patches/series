@@ -6,3 +6,4 @@ system-goimports.patch
 0006-test-e2e-skip-some-Containerized-checkpoint-tests.patch
 0007-test-update-timezone-checks.patch
 0008-cirrus-update-CI-images.patch
+0009-test-localsystem-skip-test-podman-network-reload.patch
