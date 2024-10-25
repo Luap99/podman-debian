@@ -18,7 +18,7 @@ This reverts commit e24367aa14b7669d116a2a27ba12c69cbf51612b.
  11 files changed, 63 insertions(+), 66 deletions(-)
 
 diff --git a/go.mod b/go.mod
-index f3820ed..852c36c 100644
+index 3081783..76de4a0 100644
 --- a/go.mod
 +++ b/go.mod
 @@ -29,7 +29,7 @@ require (
@@ -31,7 +31,7 @@ index f3820ed..852c36c 100644
  	github.com/docker/go-plugins-helpers v0.0.0-20211224144127-6eecb7beb651
  	github.com/docker/go-units v0.5.0
 diff --git a/go.sum b/go.sum
-index 4b83f1c..5331cfa 100644
+index 9effccf..56f8107 100644
 --- a/go.sum
 +++ b/go.sum
 @@ -136,8 +136,8 @@ github.com/docker/cli v27.1.1+incompatible h1:goaZxOqs4QKxznZjjBWKONQci/MywhtRv2
