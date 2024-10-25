@@ -1,0 +1,412 @@
+From: Paul Holzinger <pholzing@redhat.com>
+Date: Thu, 10 Oct 2024 14:19:25 +0200
+Subject: cirrus: update CI images
+
+Images from https://github.com/containers/automation_images/pull/387
+
+Signed-off-by: Paul Holzinger <pholzing@redhat.com>
+---
+ .cirrus.yml | 149 +++++++++++++++++++++++-------------------------------------
+ 1 file changed, 58 insertions(+), 91 deletions(-)
+
+diff --git a/.cirrus.yml b/.cirrus.yml
+index 3073c59..1022e58 100644
+--- a/.cirrus.yml
++++ b/.cirrus.yml
+@@ -6,7 +6,7 @@ env:
+     #### Global variables used for all tasks
+     ####
+     # Name of the ultimate destination branch for this CI run, PR or post-merge.
+-    DEST_BRANCH: "v5.2"
++    DEST_BRANCH: "main"
+     # Sane (default) value for GOPROXY and GOSUMDB.
+     GOPROXY: "https://proxy.golang.org,direct"
+     GOSUMDB: "sum.golang.org"
+@@ -33,7 +33,7 @@ env:
+     DEBIAN_NAME: "debian-13"
+ 
+     # Image identifiers
+-    IMAGE_SUFFIX: "c20240708t152000z-f40f39d13"
++    IMAGE_SUFFIX: "c20241010t105554z-f40f39d13"
+ 
+     # EC2 images
+     FEDORA_AMI: "fedora-aws-${IMAGE_SUFFIX}"
+@@ -71,7 +71,7 @@ env:
+ 
+ 
+ # Default timeout for each task
+-timeout_in: 60m
++timeout_in: 20m
+ 
+ 
+ gcp_credentials: ENCRYPTED[a28959877b2c9c36f151781b0a05407218cda646c7d047fc556e42f55e097e897ab63ee78369dae141dcf0b46a9d0cdd]
+@@ -146,9 +146,11 @@ build_task:
+               VM_IMAGE_NAME: ${FEDORA_CACHE_IMAGE_NAME}
+               CTR_FQIN: ${FEDORA_CONTAINER_FQIN}
+         - env:
+-              DISTRO_NV: ${PRIOR_FEDORA_NAME}
+-              VM_IMAGE_NAME: ${PRIOR_FEDORA_CACHE_IMAGE_NAME}
+-              CTR_FQIN: ${PRIOR_FEDORA_CONTAINER_FQIN}
++              # Note, this is changed to FEDORA_NAME temporarily as f39 contains a to old golang
++              # Once we bump our images to f41/40 this must be turned back to PRIOR_FEDORA_NAME
++              DISTRO_NV: ${FEDORA_NAME}
++              VM_IMAGE_NAME: ${FEDORA_CACHE_IMAGE_NAME}
++              CTR_FQIN: ${FEDORA_CONTAINER_FQIN}
+               CI_DESIRED_DATABASE: boltdb
+               CI_DESIRED_STORAGE: vfs
+         - env:
+@@ -160,7 +162,6 @@ build_task:
+         - env:
+               DISTRO_NV: ${DEBIAN_NAME}
+               VM_IMAGE_NAME: ${DEBIAN_CACHE_IMAGE_NAME}
+-              CI_DESIRED_NETWORK: netavark
+     env:
+         TEST_FLAVOR: build
+     clone_script: *full_clone
+@@ -240,15 +241,15 @@ alt_build_task:
+             # binary and archive installation zip file.
+             ALT_NAME: 'Windows Cross' # N/B: Referenced by URLencoded strings elsewhere
+       - env:
+-            ALT_NAME: 'Alt Arch. x86 Cross' # N/B: Referenced by URLencoded strings elsewhere
++            ALT_NAME: 'Alt Arch. x86 Cross'
+       - env:
+-            ALT_NAME: 'Alt Arch. ARM Cross' # N/B: Referenced by URLencoded strings elsewhere
++            ALT_NAME: 'Alt Arch. ARM Cross'
+       - env:
+-            ALT_NAME: 'Alt Arch. MIPS Cross' # N/B: Referenced by URLencoded strings elsewhere
++            ALT_NAME: 'Alt Arch. MIPS Cross'
+       - env:
+-            ALT_NAME: 'Alt Arch. MIPS64 Cross' # N/B: Referenced by URLencoded strings elsewhere
++            ALT_NAME: 'Alt Arch. MIPS64 Cross'
+       - env:
+-            ALT_NAME: 'Alt Arch. Other Cross' # N/B: Referenced by URLencoded strings elsewhere
++            ALT_NAME: 'Alt Arch. Other Cross'
+     # This task cannot make use of the shared repo.tbz artifact.
+     clone_script: *full_clone
+     setup_script: *setup
+@@ -374,7 +375,7 @@ bindings_task:
+     only_if: >-
+         $CIRRUS_PR == '' ||
+         $CIRRUS_CHANGE_TITLE =~ '.*CI:ALL.*' ||
+-        changesInclude('.cirrus.yml', 'Makefile', 'contrib/cirrus/**', 'vendor/**', 'test/tools/**', 'hack/**', 'version/rawversion/*') ||
++        changesInclude('.cirrus.yml', 'Makefile', 'contrib/cirrus/**', 'vendor/**', 'test/tools/**', 'test/registries*.conf', 'hack/**', 'version/rawversion/*') ||
+         changesInclude('pkg/bindings/test/**') ||
+         (changesInclude('**/*.go', '**/*.c', '**/*.h') && !changesIncludeOnly('test/**', 'pkg/machine/e2e/**'))
+     depends_on: &build
+@@ -400,6 +401,9 @@ bindings_task:
+         server_log_artifacts:
+             path: ./podman-server.log
+             type: text/plain
++        cleanup_tracer_artifacts:
++            path: ./podman-cleanup-tracer.log
++            type: text/plain
+         df_script: '$SCRIPT_BASE/logcollector.sh df'
+         audit_log_script: '$SCRIPT_BASE/logcollector.sh audit'
+         journal_script: '$SCRIPT_BASE/logcollector.sh journal'
+@@ -439,10 +443,7 @@ win_installer_task:
+       - env:
+             CONTAINERS_MACHINE_PROVIDER: 'hyperv'
+     alias: win_installer
+-    only_if:  # RHEL never releases podman windows installer binary
+-      $CIRRUS_TAG == '' &&
+-      $CIRRUS_BRANCH !=~ 'v[0-9\.]+-rhel' &&
+-      $CIRRUS_BASE_BRANCH !=~ 'v[0-9\.]+-rhel'
++    only_if: *no_rhel_release
+     depends_on: *build
+     ec2_instance: &windows
+         image: "${WINDOWS_AMI}"
+@@ -500,7 +501,7 @@ docker-py_test_task:
+     only_if: >-
+         $CIRRUS_PR == '' ||
+         $CIRRUS_CHANGE_TITLE =~ '.*CI:ALL.*' ||
+-        changesInclude('.cirrus.yml', 'Makefile', 'contrib/cirrus/**', 'vendor/**', 'test/tools/**', 'hack/**', 'version/rawversion/*') ||
++        changesInclude('.cirrus.yml', 'Makefile', 'contrib/cirrus/**', 'vendor/**', 'test/tools/**', 'test/registries*.conf', 'hack/**', 'version/rawversion/*') ||
+         changesInclude('test/python/**') ||
+         (changesInclude('**/*.go', '**/*.c', '**/*.h') && !changesIncludeOnly('test/**', 'pkg/machine/e2e/**'))
+     depends_on: *build
+@@ -527,7 +528,7 @@ unit_test_task:
+     only_if: >-
+         $CIRRUS_PR == '' ||
+         $CIRRUS_CHANGE_TITLE =~ '.*CI:ALL.*' ||
+-        changesInclude('.cirrus.yml', 'Makefile', 'contrib/cirrus/**', 'vendor/**', 'test/tools/**', 'hack/**', 'version/rawversion/*') ||
++        changesInclude('.cirrus.yml', 'Makefile', 'contrib/cirrus/**', 'vendor/**', 'test/tools/**', 'test/registries*.conf', 'hack/**', 'version/rawversion/*') ||
+         changesInclude('**/*_test.go') ||
+         (changesInclude('**/*.go', '**/*.c', '**/*.h') && !changesIncludeOnly('test/**', 'pkg/machine/e2e/**'))
+     depends_on: *build
+@@ -557,14 +558,11 @@ apiv2_test_task:
+     only_if: >-
+         $CIRRUS_PR == '' ||
+         $CIRRUS_CHANGE_TITLE =~ '.*CI:ALL.*' ||
+-        changesInclude('.cirrus.yml', 'Makefile', 'contrib/cirrus/**', 'vendor/**', 'test/tools/**', 'hack/**', 'version/rawversion/*') ||
+-        changesInclude('test/apiv2/**') ||
++        changesInclude('.cirrus.yml', 'Makefile', 'contrib/cirrus/**', 'vendor/**', 'test/tools/**', 'test/registries*.conf', 'hack/**', 'version/rawversion/*') ||
++        changesInclude('test/apiv2/**', 'test/python/**') ||
+         (changesInclude('**/*.go', '**/*.c', '**/*.h') && !changesIncludeOnly('test/**', 'pkg/machine/e2e/**'))
+     depends_on: *build
+     gce_instance: *standardvm
+-    # Test is normally pretty quick, about 10-minutes.  If it hangs,
+-    # don't make developers wait the full 1-hour timeout.
+-    timeout_in: 20m
+     env:
+         <<: *stdenvars
+         TEST_FLAVOR: apiv2
+@@ -589,7 +587,7 @@ compose_test_task:
+     only_if: >-
+         $CIRRUS_PR == '' ||
+         $CIRRUS_CHANGE_TITLE =~ '.*CI:ALL.*' ||
+-        changesInclude('.cirrus.yml', 'Makefile', 'contrib/cirrus/**', 'vendor/**', 'test/tools/**', 'hack/**', 'version/rawversion/*') ||
++        changesInclude('.cirrus.yml', 'Makefile', 'contrib/cirrus/**', 'vendor/**', 'test/tools/**', 'test/registries*.conf', 'hack/**', 'version/rawversion/*') ||
+         changesInclude('test/compose/**') ||
+         (changesInclude('**/*.go', '**/*.c', '**/*.h') && !changesIncludeOnly('test/**', 'pkg/machine/e2e/**'))
+     depends_on: *build
+@@ -621,7 +619,7 @@ local_integration_test_task: &local_integration_test_task
+     only_if: &only_if_int_test >-
+         $CIRRUS_PR == '' ||
+         $CIRRUS_CHANGE_TITLE =~ '.*CI:ALL.*' ||
+-        changesInclude('.cirrus.yml', 'Makefile', 'contrib/cirrus/**', 'vendor/**', 'test/tools/**', 'hack/**', 'version/rawversion/*') ||
++        changesInclude('.cirrus.yml', 'Makefile', 'contrib/cirrus/**', 'vendor/**', 'test/tools/**', 'test/registries*.conf', 'hack/**', 'version/rawversion/*') ||
+         changesInclude('test/e2e/**', 'test/utils/**') ||
+         (changesInclude('**/*.go', '**/*.c', '**/*.h') && !changesIncludeOnly('test/**', 'pkg/machine/e2e/**'))
+     depends_on: *build
+@@ -631,7 +629,6 @@ local_integration_test_task: &local_integration_test_task
+     gce_instance: &fastvm
+       <<: *standardvm
+       cpu: 4
+-    timeout_in: 30m
+     env:
+         TEST_FLAVOR: int
+     clone_script: *get_gosrc
+@@ -642,9 +639,6 @@ local_integration_test_task: &local_integration_test_task
+         ginkgo_node_logs_artifacts:
+             path: ./test/e2e/ginkgo-node-*.log
+             type: text/plain
+-        ginkgo_json_artifacts:
+-            path: ./ginkgo-e2e.json
+-            type: application/json
+ 
+ 
+ # Nearly identical to `local_integration_test` except all operations
+@@ -666,19 +660,9 @@ container_integration_test_task:
+     # Docs: ./contrib/cirrus/CIModes.md
+     only_if: *only_if_int_test
+     depends_on: *build
+-    matrix: &fedora_vm_axis
+-        - env:
+-              DISTRO_NV: ${FEDORA_NAME}
+-              VM_IMAGE_NAME: ${FEDORA_CACHE_IMAGE_NAME}
+-              CTR_FQIN: ${FEDORA_CONTAINER_FQIN}
+-        - env:
+-              DISTRO_NV: ${PRIOR_FEDORA_NAME}
+-              VM_IMAGE_NAME: ${PRIOR_FEDORA_CACHE_IMAGE_NAME}
+-              CTR_FQIN: ${PRIOR_FEDORA_CONTAINER_FQIN}
+-              CI_DESIRED_DATABASE: boltdb
+     gce_instance: *fastvm
+-    timeout_in: 30m
+     env:
++        <<: *stdenvars
+         TEST_FLAVOR: int
+         TEST_ENVIRON: container
+     clone_script: *get_gosrc
+@@ -696,7 +680,6 @@ rootless_integration_test_task:
+     depends_on: *build
+     matrix: *platform_axis
+     gce_instance: *fastvm
+-    timeout_in: 30m
+     env:
+         TEST_FLAVOR: int
+         PRIV_NAME: rootless
+@@ -715,13 +698,14 @@ podman_machine_task:
+     only_if: &only_if_machine_test >-
+         $CIRRUS_PR == '' ||
+         $CIRRUS_CHANGE_TITLE =~ '.*CI:ALL.*' ||
+-        changesInclude('.cirrus.yml', 'Makefile', 'contrib/cirrus/**', 'vendor/**', 'test/tools/**', 'hack/**', 'version/rawversion/*') ||
++        changesInclude('.cirrus.yml', 'Makefile', 'contrib/cirrus/**', 'vendor/**', 'test/tools/**', 'test/registries*.conf', 'hack/**', 'version/rawversion/*') ||
+         changesInclude('cmd/podman/machine/**', 'pkg/machine/**', '**/*machine*.go')
+     depends_on: *build
+     ec2_instance:
+         image: "${VM_IMAGE_NAME}"
+         type: "${EC2_INST_TYPE}"
+         region: us-east-1
++    timeout_in: 30m
+     env:
+       EC2_INST_TYPE: "m5zn.metal"  # Bare-metal instance is required
+       TEST_FLAVOR: "machine-linux"
+@@ -741,6 +725,7 @@ podman_machine_aarch64_task:
+     depends_on: *build
+     ec2_instance:
+         <<: *standard_build_ec2_aarch64
++    timeout_in: 30m
+     env:
+         TEST_FLAVOR: "machine-linux"
+         EC2_INST_TYPE: c6g.metal
+@@ -762,11 +747,20 @@ podman_machine_windows_task:
+     alias: podman_machine_windows
+     # Docs: ./contrib/cirrus/CIModes.md
+     only_if: *only_if_machine_test
++    # Special case, we do not run macos/windows builds on rhel branches.
++    # Thus the machine task should not be run too, while we use only_if
++    # everywhere to do so here it would mean we would need duplicate the
++    # full big only_if condition which is more difficult to maintain so
++    # use the skip here.
++    skip: &skip_rhel_release |
++        $CIRRUS_BRANCH =~ 'v[0-9\.]+-rhel' ||
++        $CIRRUS_BASE_BRANCH =~ 'v[0-9\.]+-rhel'
+     depends_on: *build
+     ec2_instance:
+         <<: *windows
+         type: m5zn.metal
+         platform: windows
++    timeout_in: 45m
+     env: *winenv
+     matrix:
+       - env:
+@@ -786,19 +780,21 @@ podman_machine_mac_task:
+     name: *std_name_fmt
+     alias: podman_machine_mac
+     only_if: *only_if_machine_test
++    skip: *skip_rhel_release
+     depends_on: *build
+     persistent_worker: *mac_pw
++    timeout_in: 35m
+     env:
+         <<: *mac_env
+-        # Consumed by podman-machine ginkgo tests
+-        CONTAINERS_MACHINE_PROVIDER: "applehv"
+-        # TODO: Should not require a special image, for now it does.
+-        # Simply remove the line below when a mac image is GA.
+-        # MACHINE_IMAGE: "https://fedorapeople.org/groups/podman/testing/applehv/arm64/fedora-coreos-38.20230925.dev.0-applehv.aarch64.raw.gz"
+-        # Values necessary to populate std_name_fmt alias
+-        TEST_FLAVOR: "machine-mac"
+         DISTRO_NV: "darwin"
+         PRIV_NAME: "rootless"  # intended use-case
++    matrix:
++        - env:
++            # See contrib/cirrus/mac_runner.sh
++            TEST_FLAVOR: "machine-applehv"
++        - env:
++            # See contrib/cirrus/mac_runner.sh
++            TEST_FLAVOR: "machine-libkrun"
+     clone_script:  # artifacts from osx_alt_build_task
+         - mkdir -p $CIRRUS_WORKING_DIR
+         - cd $CIRRUS_WORKING_DIR
+@@ -838,12 +834,13 @@ local_system_test_task: &local_system_test_task
+     only_if: &only_if_system_test >-
+         $CIRRUS_PR == '' ||
+         $CIRRUS_CHANGE_TITLE =~ '.*CI:ALL.*' ||
+-        changesInclude('.cirrus.yml', 'Makefile', 'contrib/cirrus/**', 'vendor/**', 'test/tools/**', 'hack/**', 'version/rawversion/*') ||
++        changesInclude('.cirrus.yml', 'Makefile', 'contrib/cirrus/**', 'vendor/**', 'test/tools/**', 'test/registries*.conf', 'hack/**', 'version/rawversion/*') ||
+         changesInclude('test/system/**') ||
+         (changesInclude('**/*.go', '**/*.c', '**/*.h') && !changesIncludeOnly('test/**', 'pkg/machine/e2e/**'))
+     depends_on: *build
+     matrix: *platform_axis
+-    gce_instance: *standardvm
++    gce_instance: *fastvm
++    timeout_in: 25m
+     env:
+         TEST_FLAVOR: sys
+     clone_script: *get_gosrc
+@@ -858,8 +855,8 @@ local_system_test_aarch64_task: &local_system_test_task_aarch64
+     # Docs: ./contrib/cirrus/CIModes.md
+     only_if: *only_if_system_test
+     depends_on: *build
+-    persistent_worker: *mac_pw
+     ec2_instance: *standard_build_ec2_aarch64
++    timeout_in: 35m
+     env:
+         <<: *stdenvars_aarch64
+         TEST_FLAVOR: sys
+@@ -896,7 +893,8 @@ rootless_remote_system_test_task:
+               CTR_FQIN: ${FEDORA_CONTAINER_FQIN}
+     <<: *local_system_test_task
+     alias: rootless_remote_system_test
+-    gce_instance: *standardvm
++    gce_instance: *fastvm
++    timeout_in: 25m
+     env:
+         TEST_FLAVOR: sys
+         PODBIN_NAME: remote
+@@ -910,7 +908,8 @@ rootless_system_test_task:
+     only_if: *only_if_system_test
+     depends_on: *build
+     matrix: *platform_axis
+-    gce_instance: *standardvm
++    gce_instance: *fastvm
++    timeout_in: 25m
+     env:
+         TEST_FLAVOR: sys
+         PRIV_NAME: rootless
+@@ -930,7 +929,7 @@ farm_test_task:
+     only_if: >-
+         $CIRRUS_PR == '' ||
+         $CIRRUS_CHANGE_TITLE =~ '.*CI:ALL.*' ||
+-        changesInclude('.cirrus.yml', 'Makefile', 'contrib/cirrus/**', 'vendor/**', 'test/tools/**', 'hack/**', 'version/rawversion/*') ||
++        changesInclude('.cirrus.yml', 'Makefile', 'contrib/cirrus/**', 'vendor/**', 'test/tools/**', 'test/registries*.conf', 'hack/**', 'version/rawversion/*') ||
+         changesInclude('test/farm/**', 'test/system/*.bash') ||
+         (changesInclude('**/*.go', '**/*.c', '**/*.h') && !changesIncludeOnly('test/**', 'pkg/machine/e2e/**'))
+     depends_on: *build
+@@ -954,7 +953,7 @@ buildah_bud_test_task:
+     only_if: >-
+         $CIRRUS_PR == '' ||
+         $CIRRUS_CHANGE_TITLE =~ '.*CI:ALL.*' ||
+-        changesInclude('.cirrus.yml', 'Makefile', 'contrib/cirrus/**', 'vendor/**', 'test/tools/**', 'hack/**', 'version/rawversion/*') ||
++        changesInclude('.cirrus.yml', 'Makefile', 'contrib/cirrus/**', 'vendor/**', 'test/tools/**', 'test/registries*.conf', 'hack/**', 'version/rawversion/*') ||
+         changesInclude('**/*build*.go', 'test/buildah-bud/**')
+     depends_on: *build
+     env:
+@@ -982,7 +981,7 @@ upgrade_test_task:
+     only_if: >-
+         $CIRRUS_PR == '' ||
+         $CIRRUS_CHANGE_TITLE =~ '.*CI:ALL.*' ||
+-        changesInclude('.cirrus.yml', 'Makefile', 'contrib/cirrus/**', 'vendor/**', 'test/tools/**', 'hack/**', 'version/rawversion/*') ||
++        changesInclude('.cirrus.yml', 'Makefile', 'contrib/cirrus/**', 'vendor/**', 'test/tools/**', 'test/registries*.conf', 'hack/**', 'version/rawversion/*') ||
+         changesInclude('test/upgrade/**', 'test/system/*.bash') ||
+         (changesInclude('**/*.go', '**/*.c', '**/*.h') && !changesIncludeOnly('test/**', 'pkg/machine/e2e/**'))
+     depends_on: *build
+@@ -1092,9 +1091,7 @@ artifacts_task:
+     name: "Artifacts"
+     alias: artifacts
+     # Docs: ./contrib/cirrus/CIModes.md
+-    only_if: >-
+-        $CIRRUS_BRANCH !=~ 'v[0-9\.]+-rhel' &&
+-        $CIRRUS_BASE_BRANCH !=~ 'v[0-9\.]+-rhel'
++    only_if: *no_rhel_release
+     depends_on:
+         - success
+     # This task is a secondary/convenience for downstream consumers, don't
+@@ -1114,36 +1111,6 @@ artifacts_task:
+         - $ARTCURL/Build%20for%20${FEDORA_NAME}/repo/repo.tbz
+         - tar xjf repo.tbz
+         - cp ./bin/* $CIRRUS_WORKING_DIR/
+-    alt_binaries_intel_script:
+-        - mkdir -p /tmp/alt
+-        - cd /tmp/alt
+-        - $ARTCURL/Alt%20Arch.%20x86%20Cross/repo/repo.tbz
+-        - tar xjf repo.tbz
+-        - mv ./*.tar.gz $CIRRUS_WORKING_DIR/
+-    alt_binaries_arm_script:
+-        - mkdir -p /tmp/alt
+-        - cd /tmp/alt
+-        - $ARTCURL/Alt%20Arch.%20ARM%20Cross/repo/repo.tbz
+-        - tar xjf repo.tbz
+-        - mv ./*.tar.gz $CIRRUS_WORKING_DIR/
+-    alt_binaries_mips_script:
+-        - mkdir -p /tmp/alt
+-        - cd /tmp/alt
+-        - $ARTCURL/Alt%20Arch.%20MIPS%20Cross/repo/repo.tbz
+-        - tar xjf repo.tbz
+-        - mv ./*.tar.gz $CIRRUS_WORKING_DIR/
+-    alt_binaries_mips64_script:
+-        - mkdir -p /tmp/alt
+-        - cd /tmp/alt
+-        - $ARTCURL/Alt%20Arch.%20MIPS64%20Cross/repo/repo.tbz
+-        - tar xjf repo.tbz
+-        - mv ./*.tar.gz $CIRRUS_WORKING_DIR/
+-    alt_binaries_other_script:
+-        - mkdir -p /tmp/alt
+-        - cd /tmp/alt
+-        - $ARTCURL/Alt%20Arch.%20Other%20Cross/repo/repo.tbz
+-        - tar xjf repo.tbz
+-        - mv ./*.tar.gz $CIRRUS_WORKING_DIR/
+     win_binaries_script:
+         - mkdir -p /tmp/win
+         - cd /tmp/win

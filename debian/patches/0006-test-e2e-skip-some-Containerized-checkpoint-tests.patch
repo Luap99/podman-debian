@@ -1,0 +1,32 @@
+From: Paul Holzinger <pholzing@redhat.com>
+Date: Thu, 10 Oct 2024 16:23:09 +0200
+Subject: test/e2e: skip some Containerized checkpoint tests
+
+They no longer work in the latest image update, it is not clear why and
+I do not have the time to debug that stuff. I opened #24230 to track it.
+
+Signed-off-by: Paul Holzinger <pholzing@redhat.com>
+---
+ test/e2e/checkpoint_test.go | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/test/e2e/checkpoint_test.go b/test/e2e/checkpoint_test.go
+index 8b2f13e..54c67a7 100644
+--- a/test/e2e/checkpoint_test.go
++++ b/test/e2e/checkpoint_test.go
+@@ -967,6 +967,7 @@ var _ = Describe("Podman checkpoint", func() {
+ 	})
+ 
+ 	It("podman checkpoint container with --pre-checkpoint", func() {
++		SkipIfContainerized("FIXME: #24230 - no longer works in container testing")
+ 		if !criu.MemTrack() {
+ 			Skip("system (architecture/kernel/CRIU) does not support memory tracking")
+ 		}
+@@ -999,6 +1000,7 @@ var _ = Describe("Podman checkpoint", func() {
+ 	})
+ 
+ 	It("podman checkpoint container with --pre-checkpoint and export (migration)", func() {
++		SkipIfContainerized("FIXME: #24230 - no longer works in container testing")
+ 		SkipIfRemote("--import-previous is not yet supported on the remote client")
+ 		if !criu.MemTrack() {
+ 			Skip("system (architecture/kernel/CRIU) does not support memory tracking")
