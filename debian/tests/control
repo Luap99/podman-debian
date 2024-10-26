@@ -7,8 +7,8 @@ Architecture: amd64, arm64
 Depends: @, @recommends@
 Restrictions: allow-stderr, isolation-machine, needs-internet, skippable
 
-Tests: localsystem
-Architecture: amd64, arm64
+Tests: system-tests
+Architecture: amd64
 Depends: aardvark-dns,
          apache2-utils,
          bats,
@@ -33,7 +33,6 @@ Depends: aardvark-dns,
          @,
          @recommends@
 Restrictions: allow-stderr,
-              flaky,
               isolation-machine,
               needs-internet,
               needs-root,
