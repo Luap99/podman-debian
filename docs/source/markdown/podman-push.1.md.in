@@ -92,10 +92,7 @@ Discard any pre-existing signatures in the image.
 
 Add a “simple signing” signature at the destination using the specified key. (This option is not available with the remote Podman client, including Mac and Windows (excluding WSL2) machines)
 
-#### **--sign-by-sigstore**=*param-file*
-
-Add a sigstore signature based on further options specified in a container's sigstore signing parameter file *param-file*.
-See containers-sigstore-signing-params.yaml(5) for details about the file format.
+@@option sign-by-sigstore
 
 #### **--sign-by-sigstore-private-key**=*path*
 
@@ -160,3 +157,8 @@ Storing signatures
 
 ## SEE ALSO
 **[podman(1)](podman.1.md)**, **[podman-pull(1)](podman-pull.1.md)**, **[podman-login(1)](podman-login.1.md)**, **[containers-certs.d(5)](https://github.com/containers/image/blob/main/docs/containers-certs.d.5.md)**, **[containers-registries.conf(5)](https://github.com/containers/image/blob/main/docs/containers-registries.conf.5.md)**, **[containers-transports(5)](https://github.com/containers/image/blob/main/docs/containers-transports.5.md)**
+
+### Troubleshooting
+
+See [podman-troubleshooting(7)](https://github.com/containers/podman/blob/main/troubleshooting.md)
+for solutions to common issues.

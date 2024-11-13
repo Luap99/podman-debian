@@ -19,7 +19,6 @@ import (
 	"github.com/containers/podman/v5/pkg/machine/env"
 	"github.com/containers/podman/v5/pkg/machine/hyperv/vsock"
 	"github.com/containers/podman/v5/pkg/machine/ignition"
-	"github.com/containers/podman/v5/pkg/machine/shim/diskpull"
 	"github.com/containers/podman/v5/pkg/machine/vmconfigs"
 	"github.com/containers/podman/v5/pkg/systemd/parser"
 	"github.com/sirupsen/logrus"
@@ -451,12 +450,8 @@ func (h HyperVStubber) UpdateSSHPort(mc *vmconfigs.MachineConfig, port int) erro
 	return nil
 }
 
-func (h HyperVStubber) GetDisk(userInputPath string, dirs *define.MachineDirs, mc *vmconfigs.MachineConfig) error {
-	return diskpull.GetDisk(userInputPath, dirs, mc.ImagePath, h.VMType(), mc.Name)
-}
-
 func resizeDisk(newSize strongunits.GiB, imagePath *define.VMFile) error {
-	resize := exec.Command("powershell", []string{"-command", fmt.Sprintf("Resize-VHD %s %d", imagePath.GetPath(), newSize.ToBytes())}...)
+	resize := exec.Command("powershell", []string{"-command", fmt.Sprintf("Resize-VHD \"%s\" %d", imagePath.GetPath(), newSize.ToBytes())}...)
 	logrus.Debug(resize.Args)
 	resize.Stdout = os.Stdout
 	resize.Stderr = os.Stderr

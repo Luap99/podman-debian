@@ -144,6 +144,21 @@ if root; then
     podman rm -f $CTRNAME
 fi
 
+# Verify that compat top endpoint combines multi-entry COMMAND lines
+CTRNAME=testtopproc
+podman run --name $CTRNAME -d $IMAGE sleep 25
+t GET containers/$CTRNAME/top?stream=false 200 \
+  .Processes.[0].[6]="00:00:00" \
+  .Processes.[0].[7]="sleep 25"
+
+# check logs output, IMPORTANT the container should write no logs to reproduce #23712
+APIV2_TEST_EXPECT_TIMEOUT=1 t GET "containers/${CTRNAME}/logs?follow=true&stdout=true&stderr=true" 999
+is "" "$(<$WORKDIR/curl.result.out)" "Container MUST NOT log output"
+like "$(<$WORKDIR/curl.headers.out)" ".*HTTP.* 200 OK.*" \
+     "Received headers from /container/<id>/logs"
+
+podman rm -f -t0 $CTRNAME
+
 CTRNAME=test123
 podman run --name $CTRNAME -d $IMAGE top
 t GET libpod/containers/$CTRNAME/top?ps_args=--invalid 500 \
@@ -205,7 +220,7 @@ iid=$(jq -r '.Id' <<<"$output")
 t GET libpod/images/$iid/json 200 \
   .RepoTags[0]=null \
   .Author="" \
-  .Comment=""
+  .Comment~"FROM docker\.io/.*"
 
 # Commit a new image w/o tag
 cparam="repo=newrepo&comment=foo&author=bob&format=docker"

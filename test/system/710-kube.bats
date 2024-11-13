@@ -4,6 +4,10 @@
 #
 
 load helpers
+load helpers.network
+
+# All tests in this file must be able to run in parallel
+# bats file_tags=ci:parallel
 
 # capability drop list
 capabilities='{"drop":["CAP_FOWNER","CAP_SETFCAP"]}'
@@ -22,12 +26,13 @@ json.dump(yaml.safe_load(sys.stdin), sys.stdout)'
 @test "podman kube generate - usage message" {
     run_podman kube generate --help
     is "$output" ".*podman.* kube generate \[options\] {CONTAINER...|POD...|VOLUME...}"
+
     run_podman generate kube --help
     is "$output" ".*podman.* generate kube \[options\] {CONTAINER...|POD...|VOLUME...}"
 }
 
 @test "podman kube generate - container" {
-    cname=c$(random_string 15)
+    cname=c-$(safename)
     run_podman container create --cap-drop fowner --cap-drop setfcap --name $cname $IMAGE top
     run_podman kube generate $cname
 
@@ -75,28 +80,27 @@ status                           | =  | null
 }
 
 @test "podman kube generate unmasked" {
+      cname=c-$(safename)
       KUBE=$PODMAN_TMPDIR/kube.yaml
-      run_podman create --name test --security-opt unmask=all $IMAGE
-      run_podman inspect --format '{{ .HostConfig.SecurityOpt }}' test
+      run_podman create --name $cname --security-opt unmask=all $IMAGE
+      run_podman inspect --format '{{ .HostConfig.SecurityOpt }}' $cname
       is "$output" "[unmask=all]" "Inspect should see unmask all"
-      run_podman kube generate test -f $KUBE
+      run_podman kube generate $cname -f $KUBE
       assert "$(< $KUBE)" =~ "procMount: Unmasked" "Generated kube yaml should have procMount unmasked"
       run_podman kube play $KUBE
-      run_podman inspect --format '{{ .HostConfig.SecurityOpt }}' test-pod-test
+      run_podman inspect --format '{{ .HostConfig.SecurityOpt }}' ${cname}-pod-${cname}
       is "$output" "[unmask=all]" "Inspect kube play container should see unmask all"
       run_podman kube down $KUBE
-      run_podman pod rm -a
-      run_podman rm -a
-      run_podman rmi $(pause_image)
-      run_podman network rm podman-default-kube-network
+      run_podman rm $cname
 }
 
 @test "podman kube generate - pod" {
-    local pname=p$(random_string 15)
-    local cname1=c1$(random_string 15)
-    local cname2=c2$(random_string 15)
+    local pname=p-$(safename)
+    local cname1=c1-$(safename)
+    local cname2=c2-$(safename)
 
-    run_podman pod create --name $pname --publish 9999:8888
+    port=$(random_free_port)
+    run_podman pod create --name $pname --publish $port:8888
 
     # Needs at least one container. Error is slightly different between
     # regular and remote podman:
@@ -127,7 +131,7 @@ spec.containers[0].command                 | =  | [\"top\"]
 spec.containers[0].image                   | =  | $IMAGE
 spec.containers[0].name                    | =  | $cname1
 spec.containers[0].ports[0].containerPort  | =  | 8888
-spec.containers[0].ports[0].hostPort       | =  | 9999
+spec.containers[0].ports[0].hostPort       | =  | $port
 spec.containers[0].resources               | =  | null
 
 spec.containers[1].command                 | =  | [\"bottom\"]
@@ -148,14 +152,13 @@ status  | =  | null
 
     run_podman rm $cname1 $cname2
     run_podman pod rm $pname
-    run_podman rmi $(pause_image)
 }
 
 @test "podman kube generate - deployment" {
     skip_if_remote "containersconf needs to be set on server side"
-    local pname=p$(random_string 15)
-    local cname1=c1$(random_string 15)
-    local cname2=c2$(random_string 15)
+    local pname=p-$(safename)
+    local cname1=c1-$(safename)
+    local cname2=c2-$(safename)
 
     run_podman pod create --name $pname
     run_podman container create --name $cname1 --pod $pname $IMAGE top
@@ -189,7 +192,46 @@ metadata.name              | =  | ${pname}-deployment
 
     run_podman rm $cname1 $cname2
     run_podman pod rm $pname
-    run_podman rmi $(pause_image)
+}
+
+@test "podman kube generate - job" {
+    skip_if_remote "containersconf needs to be set on server side"
+    local pname=p-$(safename)
+    local cname1=c1-$(safename)
+    local cname2=c2-$(safename)
+
+    run_podman pod create --name $pname
+    run_podman container create --name $cname1 --pod $pname $IMAGE top
+    run_podman container create --name $cname2 --pod $pname $IMAGE bottom
+
+    containersconf=$PODMAN_TMPDIR/containers.conf
+    cat >$containersconf <<EOF
+[engine]
+kube_generate_type="job"
+EOF
+    CONTAINERS_CONF_OVERRIDE=$containersconf run_podman kube generate $pname
+
+    json=$(yaml2json <<<"$output")
+    # For debugging purposes in the event we regress, we can see the generate output to know what went wrong
+    jq . <<<"$json"
+
+    # See container test above for description of this table
+    expect="
+apiVersion | =  | batch/v1
+kind       | =  | Job
+
+metadata.creationTimestamp | =~ | [0-9T:-]\\+Z
+metadata.labels.app        | =  | ${pname}
+metadata.name              | =  | ${pname}-job
+"
+
+    while read key op expect; do
+        actual=$(jq -r -c ".$key" <<<"$json")
+        assert "$actual" $op "$expect" ".$key"
+    done < <(parse_table "$expect")
+
+    run_podman rm $cname1 $cname2
+    run_podman pod rm $pname
 }
 
 # vim: filetype=sh

@@ -176,9 +176,10 @@ var _ = Describe("Podman push", func() {
 		publicKeyFileName, _, err := WriteRSAKeyPair(keyFileName, bitSize)
 		Expect(err).ToNot(HaveOccurred())
 
-		// Force zstd here because zstd:chunked throws a warning, https://github.com/containers/image/issues/2485.
 		if !IsRemote() { // Remote does not support --encryption-key
-			push = podmanTest.Podman([]string{"push", "-q", "--compression-format=zstd", "--encryption-key", "jwe:" + publicKeyFileName, "--tls-verify=false", "--remove-signatures", ALPINE, "localhost:5003/my-alpine"})
+			// Explicitly specify compression-format because encryption and zstd:chunked together triggers a warning:
+			//	Compression using zstd:chunked is not beneficial for encrypted layers, using plain zstd instead
+			push = podmanTest.Podman([]string{"push", "-q", "--encryption-key", "jwe:" + publicKeyFileName, "--tls-verify=false", "--remove-signatures", "--compression-format=zstd", ALPINE, "localhost:5003/my-alpine"})
 			push.WaitWithDefaultTimeout()
 			Expect(push).Should(ExitCleanly())
 		}
@@ -355,8 +356,9 @@ var _ = Describe("Podman push", func() {
 		publicKeyFileName, _, err := WriteRSAKeyPair(keyFileName, bitSize)
 		Expect(err).ToNot(HaveOccurred())
 
-		// Force zstd here because zstd:chunked throws a warning, https://github.com/containers/image/issues/2485.
-		session := podmanTest.Podman([]string{"push", "-q", "--compression-format=zstd", "--encryption-key", "jwe:" + publicKeyFileName, ALPINE, fmt.Sprintf("oci:%s", bbdir)})
+		// Explicitly specify compression-format because encryption and zstd:chunked together triggers a warning:
+		//	Compression using zstd:chunked is not beneficial for encrypted layers, using plain zstd instead
+		session := podmanTest.Podman([]string{"push", "-q", "--encryption-key", "jwe:" + publicKeyFileName, "--compression-format=zstd", ALPINE, fmt.Sprintf("oci:%s", bbdir)})
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(ExitCleanly())
 

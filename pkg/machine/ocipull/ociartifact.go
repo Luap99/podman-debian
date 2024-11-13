@@ -27,6 +27,7 @@ const (
 	artifactRegistry     = "quay.io"
 	artifactRepo         = "podman"
 	artifactImageName    = "machine-os"
+	artifactImageNameWSL = "machine-os-wsl"
 	artifactOriginalName = "org.opencontainers.image.title"
 	machineOS            = "linux"
 )
@@ -94,7 +95,14 @@ func NewOCIArtifactPull(ctx context.Context, dirs *define.MachineDirs, endpoint 
 
 	cache := false
 	if endpoint == "" {
-		endpoint = fmt.Sprintf("docker://%s/%s/%s:%s", artifactRegistry, artifactRepo, artifactImageName, artifactVersion.majorMinor())
+		// The OCI artifact containing the OS image for WSL has a different
+		// image name. This should be temporary and dropped as soon as the
+		// OS image for WSL is built from fedora-coreos too (c.f. RUN-2178).
+		imageName := artifactImageName
+		if vmType == define.WSLVirt {
+			imageName = artifactImageNameWSL
+		}
+		endpoint = fmt.Sprintf("docker://%s/%s/%s:%s", artifactRegistry, artifactRepo, imageName, artifactVersion.majorMinor())
 		cache = true
 	}
 
@@ -178,7 +186,7 @@ func (o *OCIArtifactDisk) get() (func(), error) {
 
 func (o *OCIArtifactDisk) cleanCache(cachedImagePath string) func() {
 	// cache miss while using an image that we cache, ie the default image
-	// clean out all old files fron the cache dir
+	// clean out all old files from the cache dir
 	if o.cache {
 		files, err := os.ReadDir(o.dirs.ImageCacheDir.GetPath())
 		if err != nil {

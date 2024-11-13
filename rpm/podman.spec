@@ -101,7 +101,6 @@ Requires: containers-common-extra >= 5:0.58.0-1
 %else
 Requires: containers-common-extra
 %endif
-Provides: %{name}-quadlet
 Obsoletes: %{name}-quadlet <= 5:4.4.0-1
 Provides: %{name}-quadlet = %{epoch}:%{version}-%{release}
 
@@ -266,15 +265,15 @@ PODMAN_VERSION=%{version} %{__make} DESTDIR=%{buildroot} PREFIX=%{_prefix} ETCDI
        install.remote \
        install.testing
 
-# Only need this on Fedora until nftables becomes the default
-%if %{defined fedora}
+# See above for the iptables.conf declaration
+%if %{defined fedora} && 0%{?fedora} < 41
 %{__make} DESTDIR=%{buildroot} MODULESLOADDIR=%{_modulesloaddir} install.modules-load
 %endif
 
 sed -i 's;%{buildroot};;g' %{buildroot}%{_bindir}/docker
 
 # do not include docker and podman-remote man pages in main package
-for file in `find %{buildroot}%{_mandir}/man[15] -type f | sed "s,%{buildroot},," | grep -v -e %{name}sh.1 -e remote -e docker`; do
+for file in `find %{buildroot}%{_mandir}/man[157] -type f | sed "s,%{buildroot},," | grep -v -e %{name}sh.1 -e remote -e docker`; do
     echo "$file*" >> %{name}.file-list
 done
 
@@ -307,7 +306,10 @@ ln -s ../virtiofsd %{buildroot}%{_libexecdir}/%{name}
 %{_tmpfilesdir}/%{name}.conf
 %{_systemdgeneratordir}/%{name}-system-generator
 %{_systemdusergeneratordir}/%{name}-user-generator
-%if %{defined fedora}
+# iptables modules are only needed with iptables-legacy,
+# as of f41 netavark will default to nftables so do not load unessary modules
+# https://fedoraproject.org/wiki/Changes/NetavarkNftablesDefault
+%if %{defined fedora} && 0%{?fedora} < 41
 %{_modulesloaddir}/%{name}-iptables.conf
 %endif
 

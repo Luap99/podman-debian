@@ -16,7 +16,9 @@ import (
 	"github.com/containers/podman/v5/pkg/machine/env"
 	"github.com/containers/podman/v5/pkg/machine/ignition"
 	"github.com/containers/podman/v5/pkg/machine/lock"
+	"github.com/containers/podman/v5/pkg/machine/provider"
 	"github.com/containers/podman/v5/pkg/machine/proxyenv"
+	"github.com/containers/podman/v5/pkg/machine/shim/diskpull"
 	"github.com/containers/podman/v5/pkg/machine/vmconfigs"
 	"github.com/containers/podman/v5/utils"
 	"github.com/hashicorp/go-multierror"
@@ -151,7 +153,7 @@ func Init(opts machineDefine.InitOptions, mp vmconfigs.VMProvider) error {
 	// "/path
 	// "docker://quay.io/something/someManifest
 
-	if err := mp.GetDisk(opts.Image, dirs, mc); err != nil {
+	if err := diskpull.GetDisk(opts.Image, dirs, mc.ImagePath, mp.VMType(), mc.Name); err != nil {
 		return err
 	}
 
@@ -230,7 +232,11 @@ func Init(opts machineDefine.InitOptions, mp vmconfigs.VMProvider) error {
 	}
 
 	cleanup := func() error {
-		return connection.RemoveConnections(mc.Name, mc.Name+"-root")
+		machines, err := provider.GetAllMachinesAndRootfulness()
+		if err != nil {
+			return err
+		}
+		return connection.RemoveConnections(machines, mc.Name, mc.Name+"-root")
 	}
 	callbackFuncs.Add(cleanup)
 
@@ -283,7 +289,10 @@ func checkExclusiveActiveVM(provider vmconfigs.VMProvider, mc *vmconfigs.Machine
 			return err
 		}
 		if state == machineDefine.Running || state == machineDefine.Starting {
-			return fmt.Errorf("unable to start %q: machine %s: %w", mc.Name, name, machineDefine.ErrVMAlreadyRunning)
+			if mc.Name == name {
+				return fmt.Errorf("unable to start %q: machine %s: %w", mc.Name, name, machineDefine.ErrVMAlreadyRunning)
+			}
+			return fmt.Errorf("unable to start %q: machine %s is already running: %w", mc.Name, name, machineDefine.ErrMultipleActiveVM)
 		}
 	}
 	return nil
@@ -580,7 +589,12 @@ func Remove(mc *vmconfigs.MachineConfig, mp vmconfigs.VMProvider, dirs *machineD
 		}
 	}
 
-	rmFiles, genericRm, err := mc.Remove(opts.SaveIgnition, opts.SaveImage)
+	machines, err := provider.GetAllMachinesAndRootfulness()
+	if err != nil {
+		return err
+	}
+
+	rmFiles, genericRm, err := mc.Remove(machines, opts.SaveIgnition, opts.SaveImage)
 	if err != nil {
 		return err
 	}
@@ -655,12 +669,17 @@ func Reset(mps []vmconfigs.VMProvider, opts machine.ResetOptions) error {
 		}
 		removeDirs = append(removeDirs, d)
 
+		machines, err := provider.GetAllMachinesAndRootfulness()
+		if err != nil {
+			return err
+		}
+
 		for _, mc := range mcs {
 			err := Stop(mc, p, d, true)
 			if err != nil {
 				resetErrors = multierror.Append(resetErrors, err)
 			}
-			_, genericRm, err := mc.Remove(false, false)
+			_, genericRm, err := mc.Remove(machines, false, false)
 			if err != nil {
 				resetErrors = multierror.Append(resetErrors, err)
 			}

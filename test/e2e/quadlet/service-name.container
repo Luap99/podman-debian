@@ -1,7 +1,5 @@
 ## assert-podman-final-args localhost/imagename
-## assert-podman-args "--user=%U:%G"
 
 [Container]
+ServiceName=basic
 Image=localhost/imagename
-User=%U
-Group=%G

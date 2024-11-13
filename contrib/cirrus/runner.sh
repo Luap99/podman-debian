@@ -22,15 +22,36 @@ source $(dirname $0)/lib.sh
 showrun echo "starting"
 
 function _run_validate-source() {
+    # This target is only meant to be run on PRs.
+    # We need the following env vars set for the git diff check below.
+    req_env_vars CIRRUS_CHANGE_IN_REPO PR_BASE_SHA
+
     showrun make validate-source
 
     # make sure PRs have tests
     showrun make tests-included
+
+    # make sure PRs have jira links (if needed for branch)
+    showrun make test-jira-links-included
+
+    # shellcheck disable=SC2154
+    head=$CIRRUS_CHANGE_IN_REPO
+    # shellcheck disable=SC2154
+    base=$PR_BASE_SHA
+    echo "_run_validate-source: head=$head  base=$base"
+    diffs=$(git diff --name-only $base $head)
+
+    # If PR touches renovate config validate it, as the image is very big only do so when needed
+    if grep -E -q "^.github/renovate.json5" <<<"$diffs"; then
+        msg "Checking renovate config."
+        showrun podman run \
+            -v ./.github/renovate.json5:/usr/src/app/renovate.json5:z \
+            ghcr.io/renovatebot/renovate:latest \
+            renovate-config-validator
+    fi
 }
 
 function _run_unit() {
-    _bail_if_test_can_be_skipped test/goecho test/version
-
     # shellcheck disable=SC2154
     if [[ "$PODBIN_NAME" != "podman" ]]; then
         # shellcheck disable=SC2154
@@ -40,8 +61,6 @@ function _run_unit() {
 }
 
 function _run_apiv2() {
-    _bail_if_test_can_be_skipped test/apiv2
-
     (
         showrun make localapiv2-bash
         source .venv/requests/bin/activate
@@ -50,8 +69,6 @@ function _run_apiv2() {
 }
 
 function _run_compose_v2() {
-    _bail_if_test_can_be_skipped test/compose
-
     showrun ./test/compose/test-compose |& logformatter
 }
 
@@ -64,8 +81,6 @@ function _run_sys() {
 }
 
 function _run_upgrade_test() {
-    _bail_if_test_can_be_skipped test/system test/upgrade
-
     showrun bats test/upgrade |& logformatter
 }
 
@@ -98,7 +113,6 @@ function _run_endpoint() {
 }
 
 function _run_farm() {
-    _bail_if_test_can_be_skipped test/farm test/system
     msg "Testing podman farm."
     showrun bats test/farm |& logformatter
 }
@@ -196,18 +210,16 @@ eof
 }
 
 function _run_build() {
-    local vb_target
+    # Ensure always start from clean-slate with all vendor modules downloaded
+    showrun make clean
+    showrun make vendor
+    showrun make -j $(nproc) --output-sync=target podman-release  # includes podman, podman-remote, and docs
 
     # There's no reason to validate-binaries across multiple linux platforms
     # shellcheck disable=SC2154
     if [[ "$DISTRO_NV" =~ $FEDORA_NAME ]]; then
-        vb_target=validate-binaries
+        showrun make -j $(nproc) --output-sync=target validate-binaries
     fi
-
-    # Ensure always start from clean-slate with all vendor modules downloaded
-    showrun make clean
-    showrun make vendor
-    showrun make podman-release $vb_target # includes podman, podman-remote, and docs
 
     # Last-minute confirmation that we're testing the desired runtime.
     # This Can't Possibly Fail™ in regular CI; only when updating VMs.
@@ -222,16 +234,11 @@ function _run_build() {
 }
 
 function _run_altbuild() {
-    # Subsequent windows-based tasks require a build.  Var. defined in .cirrus.yml
-    # shellcheck disable=SC2154
-    if [[ ! "$ALT_NAME" =~ Windows ]]; then
-        # We can skip all these steps for test-only PRs, but not doc-only ones
-        _bail_if_test_can_be_skipped docs
-    fi
-
     local -a arches
     local arch
     req_env_vars ALT_NAME
+    # Var. defined in .cirrus.yml
+    # shellcheck disable=SC2154
     msg "Performing alternate build: $ALT_NAME"
     msg "************************************************************"
     set -x
@@ -272,16 +279,10 @@ function _run_altbuild() {
             showrun make package
             ;;
         Alt*x86*Cross)
-            arches=(\
-                amd64
-                386)
-            _build_altbuild_archs "${arches[@]}"
+            _build_altbuild_archs "386"
             ;;
         Alt*ARM*Cross)
-            arches=(\
-                arm
-                arm64)
-            _build_altbuild_archs "${arches[@]}"
+            _build_altbuild_archs "arm"
             ;;
         Alt*Other*Cross)
             arches=(\
@@ -309,7 +310,7 @@ function _run_altbuild() {
 function _build_altbuild_archs() {
     for arch in "$@"; do
         msg "Building release archive for $arch"
-        showrun make podman-release-${arch}.tar.gz GOARCH=$arch
+        showrun make cross-binaries GOARCH=$arch
     done
 }
 
@@ -429,59 +430,6 @@ _run_machine-linux() {
     showrun make localmachine |& logformatter
 }
 
-# Optimization: will exit if the only PR diffs are under docs/ or tests/
-# with the exception of any given arguments. E.g., don't run e2e or unit
-# or bud tests if the only PR changes are in test/system.
-function _bail_if_test_can_be_skipped() {
-    local head base diffs
-
-    # Cirrus sets these for PRs but not branches or cron. In cron and branches,
-    #we never want to skip.
-    for v in CIRRUS_CHANGE_IN_REPO CIRRUS_PR DEST_BRANCH; do
-        if [[ -z "${!v}" ]]; then
-            msg "[ _cannot do selective skip: \$$v is undefined ]"
-            return 0
-        fi
-    done
-    # And if this one *is* defined, it means we're not in PR-land; don't skip.
-    if [[ -n "$CIRRUS_TAG" ]]; then
-        msg "[ _cannot do selective skip: \$CIRRUS_TAG is defined ]"
-        return 0
-    fi
-
-    # Defined by Cirrus-CI for all tasks
-    # shellcheck disable=SC2154
-    head=$CIRRUS_CHANGE_IN_REPO
-    # shellcheck disable=SC2154
-    base=$PR_BASE_SHA
-    echo "_bail_if_test_can_be_skipped: head=$head  base=$base"
-    diffs=$(git diff --name-only $base $head)
-
-    # If PR touches any files in an argument directory, we cannot skip
-    for subdir in "$@"; do
-        if grep -E -q "^$subdir/" <<<"$diffs"; then
-            return 0
-        fi
-    done
-
-    # PR does not touch any files under our input directories. Now see
-    # if the PR touches files outside of the following directories, by
-    # filtering these out from the diff results.
-    for subdir in docs test; do
-        # || true needed because we're running with set -e
-        diffs=$(grep -E -v "^$subdir/" <<<"$diffs" || true)
-    done
-
-    # If we still have diffs, they indicate files outside of docs & test.
-    # It is not safe to skip.
-    if [[ -n "$diffs" ]]; then
-        return 0
-    fi
-
-    msg "SKIPPING: This is a doc- and/or test-only PR with no changes under $*"
-    exit 0
-}
-
 # Nearly every task in .cirrus.yml makes use of this shell script
 # wrapped by /usr/bin/time to collect runtime statistics.  Because the
 # --output option is used to log stats to a file, every child-process
@@ -507,6 +455,15 @@ msg "************************************************************"
 
 ((${SETUP_ENVIRONMENT:-0})) || \
     die "Expecting setup_environment.sh to have completed successfully"
+
+if [[ "$UID" -eq 0 ]] && ((CONTAINER==0)); then
+    # start ebpf cleanup tracer (#23487)
+    msg "start ebpf cleanup tracer"
+    # replace zero bytes to make the log more readable
+    bpftrace $GOSRC/hack/podman_cleanup_tracer.bt |& \
+        tr '\0' ' ' >$GOSRC/podman-cleanup-tracer.log &
+    TRACER_PID=$!
+fi
 
 # shellcheck disable=SC2154
 if [[ "$PRIV_NAME" == "rootless" ]] && [[ "$UID" -eq 0 ]]; then
@@ -548,5 +505,10 @@ if [ "$(type -t $handler)" != "function" ]; then
 fi
 
 showrun $handler
+
+if [[ -n "$TRACER_PID" ]]; then
+    # ignore any error here
+    kill "$TRACER_PID" || true
+fi
 
 showrun echo "finished"

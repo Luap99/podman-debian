@@ -14,7 +14,7 @@ PODMAN_RUNTIME=
 PODMAN_TEST_IMAGE_REGISTRY=${PODMAN_TEST_IMAGE_REGISTRY:-"quay.io"}
 PODMAN_TEST_IMAGE_USER=${PODMAN_TEST_IMAGE_USER:-"libpod"}
 PODMAN_TEST_IMAGE_NAME=${PODMAN_TEST_IMAGE_NAME:-"testimage"}
-PODMAN_TEST_IMAGE_TAG=${PODMAN_TEST_IMAGE_TAG:-"20240123"}
+PODMAN_TEST_IMAGE_TAG=${PODMAN_TEST_IMAGE_TAG:-"20241011"}
 PODMAN_TEST_IMAGE_FQN="$PODMAN_TEST_IMAGE_REGISTRY/$PODMAN_TEST_IMAGE_USER/$PODMAN_TEST_IMAGE_NAME:$PODMAN_TEST_IMAGE_TAG"
 
 # Larger image containing systemd tools.
@@ -40,6 +40,19 @@ _LOG_PROMPT='$'
 if [ $(id -u) -eq 0 ]; then
     _LOG_PROMPT='#'
 fi
+
+# Invocations via su may not set this. Although all container tools make
+# an effort to determine a default if unset, there are corner cases (rootless
+# namespace preservation) that run before the default is set.
+# For purposes of system tests (CI, gating, OpenQA) we force a default early.
+# As of September 2024 we no longer test the default-setting logic in the
+# tools.
+if [[ -z "$XDG_RUNTIME_DIR" ]] && [[ "$(id -u)" -ne 0 ]]; then
+    export XDG_RUNTIME_DIR=/run/user/$(id -u)
+fi
+
+# Used in helpers.network, needed here in teardown
+PORT_LOCK_DIR=$BATS_SUITE_TMPDIR/reserved-ports
 
 ###############################################################################
 # BEGIN tools for fetching & caching test images
@@ -116,21 +129,6 @@ function _prefetch() {
     $cmd
 }
 
-
-# Wrapper for skopeo, because skopeo doesn't work rootless if $XDG is unset
-# (as it is in RHEL gating): it defaults to /run/containers/<uid>, which
-# of course is a root-only dir, hence fails with permission denied.
-# -- https://github.com/containers/skopeo/issues/823
-function skopeo() {
-    local xdg=${XDG_RUNTIME_DIR}
-    if [ -z "$xdg" ]; then
-        if is_rootless; then
-            xdg=/run/user/$(id -u)
-        fi
-    fi
-    XDG_RUNTIME_DIR=${xdg} command skopeo "$@"
-}
-
 # END   tools for fetching & caching test images
 ###############################################################################
 # BEGIN setup/teardown tools
@@ -157,7 +155,12 @@ function basic_setup() {
 
     # Test filenames must match ###-name.bats; use "[###] " as prefix
     run expr "$BATS_TEST_FILENAME" : "^.*/\([0-9]\{3\}\)-[^/]\+\.bats\$"
-    BATS_TEST_NAME_PREFIX="[${output}] "
+    # If parallel, use |nnn|. Serial, [nnn]
+    if [[ -n "$PARALLEL_JOBSLOT" ]]; then
+        BATS_TEST_NAME_PREFIX="|${output}| "
+    else
+        BATS_TEST_NAME_PREFIX="[${output}] "
+    fi
 
     # By default, assert() and die() cause an immediate test failure.
     # Under special circumstances (usually long test loops), tests
@@ -205,28 +208,48 @@ function defer-assertion-failures() {
 function basic_teardown() {
     echo "# [teardown]" >&2
 
+    # Free any ports reserved by our test
+    if [[ -d $PORT_LOCK_DIR ]]; then
+        mylocks=$(grep -wlr $BATS_SUITE_TEST_NUMBER $PORT_LOCK_DIR || true)
+        if [[ -n "$mylocks" ]]; then
+            rm -f $mylocks
+        fi
+    fi
+
     immediate-assertion-failures
     # Unlike normal tests teardown will not exit on first command failure
     # but rather only uses the return code of the teardown function.
     # This must be directly after immediate-assertion-failures to capture the error code
     local exit_code=$?
 
-    # Only checks for leaks on a successful run (BATS_TEST_COMPLETED is set 1),
-    # immediate-assertion-failures didn't fail (exit_code -eq 0)
-    # and PODMAN_BATS_LEAK_CHECK is set.
-    # As these podman commands are slow we do not want to do this by default
-    # and only provide this as opt in option. (#22909)
-    if [[ "$BATS_TEST_COMPLETED" -eq 1 ]] && [ $exit_code -eq 0 ] && [ -n "$PODMAN_BATS_LEAK_CHECK" ]; then
-        leak_check
-        exit_code=$((exit_code + $?))
+    # Leak check and state reset. Only run these when running tests serially!
+    # (For parallel tests, we run a leak check only at the very end of all tests)
+    if [[ -z "$PARALLEL_JOBSLOT" ]]; then
+        # Check for leaks, but only if:
+        #  1) test was successful (BATS_TEST_COMPLETED is set 1); and
+        #  2) immediate-assertion-failures didn't fail (exit_code -eq 0); and
+        #  3) PODMAN_BATS_LEAK_CHECK is set (usually only in cron).
+        # As these podman commands are slow we do not want to do this by default
+        # and only provide this as opt-in option. (#22909)
+        if [[ "$BATS_TEST_COMPLETED" -eq 1 ]] && [[ $exit_code -eq 0 ]] && [[ -n "$PODMAN_BATS_LEAK_CHECK" ]]; then
+            leak_check
+            exit_code=$((exit_code + $?))
+        fi
+
+        # Some error happened (either in teardown itself or the actual test failed)
+        # so do a full cleanup to ensure following tests start with a clean env.
+        if [ $exit_code -gt 0 ] || [ -z "$BATS_TEST_COMPLETED" ]; then
+            clean_setup
+            exit_code=$((exit_code + $?))
+        fi
     fi
 
-    # Some error happened (either in teardown itself or the actual test failed)
-    # so do a full cleanup to ensure following tests start with a clean env.
-    if [ $exit_code -gt 0 ] || [ -z "$BATS_TEST_COMPLETED" ]; then
-        clean_setup
-        exit_code=$((exit_code + $?))
+    # Status file used in teardown_suite() to decide whether or not
+    # to check for leaks
+    if [[ "$BATS_TEST_COMPLETED" -ne 1 ]]; then
+        rm -f "$BATS_SUITE_TMPDIR/all-tests-passed"
     fi
+
     command rm -rf $PODMAN_TMPDIR
     exit_code=$((exit_code + $?))
     return $exit_code
@@ -263,40 +286,88 @@ function restore_image() {
     run_podman restore $archive
 }
 
-function leak_check() {
-    run_podman volume ls -q
-    assert "$output" == "" "Leaked volumes!!!"
-    local exit_code=$?
-    run_podman network ls -q
-    # podman always exists
-    assert "$output" == "podman" "Leaked networks!!!"
-    exit_code=$((exit_code + $?))
-    run_podman pod ps -q
-    assert "$output" == "" "Leaked pods!!!"
-    exit_code=$((exit_code + $?))
-    run_podman ps -a -q
-    assert "$output" == "" "Leaked containers!!!"
-    exit_code=$((exit_code + $?))
-
-    run_podman images --all --format '{{.Repository}}:{{.Tag}} {{.ID}}'
-    for line in "${lines[@]}"; do
-        set $line
-        if [[ "$1" == "$PODMAN_TEST_IMAGE_FQN" ]]; then
-            found_needed_image=1
-        elif [[ "$1" == "$PODMAN_SYSTEMD_IMAGE_FQN" ]]; then
-            # This is a big image, don't force unnecessary pulls
-            :
-        else
-            exit_code=$((exit_code + 1))
-            echo "Leaked image $1 $2"
-        fi
-    done
-
-    # Make sure desired image is present
-    if [[ -z "$found_needed_image" ]]; then
+#######################
+#  _run_podman_quiet  #  Helper for leak_check. Runs podman with no logging
+#######################
+function _run_podman_quiet() {
+    # This should be the same as what run_podman() does.
+    run timeout -v --foreground --kill=10 60 $PODMAN $_PODMAN_TEST_OPTS "$@"
+    if [[ $status -ne 0 ]]; then
+        echo "# Error running command: podman $*"
+        echo "$output"
         exit_code=$((exit_code + 1))
-        die "$PODMAN_TEST_IMAGE_FQN was removed"
     fi
+}
+
+#####################
+#  _leak_check_one  #  Helper for leak_check: shows leaked artifacts
+#####################
+#
+# NOTE: plays fast & loose with variables! Reads $output, updates $exit_code
+#
+function _leak_check_one() {
+    local what="$1"
+
+    # Shown the first time we see a stray of this kind
+    separator="vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+"
+
+    while read line; do
+        if [[ -n "$line" ]]; then
+            echo "${separator}*** Leaked $what: $line"
+            separator=""
+            exit_code=$((exit_code + 1))
+        fi
+    done <<<"$output"
+}
+
+################
+#  leak_check  #  Look for, and warn about, stray artifacts
+################
+#
+# Runs on test failure, or at end of all tests, or when PODMAN_BATS_LEAK_CHECK=1
+#
+# Note that all ps/ls commands specify a format where something useful
+# (ID or name) is in the first column. This is not important today
+# (July 2024) but may be useful one day: a future PR may run bats
+# with --gather-test-outputs-in, which preserves logs of all tests.
+# Why not today? Because that option is still buggy: (1) we need
+# bats-1.11 to fix a more-than-one-slash-in-test-name bug, (2) as
+# of July 2024 that option only copies logs of *completed* tests
+# to the directory, so currently-running tests (the one running
+# teardown, or, in parallel mode, any other running tests) are
+# not seen. This renders that option less useful, and not worth
+# bothering with at the moment. But please leave ID-or-name as
+# the first column anyway because things may change and it's
+# a reasonable format anyway.
+#
+function leak_check() {
+    local exit_code=0
+
+    # Volumes.
+    _run_podman_quiet volume ls --format '{{.Name}} {{.Driver}}'
+    _leak_check_one "volume"
+
+    # Networks. "podman" and "podman-default-kube-network" are OK.
+    _run_podman_quiet network ls --noheading
+    output=$(grep -ve "^[0-9a-z]\{12\} *podman\(-default-kube-network\)\? *bridge\$" <<<"$output")
+    _leak_check_one "network"
+
+    # Pods, containers, and external (buildah) containers.
+    _run_podman_quiet pod ls --format '{{.ID}} {{.Name}} status={{.Status}} ({{.NumberOfContainers}} containers)'
+    _leak_check_one "pod"
+
+    _run_podman_quiet ps -a --format '{{.ID}} {{.Image}} {{.Names}}  {{.Status}}'
+    _leak_check_one "container"
+
+    _run_podman_quiet ps -a --external --filter=status=unknown --format '{{.ID}} {{.Image}} {{.Names}}  {{.Status}}'
+    _leak_check_one "storage container"
+
+    # Images. Exclude our standard expected images.
+    _run_podman_quiet images --all --format '{{.ID}} {{.Repository}}:{{.Tag}}'
+    output=$(awk "\$2 != \"$IMAGE\" && \$2 != \"$PODMAN_SYSTEMD_IMAGE_FQN\" && \$2 !~ \"localhost/podman-pause:\" { print }" <<<"$output")
+    _leak_check_one "image"
+
     return $exit_code
 }
 
@@ -308,7 +379,7 @@ function clean_setup() {
         "volume rm -a -f"
     )
     for action in "${actions[@]}"; do
-        run_podman '?' $action
+        _run_podman_quiet $action
 
         # The -f commands should never exit nonzero, but if they do we want
         # to know about it.
@@ -332,7 +403,7 @@ function clean_setup() {
     done
 
     # ...including external (buildah) ones
-    run_podman ps --all --external --format '{{.ID}} {{.Names}}'
+    _run_podman_quiet ps --all --external --format '{{.ID}} {{.Names}}'
     for line in "${lines[@]}"; do
         set $line
         echo "# setup(): removing stray external container $1 ($2)" >&3
@@ -351,7 +422,7 @@ function clean_setup() {
     # Yes, but it's also tremendously slower: 29m for a CI run, to 39m.
     # Image loads are slow.
     found_needed_image=
-    run_podman '?' images --all --format '{{.Repository}}:{{.Tag}} {{.ID}}'
+    _run_podman_quiet images --all --format '{{.Repository}}:{{.Tag}} {{.ID}}'
 
     for line in "${lines[@]}"; do
         set $line
@@ -367,12 +438,12 @@ function clean_setup() {
         else
             # Always remove image that doesn't match by name
             echo "# setup(): removing stray image $1" >&3
-            run_podman rmi --force "$1" >/dev/null 2>&1 || true
+            _run_podman_quiet rmi --force "$1"
 
             # Tagged image will have same IID as our test image; don't rmi it.
             if [[ $2 != "$PODMAN_TEST_IMAGE_ID" ]]; then
                 echo "# setup(): removing stray image $2" >&3
-                run_podman rmi --force "$2" >/dev/null 2>&1 || true
+                _run_podman_quiet rmi --force "$2"
             fi
         fi
     done
@@ -380,6 +451,21 @@ function clean_setup() {
     # Make sure desired image is present
     if [[ -z "$found_needed_image" ]]; then
         _prefetch $PODMAN_TEST_IMAGE_FQN
+    fi
+
+    # Load (create, actually) the pause image. This way, all pod tests will
+    # have it available. Without this, pod tests run in parallel will leave
+    # behind <none>:<none> images.
+    # FIXME: only do this when running parallel! Otherwise, we may break
+    #        test expectations.
+    #        SUB-FIXME: there's no actual way to tell if we're running bats
+    #                   in parallel (see bats-core#998). Use undocumented hack.
+    # FIXME: #23292 -- this should not be necessary.
+    if [[ -n "$BATS_SEMAPHORE_DIR" ]]; then
+        run_podman pod create mypod
+        run_podman pod rm mypod
+        # And now, we have a pause image, and each test does not
+        # need to build their own.
     fi
 }
 
@@ -759,6 +845,17 @@ function _ensure_container_running() {
     done
 
     die "Timed out waiting for container $1 to enter state running=$2"
+}
+
+# Return the config digest of an image in containers-storage.
+# The input can be a named reference, or an @imageID (including shorter imageID prefixes)
+# Historically, the image ID was a good indicator of “the same” image;
+# with zstd:chunked, the same image might have different IDs depending on whether
+# creating layers happened based on the TOC (and per-file operations) or the full layer tarball
+function image_config_digest() {
+    local sha_output; sha_output=$(skopeo inspect --raw --config "containers-storage:$1" | sha256sum)
+    # strip filename ("-") from sha output
+    echo "${sha_output%% *}"
 }
 
 ###########################
