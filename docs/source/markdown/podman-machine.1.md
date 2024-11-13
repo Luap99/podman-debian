@@ -20,6 +20,8 @@ NOTE: The podman-machine configuration file is managed under the
 `$XDG_CONFIG_HOME/containers/podman/machine/` directory. Changing the `$XDG_CONFIG_HOME`
 environment variable while the machines are running can lead to unexpected behavior.
 
+Podman machine behaviour can be modified via the [machine] section in the containers.conf(5) file.
+
 ## SUBCOMMANDS
 
 | Command | Man Page                                                 | Description                           |
@@ -37,7 +39,12 @@ environment variable while the machines are running can lead to unexpected behav
 | stop    | [podman-machine-stop(1)](podman-machine-stop.1.md)       | Stop a virtual machine                |
 
 ## SEE ALSO
-**[podman(1)](podman.1.md)**, **[podman-machine-info(1)](podman-machine-info.1.md)**, **[podman-machine-init(1)](podman-machine-init.1.md)**, **[podman-machine-list(1)](podman-machine-list.1.md)**, **[podman-machine-os(1)](podman-machine-os.1.md)**, **[podman-machine-rm(1)](podman-machine-rm.1.md)**, **[podman-machine-ssh(1)](podman-machine-ssh.1.md)**, **[podman-machine-start(1)](podman-machine-start.1.md)**, **[podman-machine-stop(1)](podman-machine-stop.1.md)**, **[podman-machine-inspect(1)](podman-machine-inspect.1.md)**, **[podman-machine-reset(1)](podman-machine-reset.1.md)**
+**[podman(1)](podman.1.md)**, **[podman-machine-info(1)](podman-machine-info.1.md)**, **[podman-machine-init(1)](podman-machine-init.1.md)**, **[podman-machine-list(1)](podman-machine-list.1.md)**, **[podman-machine-os(1)](podman-machine-os.1.md)**, **[podman-machine-rm(1)](podman-machine-rm.1.md)**, **[podman-machine-ssh(1)](podman-machine-ssh.1.md)**, **[podman-machine-start(1)](podman-machine-start.1.md)**, **[podman-machine-stop(1)](podman-machine-stop.1.md)**, **[podman-machine-inspect(1)](podman-machine-inspect.1.md)**, **[podman-machine-reset(1)](podman-machine-reset.1.md)**, **containers.conf(5)**
+
+### Troubleshooting
+
+See [podman-troubleshooting(7)](https://github.com/containers/podman/blob/main/troubleshooting.md)
+for solutions to common issues.
 
 ## HISTORY
 March 2021, Originally compiled by Ashley Cui <acui@redhat.com>

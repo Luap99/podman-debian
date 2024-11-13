@@ -285,6 +285,13 @@ case "$PRIV_NAME" in
     *) die_unknown PRIV_NAME
 esac
 
+# Root user namespace
+for which in uid gid;do
+    if ! grep -qE '^containers:' /etc/sub$which; then
+        echo 'containers:10000000:1048576' >>/etc/sub$which
+    fi
+done
+
 # FIXME! experimental workaround for #16973, the "lookup cdn03.quay.io" flake.
 #
 # If you are reading this on or after April 2023:
@@ -386,7 +393,6 @@ case "$TEST_FLAVOR" in
         ;& # Continue with next item
     apiv2)
         msg "Installing previously downloaded/cached packages"
-        showrun dnf install -y $PACKAGE_DOWNLOAD_DIR/python3*.rpm
         virtualenv .venv/requests
         source .venv/requests/bin/activate
         showrun pip install --upgrade pip
@@ -396,7 +402,7 @@ case "$TEST_FLAVOR" in
         showrun make .install.ginkgo
         ;&
     sys)
-        # when run nighlty check for system test leaks
+        # when run nightly check for system test leaks
         # shellcheck disable=SC2154
         if [[ "$CIRRUS_CRON" != '' ]]; then
             export PODMAN_BATS_LEAK_CHECK=1

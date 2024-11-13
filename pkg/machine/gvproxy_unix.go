@@ -8,7 +8,8 @@ import (
 	"syscall"
 	"time"
 
-	psutil "github.com/shirou/gopsutil/v3/process"
+	"github.com/containers/podman/v5/pkg/machine/define"
+	psutil "github.com/shirou/gopsutil/v4/process"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 )
@@ -71,4 +72,10 @@ func waitOnProcess(processID int) error {
 		return err
 	}
 	return backoffForProcess(p)
+}
+
+// removeGVProxyPIDFile is just a wrapper to vmfile delete so we handle differently
+// on windows
+func removeGVProxyPIDFile(f define.VMFile) error {
+	return f.Delete()
 }

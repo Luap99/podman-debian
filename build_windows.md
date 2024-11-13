@@ -24,8 +24,8 @@ Windows.
   - [Create and start a podman machine](#create-and-start-a-podman-machine)
   - [Run a container using podman](#run-a-container-using-podman)
 - [Build and test the Podman Windows installer](#build-and-test-the-podman-windows-installer)
-  - [Build the installer](#build-the-installer)
-  - [Test the installer](#test-the-installer)
+  - [Build the Windows installer](#build-the-windows-installer)
+  - [Test the Windows installer](#test-the-windows-installer)
   - [Build and test the standalone `podman.msi` file](#build-and-test-the-standalone-podmanmsi-file)
   - [Verify the installation](#verify-the-installation)
   - [Uninstall and clean-up](#uninstall-and-clean-up)
@@ -94,7 +94,7 @@ The installer includes a C program that checks the installation of the
 pre-required virtualization providers (WSL or Hyper-V). Building this program
 requires the
 [Microsoft C/C++ compiler](https://learn.microsoft.com/en-us/cpp/build/building-on-the-command-line?view=msvc-170) and the
-[PowerShell Moduel VSSetup](https://github.com/microsoft/vssetup.powershell):
+[PowerShell Module VSSetup](https://github.com/microsoft/vssetup.powershell):
 
 1. Download the Build Tools for Visual Studio 2022 installer
 ```pwsh
@@ -362,11 +362,19 @@ set the bundle variables `MachineProvider` (`wsl` or `hyperv`), `WSLCheckbox`
 otherwise):
 
 ```pwsh
-contrib\win-installer\podman-5.1.0-dev-setup.exe /install /log podman-setup.log /quiet MachineProvider=wsl WSLCheckbox=0 HyperVCheckbox=0
+contrib\win-installer\podman-5.1.0-dev-setup.exe /install `
+                      /log podman-setup.log /quiet `
+                      MachineProvider=wsl WSLCheckbox=0 HyperVCheckbox=0
 ```
 
-:information_source: The `winmake.ps1` target `installertest` automatically
-tests installing and uninstalling Podman.
+#### Run the Windows installer automated tests
+
+The following command executes a number of tests of the windows installer. Running
+it requires an administrator terminal.
+
+```pwsh
+.\winmake.ps1 installertest
+```
 
 ### Build and test the standalone `podman.msi` file
 
@@ -403,9 +411,9 @@ msiexec /package contrib\win-installer\en-US\podman.msi /l*v podman-msi.log /qui
 ```
 
 :information_source: `podman.msi` GUI dialogs, defined in the file
-`contrib\win-installer\podman-ui.wxs`, are distinct from the installation bundle
+`contrib\win-installer\welcome-install-dlg.wxs`, are distinct from the installation bundle
 `podman-setup.exe` GUI dialogs, defined in
-`contrib\win-installer\welcome-install-dlg.wxs`.
+`contrib\win-installer\podman-theme.xml`.
 
 ### Verify the installation
 
@@ -472,7 +480,7 @@ $foldersToCheck = @(
     "$env:USERPROFILE.config\containers\"
     "$env:USERPROFILE.local\share\containers\"
     "$ENV:LOCALAPPDATA\containers\"
-    "$ENV:APPDATA\containers\containers.conf.d\99-podman-machine-provider.conf"
+    "$ENV:PROGRAMDATA\containers\containers.conf.d\99-podman-machine-provider.conf"
 )
 $foldersToCheck | ForEach-Object {Test-Path -Path $PSItem}
 ```

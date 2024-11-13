@@ -15,7 +15,7 @@ if ($Env:CI -eq "true") {
 Push-Location $WIN_INST_FOLDER
 
 # Build Installer
-# Note: consumes podman-remote-release-windows_amd64.zip from repo.tbz2
+# Note: consumes podman-remote-release-windows_amd64.zip from repo.tar.zst
 Run-Command ".\build.ps1 $Env:WIN_INST_VER dev `"$RELEASE_DIR`""
 
 Pop-Location
@@ -23,10 +23,7 @@ Pop-Location
 # Run the installer silently and WSL/HyperV install options disabled (prevent reboots)
 # We need -skipWinVersionCheck for server 2019 (cirrus image), can be dropped after server 2022
 $command = "$WIN_INST_FOLDER\test-installer.ps1 "
-$command += "-operation all "
+$command += "-scenario all "
 $command += "-provider $ENV:CONTAINERS_MACHINE_PROVIDER "
-$command += "-setupExePath `"$WIN_INST_FOLDER\podman-$ENV:WIN_INST_VER-dev-setup.exe`" "
-$command += "-installWSL:`$false "
-$command += "-installHyperV:`$false "
-$command += "-skipWinVersionCheck:`$true"
+$command += "-setupExePath `"$WIN_INST_FOLDER\podman-$ENV:WIN_INST_VER-dev-setup.exe`""
 Run-Command "${command}"

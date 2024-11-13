@@ -118,8 +118,9 @@ func PruneImages(w http.ResponseWriter, r *http.Request) {
 	runtime := r.Context().Value(api.RuntimeKey).(*libpod.Runtime)
 	decoder := r.Context().Value(api.DecoderKey).(*schema.Decoder)
 	query := struct {
-		All      bool `schema:"all"`
-		External bool `schema:"external"`
+		All        bool `schema:"all"`
+		External   bool `schema:"external"`
+		BuildCache bool `schema:"buildcache"`
 	}{
 		// override any golang type defaults
 	}
@@ -157,9 +158,10 @@ func PruneImages(w http.ResponseWriter, r *http.Request) {
 	imageEngine := abi.ImageEngine{Libpod: runtime}
 
 	pruneOptions := entities.ImagePruneOptions{
-		All:      query.All,
-		External: query.External,
-		Filter:   libpodFilters,
+		All:        query.All,
+		External:   query.External,
+		Filter:     libpodFilters,
+		BuildCache: query.BuildCache,
 	}
 	imagePruneReports, err := imageEngine.Prune(r.Context(), pruneOptions)
 	if err != nil {
@@ -711,18 +713,21 @@ func ImageScp(w http.ResponseWriter, r *http.Request) {
 
 	sourceArg := utils.GetName(r)
 
-	rep, source, dest, _, err := domainUtils.ExecuteTransfer(sourceArg, query.Destination, []string{}, query.Quiet, ssh.GolangMode)
+	opts := entities.ScpExecuteTransferOptions{}
+	opts.Quiet = query.Quiet
+	opts.SSHMode = ssh.GolangMode
+	report, err := domainUtils.ExecuteTransfer(sourceArg, query.Destination, opts)
 	if err != nil {
 		utils.Error(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	if source != nil || dest != nil {
+	if report.Source != nil || report.Dest != nil {
 		utils.Error(w, http.StatusBadRequest, fmt.Errorf("cannot use the user transfer function on the remote client: %w", define.ErrInvalidArg))
 		return
 	}
 
-	utils.WriteResponse(w, http.StatusOK, &reports.ScpReport{Id: rep.Names[0]})
+	utils.WriteResponse(w, http.StatusOK, &reports.ScpReport{Id: report.LoadReport.Names[0]})
 }
 
 // Resolve the passed (short) name to one more candidates it may resolve to.

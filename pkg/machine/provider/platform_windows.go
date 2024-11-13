@@ -43,16 +43,11 @@ func Get() (vmconfigs.VMProvider, error) {
 	}
 }
 
-func GetAll(force bool) ([]vmconfigs.VMProvider, error) {
-	providers := []vmconfigs.VMProvider{
+func GetAll() []vmconfigs.VMProvider {
+	return []vmconfigs.VMProvider{
 		new(wsl.WSLStubber),
+		new(hyperv.HyperVStubber),
 	}
-	if !wsl.HasAdminRights() && !force {
-		logrus.Warn("managing hyperv machines require admin authority.")
-	} else {
-		providers = append(providers, new(hyperv.HyperVStubber))
-	}
-	return providers, nil
 }
 
 // SupportedProviders returns the providers that are supported on the host operating system
@@ -60,20 +55,22 @@ func SupportedProviders() []define.VMType {
 	return []define.VMType{define.HyperVVirt, define.WSLVirt}
 }
 
-// InstalledProviders returns the supported providers that are installed on the host
-func InstalledProviders() ([]define.VMType, error) {
-	installed := []define.VMType{}
-	if wutil.IsWSLInstalled() {
-		installed = append(installed, define.WSLVirt)
+func IsInstalled(provider define.VMType) (bool, error) {
+	switch provider {
+	case define.WSLVirt:
+		return wutil.IsWSLInstalled(), nil
+	case define.HyperVVirt:
+		service, err := hypervctl.NewLocalHyperVService()
+		if err == nil {
+			return true, nil
+		}
+		if service != nil {
+			defer service.Close()
+		}
+		return false, nil
+	default:
+		return false, nil
 	}
-
-	service, err := hypervctl.NewLocalHyperVService()
-	if err == nil {
-		installed = append(installed, define.HyperVVirt)
-	}
-	service.Close()
-
-	return installed, nil
 }
 
 // HasPermsForProvider returns whether the host operating system has the proper permissions to use the given provider

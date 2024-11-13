@@ -4,7 +4,7 @@
 /build/
 /conmon/
 contrib/spec/podman.spec
-contrib/systemd/*/*.service
+contrib/systemd/system/*.service
 *.coverprofile
 coverprofile
 /.coverage
@@ -57,3 +57,4 @@ contrib/win-installer/shasums
 contrib/win-installer/*.wixobj
 contrib/win-installer/*.wixpdb
 contrib/win-installer/*.log
+podman-cleanup-tracer.log*

@@ -17,20 +17,28 @@ unset REGISTRY_AUTH_FILE
 # Start a local registry. Only needed on demand (e.g. by 150-login.bats)
 # and then only once: if we start, leave it running until final teardown.
 function start_registry() {
-    if [[ -d "$PODMAN_LOGIN_WORKDIR/auth" ]]; then
-        # Already started
+    AUTHDIR=${PODMAN_LOGIN_WORKDIR}/auth
 
-        # Fixes very obscure corner case in root system tests:
-        #  1) we run 150-login tests, starting a registry; then
-        #  2) run 500-network, which runs iptables -F; then
-        #  3) run 700-play, the "private" test, which needs the
-        #     already-started registry, but its port is now DROPped,
-        #     so the test times out trying to talk to registry
-        run_podman --storage-driver vfs $(podman_isolation_opts ${PODMAN_LOGIN_WORKDIR}) network reload --all
-        return
+    local startflag=${PODMAN_LOGIN_WORKDIR}/OK
+
+    if ! mkdir $AUTHDIR; then
+        # *Possibly* already started. Or, possibly (when running
+        # parallel tests) another process is trying to start it.
+        # Give it some time.
+        local timeout=30
+        while [[ $timeout -gt 0 ]]; do
+            if [[ -e $startflag ]]; then
+                echo "Registry has already been started by another process"
+                return
+            fi
+
+            sleep 1
+            timeout=$((timeout - 1))
+        done
+
+        die "Internal error: timed out waiting for another process to start registry"
     fi
 
-    AUTHDIR=${PODMAN_LOGIN_WORKDIR}/auth
     mkdir -p $AUTHDIR
 
     # Registry image; copy of docker.io, but on our own registry
@@ -64,21 +72,22 @@ function start_registry() {
 
     # Run the registry container.
     run_podman ${PODMAN_LOGIN_ARGS} run -d \
-               -p 127.0.0.1:${PODMAN_LOGIN_REGISTRY_PORT}:5000 \
+               --net=host \
                --name registry \
                -v $AUTHDIR:/auth:Z \
-               -e "REGISTRY_AUTH=htpasswd" \
-               -e "REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm" \
-               -e REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd \
-               -e REGISTRY_HTTP_TLS_CERTIFICATE=/auth/domain.crt \
-               -e REGISTRY_HTTP_TLS_KEY=/auth/domain.key \
+               -e REGISTRY_HTTP_ADDR="127.0.0.1:${PODMAN_LOGIN_REGISTRY_PORT}" \
+               -e REGISTRY_AUTH="htpasswd" \
+               -e REGISTRY_AUTH_HTPASSWD_REALM="Registry Realm" \
+               -e REGISTRY_AUTH_HTPASSWD_PATH="/auth/htpasswd" \
+               -e REGISTRY_HTTP_TLS_CERTIFICATE="/auth/domain.crt" \
+               -e REGISTRY_HTTP_TLS_KEY="/auth/domain.key" \
                $REGISTRY_IMAGE
     cid="$output"
 
-    # wait_for_port isn't enough: that just checks that podman has mapped the port...
     wait_for_port 127.0.0.1 ${PODMAN_LOGIN_REGISTRY_PORT}
-    # ...so we look in container logs for confirmation that registry is running.
-    _PODMAN_TEST_OPTS="${PODMAN_LOGIN_ARGS}" wait_for_output "listening on .::.:5000" $cid
+
+    touch $startflag
+    echo "I have started the registry"
 }
 
 function stop_registry() {
@@ -103,10 +112,10 @@ function stop_registry() {
         mount | grep ${PODMAN_LOGIN_WORKDIR} | awk '{print $3}' | xargs --no-run-if-empty umount
 
         if [[ $(id -u) -eq 0 ]]; then
-            rm -rf ${PODMAN_LOGIN_WORKDIR}
+            rm -rf ${PODMAN_LOGIN_WORKDIR}/*
         else
             # rootless image data is owned by a subuid
-            run_podman unshare rm -rf ${PODMAN_LOGIN_WORKDIR}
+            run_podman unshare rm -rf ${PODMAN_LOGIN_WORKDIR}/*
         fi
     fi
 
@@ -119,7 +128,7 @@ function stop_registry() {
         echo ""
         echo "lsof -i -P"
         lsof -i -P
-        die "Socket still seems open"
+        die "Socket $PODMAN_LOGIN_REGISTRY_PORT still seems open"
     fi
 }
 

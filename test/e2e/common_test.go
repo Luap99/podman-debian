@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math/rand"
 	"net"
 	"net/url"
@@ -138,9 +139,31 @@ const (
 	imageCacheDir = "imagecachedir"
 )
 
+var netnsFiles []fs.DirEntry
+
+func getNetnsDir() string {
+	if isRootless() {
+		var path string
+		if env, ok := os.LookupEnv("XDG_RUNTIME_DIR"); ok {
+			path = env
+		} else {
+			path = fmt.Sprintf("/run/user/%d", os.Getuid())
+		}
+		return filepath.Join(path, "netns")
+	}
+	// root is hard coded to
+	return "/run/netns"
+}
+
 var _ = SynchronizedBeforeSuite(func() []byte {
 	globalTmpDir, err := os.MkdirTemp("", "podman-e2e-")
 	Expect(err).ToNot(HaveOccurred())
+
+	netnsFiles, err = os.ReadDir(getNetnsDir())
+	// dir might not exists which is fine
+	if !errors.Is(err, fs.ErrNotExist) {
+		Expect(err).ToNot(HaveOccurred())
+	}
 
 	// make cache dir
 	ImageCacheDir = filepath.Join(globalTmpDir, imageCacheDir)
@@ -203,6 +226,13 @@ var _ = SynchronizedAfterSuite(func() {
 	timingsFile = nil
 },
 	func() {
+		// perform a netns leak check after all tests run
+		newNetnsFiles, err := os.ReadDir(getNetnsDir())
+		if !errors.Is(err, fs.ErrNotExist) {
+			Expect(err).ToNot(HaveOccurred())
+		}
+		Expect(newNetnsFiles).To(ConsistOf(netnsFiles), "Netns files were leaked")
+
 		testTimings := make(testResultsSorted, 0, 2000)
 		for i := 1; i <= GinkgoT().ParallelTotal(); i++ {
 			f, err := os.Open(fmt.Sprintf("%s/timings-%d", LockTmpDir, i))
@@ -402,6 +432,30 @@ func imageTarPath(image string) string {
 	return filepath.Join(cacheDir, imageCacheName)
 }
 
+func (p *PodmanTestIntegration) pullImage(image string, toCache bool) {
+	if toCache {
+		oldRoot := p.Root
+		p.Root = p.ImageCacheDir
+		defer func() {
+			p.Root = oldRoot
+		}()
+	}
+	for try := 0; try < 3; try++ {
+		podmanSession := p.PodmanBase([]string{"pull", image}, toCache, true)
+		pull := PodmanSessionIntegration{podmanSession}
+		pull.Wait(440)
+		if pull.ExitCode() == 0 {
+			break
+		}
+		if try == 2 {
+			Expect(pull).Should(Exit(0), "Failed after many retries")
+		}
+
+		GinkgoWriter.Println("Will wait and retry")
+		time.Sleep(time.Duration(try+1) * 5 * time.Second)
+	}
+}
+
 // createArtifact creates a cached image tarball in a local directory
 func (p *PodmanTestIntegration) createArtifact(image string) {
 	if os.Getenv("NO_TEST_CACHE") != "" {
@@ -410,19 +464,8 @@ func (p *PodmanTestIntegration) createArtifact(image string) {
 	destName := imageTarPath(image)
 	if _, err := os.Stat(destName); os.IsNotExist(err) {
 		GinkgoWriter.Printf("Caching %s at %s...\n", image, destName)
-		for try := 0; try < 3; try++ {
-			pull := p.PodmanNoCache([]string{"pull", image})
-			pull.Wait(440)
-			if pull.ExitCode() == 0 {
-				break
-			}
-			if try == 2 {
-				Expect(pull).Should(Exit(0), "Failed after many retries")
-			}
 
-			GinkgoWriter.Println("Will wait and retry")
-			time.Sleep(time.Duration(try+1) * 5 * time.Second)
-		}
+		p.pullImage(image, false)
 
 		save := p.PodmanNoCache([]string{"save", "-o", destName, image})
 		save.Wait(90)
@@ -1038,8 +1081,14 @@ func (p *PodmanTestIntegration) RestoreArtifactToCache(image string) error {
 
 func populateCache(podman *PodmanTestIntegration) {
 	for _, image := range CACHE_IMAGES {
-		err := podman.RestoreArtifactToCache(image)
-		Expect(err).ToNot(HaveOccurred())
+		// FIXME: Remove this hack once composefs can be used with images
+		// pulled from sources other than a registry.
+		if strings.Contains(podman.StorageOptions, "overlay.use_composefs=true") {
+			podman.pullImage(image, true)
+		} else {
+			err := podman.RestoreArtifactToCache(image)
+			Expect(err).ToNot(HaveOccurred())
+		}
 	}
 	// logformatter uses this to recognize the first test
 	GinkgoWriter.Printf("-----------------------------\n")
@@ -1391,6 +1440,9 @@ func WaitForService(address url.URL) {
 // This needs to be called for all test they may remove networks from other tests,
 // so netwokr prune, system prune, or system reset.
 // see https://github.com/containers/podman/issues/17946
+// Note that when using this and running containers with custom networks you must use the
+// ginkgo Serial decorator to ensure no parallel test are running otherwise we get flakes,
+// https://github.com/containers/podman/issues/23876
 func useCustomNetworkDir(podmanTest *PodmanTestIntegration, tempdir string) {
 	// set custom network directory to prevent flakes since the dir is shared with all tests by default
 	podmanTest.NetworkConfigDir = tempdir

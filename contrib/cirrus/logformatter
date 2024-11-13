@@ -33,7 +33,7 @@ $| = 1;
 # Stylesheet for highlighting or de-highlighting parts of lines
 our $CSS = <<'END_CSS';
 /* wrap long lines - don't require user to scroll right */
-pre        { line-break: normal; overflow-wrap: normal; white-space: pre-wrap; }
+.tt           { font-family: monospace; line-break: normal; overflow-wrap: normal; white-space: pre-wrap; }
 
 /* synopsis table at top */
 table.synopsis { border: none; border-collapse: collapse; margin-left: 2em; margin-top: 2ex; }
@@ -246,7 +246,7 @@ END_HTML
     # When running in cirrus, we have the commit SHA
     $git_commit = $ENV{CIRRUS_CHANGE_IN_REPO};
 
-    print { $out_fh } "<pre> <!-- begin processed output -->\n";
+    print { $out_fh } "<div class='tt'> <!-- begin processed output -->\n";
 
     # Assume rootful prompt, check for rootless (here and in log itself, below)
     my $Prompt = '#';
@@ -349,7 +349,7 @@ END_HTML
         # BATS handling. This will recognize num_tests both at start and end
         if ($line =~ /^1\.\.(\d+)$/) {
             $looks_like_bats = 1;
-            $bats_count{expected_total} = $1;
+            $bats_count{expected_total} += $1;
             undef $looks_like_python;
         }
         # Since the number of tests can't always be predicted, recognize
@@ -445,9 +445,14 @@ END_HTML
             if ($css) {
                 # Make it linkable, e.g. foo.html#t--00001
                 if ($line =~ /^(not\s+)?ok\s+(\d+)\s+(.*)/) {
-                    $line = sprintf("<a name='t--%05d'>%s</a>", $2, $line);
+                    my ($notok, $num, $name) = ($1, $2, $3);
+                    # Parallel system tests are shown as |nnn| instead of [nnn]
+                    my $p = '';
+                    $p = 'p' if $name =~ /^\s*\|\d+\|/;
 
-                    push @{$bats_count{__fail_list}}, [ $2, $3 ] if $1;
+                    $line = sprintf("<a name='t--%05d%s'>%s</a>", $num, $p, $line);
+
+                    push @{$bats_count{__fail_list}}, [ $num, $name ] if $notok;
                 }
                 $bats_count{$css}++;
                 $css = "bats-$css";
@@ -581,7 +586,7 @@ END_HTML
             $subtest_status = 'passed';         # until proven otherwise
             $subtest_name = '';
 
-            print { $out_fh } "</pre>\n<hr />\n<pre>\n";
+            print { $out_fh } "</div>\n<hr />\n<div class='tt'>\n";
             # Always show timestamp at start of each new test
             $previous_timestamp = '';
             next LINE;
@@ -595,8 +600,6 @@ END_HTML
                 my ($full_path, $remote, $options, $args) = ($1, $2||'', $3, $6);
 
                 $options =~ s/^\s+//;
-                # July 2024: "" in composefs pull-option confuses hovertext
-                $options =~ s/\&quot;//g;
                 # Separate each '--foo bar' with newlines for readability
                 $options =~ s/ --/\n--/g;
                 qq{<span title="$full_path"><b>podman$remote</b></span> <span class=\"boring\" title=\"$options\">[options]</span><b>$args</b>};
@@ -683,7 +686,7 @@ END_HTML
                 $subtest_name .= " " if $subtest_name;
                 $subtest_name .= $2;
                 my $id = make_id($subtest_name, 'anchor');
-                $line = "<a name='t--$id'><h2 class=\"log-$subtest_status\">$line</h2></a>";
+                $line = "<a name='t--$id' /><h2 class=\"log-$subtest_status\">$line</h2>";
 
                 # Special case for tests that fail outside of a Describe()
                 # block, e.g., global After/BeforeEach. We still want to
@@ -741,7 +744,7 @@ END_HTML
             print { $out_fh } "</span>\n";
         }
 
-        print { $out_fh } "</pre>  <!-- end processed output -->\n";
+        print { $out_fh } "</div>  <!-- end processed output -->\n";
 
         # Did we find a cirrus task? Link back.
         if ($cirrus_task) {
@@ -875,11 +878,14 @@ END_SYNOPSIS
                                 _a("{CIRRUS_BUILD_ID}", "https://cirrus-ci.com/build/{CIRRUS_BUILD_ID}"),
                                 _a("{CIRRUS_TASK_ID}", "https://cirrus-ci.com/task/{CIRRUS_TASK_ID}")));
 
-    # Logs: link to original (unformatted) log; journal; and, if remote, server
+    # Logs: link to original (unformatted) log; journal; cleanup tracer; and, if remote, server
     my @logs;
     push @logs, _a("main", sprintf("https://api.cirrus-ci.com/v1/task/{CIRRUS_TASK_ID}/logs/%s.log",
                                    ($is_mac ? 'test' : 'main')));
     push @logs, _a("journal", "https://api.cirrus-ci.com/v1/task/{CIRRUS_TASK_ID}/logs/journal.log")
+        unless $is_mac;
+
+    push @logs, _a("cleanup tracer", "https://api.cirrus-ci.com/v1/artifact/task/{CIRRUS_TASK_ID}/cleanup_tracer/podman-cleanup-tracer.log")
         unless $is_mac;
 
     # System tests are single-threaded, and have a server log available

@@ -4,6 +4,7 @@ package integration
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -742,9 +743,9 @@ USER bin`, BB)
 	It("podman run limits host test", func() {
 		SkipIfRemote("This can only be used for local tests")
 		info := GetHostDistributionInfo()
-		if info.Distribution == "debian" {
+		if info.Distribution == "debian" && isRootless() {
 			// "expected 1048576 to be >= 1073741816"
-			Skip("FIXME 2024-05-28 fails on debian, maybe because of systemd 256?")
+			Skip("FIXME 2024-09 still fails on debian rootless, reason unknown")
 		}
 
 		var l syscall.Rlimit
@@ -957,7 +958,29 @@ USER bin`, BB)
 		random := stringid.GenerateRandomID()
 
 		hookScript := fmt.Sprintf(`#!/bin/sh
-echo -n %s >%s
+teststring="%s"
+tmpfile="%s"
+
+# Hook gets invoked with config.json in stdin.
+# Flush it, otherwise caller may get SIGPIPE.
+cat >$tmpfile.json
+
+# Check for required fields in our given json.
+# Hooks have no visibility -- our output goes nowhere -- so
+# use unique exit codes to give test code reader a hint as
+# to what went wrong. Podman will exit 126, but will emit
+#   "crun: error executing hook .... (exit code: X)"
+rc=1
+for s in ociVersion id pid root bundle status annotations io.container.manager; do
+    grep -w $s $tmpfile.json || exit $rc
+    rc=$((rc + 1))
+done
+rm -f $tmpfile.json
+
+# json contains all required keys. We're good so far.
+# Now write a modified teststring to our tmpfile. Our
+# caller will confirm.
+echo -n madeit-$teststring >$tmpfile
 `, random, targetFile)
 		err = os.WriteFile(hookScriptPath, []byte(hookScript), 0755)
 		Expect(err).ToNot(HaveOccurred())
@@ -968,7 +991,7 @@ echo -n %s >%s
 
 		b, err := os.ReadFile(targetFile)
 		Expect(err).ToNot(HaveOccurred())
-		Expect(string(b)).To(Equal(random))
+		Expect(string(b)).To(Equal("madeit-" + random))
 	})
 
 	It("podman run with subscription secrets", func() {
@@ -1012,6 +1035,7 @@ echo -n %s >%s
 	})
 
 	It("podman run with FIPS mode secrets", func() {
+		Skip("FIPS mode not enabled in this branch as of November, 2024, Skipping")
 		SkipIfRootless("rootless can not manipulate system-fips file")
 		fipsFile := "/etc/system-fips"
 		err = os.WriteFile(fipsFile, []byte{}, 0755)
@@ -2160,9 +2184,31 @@ WORKDIR /madethis`, BB)
 
 		podmanTest.AddImageToRWStore(ALPINE)
 
+		success := false
+		registryArgs := []string{"run", "-d", "--name", "registry", "-p", "5006:5000"}
+		if isRootless() {
+			// Debug code for https://github.com/containers/podman/issues/24219
+			logFile := filepath.Join(podmanTest.TempDir, "pasta.log")
+			registryArgs = append(registryArgs, "--network", "pasta:--trace,--log-file,"+logFile)
+			defer func() {
+				if success {
+					// only print the log on errors otherwise it will clutter CI logs way to much
+					return
+				}
+
+				f, err := os.Open(logFile)
+				Expect(err).ToNot(HaveOccurred())
+				defer f.Close()
+				GinkgoWriter.Println("pasta trace log:")
+				_, err = io.Copy(GinkgoWriter, f)
+				Expect(err).ToNot(HaveOccurred())
+			}()
+		}
+		registryArgs = append(registryArgs, REGISTRY_IMAGE, "/entrypoint.sh", "/etc/docker/registry/config.yml")
+
 		lock := GetPortLock("5006")
 		defer lock.Unlock()
-		session := podmanTest.Podman([]string{"run", "-d", "--name", "registry", "-p", "5006:5000", REGISTRY_IMAGE, "/entrypoint.sh", "/etc/docker/registry/config.yml"})
+		session := podmanTest.Podman(registryArgs)
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(ExitCleanly())
 
@@ -2175,9 +2221,11 @@ WORKDIR /madethis`, BB)
 		publicKeyFileName, privateKeyFileName, err := WriteRSAKeyPair(keyFileName, bitSize)
 		Expect(err).ToNot(HaveOccurred())
 
-		imgPath := "localhost:5006/my-alpine"
+		imgPath := "localhost:5006/my-alpine-podman-run-and-decrypt"
 		session = podmanTest.Podman([]string{"push", "--encryption-key", "jwe:" + publicKeyFileName, "--tls-verify=false", "--remove-signatures", ALPINE, imgPath})
 		session.WaitWithDefaultTimeout()
+		Expect(session).Should(Exit(0))
+		Expect(session.ErrorToString()).To(ContainSubstring("Writing manifest to image destination"))
 
 		session = podmanTest.Podman([]string{"rmi", ALPINE})
 		session.WaitWithDefaultTimeout()
@@ -2194,15 +2242,11 @@ WORKDIR /madethis`, BB)
 		session.WaitWithDefaultTimeout()
 		Expect(session).Should(Exit(0))
 		Expect(session.ErrorToString()).To(ContainSubstring("Trying to pull " + imgPath))
+
+		success = true
 	})
 
 	It("podman run --shm-size-systemd", func() {
-		// FIXME Failed to set RLIMIT_CORE: Operation not permitted
-		info := GetHostDistributionInfo()
-		if info.Distribution == "debian" {
-			Skip("FIXME 2024-05-28 fails on debian, maybe because of systemd 256?")
-		}
-
 		ctrName := "testShmSizeSystemd"
 		run := podmanTest.Podman([]string{"run", "--name", ctrName, "--shm-size-systemd", "10mb", "-d", SYSTEMD_IMAGE, "/sbin/init"})
 		run.WaitWithDefaultTimeout()

@@ -24,7 +24,7 @@ var (
 	execDescription = `Execute the specified command inside a running container.
 `
 	execCommand = &cobra.Command{
-		Use:               "exec [options] CONTAINER [COMMAND [ARG...]]",
+		Use:               "exec [options] CONTAINER COMMAND [ARG...]",
 		Short:             "Run a process in a running container",
 		Long:              execDescription,
 		RunE:              exec,
@@ -71,7 +71,7 @@ func execFlags(cmd *cobra.Command) {
 	flags.StringArrayVar(&envFile, envFileFlagName, []string{}, "Read in a file of environment variables")
 	_ = cmd.RegisterFlagCompletionFunc(envFileFlagName, completion.AutocompleteDefault)
 
-	flags.BoolVarP(&execOpts.Interactive, "interactive", "i", false, "Keep STDIN open even if not attached")
+	flags.BoolVarP(&execOpts.Interactive, "interactive", "i", false, "Make STDIN available to the contained process")
 	flags.BoolVar(&execOpts.Privileged, "privileged", podmanConfig.ContainersConfDefaultsRO.Containers.Privileged, "Give the process extended Linux capabilities inside the container.  The default is false")
 	flags.BoolVarP(&execOpts.Tty, "tty", "t", false, "Allocate a pseudo-TTY. The default is false")
 

@@ -44,9 +44,8 @@ NOTE: `podman build` uses code sourced from the `Buildah` project to build
 container images.  This `Buildah` code creates `Buildah` containers for the
 `RUN` options in container storage. In certain situations, when the
 `podman build` crashes or users kill the `podman build` process, these external
-containers can be left in container storage. Use the `podman ps --all --storage`
-command to see these containers. External containers can be removed with the
-`podman rm --storage` command.
+containers can be left in container storage. Use the `podman ps --all --external`
+command to see these containers.
 
 `podman buildx build` command is an alias of `podman build`.  Not all `buildx build` features are available in Podman. The `buildx build` option is provided for scripting compatibility.
 
@@ -312,7 +311,7 @@ values for $GOOS and $GOARCH at https://golang.org/doc/install/source#environmen
 and can also be found by running `go tool dist list`.
 
 While `podman build` is happy to use base images and build images for any
-platform that exists, `RUN` instructions are able to succeed without
+platform that exists, `RUN` instructions are unable to succeed without
 the help of emulation provided by packages like `qemu-user-static`.
 
 @@option pull.image
@@ -708,6 +707,14 @@ useradd to stop creating the lastlog file.
 
 ## SEE ALSO
 **[podman(1)](podman.1.md)**, **[buildah(1)](https://github.com/containers/buildah/blob/main/docs/buildah.1.md)**, **[containers-certs.d(5)](https://github.com/containers/image/blob/main/docs/containers-certs.d.5.md)**, **[containers-registries.conf(5)](https://github.com/containers/image/blob/main/docs/containers-registries.conf.5.md)**, **[crun(1)](https://github.com/containers/crun/blob/main/crun.1.md)**, **[runc(8)](https://github.com/opencontainers/runc/blob/main/man/runc.8.md)**, **[useradd(8)](https://www.unix.com/man-page/redhat/8/useradd)**, **[podman-ps(1)](podman-ps.1.md)**, **[podman-rm(1)](podman-rm.1.md)**, **[Containerfile(5)](https://github.com/containers/common/blob/main/docs/Containerfile.5.md)**, **[containerignore(5)](https://github.com/containers/common/blob/main/docs/containerignore.5.md)**
+
+### Troubleshooting
+
+See [podman-troubleshooting(7)](https://github.com/containers/podman/blob/main/troubleshooting.md)
+for solutions to common issues.
+
+See [podman-rootless(7)](https://github.com/containers/podman/blob/main/rootless.md)
+for rootless issues.
 
 ## HISTORY
 Aug 2020, Additional options and .containerignore added by Dan Walsh `<dwalsh@redhat.com>`
