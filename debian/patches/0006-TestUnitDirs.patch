@@ -1,0 +1,22 @@
+From: Reinhard Tartler <siretart@tauware.de>
+Date: Wed, 13 Nov 2024 21:51:47 -0500
+Subject: TestUnitDirs: Skip when CLONE_NEWUSER fails
+
+---
+ cmd/quadlet/main_test.go | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/cmd/quadlet/main_test.go b/cmd/quadlet/main_test.go
+index d7efc80..e1da08e 100644
+--- a/cmd/quadlet/main_test.go
++++ b/cmd/quadlet/main_test.go
+@@ -210,6 +210,9 @@ func TestUnitDirs(t *testing.T) {
+ 		}
+ 		c.Env = append(os.Environ(), "_UNSHARED=true")
+ 		err = c.Run()
++		if strings.Contains(err.Error(), "operation not permitted") {
++			t.Skipf("Skipping test, CLONE_NEWUSER: %v", err)
++		}
+ 		assert.Nil(t, err)
+ 	} else {
+ 		fmt.Println(os.Args)
