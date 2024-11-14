@@ -4,8 +4,6 @@ Subject: Revert "update to docker 27"
 
 This reverts commit e24367aa14b7669d116a2a27ba12c69cbf51612b.
 ---
- go.mod                                            |  2 +-
- go.sum                                            |  4 ++--
  pkg/api/handlers/compat/containers.go             |  7 ++-----
  pkg/api/handlers/compat/containers_stats_linux.go | 24 +++++++++++-----------
  pkg/api/handlers/compat/images_prune.go           |  3 ++-
@@ -15,38 +13,10 @@ This reverts commit e24367aa14b7669d116a2a27ba12c69cbf51612b.
  pkg/api/handlers/compat/volumes.go                | 19 +++++++++--------
  pkg/api/handlers/swagger/models.go                |  8 ++++----
  pkg/api/handlers/swagger/responses.go             | 13 ++++++------
- 11 files changed, 63 insertions(+), 66 deletions(-)
+ 9 files changed, 60 insertions(+), 63 deletions(-)
 
-diff --git a/go.mod b/go.mod
-index f3820ed..852c36c 100644
---- a/go.mod
-+++ b/go.mod
-@@ -29,7 +29,7 @@ require (
- 	github.com/cyphar/filepath-securejoin v0.3.1
- 	github.com/digitalocean/go-qemu v0.0.0-20230711162256-2e3d0186973e
- 	github.com/docker/distribution v2.8.3+incompatible
--	github.com/docker/docker v27.1.1+incompatible
-+	github.com/docker/docker v26.1.4+incompatible
- 	github.com/docker/go-connections v0.5.0
- 	github.com/docker/go-plugins-helpers v0.0.0-20211224144127-6eecb7beb651
- 	github.com/docker/go-units v0.5.0
-diff --git a/go.sum b/go.sum
-index 4b83f1c..5331cfa 100644
---- a/go.sum
-+++ b/go.sum
-@@ -136,8 +136,8 @@ github.com/docker/cli v27.1.1+incompatible h1:goaZxOqs4QKxznZjjBWKONQci/MywhtRv2
- github.com/docker/cli v27.1.1+incompatible/go.mod h1:JLrzqnKDaYBop7H2jaqPtU4hHvMKP+vjCwu2uszcLI8=
- github.com/docker/distribution v2.8.3+incompatible h1:AtKxIZ36LoNK51+Z6RpzLpddBirtxJnzDrHLEKxTAYk=
- github.com/docker/distribution v2.8.3+incompatible/go.mod h1:J2gT2udsDAN96Uj4KfcMRqY0/ypR+oyYUYmja8H+y+w=
--github.com/docker/docker v27.1.1+incompatible h1:hO/M4MtV36kzKldqnA37IWhebRA+LnqqcqDja6kVaKY=
--github.com/docker/docker v27.1.1+incompatible/go.mod h1:eEKB0N0r5NX/I1kEveEz05bcu8tLC/8azJZsviup8Sk=
-+github.com/docker/docker v26.1.4+incompatible h1:vuTpXDuoga+Z38m1OZHzl7NKisKWaWlhjQk7IDPSLsU=
-+github.com/docker/docker v26.1.4+incompatible/go.mod h1:eEKB0N0r5NX/I1kEveEz05bcu8tLC/8azJZsviup8Sk=
- github.com/docker/docker-credential-helpers v0.8.2 h1:bX3YxiGzFP5sOXWc3bTPEXdEaZSeVMrFgOr3T+zrFAo=
- github.com/docker/docker-credential-helpers v0.8.2/go.mod h1:P3ci7E3lwkZg6XiHdRKft1KckHiO9a2rNtyFbZ/ry9M=
- github.com/docker/go-connections v0.5.0 h1:USnMq7hx7gwdVZq1L49hLXaFtUdTADjXGp+uj1Br63c=
 diff --git a/pkg/api/handlers/compat/containers.go b/pkg/api/handlers/compat/containers.go
-index bd883bf..3681b7a 100644
+index 706d2d9..f9d9f72 100644
 --- a/pkg/api/handlers/compat/containers.go
 +++ b/pkg/api/handlers/compat/containers.go
 @@ -393,13 +393,10 @@ func LibpodToContainer(l *libpod.Container, sz bool) (*handlers.Container, error
@@ -355,7 +325,7 @@ index 2402fe7..764e141 100644
 +	Networks map[string]docker.NetworkStats `json:"networks,omitempty"`
  }
 diff --git a/pkg/api/handlers/compat/volumes.go b/pkg/api/handlers/compat/volumes.go
-index 9431908..cf996a4 100644
+index 9ddda58..37eff3a 100644
 --- a/pkg/api/handlers/compat/volumes.go
 +++ b/pkg/api/handlers/compat/volumes.go
 @@ -19,7 +19,8 @@ import (
@@ -368,7 +338,7 @@ index 9431908..cf996a4 100644
  )
  
  func ListVolumes(w http.ResponseWriter, r *http.Request) {
-@@ -56,14 +57,14 @@ func ListVolumes(w http.ResponseWriter, r *http.Request) {
+@@ -56,7 +57,7 @@ func ListVolumes(w http.ResponseWriter, r *http.Request) {
  		utils.InternalServerError(w, err)
  		return
  	}
@@ -377,6 +347,7 @@ index 9431908..cf996a4 100644
  	for _, v := range vols {
  		mp, err := v.MountPoint()
  		if err != nil {
+@@ -66,7 +67,7 @@ func ListVolumes(w http.ResponseWriter, r *http.Request) {
  			utils.InternalServerError(w, err)
  			return
  		}
@@ -385,7 +356,7 @@ index 9431908..cf996a4 100644
  			Name:       v.Name(),
  			Driver:     v.Driver(),
  			Mountpoint: mp,
-@@ -74,7 +75,7 @@ func ListVolumes(w http.ResponseWriter, r *http.Request) {
+@@ -77,7 +78,7 @@ func ListVolumes(w http.ResponseWriter, r *http.Request) {
  		}
  		volumeConfigs = append(volumeConfigs, &config)
  	}
@@ -394,7 +365,7 @@ index 9431908..cf996a4 100644
  		Volumes:  volumeConfigs,
  		Warnings: []string{},
  	}
-@@ -95,7 +96,7 @@ func CreateVolume(w http.ResponseWriter, r *http.Request) {
+@@ -98,7 +99,7 @@ func CreateVolume(w http.ResponseWriter, r *http.Request) {
  		return
  	}
  	// decode params from body
@@ -403,7 +374,7 @@ index 9431908..cf996a4 100644
  	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
  		utils.Error(w, http.StatusInternalServerError, fmt.Errorf("Decode(): %w", err))
  		return
-@@ -122,7 +123,7 @@ func CreateVolume(w http.ResponseWriter, r *http.Request) {
+@@ -125,7 +126,7 @@ func CreateVolume(w http.ResponseWriter, r *http.Request) {
  			utils.InternalServerError(w, err)
  			return
  		}
@@ -412,7 +383,7 @@ index 9431908..cf996a4 100644
  			CreatedAt:  existingVolume.CreatedTime().Format(time.RFC3339),
  			Driver:     existingVolume.Driver(),
  			Labels:     existingVolume.Labels(),
-@@ -167,7 +168,7 @@ func CreateVolume(w http.ResponseWriter, r *http.Request) {
+@@ -170,7 +171,7 @@ func CreateVolume(w http.ResponseWriter, r *http.Request) {
  		utils.InternalServerError(w, err)
  		return
  	}
@@ -421,7 +392,7 @@ index 9431908..cf996a4 100644
  		Name:       config.Name,
  		Driver:     config.Driver,
  		Mountpoint: mp,
-@@ -197,7 +198,7 @@ func InspectVolume(w http.ResponseWriter, r *http.Request) {
+@@ -200,7 +201,7 @@ func InspectVolume(w http.ResponseWriter, r *http.Request) {
  		utils.InternalServerError(w, err)
  		return
  	}
@@ -430,7 +401,7 @@ index 9431908..cf996a4 100644
  		Name:       vol.Name(),
  		Driver:     vol.Driver(),
  		Mountpoint: mp,
-@@ -308,7 +309,7 @@ func PruneVolumes(w http.ResponseWriter, r *http.Request) {
+@@ -311,7 +312,7 @@ func PruneVolumes(w http.ResponseWriter, r *http.Request) {
  	}
  
  	payload := handlers.VolumesPruneReport{

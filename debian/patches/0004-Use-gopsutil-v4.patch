@@ -15,53 +15,53 @@ upgrade the gopsutil modules from v3 to v4 in Debian.
  4 files changed, 4 insertions(+), 4 deletions(-)
 
 diff --git a/cmd/podman/machine/init.go b/cmd/podman/machine/init.go
-index f284c7f..1188f73 100644
+index 69afdc0..7dc9bd4 100644
 --- a/cmd/podman/machine/init.go
 +++ b/cmd/podman/machine/init.go
-@@ -15,7 +15,7 @@ import (
+@@ -14,7 +14,7 @@ import (
  	"github.com/containers/podman/v5/pkg/machine/define"
  	"github.com/containers/podman/v5/pkg/machine/shim"
  	"github.com/containers/podman/v5/pkg/machine/vmconfigs"
--	"github.com/shirou/gopsutil/v3/mem"
+-	"github.com/shirou/gopsutil/v4/mem"
 +	"github.com/shirou/gopsutil/mem"
  	"github.com/sirupsen/logrus"
  	"github.com/spf13/cobra"
  )
 diff --git a/cmd/podman/machine/server9p.go b/cmd/podman/machine/server9p.go
-index d9206c1..a24158e 100644
+index dae39f7..a24158e 100644
 --- a/cmd/podman/machine/server9p.go
 +++ b/cmd/podman/machine/server9p.go
 @@ -11,7 +11,7 @@ import (
  	"github.com/containers/common/pkg/completion"
  	"github.com/containers/podman/v5/cmd/podman/registry"
  	"github.com/containers/podman/v5/pkg/fileserver"
--	psutil "github.com/shirou/gopsutil/v3/process"
+-	psutil "github.com/shirou/gopsutil/v4/process"
 +	psutil "github.com/shirou/gopsutil/process"
  	"github.com/sirupsen/logrus"
  	"github.com/spf13/cobra"
  )
 diff --git a/pkg/machine/e2e/init_test.go b/pkg/machine/e2e/init_test.go
-index 63c0336..86ec8b0 100644
+index 58fa3f8..86ec8b0 100644
 --- a/pkg/machine/e2e/init_test.go
 +++ b/pkg/machine/e2e/init_test.go
 @@ -15,7 +15,7 @@ import (
  	. "github.com/onsi/ginkgo/v2"
  	. "github.com/onsi/gomega"
  	. "github.com/onsi/gomega/gexec"
--	"github.com/shirou/gopsutil/v3/mem"
+-	"github.com/shirou/gopsutil/v4/mem"
 +	"github.com/shirou/gopsutil/mem"
  	"github.com/sirupsen/logrus"
  )
  
 diff --git a/pkg/machine/gvproxy_unix.go b/pkg/machine/gvproxy_unix.go
-index 20869d5..09f3858 100644
+index da76fc4..f5e2afd 100644
 --- a/pkg/machine/gvproxy_unix.go
 +++ b/pkg/machine/gvproxy_unix.go
-@@ -8,7 +8,7 @@ import (
- 	"syscall"
+@@ -9,7 +9,7 @@ import (
  	"time"
  
--	psutil "github.com/shirou/gopsutil/v3/process"
+ 	"github.com/containers/podman/v5/pkg/machine/define"
+-	psutil "github.com/shirou/gopsutil/v4/process"
 +	psutil "github.com/shirou/gopsutil/process"
  	"github.com/sirupsen/logrus"
  	"golang.org/x/sys/unix"
