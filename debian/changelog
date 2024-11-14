@@ -1,8 +1,13 @@
 podman (5.3.0+ds1-1) experimental; urgency=medium
 
   * New upstream release.
+  * Tighten build dependencies
+  * refresh patches
+  * build-depend on golang-github-kevinburke-ssh-config-dev
+  * Normalize fields with wrap-and-sort
+  * TestUnitDirs: Skip when CLONE_NEWUSER fails
 
- -- Reinhard Tartler <siretart@tauware.de>  Wed, 13 Nov 2024 16:58:07 -0500
+ -- Reinhard Tartler <siretart@tauware.de>  Thu, 14 Nov 2024 10:56:37 -0500
 
 podman (5.2.4+ds1-1) unstable; urgency=medium
 
