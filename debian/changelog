@@ -1,3 +1,9 @@
+podman (5.3.0+ds1-2) experimental; urgency=medium
+
+  * Merge in lost fixes to system tests from unstable
+
+ -- Reinhard Tartler <siretart@tauware.de>  Fri, 15 Nov 2024 11:51:57 -0500
+
 podman (5.3.0+ds1-1) experimental; urgency=medium
 
   * New upstream release.
