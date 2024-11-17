@@ -4,4 +4,4 @@ system-goimports.patch
 0004-Use-gopsutil-v4.patch
 0006-test-system-ignore-some-tests-that-are-broken-on-deb.patch
 0006-TestUnitDirs.patch
-0009-test-localsystem-skip-test-podman-network-reload.patch
+0009-system-tests-shell-completion.patch

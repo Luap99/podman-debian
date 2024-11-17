@@ -3,13 +3,12 @@ Date: Thu, 3 Oct 2024 07:18:40 -0400
 Subject: test/system: ignore some tests that are broken on debian
 
 ---
- test/e2e/logs_test.go           | 1 +
- test/e2e/top_test.go            | 5 +++++
- test/system/125-import.bats     | 2 +-
- test/system/160-volumes.bats    | 2 ++
- test/system/600-completion.bats | 4 ++++
- test/system/700-play.bats       | 3 +++
- 6 files changed, 16 insertions(+), 1 deletion(-)
+ test/e2e/logs_test.go        | 1 +
+ test/e2e/top_test.go         | 5 +++++
+ test/system/125-import.bats  | 2 +-
+ test/system/160-volumes.bats | 2 ++
+ test/system/700-play.bats    | 3 +++
+ 5 files changed, 12 insertions(+), 1 deletion(-)
 
 diff --git a/test/e2e/logs_test.go b/test/e2e/logs_test.go
 index 9d2d551..741959d 100644
@@ -72,28 +71,6 @@ index a80e615..46caacf 100644
  @test "podman --image-volume" {
      tmpdir=$PODMAN_TMPDIR/volume-test
      mkdir -p $tmpdir
-diff --git a/test/system/600-completion.bats b/test/system/600-completion.bats
-index 1f300b0..f8fb6c2 100644
---- a/test/system/600-completion.bats
-+++ b/test/system/600-completion.bats
-@@ -29,6 +29,8 @@ function _can_pause() {
-     return 0
- }
- 
-+# TODO: figure out why this fails in Debian
-+# bats test_tags=distro-integration, debian_ignore
- function check_shell_completion() {
-     local count=0
- 
-@@ -353,6 +355,8 @@ function _check_no_suggestions() {
-     done
- }
- 
-+# TODO: figure out why this fails in Debian
-+# bats test_tags=distro-integration, debian_ignore
- # bats test_tags=ci:parallel
- @test "podman shell completion for paths in container/image" {
-     skip_if_remote "mounting via remote does not work"
 diff --git a/test/system/700-play.bats b/test/system/700-play.bats
 index ce5011b..d597d03 100644
 --- a/test/system/700-play.bats
