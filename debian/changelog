@@ -1,8 +1,9 @@
 podman (5.3.1+ds1-1) unstable; urgency=medium
 
   * new upstream release
+  * autopkgtest/builtin-tests: disable to workaround #1088235
 
- -- Reinhard Tartler <siretart@tauware.de>  Fri, 22 Nov 2024 06:27:58 -0500
+ -- Reinhard Tartler <siretart@tauware.de>  Mon, 25 Nov 2024 11:26:43 -0500
 
 podman (5.3.0+ds1-3) unstable; urgency=medium
 
