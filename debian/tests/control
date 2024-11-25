@@ -39,12 +39,12 @@ Restrictions: allow-stderr,
               rw-build-tree,
               skippable
 
-# works locally for me, but appears to take too long for debci
+# Seem to run into https://bugs.debian.org/1088235
 # Tests: e2e
 # Architecture: amd64, arm64
 # Depends: @, @builddeps@, @recommends@, aardvark-dns, apache2-utils, netavark, iproute2, iptables, skopeo, gnupg2, jq, ncat
 # Restrictions: allow-stderr, flaky, isolation-machine, needs-internet
-
-Tests: builtin-tests
-Depends: @, @builddeps@, @recommends@
-Restrictions: allow-stderr, flaky, needs-root
+#
+# Tests: builtin-tests
+# Depends: @, @builddeps@, @recommends@
+# Restrictions: allow-stderr, flaky, needs-root
