@@ -1,3 +1,7 @@
+Tests: builtin-tests
+Depends: ca-certificates, passt, slirp4netns, uidmap, @, @builddeps@
+Restrictions: allow-stderr, needs-root
+
 Tests: podman-info
 Architecture: amd64
 Depends: @, @recommends@
