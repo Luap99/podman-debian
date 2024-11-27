@@ -44,12 +44,24 @@ Restrictions: allow-stderr,
               rw-build-tree,
               skippable
 
-# Seem to run into https://bugs.debian.org/1088235
-# Tests: e2e
-# Architecture: amd64, arm64
-# Depends: @, @builddeps@, @recommends@, aardvark-dns, apache2-utils, netavark, iproute2, iptables, skopeo, gnupg2, jq, ncat
-# Restrictions: allow-stderr, flaky, isolation-machine, needs-internet
-#
-# Tests: builtin-tests
-# Depends: @, @builddeps@, @recommends@
-# Restrictions: allow-stderr, flaky, needs-root
+# Do not add @recommends@, seem to run into https://bugs.debian.org/1088235
+Tests: localintegration-root
+Architecture: amd64
+Depends: aardvark-dns,
+         apache2-utils,
+         ca-certificates,
+         catatonit,
+         dbus-user-session,
+         gnupg2,
+         iproute2,
+         iptables,
+         jq,
+         ncat,
+         netavark,
+         passt,
+         skopeo,
+         slirp4netns,
+         uidmap,
+         @,
+         @builddeps@
+Restrictions: allow-stderr, isolation-machine, needs-internet, needs-root

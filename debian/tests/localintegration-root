@@ -1,0 +1,39 @@
+#!/bin/bash -ex
+
+# The podman e2e test suite is implemented in form of ginkgo tests
+
+export DH_GOLANG_BUILDPKG="github.com/containers/podman/test/e2e"
+export DH_GOLANG_INSTALL_ALL=1
+# export DH_VERBOSE=1
+
+# Given that we don't currently have a golang-github-containers-libpod-dev
+# package that would ship the sources to the tests, let's run them from the
+# source tree. However, we need to simulate an environment that ensures
+# to avoid downloading source from the internet and instead use the golang
+# packages from the distribution instead. For this, this script is copying
+# the invocation from `debian/rules`.
+# note that buildtags need to be kept in sync here
+
+BUILDTAGS="apparmor,seccomp,selinux,systemd,libsubid,cni"
+dh_auto_configure -O--buildsystem=golang -O--builddirectory=_build
+dh_auto_build -O--buildsystem=golang -O--builddirectory=_build --  -tags "${BUILDTAGS}"
+
+# use binaries built by the package
+export PODMAN_BINARY=/usr/bin/podman
+export PODMAN_REMOTE_BINARY=/usr/bin/podman-remote
+export QUADLET_BINARY=/usr/libexec/podman/quadlet
+
+# bindings tests need access to podman-registry
+PATH="$(pwd)/hack:${PATH}"
+export PATH
+
+# avoid accessing internet but use debian sources for gomodules
+export GO111MODULE=off
+export GOPATH="${PWD}/_build:/usr/share/gocode"
+export GOCACHE="${PWD}/_build/go-build"
+export GOPROXY="off"
+
+exec go run github.com/onsi/ginkgo/v2/ginkgo -p -vv --timeout 20m \
+     run --no-color --tags "${BUILDTAGS} remote" \
+     "_build/src/${DH_GOLANG_BUILDPKG}/."
+
