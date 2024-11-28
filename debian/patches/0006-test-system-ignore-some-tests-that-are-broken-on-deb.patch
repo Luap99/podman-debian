@@ -3,48 +3,11 @@ Date: Thu, 3 Oct 2024 07:18:40 -0400
 Subject: test/system: ignore some tests that are broken on debian
 
 ---
- test/e2e/logs_test.go        | 1 +
- test/e2e/top_test.go         | 5 +++++
  test/system/125-import.bats  | 2 +-
  test/system/160-volumes.bats | 2 ++
  test/system/700-play.bats    | 3 +++
- 5 files changed, 12 insertions(+), 1 deletion(-)
+ 3 files changed, 6 insertions(+), 1 deletion(-)
 
-diff --git a/test/e2e/logs_test.go b/test/e2e/logs_test.go
-index 9d2d551..741959d 100644
---- a/test/e2e/logs_test.go
-+++ b/test/e2e/logs_test.go
-@@ -602,6 +602,7 @@ var _ = Describe("Podman logs", func() {
- 	})
- 
- 	It("podman logs with non ASCII log tag succeeds with proper env", func() {
-+		Skip("Debian: TODO: find out why this fails")
- 		SkipIfJournaldUnavailable()
- 		cleanup := setLangEnv("en_US.UTF-8")
- 		if IsRemote() {
-diff --git a/test/e2e/top_test.go b/test/e2e/top_test.go
-index 2fbac24..067860b 100644
---- a/test/e2e/top_test.go
-+++ b/test/e2e/top_test.go
-@@ -66,6 +66,9 @@ var _ = Describe("Podman top", func() {
- 	})
- 
- 	It("podman top with options", func() {
-+		// maybe fedora has a different ps?
-+		Skip("Debian-ignore: ps(1) failed with exit code 1: error: unsupported option (BSD syntax)")
-+
- 		session := podmanTest.Podman([]string{"run", "-d", ALPINE, "top", "-d", "2"})
- 		session.WaitWithDefaultTimeout()
- 		Expect(session).Should(ExitCleanly())
-@@ -162,6 +165,8 @@ var _ = Describe("Podman top", func() {
- 	})
- 
- 	It("podman top on privileged container", func() {
-+		Skip("Debian-ignore: ps(1) different in Debian?")
-+
- 		session := podmanTest.Podman([]string{"run", "--privileged", "-d", ALPINE, "top"})
- 		session.WaitWithDefaultTimeout()
- 		Expect(session).Should(ExitCleanly())
 diff --git a/test/system/125-import.bats b/test/system/125-import.bats
 index 75409e7..7fbb126 100644
 --- a/test/system/125-import.bats
