@@ -1,3 +1,15 @@
+podman (5.3.1+ds1-2) unstable; urgency=medium
+
+  * Remove a number of redundant build-dependencies
+  * autopkgtest:
+     - Restrict qemu tests to amd64
+     - Enable built-in tests
+     - Enable e2e tests
+     - Split out and expand patches for e2e tests
+  * Fix testdata installation
+
+ -- Reinhard Tartler <siretart@tauware.de>  Sat, 30 Nov 2024 17:49:45 -0500
+
 podman (5.3.1+ds1-1) unstable; urgency=medium
 
   * new upstream release
