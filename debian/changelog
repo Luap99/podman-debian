@@ -1,3 +1,10 @@
+podman (5.3.1+ds1-3) unstable; urgency=medium
+
+  * e2e integration tests: double the default timeout
+  * builtin-tests: Set buildtags to expand test coverage
+
+ -- Reinhard Tartler <siretart@tauware.de>  Sun, 01 Dec 2024 08:53:39 -0500
+
 podman (5.3.1+ds1-2) unstable; urgency=medium
 
   * Remove a number of redundant build-dependencies
