@@ -1,0 +1,21 @@
+From: Reinhard Tartler <siretart@tauware.de>
+Date: Sun, 1 Dec 2024 08:30:13 -0500
+Subject: e2e integration tests: double the default timeout
+
+---
+ test/utils/utils.go | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/test/utils/utils.go b/test/utils/utils.go
+index 30a0107..08286da 100644
+--- a/test/utils/utils.go
++++ b/test/utils/utils.go
+@@ -47,7 +47,7 @@ func (n NetworkBackend) ToString() string {
+ }
+ 
+ var (
+-	DefaultWaitTimeout   = 90
++	DefaultWaitTimeout   = 180
+ 	OSReleasePath        = "/etc/os-release"
+ 	ProcessOneCgroupPath = "/proc/1/cgroup"
+ )

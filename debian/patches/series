@@ -6,3 +6,4 @@ system-goimports.patch
 0006-TestUnitDirs.patch
 0009-system-tests-shell-completion.patch
 0007-e2e-ignore-tests.patch
+0009-e2e-integration-tests-double-the-default-timeout.patch
