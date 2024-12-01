@@ -1,9 +1,13 @@
 #!/bin/sh -ex
 
 export DH_GOLANG_BUILDPKG="github.com/containers/podman/cmd/podman"
+BUILDTAGS="apparmor,seccomp,selinux,systemd,libsubid,cni"
 
 dh_auto_configure -O--buildsystem=golang -O--builddirectory=_build
-dh_auto_build -O--buildsystem=golang -O--builddirectory=_build
+dh_auto_build -O--buildsystem=golang -O--builddirectory=_build -- \
+              -tags "${BUILDTAGS}"
 
-dh_auto_test -O--buildsystem=golang -O--builddirectory=_build --no-parallel -- -timeout 30m
+dh_auto_test -O--buildsystem=golang -O--builddirectory=_build --no-parallel -- \
+             -tags "${BUILDTAGS}" -timeout 30m
+
 
