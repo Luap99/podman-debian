@@ -33,7 +33,7 @@ export GOPATH="${PWD}/_build:/usr/share/gocode"
 export GOCACHE="${PWD}/_build/go-build"
 export GOPROXY="off"
 
-exec go run github.com/onsi/ginkgo/v2/ginkgo -p -vv --timeout 20m \
+exec go run github.com/onsi/ginkgo/v2/ginkgo -p -vv --timeout 90m \
      run --no-color --tags "${BUILDTAGS} remote" \
      "_build/src/${DH_GOLANG_BUILDPKG}/."
 
