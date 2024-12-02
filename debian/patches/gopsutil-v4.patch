@@ -1,6 +1,6 @@
 From: Guillem Jover <gjover@sipwise.com>
 Date: Tue, 1 Oct 2024 22:48:05 +0200
-Subject: Do not hardcode gopsutil v3
+Subject: Do not hardcode gopsutil v4
 
 Forwarded: Not-needed
 Debian-Bug: https://bugs.debian.org/1083117
@@ -41,7 +41,7 @@ index dae39f7..a24158e 100644
  	"github.com/spf13/cobra"
  )
 diff --git a/pkg/machine/e2e/init_test.go b/pkg/machine/e2e/init_test.go
-index 58fa3f8..86ec8b0 100644
+index 7b5e35e..0ecaf72 100644
 --- a/pkg/machine/e2e/init_test.go
 +++ b/pkg/machine/e2e/init_test.go
 @@ -15,7 +15,7 @@ import (
