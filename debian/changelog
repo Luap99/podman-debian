@@ -1,3 +1,10 @@
+podman (5.3.1+ds1-4) unstable; urgency=medium
+
+  * autopkgtest/e2e: Bump total timeout 20m -> 90m
+  * Rename patches
+
+ -- Reinhard Tartler <siretart@tauware.de>  Mon, 02 Dec 2024 09:00:49 -0500
+
 podman (5.3.1+ds1-3) unstable; urgency=medium
 
   * e2e integration tests: double the default timeout
