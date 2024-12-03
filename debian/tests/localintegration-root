@@ -14,7 +14,7 @@ export DH_GOLANG_INSTALL_ALL=1
 # the invocation from `debian/rules`.
 # note that buildtags need to be kept in sync here
 
-BUILDTAGS="apparmor,seccomp,selinux,systemd,libsubid,cni"
+BUILDTAGS="apparmor seccomp selinux systemd libsubid cni"
 dh_auto_configure -O--buildsystem=golang -O--builddirectory=_build
 dh_auto_build -O--buildsystem=golang -O--builddirectory=_build --  -tags "${BUILDTAGS}"
 
@@ -32,8 +32,11 @@ export GO111MODULE=off
 export GOPATH="${PWD}/_build:/usr/share/gocode"
 export GOCACHE="${PWD}/_build/go-build"
 export GOPROXY="off"
+GINKGO="go run github.com/onsi/ginkgo/v2/ginkgo"
+GINKGO_FLAGS="-p -vv --timeout 90m --flake-attempts 3"
+EXTRA_FLAGS=${EXTRA_FLAGS:-}
 
-exec go run github.com/onsi/ginkgo/v2/ginkgo -p -vv --timeout 90m --flake-attempts 3 \
-     run --no-color --tags "${BUILDTAGS} remote" \
+exec ${GINKGO} ${GINKGO_FLAGS} ${EXTRA_FLAGS} -tags "${BUILDTAGS} remote"  \
+     run --no-color  \
      "_build/src/${DH_GOLANG_BUILDPKG}/."
 
