@@ -65,3 +65,24 @@ Depends: aardvark-dns,
          @,
          @builddeps@
 Restrictions: allow-stderr, isolation-machine, needs-internet, needs-root
+
+Tests: localintegration-nonroot
+Architecture: amd64
+Depends: aardvark-dns,
+         apache2-utils,
+         ca-certificates,
+         catatonit,
+         dbus-user-session,
+         gnupg2,
+         iproute2,
+         iptables,
+         jq,
+         ncat,
+         netavark,
+         passt,
+         skopeo,
+         slirp4netns,
+         uidmap,
+         @,
+         @builddeps@
+Restrictions: allow-stderr, isolation-machine, needs-internet
