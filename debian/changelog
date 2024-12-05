@@ -1,3 +1,11 @@
+podman (5.3.1+ds1-5) unstable; urgency=medium
+
+  * Automatically retry flaky tests
+  * Pass BUILDTAGS with spaces instead of ','
+  * Add rootless integration tests
+
+ -- Reinhard Tartler <siretart@tauware.de>  Thu, 05 Dec 2024 09:46:34 -0500
+
 podman (5.3.1+ds1-4) unstable; urgency=medium
 
   * autopkgtest/e2e: Bump total timeout 20m -> 90m
