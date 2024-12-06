@@ -34,9 +34,9 @@ export GOCACHE="${PWD}/_build/go-build"
 export GOPROXY="off"
 GINKGO="go run github.com/onsi/ginkgo/v2/ginkgo"
 GINKGO_FLAGS="-p -vv --timeout 90m --flake-attempts 3"
-EXTRA_FLAGS=${EXTRA_FLAGS:-}
+GINKGO_EXTRA_FLAGS=${GINKGO_EXTRA_FLAGS:-}
 
-exec ${GINKGO} ${GINKGO_FLAGS} ${EXTRA_FLAGS} -tags "${BUILDTAGS} remote"  \
+exec ${GINKGO} ${GINKGO_FLAGS} ${GINKGO_EXTRA_FLAGS} -tags "${BUILDTAGS} remote"  \
      run --no-color  \
      "_build/src/${DH_GOLANG_BUILDPKG}/."
 
