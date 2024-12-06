@@ -1,3 +1,10 @@
+podman (5.3.1+ds1-6) unstable; urgency=medium
+
+  * localintegration tests: Rename helper variable to GINKGO_EXTRA_FLAGS
+  * integration-tests: Ignore os.Lchown failures
+
+ -- Reinhard Tartler <siretart@tauware.de>  Fri, 06 Dec 2024 08:13:07 -0500
+
 podman (5.3.1+ds1-5) unstable; urgency=medium
 
   * Automatically retry flaky tests
