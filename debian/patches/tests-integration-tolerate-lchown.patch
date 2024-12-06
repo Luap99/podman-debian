@@ -1,0 +1,27 @@
+From: Reinhard Tartler <siretart@tauware.de>
+Date: Fri, 6 Dec 2024 08:12:03 -0500
+Subject: integration-tests: Ignore os.Lchown failures
+
+When this chown fails, it is more indicative of an issue with the
+test environemnt rather than with the code under test.
+
+I believe I've seen it in some interation on my laptop, but I am
+haven't been able to determine the exact conditions. It does appear
+to happen quite reliably on debci, though
+---
+ test/e2e/common_test.go | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/test/e2e/common_test.go b/test/e2e/common_test.go
+index 61fed90..6d938cf 100644
+--- a/test/e2e/common_test.go
++++ b/test/e2e/common_test.go
+@@ -1490,7 +1490,7 @@ func CopyDirectory(srcDir, dest string) error {
+ 		}
+ 
+ 		if err := os.Lchown(destPath, int(stat.Uid), int(stat.Gid)); err != nil {
+-			return err
++			GinkgoWriter.Printf("Warning: Failed to chown %s to uid=%d, gid=%d: %v\n", destPath, int(stat.Uid), int(stat.Gid), err)
+ 		}
+ 
+ 		fInfo, err := entry.Info()
