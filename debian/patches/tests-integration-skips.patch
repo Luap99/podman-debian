@@ -4,29 +4,14 @@ Subject: e2e-test: Skip tests that don't currently work
 
 These failures need to be investigated more closely
 ---
- test/e2e/containers_conf_test.go   | 3 +++
  test/e2e/logs_test.go              | 1 +
  test/e2e/run_apparmor_test.go      | 5 +++++
  test/e2e/run_networking_test.go    | 3 ++-
  test/e2e/run_test.go               | 3 ++-
  test/e2e/system_dial_stdio_test.go | 1 +
  test/e2e/top_test.go               | 5 +++++
- 7 files changed, 19 insertions(+), 2 deletions(-)
+ 6 files changed, 16 insertions(+), 2 deletions(-)
 
-diff --git a/test/e2e/containers_conf_test.go b/test/e2e/containers_conf_test.go
-index 94e6146..7aea285 100644
---- a/test/e2e/containers_conf_test.go
-+++ b/test/e2e/containers_conf_test.go
-@@ -588,6 +588,9 @@ var _ = Describe("Verify podman containers.conf usage", func() {
- 	It("set .engine.remote=true", func() {
- 		SkipIfRemote("only meaningful when running ABI/local")
- 
-+		// TODO: why does this fail in debian?
-+		Skip("Failing in debian")
-+
- 		// Need to restore CONTAINERS_CONF or AfterEach() will fail
- 		if path, found := os.LookupEnv("CONTAINERS_CONF"); found {
- 			defer os.Setenv("CONTAINERS_CONF", path)
 diff --git a/test/e2e/logs_test.go b/test/e2e/logs_test.go
 index 9d2d551..741959d 100644
 --- a/test/e2e/logs_test.go
