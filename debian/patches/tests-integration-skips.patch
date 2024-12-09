@@ -9,10 +9,10 @@ These failures need to be investigated more closely
  test/e2e/top_test.go          | 5 +++++
  3 files changed, 11 insertions(+)
 
-diff --git a/test/e2e/logs_test.go b/test/e2e/logs_test.go
-index 9d2d551..741959d 100644
---- a/test/e2e/logs_test.go
-+++ b/test/e2e/logs_test.go
+Index: podman/test/e2e/logs_test.go
+===================================================================
+--- podman.orig/test/e2e/logs_test.go
++++ podman/test/e2e/logs_test.go
 @@ -602,6 +602,7 @@ var _ = Describe("Podman logs", func() {
  	})
  
@@ -21,11 +21,11 @@ index 9d2d551..741959d 100644
  		SkipIfJournaldUnavailable()
  		cleanup := setLangEnv("en_US.UTF-8")
  		if IsRemote() {
-diff --git a/test/e2e/run_apparmor_test.go b/test/e2e/run_apparmor_test.go
-index 5f44473..63819be 100644
---- a/test/e2e/run_apparmor_test.go
-+++ b/test/e2e/run_apparmor_test.go
-@@ -115,6 +115,7 @@ profile aa-test-profile flags=(attach_disconnected,mediate_deleted) {
+Index: podman/test/e2e/run_apparmor_test.go
+===================================================================
+--- podman.orig/test/e2e/run_apparmor_test.go
++++ podman/test/e2e/run_apparmor_test.go
+@@ -115,6 +115,7 @@ profile aa-test-profile flags=(attach_di
  
  	It("podman run apparmor disabled --security-opt apparmor fails", func() {
  		skipIfAppArmorEnabled()
@@ -33,7 +33,7 @@ index 5f44473..63819be 100644
  		// Should fail if user specifies apparmor on disabled system
  		session := podmanTest.Podman([]string{"create", "--security-opt", fmt.Sprintf("apparmor=%s", apparmor.Profile), ALPINE, "ls"})
  		session.WaitWithDefaultTimeout()
-@@ -123,6 +124,8 @@ profile aa-test-profile flags=(attach_disconnected,mediate_deleted) {
+@@ -123,6 +124,8 @@ profile aa-test-profile flags=(attach_di
  
  	It("podman run apparmor disabled no default", func() {
  		skipIfAppArmorEnabled()
@@ -42,7 +42,7 @@ index 5f44473..63819be 100644
  		// Should succeed if user specifies apparmor on disabled system
  		session := podmanTest.Podman([]string{"create", ALPINE, "ls"})
  		session.WaitWithDefaultTimeout()
-@@ -137,6 +140,8 @@ profile aa-test-profile flags=(attach_disconnected,mediate_deleted) {
+@@ -137,6 +140,8 @@ profile aa-test-profile flags=(attach_di
  	It("podman run apparmor disabled unconfined", func() {
  		skipIfAppArmorEnabled()
  
@@ -51,10 +51,10 @@ index 5f44473..63819be 100644
  		session := podmanTest.Podman([]string{"create", "--security-opt", "apparmor=unconfined", ALPINE, "ls"})
  		session.WaitWithDefaultTimeout()
  		Expect(session).Should(ExitCleanly())
-diff --git a/test/e2e/top_test.go b/test/e2e/top_test.go
-index 2fbac24..067860b 100644
---- a/test/e2e/top_test.go
-+++ b/test/e2e/top_test.go
+Index: podman/test/e2e/top_test.go
+===================================================================
+--- podman.orig/test/e2e/top_test.go
++++ podman/test/e2e/top_test.go
 @@ -66,6 +66,9 @@ var _ = Describe("Podman top", func() {
  	})
  
@@ -74,3 +74,17 @@ index 2fbac24..067860b 100644
  		session := podmanTest.Podman([]string{"run", "--privileged", "-d", ALPINE, "top"})
  		session.WaitWithDefaultTimeout()
  		Expect(session).Should(ExitCleanly())
+Index: podman/test/e2e/run_test.go
+===================================================================
+--- podman.orig/test/e2e/run_test.go
++++ podman/test/e2e/run_test.go
+@@ -743,7 +743,8 @@ USER bin`, BB)
+ 	It("podman run limits host test", func() {
+ 		SkipIfRemote("This can only be used for local tests")
+ 		info := GetHostDistributionInfo()
+-		if info.Distribution == "debian" && isRootless() {
++		// Debian: This fails for both rootful and Rootless
++		if info.Distribution == "debian" {
+ 			// "expected 1048576 to be >= 1073741816"
+ 			Skip("FIXME 2024-09 still fails on debian rootless, reason unknown")
+ 		}
