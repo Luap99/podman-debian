@@ -18,6 +18,9 @@ BUILDTAGS="apparmor seccomp selinux systemd libsubid cni"
 dh_auto_configure -O--buildsystem=golang -O--builddirectory=_build
 dh_auto_build -O--buildsystem=golang -O--builddirectory=_build --  -tags "${BUILDTAGS}"
 
+# cf. https://github.com/containers/podman/issues/24802#issuecomment-2527979071
+chown -R "$(id -u):$(id -g)" _build
+
 # use binaries built by the package
 export PODMAN_BINARY=/usr/bin/podman
 export PODMAN_REMOTE_BINARY=/usr/bin/podman-remote

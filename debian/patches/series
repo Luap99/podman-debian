@@ -5,4 +5,3 @@ gopsutil-v4.patch
 tests-unit-skips.patch
 tests-system-skips.patch
 tests-integration-skips.patch
-tests-integration-tolerate-lchown.patch
