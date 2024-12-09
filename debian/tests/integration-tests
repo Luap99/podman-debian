@@ -1,7 +1,19 @@
 #!/bin/bash -ex
 
-# The podman e2e test suite is implemented in form of ginkgo tests
+# some integration tests get confused by a running podman service
+if [ "$(id -u)" = "0" ]; then
+    systemctl stop podman.service
+    systemctl stop podman.socket
+    systemctl mask podman.service
+    systemctl mask podman.socket
+else
+    systemctl stop --user podman.service
+    systemctl stop --user podman.socket
+    systemctl mask --user podman.service
+    systemctl mask --user podman.socket
+fi
 
+# The podman e2e test suite is implemented in form of ginkgo tests
 export DH_GOLANG_BUILDPKG="github.com/containers/podman/test/e2e"
 export DH_GOLANG_INSTALL_ALL=1
 # export DH_VERBOSE=1

@@ -4,26 +4,11 @@ Subject: e2e-test: Skip tests that don't currently work
 
 These failures need to be investigated more closely
 ---
- test/e2e/containers_conf_test.go   | 1 +
- test/e2e/logs_test.go              | 1 +
- test/e2e/run_apparmor_test.go      | 5 +++++
- test/e2e/run_networking_test.go    | 1 +
- test/e2e/system_dial_stdio_test.go | 1 +
- test/e2e/top_test.go               | 5 +++++
- 6 files changed, 14 insertions(+)
+ test/e2e/logs_test.go         | 1 +
+ test/e2e/run_apparmor_test.go | 5 +++++
+ test/e2e/top_test.go          | 5 +++++
+ 3 files changed, 11 insertions(+)
 
-diff --git a/test/e2e/containers_conf_test.go b/test/e2e/containers_conf_test.go
-index 94e6146..a2fd2ca 100644
---- a/test/e2e/containers_conf_test.go
-+++ b/test/e2e/containers_conf_test.go
-@@ -587,6 +587,7 @@ var _ = Describe("Verify podman containers.conf usage", func() {
- 
- 	It("set .engine.remote=true", func() {
- 		SkipIfRemote("only meaningful when running ABI/local")
-+		Skip("Debian: cf. https://github.com/containers/podman/issues/24803")
- 
- 		// Need to restore CONTAINERS_CONF or AfterEach() will fail
- 		if path, found := os.LookupEnv("CONTAINERS_CONF"); found {
 diff --git a/test/e2e/logs_test.go b/test/e2e/logs_test.go
 index 9d2d551..741959d 100644
 --- a/test/e2e/logs_test.go
@@ -66,30 +51,6 @@ index 5f44473..63819be 100644
  		session := podmanTest.Podman([]string{"create", "--security-opt", "apparmor=unconfined", ALPINE, "ls"})
  		session.WaitWithDefaultTimeout()
  		Expect(session).Should(ExitCleanly())
-diff --git a/test/e2e/run_networking_test.go b/test/e2e/run_networking_test.go
-index 9b984ee..b8f6a6f 100644
---- a/test/e2e/run_networking_test.go
-+++ b/test/e2e/run_networking_test.go
-@@ -927,6 +927,7 @@ EXPOSE 2004-2005/tcp`, ALPINE)
- 		Expect(inspectOut[0].NetworkSettings).To(HaveField("MacAddress", "46:7f:45:6e:4f:c8"))
- 		Expect(inspectOut[0].NetworkSettings.AdditionalMacAddresses).To(HaveLen(1))
- 		Expect(inspectOut[0].NetworkSettings.AdditionalMacAddresses[0]).To(Equal("56:6e:35:5d:3e:a8"))
-+		// TODO: why is this empty in Debian?
- 		Expect(inspectOut[0].NetworkSettings).To(HaveField("Gateway", "10.25.40.0"))
- 
- 	}
-diff --git a/test/e2e/system_dial_stdio_test.go b/test/e2e/system_dial_stdio_test.go
-index 7c278f2..7e2d7c9 100644
---- a/test/e2e/system_dial_stdio_test.go
-+++ b/test/e2e/system_dial_stdio_test.go
-@@ -21,6 +21,7 @@ var _ = Describe("podman system dial-stdio", func() {
- 		if IsRemote() {
- 			Skip("this test is only for non-remote")
- 		}
-+		Skip("Debian: cf. https://github.com/containers/podman/issues/24803")
- 		session := podmanTest.Podman([]string{"system", "dial-stdio"})
- 		session.WaitWithDefaultTimeout()
- 		Expect(session).Should(ExitWithError(125, "Error: failed to open connection to podman"))
 diff --git a/test/e2e/top_test.go b/test/e2e/top_test.go
 index 2fbac24..067860b 100644
 --- a/test/e2e/top_test.go
