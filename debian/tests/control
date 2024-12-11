@@ -86,4 +86,4 @@ Depends: aardvark-dns,
          uidmap,
          @,
          @builddeps@
-Restrictions: allow-stderr, isolation-machine, needs-internet, rw-build-tree
+Restrictions: allow-stderr, isolation-machine, needs-internet, rw-build-tree, needs-sudo
