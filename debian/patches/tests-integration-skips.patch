@@ -4,28 +4,15 @@ Subject: e2e-test: Skip tests that don't currently work
 
 These failures need to be investigated more closely
 ---
- test/e2e/logs_test.go         | 1 +
  test/e2e/run_apparmor_test.go | 5 +++++
- test/e2e/top_test.go          | 5 +++++
- 3 files changed, 11 insertions(+)
+ test/e2e/run_test.go          | 3 ++-
+ 2 files changed, 7 insertions(+), 1 deletion(-)
 
-Index: podman/test/e2e/logs_test.go
-===================================================================
---- podman.orig/test/e2e/logs_test.go
-+++ podman/test/e2e/logs_test.go
-@@ -602,6 +602,7 @@ var _ = Describe("Podman logs", func() {
- 	})
- 
- 	It("podman logs with non ASCII log tag succeeds with proper env", func() {
-+		Skip("Debian: TODO: find out why this fails")
- 		SkipIfJournaldUnavailable()
- 		cleanup := setLangEnv("en_US.UTF-8")
- 		if IsRemote() {
-Index: podman/test/e2e/run_apparmor_test.go
-===================================================================
---- podman.orig/test/e2e/run_apparmor_test.go
-+++ podman/test/e2e/run_apparmor_test.go
-@@ -115,6 +115,7 @@ profile aa-test-profile flags=(attach_di
+diff --git a/test/e2e/run_apparmor_test.go b/test/e2e/run_apparmor_test.go
+index 5f44473..63819be 100644
+--- a/test/e2e/run_apparmor_test.go
++++ b/test/e2e/run_apparmor_test.go
+@@ -115,6 +115,7 @@ profile aa-test-profile flags=(attach_disconnected,mediate_deleted) {
  
  	It("podman run apparmor disabled --security-opt apparmor fails", func() {
  		skipIfAppArmorEnabled()
@@ -33,7 +20,7 @@ Index: podman/test/e2e/run_apparmor_test.go
  		// Should fail if user specifies apparmor on disabled system
  		session := podmanTest.Podman([]string{"create", "--security-opt", fmt.Sprintf("apparmor=%s", apparmor.Profile), ALPINE, "ls"})
  		session.WaitWithDefaultTimeout()
-@@ -123,6 +124,8 @@ profile aa-test-profile flags=(attach_di
+@@ -123,6 +124,8 @@ profile aa-test-profile flags=(attach_disconnected,mediate_deleted) {
  
  	It("podman run apparmor disabled no default", func() {
  		skipIfAppArmorEnabled()
@@ -42,7 +29,7 @@ Index: podman/test/e2e/run_apparmor_test.go
  		// Should succeed if user specifies apparmor on disabled system
  		session := podmanTest.Podman([]string{"create", ALPINE, "ls"})
  		session.WaitWithDefaultTimeout()
-@@ -137,6 +140,8 @@ profile aa-test-profile flags=(attach_di
+@@ -137,6 +140,8 @@ profile aa-test-profile flags=(attach_disconnected,mediate_deleted) {
  	It("podman run apparmor disabled unconfined", func() {
  		skipIfAppArmorEnabled()
  
@@ -51,33 +38,10 @@ Index: podman/test/e2e/run_apparmor_test.go
  		session := podmanTest.Podman([]string{"create", "--security-opt", "apparmor=unconfined", ALPINE, "ls"})
  		session.WaitWithDefaultTimeout()
  		Expect(session).Should(ExitCleanly())
-Index: podman/test/e2e/top_test.go
-===================================================================
---- podman.orig/test/e2e/top_test.go
-+++ podman/test/e2e/top_test.go
-@@ -66,6 +66,9 @@ var _ = Describe("Podman top", func() {
- 	})
- 
- 	It("podman top with options", func() {
-+		// maybe fedora has a different ps?
-+		Skip("Debian-ignore: ps(1) failed with exit code 1: error: unsupported option (BSD syntax)")
-+
- 		session := podmanTest.Podman([]string{"run", "-d", ALPINE, "top", "-d", "2"})
- 		session.WaitWithDefaultTimeout()
- 		Expect(session).Should(ExitCleanly())
-@@ -162,6 +165,8 @@ var _ = Describe("Podman top", func() {
- 	})
- 
- 	It("podman top on privileged container", func() {
-+		Skip("Debian-ignore: ps(1) different in Debian?")
-+
- 		session := podmanTest.Podman([]string{"run", "--privileged", "-d", ALPINE, "top"})
- 		session.WaitWithDefaultTimeout()
- 		Expect(session).Should(ExitCleanly())
-Index: podman/test/e2e/run_test.go
-===================================================================
---- podman.orig/test/e2e/run_test.go
-+++ podman/test/e2e/run_test.go
+diff --git a/test/e2e/run_test.go b/test/e2e/run_test.go
+index b7ca4c7..9be0a0e 100644
+--- a/test/e2e/run_test.go
++++ b/test/e2e/run_test.go
 @@ -743,7 +743,8 @@ USER bin`, BB)
  	It("podman run limits host test", func() {
  		SkipIfRemote("This can only be used for local tests")
