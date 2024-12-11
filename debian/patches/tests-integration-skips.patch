@@ -4,40 +4,9 @@ Subject: e2e-test: Skip tests that don't currently work
 
 These failures need to be investigated more closely
 ---
- test/e2e/run_apparmor_test.go | 5 +++++
- test/e2e/run_test.go          | 3 ++-
- 2 files changed, 7 insertions(+), 1 deletion(-)
+ test/e2e/run_test.go | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
 
-diff --git a/test/e2e/run_apparmor_test.go b/test/e2e/run_apparmor_test.go
-index 5f44473..63819be 100644
---- a/test/e2e/run_apparmor_test.go
-+++ b/test/e2e/run_apparmor_test.go
-@@ -115,6 +115,7 @@ profile aa-test-profile flags=(attach_disconnected,mediate_deleted) {
- 
- 	It("podman run apparmor disabled --security-opt apparmor fails", func() {
- 		skipIfAppArmorEnabled()
-+		Skip("TODO: why does this fail in Debian?")
- 		// Should fail if user specifies apparmor on disabled system
- 		session := podmanTest.Podman([]string{"create", "--security-opt", fmt.Sprintf("apparmor=%s", apparmor.Profile), ALPINE, "ls"})
- 		session.WaitWithDefaultTimeout()
-@@ -123,6 +124,8 @@ profile aa-test-profile flags=(attach_disconnected,mediate_deleted) {
- 
- 	It("podman run apparmor disabled no default", func() {
- 		skipIfAppArmorEnabled()
-+		Skip("TODO: why does this fail in Debian?")
-+
- 		// Should succeed if user specifies apparmor on disabled system
- 		session := podmanTest.Podman([]string{"create", ALPINE, "ls"})
- 		session.WaitWithDefaultTimeout()
-@@ -137,6 +140,8 @@ profile aa-test-profile flags=(attach_disconnected,mediate_deleted) {
- 	It("podman run apparmor disabled unconfined", func() {
- 		skipIfAppArmorEnabled()
- 
-+		Skip("TODO: why does this fail in Debian?")
-+
- 		session := podmanTest.Podman([]string{"create", "--security-opt", "apparmor=unconfined", ALPINE, "ls"})
- 		session.WaitWithDefaultTimeout()
- 		Expect(session).Should(ExitCleanly())
 diff --git a/test/e2e/run_test.go b/test/e2e/run_test.go
 index b7ca4c7..9be0a0e 100644
 --- a/test/e2e/run_test.go
