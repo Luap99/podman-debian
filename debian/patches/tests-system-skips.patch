@@ -3,11 +3,8 @@ Date: Thu, 3 Oct 2024 07:18:40 -0400
 Subject: test/system: Skip some system tests that fail in Debian
 
 ---
- test/system/125-import.bats     |  2 +-
- test/system/160-volumes.bats    |  2 ++
- test/system/600-completion.bats | 10 +++++++---
- test/system/700-play.bats       |  3 +++
- 4 files changed, 13 insertions(+), 4 deletions(-)
+ test/system/125-import.bats | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/test/system/125-import.bats b/test/system/125-import.bats
 index 75409e7..7fbb126 100644
@@ -22,58 +19,3 @@ index 75409e7..7fbb126 100644
  @test "podman export, alter tarball, re-import" {
      # FIXME: #21373 - tar < 1.35 is broken.
      # Remove this skip once all VMs are updated to 1.35.2 or above
-diff --git a/test/system/160-volumes.bats b/test/system/160-volumes.bats
-index a80e615..46caacf 100644
---- a/test/system/160-volumes.bats
-+++ b/test/system/160-volumes.bats
-@@ -508,6 +508,8 @@ NeedsChown    | true
-     fi
- }
- 
-+## hit by https://unix.stackexchange.com/questions/256920/stat-f-show-a-ext4-file-system-type-as-ext2-ext3
-+# bats test_tags=distro-integration, debian_ignore
- @test "podman --image-volume" {
-     tmpdir=$PODMAN_TMPDIR/volume-test
-     mkdir -p $tmpdir
-diff --git a/test/system/600-completion.bats b/test/system/600-completion.bats
-index 1f300b0..8fec431 100644
---- a/test/system/600-completion.bats
-+++ b/test/system/600-completion.bats
-@@ -261,8 +261,9 @@ function _check_no_suggestions() {
-     fi
- }
- 
--
--# bats test_tags=ci:parallel
-+# TODO: this fails in debian with:
-+# FAIL: image trust set: No REGISTRIES found in suggestions
-+# bats test_tags=ci:parallel, debian_ignore
- @test "podman shell completion test" {
- 
-     random_container_name="c-$(safename)"
-@@ -353,7 +354,10 @@ function _check_no_suggestions() {
-     done
- }
- 
--# bats test_tags=ci:parallel
-+# TODO: figure out why this fails in Debian
-+# Fails with:
-+# quay.io/libpod/testimage:20241011: image not known
-+# bats test_tags=ci:parallel, debian_ignore
- @test "podman shell completion for paths in container/image" {
-     skip_if_remote "mounting via remote does not work"
-     for cmd in create run; do
-diff --git a/test/system/700-play.bats b/test/system/700-play.bats
-index ce5011b..d597d03 100644
---- a/test/system/700-play.bats
-+++ b/test/system/700-play.bats
-@@ -953,6 +953,9 @@ EOF
- 
- # CANNOT BE PARALLELIZED (YET): buildah#5674, parallel builds fail
- # ...workaround is --layers=false, but there's no way to do that in kube
-+# TODO: figure out why this fails in Debian
-+# Fails with Error: short-name \"userimage-t668-8uxtf4bf\" did not resolve to an alias and no unqualified-search registries are defined in \"/etc/containers/registries.conf\"
-+# bats test_tags=distro-integration, debian_ignore
- @test "podman play --build private registry" {
-     skip_if_remote "--build is not supported in context remote"
- 

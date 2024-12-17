@@ -1,0 +1,54 @@
+From: Paul Holzinger <git@holzinger.dev>
+Date: Tue, 17 Dec 2024 17:05:47 +0100
+Subject: test/system: CopyDirectory() do not chown files
+
+Forwarded: https://github.com/containers/podman/pull/24861
+
+If the source dir is owned by another user then the test the chown will
+fail assuming we run the tests rootless. This function is only used by
+the quadlet tests and for the purpose all we need is to read the files
+so the simple fix is remove the chown as this should make the tests pass
+on the special debian gating env.
+
+Fixes #24802
+
+Signed-off-by: Paul Holzinger <git@holzinger.dev>
+---
+ test/e2e/common_test.go | 10 ----------
+ 1 file changed, 10 deletions(-)
+
+diff --git a/test/e2e/common_test.go b/test/e2e/common_test.go
+index 61fed90..00151c0 100644
+--- a/test/e2e/common_test.go
++++ b/test/e2e/common_test.go
+@@ -20,7 +20,6 @@ import (
+ 	"strconv"
+ 	"strings"
+ 	"sync"
+-	"syscall"
+ 	"testing"
+ 	"time"
+ 
+@@ -1466,11 +1465,6 @@ func CopyDirectory(srcDir, dest string) error {
+ 			return err
+ 		}
+ 
+-		stat, ok := fileInfo.Sys().(*syscall.Stat_t)
+-		if !ok {
+-			return fmt.Errorf("failed to get raw syscall.Stat_t data for %q", sourcePath)
+-		}
+-
+ 		switch fileInfo.Mode() & os.ModeType {
+ 		case os.ModeDir:
+ 			if err := os.MkdirAll(destPath, 0755); err != nil {
+@@ -1489,10 +1483,6 @@ func CopyDirectory(srcDir, dest string) error {
+ 			}
+ 		}
+ 
+-		if err := os.Lchown(destPath, int(stat.Uid), int(stat.Gid)); err != nil {
+-			return err
+-		}
+-
+ 		fInfo, err := entry.Info()
+ 		if err != nil {
+ 			return err

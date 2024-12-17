@@ -1,0 +1,149 @@
+From: Paul Holzinger <git@holzinger.dev>
+Date: Tue, 17 Dec 2024 16:29:40 +0100
+Subject: shell completion: respect CONTAINERS_REGISTRIES_CONF
+
+Forwarded: https://github.com/containers/podman/pull/24861
+
+Found in debian testing where by default there are no unqualified search
+registries installed. As such the test failed as the FIXME said. Now
+there is no need for the test to assume anything.
+
+Instead set our own config via CONTAINERS_REGISTRIES_CONF then we can
+do exact matches, except that env was not read in the shell completion
+code so move some code around to make it read the var in the same way as
+podman login/logout.
+
+Signed-off-by: Paul Holzinger <git@holzinger.dev>
+---
+ cmd/podman/common/completion.go |  5 ++++-
+ cmd/podman/common/registries.go | 24 ++++++++++++++++++++++++
+ cmd/podman/login.go             | 19 +------------------
+ cmd/podman/logout.go            |  2 +-
+ test/system/600-completion.bats |  9 +++++++--
+ 5 files changed, 37 insertions(+), 22 deletions(-)
+ create mode 100644 cmd/podman/common/registries.go
+
+diff --git a/cmd/podman/common/completion.go b/cmd/podman/common/completion.go
+index 5e43f51..a03ce86 100644
+--- a/cmd/podman/common/completion.go
++++ b/cmd/podman/common/completion.go
+@@ -16,6 +16,7 @@ import (
+ 	"github.com/containers/common/pkg/config"
+ 	"github.com/containers/common/pkg/ssh"
+ 	"github.com/containers/image/v5/pkg/sysregistriesv2"
++	imageTypes "github.com/containers/image/v5/types"
+ 	"github.com/containers/podman/v5/cmd/podman/registry"
+ 	"github.com/containers/podman/v5/libpod/define"
+ 	"github.com/containers/podman/v5/libpod/events"
+@@ -276,7 +277,9 @@ func getSecrets(cmd *cobra.Command, toComplete string, cType completeType) ([]st
+ }
+ 
+ func getRegistries() ([]string, cobra.ShellCompDirective) {
+-	regs, err := sysregistriesv2.UnqualifiedSearchRegistries(nil)
++	sysCtx := &imageTypes.SystemContext{}
++	SetRegistriesConfPath(sysCtx)
++	regs, err := sysregistriesv2.UnqualifiedSearchRegistries(sysCtx)
+ 	if err != nil {
+ 		cobra.CompErrorln(err.Error())
+ 		return nil, cobra.ShellCompDirectiveNoFileComp
+diff --git a/cmd/podman/common/registries.go b/cmd/podman/common/registries.go
+new file mode 100644
+index 0000000..f444585
+--- /dev/null
++++ b/cmd/podman/common/registries.go
+@@ -0,0 +1,24 @@
++package common
++
++import (
++	"os"
++
++	"github.com/containers/image/v5/types"
++)
++
++// SetRegistriesConfPath sets the registries.conf path for the specified context.
++// NOTE: this is a verbatim copy from c/common/libimage which we're not using
++// to prevent leaking c/storage into this file.  Maybe this should go into c/image?
++func SetRegistriesConfPath(systemContext *types.SystemContext) {
++	if systemContext.SystemRegistriesConfPath != "" {
++		return
++	}
++	if envOverride, ok := os.LookupEnv("CONTAINERS_REGISTRIES_CONF"); ok {
++		systemContext.SystemRegistriesConfPath = envOverride
++		return
++	}
++	if envOverride, ok := os.LookupEnv("REGISTRIES_CONFIG_PATH"); ok {
++		systemContext.SystemRegistriesConfPath = envOverride
++		return
++	}
++}
+diff --git a/cmd/podman/login.go b/cmd/podman/login.go
+index 5a3edb3..fe63a4b 100644
+--- a/cmd/podman/login.go
++++ b/cmd/podman/login.go
+@@ -98,24 +98,7 @@ func login(cmd *cobra.Command, args []string) error {
+ 	sysCtx := &types.SystemContext{
+ 		DockerInsecureSkipTLSVerify: skipTLS,
+ 	}
+-	setRegistriesConfPath(sysCtx)
++	common.SetRegistriesConfPath(sysCtx)
+ 	loginOptions.GetLoginSet = cmd.Flag("get-login").Changed
+ 	return auth.Login(context.Background(), sysCtx, &loginOptions.LoginOptions, args)
+ }
+-
+-// setRegistriesConfPath sets the registries.conf path for the specified context.
+-// NOTE: this is a verbatim copy from c/common/libimage which we're not using
+-// to prevent leaking c/storage into this file.  Maybe this should go into c/image?
+-func setRegistriesConfPath(systemContext *types.SystemContext) {
+-	if systemContext.SystemRegistriesConfPath != "" {
+-		return
+-	}
+-	if envOverride, ok := os.LookupEnv("CONTAINERS_REGISTRIES_CONF"); ok {
+-		systemContext.SystemRegistriesConfPath = envOverride
+-		return
+-	}
+-	if envOverride, ok := os.LookupEnv("REGISTRIES_CONFIG_PATH"); ok {
+-		systemContext.SystemRegistriesConfPath = envOverride
+-		return
+-	}
+-}
+diff --git a/cmd/podman/logout.go b/cmd/podman/logout.go
+index 46a123f..ef2dc17 100644
+--- a/cmd/podman/logout.go
++++ b/cmd/podman/logout.go
+@@ -49,6 +49,6 @@ func init() {
+ // Implementation of podman-logout.
+ func logout(cmd *cobra.Command, args []string) error {
+ 	sysCtx := &types.SystemContext{}
+-	setRegistriesConfPath(sysCtx)
++	common.SetRegistriesConfPath(sysCtx)
+ 	return auth.Logout(sysCtx, &logoutOptions, args)
+ }
+diff --git a/test/system/600-completion.bats b/test/system/600-completion.bats
+index 1f300b0..fd108e4 100644
+--- a/test/system/600-completion.bats
++++ b/test/system/600-completion.bats
+@@ -168,10 +168,10 @@ function check_shell_completion() {
+ 
+                 *REGISTRY*)
+                     run_completion "$@" $cmd "${extra_args[@]}" ""
+-                    ### FIXME how can we get the configured registries?
+                     _check_completion_end NoFileComp
+-                    ### FIXME this fails if no registries are configured
+                     assert "${#lines[@]}" -gt 2 "$* $cmd: No REGISTRIES found in suggestions"
++                    # We can assume quay.io as we force our own CONTAINERS_REGISTRIES_CONF below.
++                    assert "${lines[0]}" == "quay.io" "unqualified-search-registries from registries.conf listed"
+ 
+                     match=true
+                     # resume
+@@ -311,6 +311,11 @@ function _check_no_suggestions() {
+     # create secret
+     run_podman secret create $random_secret_name $secret_file
+ 
++    # create our own registries.conf so we know what registry is set
++    local CONTAINERS_REGISTRIES_CONF="$PODMAN_TMPDIR/registries.conf"
++    echo 'unqualified-search-registries = ["quay.io"]' > "$CONTAINERS_REGISTRIES_CONF"
++    export CONTAINERS_REGISTRIES_CONF
++
+     # Called with no args -- start with 'podman --help'. check_shell_completion() will
+     # recurse for any subcommands.
+     check_shell_completion

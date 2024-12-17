@@ -5,3 +5,8 @@ gopsutil-v4.patch
 tests-unit-skips.patch
 tests-system-skips.patch
 tests-integration-skips.patch
+0008-shell-completion-respect-CONTAINERS_REGISTRIES_CONF.patch
+0009-test-system-remove-system-dial-stdio-test.patch
+0010-test-system-CopyDirectory-do-not-chown-files.patch
+0011-test-system-fix-podman-play-build-private-registry-e.patch
+0012-CI-image-volume-test-robustify.patch

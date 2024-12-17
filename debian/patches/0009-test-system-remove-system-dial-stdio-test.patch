@@ -1,0 +1,40 @@
+From: Paul Holzinger <git@holzinger.dev>
+Date: Tue, 17 Dec 2024 16:49:55 +0100
+Subject: test/system: remove system dial-stdio test
+
+Forwarded: https://github.com/containers/podman/pull/24861
+
+This test a pretty much useless, it checks that a connection attempt on
+the default socket fails. But this is incorrect as the socket is outside
+of the test control as such it might be ready to accept connections as
+thus the test can fail locally or as reported here in the debian tests.
+
+Given that a simple connection fails does not add any value I opted to
+remove it.
+
+Fixes #24803
+
+Signed-off-by: Paul Holzinger <git@holzinger.dev>
+---
+ test/e2e/system_dial_stdio_test.go | 10 ++--------
+ 1 file changed, 2 insertions(+), 8 deletions(-)
+
+diff --git a/test/e2e/system_dial_stdio_test.go b/test/e2e/system_dial_stdio_test.go
+index 7c278f2..3fffb7f 100644
+--- a/test/e2e/system_dial_stdio_test.go
++++ b/test/e2e/system_dial_stdio_test.go
+@@ -17,12 +17,6 @@ var _ = Describe("podman system dial-stdio", func() {
+ 		Expect(session.OutputToString()).To(ContainSubstring("Examples: podman system dial-stdio"))
+ 	})
+ 
+-	It("podman system dial-stdio while service is not running", func() {
+-		if IsRemote() {
+-			Skip("this test is only for non-remote")
+-		}
+-		session := podmanTest.Podman([]string{"system", "dial-stdio"})
+-		session.WaitWithDefaultTimeout()
+-		Expect(session).Should(ExitWithError(125, "Error: failed to open connection to podman"))
+-	})
++	// TODO: this should have a proper connection test where we spawn a server
++	// and the use dial-stdio to connect to it and send data.
+ })
